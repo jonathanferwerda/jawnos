@@ -24,6 +24,10 @@
 		<div class="studio_pedalboard_bar">
 			<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
 		</div>
+		<%# The selected track's chain sits in the sheet with the shelf, never in the
+		   track panel: choosing a pedal changes this list, not the panel's height.
+		   studioRackRender() fills it and stamps it with the track it shows. %>
+		<div id="studio_pedalboard_rack" class="studio_channel_rack" hint="<%= &subs::ui('The effects in this track\'s chain, in order') %>"></div>
 		<div id="studio_pedalboard_pedals">
 		<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
 			<span id="pedal_<%= $p->{'name'} %>" class="pedal" data-effect="<%= $p->{'name'} %>"<% if ($p->{'tuner'}) { %> data-tuner="yes" hint="<%= &subs::ui('Start or stop the tuner') %>"<% } %>>
@@ -222,7 +226,7 @@
 							<input type="range" min="0" max="100" value="1" channel="<%= $ch %>" control="volume" class="channel_volume studio_track_volume" hint="<%= &subs::ui('Mix this track against the others') %>">
 						</div>
 						<div class="studio_track_line studio_track_actions">
-							<button class="studio_track_fx hover" channel="<%= $ch %>" hint="<%= &subs::ui('Show this track\'s pedals') %>"><%= &subs::ui('FX') %></button>
+							<button class="studio_track_fx hover" channel="<%= $ch %>" hint="<%= &subs::ui('Open the pedalboard for this track') %>"><%= &subs::ui('FX') %></button>
 							<button class="studio_track_monitor hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Hear this track\'s live input through the monitor; one track at a time') %>"><%= &subs::ui('Monitor') %></button>
 							<button class="studio_track_automation hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Show automation for this track') %>"><%= &subs::ui('Auto') %></button>
 							<button class="studio_track_delete hover" channel="<%= $ch %>" armed="no" hint="<%= &subs::ui('Delete this track') %>"><%= &subs::ui('Delete') %></button>
@@ -230,7 +234,6 @@
 						<div class="studio_track_line studio_track_metre_line">
 							<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
 						</div>
-						<div class="studio_channel_rack" channel="<%= $ch %>" hint="<%= &subs::ui('The effects in this track\'s chain, in order') %>"></div>
 					</div>
 					<div class="studio_track_body">
 						<canvas class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="<%= &subs::ui('Drag to move a clip, its edges to trim, double-click to cut, right-click for split, cut, copy and paste, select + Delete to remove') %>"></canvas>

@@ -1194,8 +1194,7 @@ function studioRewireChannel(node, from, to) {
 function studioResetChannelMarkup(node, ch) {
 	node.find('.armed').attr('state', 'off').text('O');
 	node.find('.channel_volume').val(1);
-	node.find('.channel_fx').empty().removeClass('studio_fx_open');
-	node.find('.studio_channel_rack').empty();
+	node.find('.channel_fx').empty();
 	node.find('.studio_channel_information').text('');
 	node.find('.knob_control').val(50);
 	node.find('.knob').css('transform', '');
@@ -1209,7 +1208,7 @@ function studioResetChannelMarkup(node, ch) {
 	node.find('.studio_strip_led').removeClass('lit');
 	node.removeClass('studio_solo_muted');
 	node.find('.studio_solo_muted').removeClass('studio_solo_muted');
-	node.removeClass('selected_channel studio_track_automation_on studio_fx_open');
+	node.removeClass('selected_channel studio_track_automation_on');
 	node.find('.selected_channel').removeClass('selected_channel');
 	// a recycled clone must not wear the first track's colour
 	node.removeAttr('data-colour');
@@ -1392,6 +1391,8 @@ function studioRemoveTrack(ch, quiet) {
 	studioTakesChanged();
 	studioUpdateTrackCount();
 	if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
+	// the sheet was showing the removed track's chain, so it draws the new one
+	if (typeof studioRackRender === 'function') { studioRackRender(studioSelectedChannel); }
 	if (!quiet) {
 		studioSaveTrackCount();
 		studioSaver();
@@ -1434,11 +1435,13 @@ $(document).on('click', '.studio_track_automation', function () {
 
 $(document).on('click', '.studio_track_fx', function () {
 	var ch = $(this).attr('channel');
+	// FX selects this track and opens the pedalboard, which is the one place a
+	// chain is drawn. The panel keeps its fixed height whatever is in the chain.
 	studioSelectedChannel = ch;
-	// FX shows this track's chain in the panel. The pedalboard follows the
-	// press, so a second press puts the shelf away and the chain stays in reach.
-	$('#studio_track_row_' + ch).addClass('studio_fx_open');
+	$('.channel, .studio_track_panel').removeClass('selected_channel');
+	$('#studio_track_row_' + ch + ' .studio_track_panel').addClass('selected_channel');
+	$('#studio_mixer_strips .channel_' + ch).addClass('selected_channel');
 	studioRackRender(ch);
 	studioPaletteLabel();
-	studioPedalboardOpen(!$('#pedalboard').is(':visible'));
+	studioPedalboardOpen(true);
 });

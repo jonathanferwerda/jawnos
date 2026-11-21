@@ -624,7 +624,8 @@ $(document).on('click', '#studio_new', function() {
 });
 
 // One path for the Pedals button, the transport's old burger, the FX button and
-// a channel badge: the sheet's visibility and its button stay in step.
+// a channel badge: the sheet's visibility and its button stay in step. The
+// sheet carries the selected track's chain, so it is drawn as it opens.
 function studioPedalboardOpen(show) {
 	var board = $('#pedalboard');
 	if (show === undefined) { show = !board.is(':visible'); }
@@ -632,6 +633,7 @@ function studioPedalboardOpen(show) {
 	if (show) { board.show(); }
 	else { board.hide(); }
 	$('#studio_pedals').attr('aria-pressed', show ? 'true' : 'false');
+	if (show && typeof studioRackRender === 'function') { studioRackRender(studioPaletteChannel()); }
 	return show;
 }
 

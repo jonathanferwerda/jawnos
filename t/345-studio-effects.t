@@ -89,8 +89,10 @@ like($rack, qr/'\.studio_pedal_model'/, 'the shelf model dropdown is wired to th
 # --- the rack: add, order, bypass, remove ----------------------------------
 unlike($markup, qr/id="studio_effect_palette"/, 'the old layout-bar effect palette is gone');
 like($markup, qr/id="studio_add_track"[\s\S]{0,300}?Add track/, 'Add track sits where the palette was');
-like($markup, qr/class="studio_channel_rack"[^>]*channel="<%= \$ch %>"/,
-	'every track panel has its own rack');
+like($markup, qr/id="studio_pedalboard_rack" class="studio_channel_rack"/,
+	'the pedalboard carries the one chain container');
+unlike($markup, qr/studio_track_panel[\s\S]*?studio_channel_rack/,
+	'no track panel carries a rack of its own');
 like($markup, qr/id="studio_rack_template"/, 'the rack row template is in the markup');
 
 like($rack, qr/function studioRackReorder\(ch\)/, 'a dragged order is read back');

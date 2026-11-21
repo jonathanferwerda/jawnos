@@ -29,21 +29,38 @@
 	}
 	/* The pedalboard is a bottom sheet over the console, not a grid row: opening
 	   it never shrinks the arranged timeline and it cannot be pushed off the
-	   window. Its own bar holds Close and the tiles scroll inside it. */
+	   window. Its own bar holds Close, the selected track's chain sits under the
+	   bar, and the tiles scroll inside it. */
 	#pedalboard {
+		display: flex;
+		flex-direction: column;
 		position: absolute;
 		left: 0;
 		right: 0;
 		bottom: 0;
 		z-index: 70002;
-		/* the bar (20px) plus the 190px tiles, the scroller's padding and a thin
-		   scrollbar: 238px */
-		max-height: 238px;
+		/* the bar (20px), the chain's 110px cap and the 214px tiles */
+		max-height: 344px;
 		overflow: hidden;
 		background-color: var(--panel-2);
 		border-top: 3px solid var(--line);
 		box-shadow: var(--shadow-2);
 		box-sizing: border-box;
+	}
+	/* The chain rides in the sheet with the shelf: it is bounded and scrolls in
+	   place, so a long chain never grows the sheet past the window's foot. */
+	#studio_pedalboard_rack {
+		flex: 0 0 auto;
+		min-height: 0;
+		max-height: 110px;
+		overflow-y: auto;
+		scrollbar-width: thin;
+		padding: 3px 10px;
+		box-sizing: border-box;
+		border-bottom: 1px solid var(--line);
+	}
+	#studio_pedalboard_rack::-webkit-scrollbar {
+		width: 6px;
 	}
 	.studio_pedalboard_bar {
 		display: flex;
@@ -1178,23 +1195,11 @@
 		width: 80px;
 		height: 6px;
 	}
-	.studio_track_panel .channel_fx {
-		display: none;
-		max-height: 34px;
-	}
-	.studio_track_panel .channel_fx.studio_fx_open {
-		display: block;
-	}
-	/* A track's rack is the ordered chain itself: FX opens it under the panel. */
+	/* A track's rack is the ordered chain itself, drawn in the pedalboard above
+	   the shelf: the panel never carries a list of effects. */
 	.studio_channel_rack {
-		display: none;
 		margin-top: 2px;
 		font-size: 11px;
-		max-height: 260px;
-		overflow-y: auto;
-	}
-	.studio_track.studio_fx_open .studio_channel_rack {
-		display: block;
 	}
 	.studio_rack_row {
 		border: 1px solid var(--line);

@@ -1,11 +1,13 @@
-# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
+# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/09_pedals.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
 # covers:    The Studio layout: a compact panel beside every track with its five
 #            controls, four remembered hide toggles, a Dock control and pointer
 #            drag/resize handlers, a packing grid where an ordered panel can span
 #            one or two columns, a channel-strips panel that scrolls its faders
 #            into reach, a jog wheel in the transport's button row, a dynamic
 #            track list with Add track / a twice-pressed Delete, and a help topic
-#            that names them. Also the channel input/output selector: a bounded,
+#            that names them. Also the pedalboard as the one FX surface: the
+#            selected track's chain lives in the sheet, never in the track panel.
+#            Also the channel input/output selector: a bounded,
 #            scrollable box clamped to the window by channelSelect().
 #            Structure only; pixels are not asserted here.
 
@@ -36,6 +38,7 @@ my $knobs  = slurp("$root/public/js/manager/studio/04_knobs.js");
 my $ctrl   = slurp("$root/public/js/manager/studio/06_controls.js");
 my $inputs = slurp("$root/public/js/manager/studio/05_inputs.js");
 my $layout = slurp("$root/public/js/manager/studio/07_layout.js");
+my $pedals = slurp("$root/public/js/manager/studio/09_pedals.js");
 my $winjs  = slurp("$root/public/js/manager/windows.js");
 my $fitjs  = slurp("$root/public/js/manager/windows/02_fit.js");
 my $maker  = slurp("$root/lib/JawnOS/Manager/Part22.pm");
@@ -115,8 +118,11 @@ like($edit, qr/function studioPedalboardOpen\(show\)/, 'one open/close path serv
 like($edit, qr/\$\('#studio_pedals'\)\.attr\('aria-pressed'/, 'the Pedals button follows the sheet');
 like($edit, qr/'#studio_pedals, #pedalboard_hamburger'/, 'the Pedals button and the old burger both toggle it');
 like($layout, qr/'#studio_pedalboard_close'[\s\S]*studioPedalboardOpen\(false\)/, 'the close control hides the sheet');
-like($layout, qr/studioPedalboardOpen\(!\$\('#pedalboard'\)\.is\(':visible'\)\)/,
-	'FX toggles the sheet, so a second press puts it away');
+like($layout, qr/studioPedalboardOpen\(true\)/,
+	'FX opens the sheet rather than toggling it');
+like($layout, qr/click', '\.studio_track_fx'[\s\S]*?studioRackRender\(ch\);[\s\S]*?studioPedalboardOpen\(true\);/, 
+	'FX selects the track, draws its chain and opens the pedalboard');
+unlike($layout, qr/studio_fx_open/, 'FX no longer opens a rack inside the track row');
 like($edit, qr/studioPedalboardOpen\(true\);[\s\S]*scroller\.scrollLeft/, 'a channel badge opens the sheet and scrolls to the pedal');
 like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_pedals"[^>]*hint="[^"]*Open or close the pedalboard/,
 	'the Pedals button sits in the layout bar');
@@ -140,7 +146,10 @@ like($style, qr/\.pedal\s*\{[^}]*flex:\s*0 0 auto/s, 'a tile keeps its width in 
 like($style, qr/\.pedal\s*\{[^}]*position:\s*relative/s, 'a tile is positioned in the row');
 like($style, qr/\.pedal\s*\{[^}]*left:\s*auto/s, 'the fixed left offset is gone');
 like($style, qr/\.pedal\s*\{[^}]*height:\s*190px/s, 'every tile is 190px tall');
-like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*238px/s, 'the dock fits a shorter window');
+like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*344px/s, 'the dock fits a shorter window');
+like($style, qr/#pedalboard\s*\{[^}]*flex-direction:\s*column/s, 'the chain and the tiles stack in the sheet');
+like($style, qr/#studio_pedalboard_rack\s*\{[^}]*max-height:\s*110px/s, 'the chain keeps a compact bound in the sheet');
+like($style, qr/#studio_pedalboard_rack\s*\{[^}]*overflow-y:\s*auto/s, 'a long chain scrolls in place');
 like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*max-height:\s*214px/s, 'the tile row keeps within the dock');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork fits inside the tile');
 unlike($markup, qr/count\s*\*\s*175/, 'no tile is placed by counted pixels');
@@ -361,8 +370,11 @@ like($help, qr/Hide the track listing/, 'help names the track hide toggle');
 like($help, qr/Dock the tracks/, 'help names the Dock control');
 like($help, qr/Close the pedalboard/, 'help names the pedalboard close');
 like($help, qr/Open or close the pedalboard/, 'help names the Pedals button');
-like($help, qr/The Pedals button in the layout bar opens the pedalboard as a 238px sheet/,
+like($help, qr/The Pedals button in the layout bar opens the pedalboard as a sheet/,
 	'help describes the sheet over the console');
+like($help, qr/Open the pedalboard for this track/,
+	'help names the FX button in its on-screen words');
+like($help, qr/never lists effects/, 'help says the track panel keeps its height');
 like($help, qr/Every track has a compact panel/, 'help describes the per-track panel');
 like($help, qr/Drag to resize this panel/, 'help names the floated panel resize grip');
 like($help, qr/pack into a two-column grid/, 'help describes the packing grid');
@@ -448,6 +460,29 @@ like($markup, qr/class="studio_transport_field"[^>]*id="studio_signature"/, 'the
 like($markup, qr/class="studio_transport_time"/, 'the position sits in the row');
 like($style, qr/\.studio_transport_row\s*\{[^}]*flex-wrap:\s*wrap/s,
 	'the row wraps only when the window is genuinely narrow');
+
+# --- the pedalboard is the one FX surface ----------------------------------
+my @racks = $markup =~ /class="studio_channel_rack"/g;
+is(scalar(@racks), 1, 'the markup carries exactly one chain container');
+like($markup, qr/id="pedalboard"[\s\S]*?id="studio_pedalboard_rack"[\s\S]*?id="studio_pedalboard_pedals"/,
+	'the chain sits in the pedalboard, between its bar and its tiles');
+unlike($markup, qr/studio_track_panel[\s\S]*?studio_channel_rack/,
+	'the track panel carries no effect list at all');
+like($markup, qr/class="studio_track_fx hover" channel="<%=\s*\$ch\s*%>" hint="<%=\s*&subs::ui\('Open the pedalboard for this track'\) %>"/,
+	'the FX hint names what the press does');
+like($pedals, qr/var holder = \$\('#studio_pedalboard_rack'\);/, 'the rack renders into the pedalboard');
+like($pedals, qr/holder\.attr\('channel', ch\);/, 'the container is stamped with the track it shows');
+like($pedals, qr/\$\('#studio_pedalboard_rack \.studio_rack_row'\)/,
+	'reorder and move read the pedalboard rows');
+like($pedals, qr/studioRackRender\(studioPaletteChannel\(\)\)/,
+	'the chain follows the selected track');
+for my $action (qw(studio_rack_led studio_rack_bypass studio_rack_up studio_rack_down studio_rack_remove)) {
+	like($pedals, qr/'\.$action/, "the rack keeps its $action action");
+}
+like($edit, qr/if \(show && typeof studioRackRender === 'function'\) \{ studioRackRender\(studioPaletteChannel\(\)\); \}/,
+	'opening the sheet draws the selected track\'s chain');
+unlike($style, qr/studio_fx_open/, 'no rule opens a rack inside the track row');
+unlike($pedals, qr/studio_fx_open/, 'the chain code no longer marks a track row open');
 
 # --- the track panel never bleeds over the canvas ---------------------------
 like($markup, qr/class="studio_track_line studio_track_actions"/,

@@ -2,10 +2,13 @@
 // The per-track rack
 // ===========================================================================
 // Every channel owns an ordered list of inserts in studioAudio.channels[ch],
-// and this part is the UI over that list: the palette adds one, the rack shows
-// the chain in order, drag or the arrows reorder it, the footswitch bypasses an
-// insert in place, and X removes it. The song keeps the order and the on/off
-// state in the channel's `fx` records (see studioSaver / studioRetriever).
+// and this part is the UI over that list. The pedalboard is the one FX surface:
+// its tiles add an insert, and the chain container in the sheet shows the
+// selected track's chain in order, where drag or the arrows reorder it, the
+// footswitch bypasses an insert in place, and X removes it. A track's panel
+// never lists effects, so choosing one can never cramp its FX/Monitor/Auto/
+// Delete row. The song keeps the order and the on/off state in the channel's
+// `fx` records (see studioSaver / studioRetriever).
 //
 // A channel has two chains: In is before the recording (the take is wet) and
 // Out is after it (the take stays clean). The rack shows one at a time; every
@@ -75,10 +78,15 @@ function studioRackRow(ch, ins, chain) {
 }
 
 function studioRackRender(ch) {
-	var holder = $('.studio_channel_rack[channel="' + ch + '"]');
+	var holder = $('#studio_pedalboard_rack');
 	var c = studioAudio.channels[ch];
 	if (!holder.length || !c) { return; }
+	// One sheet, one chain: a render for a track that is not selected would put
+	// the wrong inserts under the shelf, so it is skipped.
+	if (String(ch) !== String(studioPaletteChannel())) { return; }
 	var chain = studioChannelChain(ch);
+	// every rack action reads this attribute to find its channel
+	holder.attr('channel', ch);
 	holder.empty();
 	// In is before the recording, so its pedals print into the take; Out is
 	// after it, so the take stays clean. One switch chooses what the rack shows
@@ -102,6 +110,10 @@ function studioRackRender(ch) {
 			items: '> .studio_rack_row',
 			axis: 'y',
 			tolerance: 'pointer',
+			// Every rack row now lives in the pedalboard's one chain container, so a
+			// drop lands in the same chain: the option is kept so the sortable's
+			// own row-to-row dragging keeps working, and the stop handler below still
+			// tolerates a row whose channel attribute says it came from elsewhere.
 			connectWith: '.studio_channel_rack',
 			placeholder: 'studio_rack_placeholder',
 			forcePlaceholderSize: true,
@@ -126,7 +138,8 @@ function studioRackRender(ch) {
 }
 
 function studioRackRenderAll() {
-	$.each(studioAudio.channels, function (ch) { studioRackRender(ch); });
+	// the sheet carries one chain at a time, so only the selected track draws
+	studioRackRender(studioPaletteChannel());
 	studioPaletteLabel();
 	studioUpdatePedalLamps();
 }
@@ -152,7 +165,7 @@ function studioRackMoveInsert(from, to, name) {
 	else { dst.inserts.push(ins); }
 	dstMap[name] = ins;
 	var order = [];
-	$('.studio_channel_rack[channel="' + to + '"] .studio_rack_row').each(function () {
+	$('#studio_pedalboard_rack .studio_rack_row').each(function () {
 		order.push($(this).attr('insert'));
 	});
 	var next = [];
@@ -183,7 +196,7 @@ function studioRackReorder(ch) {
 	var map = out ? c.outInsertByName : c.insertByName;
 	var list = out ? c.outInserts : c.inserts;
 	var order = [];
-	$('.studio_channel_rack[channel="' + ch + '"] .studio_rack_row').each(function () {
+	$('#studio_pedalboard_rack .studio_rack_row').each(function () {
 		order.push($(this).attr('insert'));
 	});
 	var next = [];
@@ -353,8 +366,8 @@ function studioPaletteAdd() {
 	var ch = studioPaletteChannel();
 	var chain = studioChannelChain(ch);
 	if (studioRackFind(ch, name, chain)) {
-		// Already in the chain: open the rack rather than adding a second copy.
-		$('#studio_track_row_' + ch).addClass('studio_fx_open');
+		// Already in the chain: open the sheet on it rather than adding a second copy.
+		studioPedalboardOpen(true);
 		studioRackRender(ch);
 		return;
 	}
@@ -364,10 +377,12 @@ function studioPaletteAdd() {
 
 $(document).on('click', '#studio_palette_add', function () { studioPaletteAdd(); });
 
-// The palette follows the selected strip or track panel. The selection handler
-// itself is in 03_editing.js; this runs after it in bundle order. A listening
-// tuner moves its tap to the newly selected chain.
+// The pedalboard follows the selected strip or track panel. The selection handler
+// itself is in 03_editing.js; this runs after it in bundle order, so the sheet
+// draws the chain of the track that was just chosen. A listening tuner moves its
+// tap to the newly selected chain.
 $(document).on('click', '.channel, .studio_track_panel', function () {
+	studioRackRender(studioPaletteChannel());
 	studioPaletteLabel();
 	studioUpdatePedalLamps();
 	if (typeof studioTunerFollow === 'function') { studioTunerFollow(); }
@@ -440,12 +455,13 @@ $(document).on('input change', '.studio_insert_control', function () {
 	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val());
 });
 
-// A text badge has no artwork to reveal on the shelf, so it opens the rack.
+// A text badge has no artwork to reveal on the shelf, so it opens the sheet on
+// the selected track's chain.
 $(document).on('click', '.channel_fx_text', function () {
 	var ch = $(this).closest('.channel_fx').attr('channel');
 	if (!ch) { return; }
 	studioSelectedChannel = ch;
-	$('#studio_track_row_' + ch).addClass('studio_fx_open');
+	studioPedalboardOpen(true);
 	studioRackRender(ch);
 	studioPaletteLabel();
 });
