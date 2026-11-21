@@ -109,6 +109,16 @@ my $lenient = gate_analyse($missing, bpm => 120, expected => 3, strict_count => 
 ok($lenient->{passed}, 'a short count is a note when the grid is still exact');
 like($lenient->{count_note}, qr/expected 3 click\(s\), found 2/, 'and the note names the count');
 
+my $edge = write_wav("$dir/edge.wav",
+	frames => 60_000, clicks => [ 985, 25_000, 49_000 ]);
+my $unsettled = gate_analyse($edge, bpm => 120, expected => 3);
+ok(!$unsettled->{passed}, 'a first-click edge offset fails without a settle');
+my $settled = gate_analyse($edge, bpm => 120, expected => 3, settle => 1);
+ok($settled->{passed}, 'one settled click makes the steady grid exact');
+is($settled->{max_delta}, 0, 'and the steady grid has no delta');
+is($settled->{anchor}, 25_000, 'the grid anchors on the second onset');
+is($settled->{settle}, 1, 'and reports the settled click');
+
 my $stereo_pass = gate_analyse($stereo, channel => 1, bpm => 120, expected => 3);
 ok($stereo_pass->{passed}, 'a stereo take passes on its second channel');
 

@@ -415,8 +415,9 @@ sub gate_analyse {
 		return $report;
 	}
 
-	$report->{first} = $onsets->[0];
-	$report->{first_ms} = $onsets->[0] / $rate * 1000;
+	my $first = $onsets->[0];
+	$report->{first} = $first;
+	$report->{first_ms} = $first / $rate * 1000;
 
 	if (defined $report->{expected} && @$onsets != $report->{expected}) {
 		my $note = sprintf(
@@ -433,24 +434,36 @@ sub gate_analyse {
 		$report->{count_note} = $note;
 	}
 
-	if (@$onsets < 2) {
-		$report->{reason} = 'a grid needs at least two onsets to measure spacing';
+	# `settle` drops the first N onsets from the grid. A clip's first click can
+	# sit on the transport's start edge, where the mixer's gain has not reached
+	# its settled level; the later clicks are the steady grid. The dropped
+	# onsets still count, but they do not move the anchor.
+	my $settle = $opts{settle} // 0;
+	$settle = 0 unless defined $settle && $settle =~ /\A\d+\z/;
+	$report->{settle} = $settle;
+	if ($settle > $#$onsets - 1) {
+		$report->{reason} = $settle
+			? "a grid needs at least two onsets after the first $settle"
+			: 'a grid needs at least two onsets to measure spacing';
 		return $report;
 	}
 
-	my $first = $onsets->[0];
+	my $anchor = $onsets->[$settle];
+	$report->{anchor}     = $anchor;
+	$report->{anchor_ms}  = $anchor / $rate * 1000;
 	my $bars  = $report->{beats_per_bar};
 	$bars = 1 unless defined $bars && $bars > 0;
 	my @beats;
 	my $max_delta = 0;
-	for my $index (1 .. $#$onsets) {
-		my $nominal = $first + int($index * $beat_frames + 0.5);
+	for my $index ($settle + 1 .. $#$onsets) {
+		my $ordinal = $index - $settle;
+		my $nominal = $anchor + int($ordinal * $beat_frames + 0.5);
 		my $delta   = $onsets->[$index] - $nominal;
 		$max_delta = abs($delta) if abs($delta) > $max_delta;
 		push @beats, {
-			index   => $index,
-			bar     => int($index / $bars) + 1,
-			beat    => ($index % $bars) + 1,
+			index   => $ordinal,
+			bar     => int($ordinal / $bars) + 1,
+			beat    => ($ordinal % $bars) + 1,
 			sample  => $onsets->[$index],
 			nominal => $nominal,
 			delta   => $delta,
@@ -460,7 +473,9 @@ sub gate_analyse {
 	$report->{max_delta} = $max_delta;
 	$report->{passed}    = $max_delta <= $report->{tolerance} ? 1 : 0;
 	$report->{reason}    = $report->{passed}
-		? "every onset is within $report->{tolerance} sample(s) of the $report->{bpm} bpm grid"
+		? ($settle
+			? "every onset after the first $settle is within $report->{tolerance} sample(s) of the $report->{bpm} bpm grid"
+			: "every onset is within $report->{tolerance} sample(s) of the $report->{bpm} bpm grid")
 		: "an onset is $max_delta sample(s) from the $report->{bpm} bpm grid (tolerance $report->{tolerance})";
 	return $report;
 }

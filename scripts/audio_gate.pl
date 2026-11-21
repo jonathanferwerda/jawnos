@@ -375,6 +375,7 @@ if ($click_take->{ok} && -f $take1) {
 			beats_per_bar => $bpb,
 			expected      => $expected,
 			strict_count  => 0,
+			settle        => 1,
 			channel       => 0,
 		);
 		$report->{playback} = {
@@ -828,6 +829,10 @@ sub print_analysis {
 		defined $analysis->{expected} ? $analysis->{expected} : '-',
 		$analysis->{count};
 	print "  note: $analysis->{count_note}\n" if defined $analysis->{count_note};
+	if ($analysis->{settle}) {
+		printf "  grid anchored after the first %d click(s) (clip start); anchor %d\n",
+			$analysis->{settle}, $analysis->{anchor};
+	}
 	if (@{ $analysis->{beats} }) {
 		printf "  %-5s %-9s %-10s %-10s %s\n",
 			'beat', 'bar.beat', 'sample', 'nominal', 'delta';
