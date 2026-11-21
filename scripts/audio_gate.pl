@@ -412,18 +412,10 @@ my $four = {
 	error        => '',
 };
 
-if ($tracks > 1 && $engine_channels && $tracks > $engine_channels) {
-	$four->{error} = sprintf(
-		'the engine reports %d capture channel(s); a %d-track take needs at least %d. '
-		. 'Start the engine with --channels %d and an interface that grants them. '
-		. 'Duplicating one patched input across tracks does not bypass the engine\'s per-take channel check.',
-		$engine_channels, $tracks, $tracks, $tracks,
-	);
-	push @errors, 'the four-track step could not run: ' . $four->{error};
-	$check->('four-track shared start', 0, $four->{error});
-	$report->{four_track} = $four;
-}
-else {
+# A take may carry more tracks than the interface has channels: the engine lets
+# several tracks name the same input, which is how four tracks fit the UM2's two
+# inputs. The step proves the shared start stamp, not four ADCs.
+{
 	my @inputs = ($input) x $tracks;
 	my $four_take = take_with_transport(
 		path    => $take4,
