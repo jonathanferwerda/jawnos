@@ -3001,17 +3001,19 @@ function musicWindowSync() {
 	topIndex = Math.max(0, Math.min(s.total - 1, topIndex));
 	var visible = Math.max(1, Math.ceil(s.scroller.clientHeight / s.pitch) + 1);
 	var mountedEnd = s.offset + cards.length;
-	// Fetch only when the viewport is within half a screen of an edge. The
-	// margin is what stops a rounding difference from asking for the same
-	// slice again and again; the new slice then has a full screen of overscan
-	// on each side of the viewport. The margin is in items, so a grid gets one
-	// whole screen of columns either side.
-	var margin = Math.max(1, Math.floor(visible / 2)) * s.columns;
+	// Fetch when the viewport is within two screens of an edge. Half a screen
+	// was not enough lead: the new rows are probed before they are drawn, so the
+	// next batch landed only after the last mounted title had already scrolled
+	// away. The margin is in items, so a grid gets whole screens of columns
+	// either side. The slice is then mounted with two screens behind and four
+	// ahead, which gives the next fetch the same lead and stops a rounding
+	// difference from asking for the same slice again and again.
+	var margin = visible * 2 * s.columns;
 	var nearTop = s.offset > 0 && topIndex < s.offset + margin;
 	var nearBottom = mountedEnd < s.total && topIndex > mountedEnd - margin;
 	if (!nearTop && !nearBottom) { return; }
-	var start = Math.max(0, topIndex - visible * s.columns);
-	var end = Math.min(s.total, topIndex + visible * 2 * s.columns);
+	var start = Math.max(0, topIndex - visible * 2 * s.columns);
+	var end = Math.min(s.total, topIndex + visible * 4 * s.columns);
 	if (s.columns > 1) {
 		start = Math.floor(start / s.columns) * s.columns;
 		end = Math.min(s.total, Math.ceil(end / s.columns) * s.columns);

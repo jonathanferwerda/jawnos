@@ -263,6 +263,15 @@ like($js, qr/new ResizeObserver/, 'and re-measures when the window resizes');
 like($js, qr/off\('scroll\.musicwindow'\)\.on\('scroll\.musicwindow'/, 'and follows the list scroll on the scroller itself');
 like($js, qr/offset: start,/, 'and tells the server where the slice starts');
 like($js, qr/scrollTop\(0\)/, 'a search returns the list to the top');
+# a scroll asks for the next batch while the last mounted titles are still on
+# screen: two screens of lead, with two screens behind and four ahead so the
+# next fetch is not due immediately after the reply
+like($js, qr/var margin = visible \* 2 \* s\.columns;/,
+	'it asks for the next slice two screens before the end');
+like($js, qr/var start = Math\.max\(0, topIndex - visible \* 2 \* s\.columns\);/,
+	'mounting the slice two screens behind the viewport');
+like($js, qr/var end = Math\.min\(s\.total, topIndex \+ visible \* 4 \* s\.columns\);/,
+	'and four screens ahead, so the next fetch has the same lead');
 
 # the cached shell carries the initial slice and the manifest, never a stale view
 my ($cache) = $js =~ /(function musicContentCache\(html\)\s*\{.*?\n\}\n)/s;
