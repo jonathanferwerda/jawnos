@@ -16,6 +16,8 @@ import sys
 
 from . import DESKTOP_DIR, core
 
+IS_WINDOWS = os.name == "nt"
+
 # At document start the page can see that it is running inside the desktop app.
 # universal.js keys its app login off this, the same way the phone keys off the
 # Android bridge.
@@ -158,9 +160,17 @@ def browse_launcher():
         shutil.which("jawnos-browse"),
     ]
     for candidate in candidates:
-        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        # Windows has no executable bit; os.access(X_OK) is not the test there.
+        if (not IS_WINDOWS and candidate and os.path.isfile(candidate)
+                and os.access(candidate, os.X_OK)):
             return [candidate]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate):
+            if IS_WINDOWS:
+                python = sys.executable or "python.exe"
+                windowless = os.path.join(os.path.dirname(python), "pythonw.exe")
+                if os.path.isfile(windowless):
+                    python = windowless
+                return [python, candidate]
             return [sys.executable or "python3", candidate]
     return None

@@ -78,6 +78,35 @@ if (-not (Test-Path -LiteralPath $InstallDir)) {
 $appDir = Join-Path $InstallDir 'app'
 $perl = Join-Path $InstallDir 'runtime\perl\bin\perl.exe'
 
+# --- stop the desktop shell -------------------------------------------------
+# The WebView2 shell and the optional Qt shell are separate processes.
+# Stopping the master does not end them, and the Qt supervisor would start the
+# tree again. Stop them before the killer.
+
+try {
+    Get-CimInstance Win32_Process -Filter "Name='JawnOSShell.exe'" -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            try {
+                Stop-Process -Id $_.ProcessId -Force
+                Note "Stopped the JawnOS desktop (pid $($_.ProcessId))."
+            } catch {
+                Write-Warning "Could not stop the JawnOS desktop (pid $($_.ProcessId)): $_"
+            }
+        }
+    Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like '*jawnos-desktop*' } |
+        ForEach-Object {
+            try {
+                Stop-Process -Id $_.ProcessId -Force
+                Note "Stopped the JawnOS desktop (pid $($_.ProcessId))."
+            } catch {
+                Write-Warning "Could not stop the JawnOS desktop (pid $($_.ProcessId)): $_"
+            }
+        }
+} catch {
+    Write-Warning "Could not look for a running JawnOS desktop: $_"
+}
+
 # --- stop the master --------------------------------------------------------
 # The tree's own killer knows the master, its workers and the port. It is the
 # first answer; the pid record is the fallback when the runtime is already

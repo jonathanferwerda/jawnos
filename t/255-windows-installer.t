@@ -114,6 +114,8 @@ like($install, qr/"%~dp0runtime\\perl\\bin\\perl\.exe" jawn/,
 # The Start menu and desktop icons open the interface; the Startup entry only
 # starts the service. The icon used to run launch.bat alone, so a second click
 # while the house was already serving did nothing and no browser ever opened.
+# The interface is the bundled Qt shell when it is present; the browser is the
+# fallback for a payload built without it.
 like($install, qr/launch\.ps1/, 'install.ps1 generates the interface launcher');
 like($install, qr/start\.vbs/, 'install.ps1 generates a service-only launcher');
 like($install, qr/\$startArgs\s*=/, 'the Startup shortcut has its own arguments');
@@ -122,8 +124,25 @@ like($install, qr/New-JawnShortcut -LinkPath \$startupShortcut[^\n]*\$startArgs/
 like($install, qr/Start-Process -FilePath \$wscript -ArgumentList \$startArgs/,
 	'the installer starts the service while it waits, not the interface');
 like($install, qr/Start-Process "https:\/\/127\.0\.0\.1:\$port\/manager"/,
-	'the interface launcher opens the manager');
+	'the browser fallback opens the manager');
 like($install, qr/Test-JawnPort/, 'the interface launcher checks the port first');
+
+# The desktop shell is the interface when the payload carries it. It needs the
+# Python runtime and both Qt WebEngine bindings; install.ps1 mints the ticket
+# the shell signs in with, and an upgrade stops the running shell before the
+# files it has open are replaced.
+like($install, qr/'scripts\\app_ticket\.pl', 'desktop', '--save'/,
+	'install.ps1 mints the desktop ticket');
+like($install, qr/runtime\\python\\pythonw\.exe/, 'the shell uses the bundled pythonw');
+like($install, qr/QtWebEngineCore\.pyd/, 'the shell needs Qt WebEngine');
+like($install, qr/QtWebEngineWidgets\.pyd/, 'including the widgets binding');
+like($install, qr/\$useWebView =/, 'the launcher decides once whether it has the WebView2 shell');
+like($install, qr/if \(\$useWebView\)/, 'the interactive run starts the shell');
+like($install, qr/if \(\$up -and -not \$NoBrowser -and -not \$useWebView -and -not \$useQt\)/,
+	'and does not also open a browser');
+like($install, qr/'--tray'/, 'the shell keeps its tray icon');
+like($install, qr/Get-CimInstance Win32_Process/,
+	'an upgrade stops a running shell before copying files');
 
 # The shortcuts carry the house mark, the same logo the Linux .desktop and the
 # Android launcher use, not the generic wscript script icon.
@@ -150,6 +169,12 @@ unlike($install, qr{C:\\Strawberry}i, 'install.ps1 does not hardcode C:\Strawber
 
 # --- build-portable.ps1 -----------------------------------------------------
 
+like($build, qr/\[string\]\$PythonDir/, 'build-portable.ps1 takes a Python runtime');
+like($build, qr/PythonDir is not a Python \+ PySide6 tree/,
+	'and validates pythonw plus both Qt WebEngine bindings');
+like($build, qr/Join-Path \$stage 'runtime\\python'/,
+	'copying it to runtime\python');
+like($build, qr/No -PythonDir/, 'a build without it still works, with a warning');
 like($build, qr/git/, 'build-portable.ps1 calls git');
 like($build, qr/\barchive\b/, 'build-portable.ps1 takes app\ from git archive');
 like($build, qr/firewall\.ps1/, 'build-portable.ps1 stages firewall.ps1');
@@ -259,6 +284,11 @@ like($iss, qr/\{app\}\\start\.vbs/, 'the uninstaller removes the service launche
 like($iss, qr/IconFilename:\s*"\{app\}\\jawnos\.ico"/, 'the Inno shortcuts use the JawnOS icon');
 like($iss, qr/UninstallDisplayIcon=\{app\}\\jawnos\.ico/, 'Apps & features shows the JawnOS icon');
 like($iss, qr/PrepareToInstall/, 'an upgrade stops the running house before replacing files');
+like($uninstall, qr/Get-CimInstance Win32_Process/,
+	'the uninstaller looks for a running desktop shell');
+like($uninstall, qr/Name='pythonw\.exe' OR Name='python\.exe'/,
+	'including a python.exe debug run');
+like($uninstall, qr/jawnos-desktop/, 'identified by its own command line');
 
 # The icon is a real multi-size Windows ICO, shipped with the installer and the
 # bundle. A missing or empty file would leave every shortcut with the wscript

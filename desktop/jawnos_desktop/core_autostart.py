@@ -1,18 +1,10 @@
 """Login autostart for the BLE bridge.
 
-Linux (today) writes an XDG ``.desktop`` file under
-``$XDG_CONFIG_HOME/autostart``, the desktop analogue of the Android boot
-receiver. The platform branch points the macOS and Windows lanes fill in P2/P3
-are:
-
-* ``sys.platform == "darwin"``: a LaunchAgent plist under
-  ``~/Library/LaunchAgents`` instead of the XDG unit.
-* ``os.name == "nt"``: a Startup-folder shortcut or an
-  ``HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`` value.
-
-Only the Linux implementation exists. The unit text and the three functions
-are the seam; the daemon and log paths come from ``core_paths`` so a port only
-has to replace this file.
+Linux writes an XDG ``.desktop`` file under ``$XDG_CONFIG_HOME/autostart``, the
+desktop analogue of the Android boot receiver. Windows has no BLE bridge yet
+(it is a BlueZ D-Bus central), so the three functions are a no-op there; the
+Windows installer owns the house's own login item instead. macOS (P2) will use
+a LaunchAgent plist.
 """
 
 import os
@@ -20,16 +12,30 @@ import sys
 
 from .core_paths import _xdg, ble_log_path, daemon_path
 
+IS_WINDOWS = os.name == "nt"
+
 
 def autostart_path():
+    if IS_WINDOWS:
+        base = os.environ.get("APPDATA")
+        if not base:
+            base = os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+        return os.path.join(base, "Microsoft", "Windows", "Start Menu",
+                            "Programs", "Startup", "JawnOS BLE bridge.lnk")
     return os.path.join(_xdg("XDG_CONFIG_HOME", ".config"), "autostart", "jawnos-bt.desktop")
 
 
 def autostart_enabled():
+    if IS_WINDOWS:
+        return False
     return os.path.exists(autostart_path())
 
 
 def set_autostart(enabled):
+    if IS_WINDOWS:
+        # Nothing to write: the Windows package has no BLE daemon, and the
+        # installer's startup entry is the house's own login item.
+        return True
     path = autostart_path()
     if not enabled:
         for candidate in (path, path.replace("jawnos-bt.desktop", "jawnos-desktop.desktop")):

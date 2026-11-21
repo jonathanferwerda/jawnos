@@ -44,6 +44,9 @@ basemaps/
 # --- The Setup.exe is a build artifact; release copies live in releases/. ---
 dist/
 
+# --- Windows WebView2 shell build output: the SDK DLLs and JawnOSShell.exe ---
+installer/windows/webview/
+
 # --- Speech voices (Piper models + the piper binary). Same deal as releases/: ---
 # --- multi-MB blobs carried across devices, never committed. ---
 voices/

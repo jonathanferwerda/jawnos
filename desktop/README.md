@@ -492,13 +492,45 @@ ticket, as before. `--mode measure` is unchanged: pick an element, the live
 document goes to `/manager/web/measure/live`, and the returned candidates are
 shown in a dialog.
 
-## Windows and macOS
+## Windows
 
-The supervisor in `jawnos_desktop/core.py` is deliberately written to be
-portable, and Qt already gives both platforms the same Manager, Browse and
-session-bar code. What differs is the server's process/socket layer, the
-platform paths, and the hardware lane (CoreBluetooth/WinRT BLE, CoreAudio/
-WASAPI audio, serial, printing, LAN discovery).
+The Windows `Setup.exe` opens the Manager in a **WebView2** window with a tray
+(`installer/windows/JawnOSShell.cs`, compiled into `webview\` by
+`prepare-webview.ps1`). WebView2 is the same Chromium engine family as Qt
+WebEngine and renders where Qt WebEngine cannot create a GL context. The shell
+signs in from the ticket `install.ps1` mints with
+`perl scripts\app_ticket.pl desktop --save` — the same ticket the Linux shell
+uses — keeps the profile and its cookie under `%LOCALAPPDATA%\JawnOS\webview2`,
+and starts jawn from the tray when it is down. Closing the window hides to the
+tray, and a second launch shows the first window. The Evergreen WebView2
+runtime is the machine's: Windows 11 ships it, and a machine without it falls
+back to the Qt shell below (when the payload carries `runtime\python`), then to
+the browser, as before.
 
-The plan for a native `.app` and a native MSI/MSIX, with the Perl tree running
-locally beside the shell, is `docs/platform-roadmap.md`.
+A payload built with `-PythonDir` also carries the Qt shell: `launch.ps1`
+starts `runtime\python\pythonw.exe` on
+`app\desktop\jawnos-desktop --tray`, which starts jawn if it is down, keeps
+the tray, and stores the ticket with DPAPI after the Manager proves it. A
+payload built without `-PythonDir` still installs and still gets the WebView2
+window; only the Qt fallback is absent.
+
+What differs from Linux is the platform layer, not the UI:
+
+| Surface | Windows |
+|---|---|
+| Window | WebView2 (`webview\JawnOSShell.exe`), then Qt when bundled |
+| Paths | `%APPDATA%\JawnOS`, `%LOCALAPPDATA%\JawnOS\state` |
+| Start/stop | `DETACHED_PROCESS` spawn, `~/.president/pid` liveness, `taskkill /T /F` |
+| Ticket | WebView2 profile cookie, or DPAPI (`ticket.dpapi`) in the Qt shell |
+| BLE bridge | not available (BlueZ-only); the BLE rows and settings are hidden |
+| GPU flags | left to Chromium's D3D/ANGLE; no VA-API probe |
+
+The branches live in `core_paths.py`, `core_process.py`, `core_secrets.py`,
+`core_shell.py`, `core_autostart.py` and `gpu.py`. The installer stops a
+running shell before an upgrade and stops it again on uninstall.
+
+Building the bundle: `build-portable.ps1 -RuntimeDir <strawberry> [-PythonDir
+<CPython with PySide6>]` builds `webview\` first (downloads the pinned
+WebView2 SDK and compiles the shell), then validates `pythonw.exe` and both Qt
+WebEngine bindings before copying the runtime to `runtime\python`. macOS
+remains P2; the plan is `docs/platform-roadmap.md`.

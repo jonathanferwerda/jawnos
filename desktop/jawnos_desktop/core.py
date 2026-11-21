@@ -38,8 +38,8 @@ from .core_autostart import (
     _AUTOSTART_UNIT, autostart_enabled, autostart_path, set_autostart,
 )
 from .core_paths import (
-    DEFAULT_DIRNAME, _boot_id, _xdg, ble_log_path, ble_pid_path, config_dir,
-    daemon_path, default_jawn_dir, held_path, home, is_held,
+    DEFAULT_DIRNAME, IS_WINDOWS, _boot_id, _xdg, ble_log_path, ble_pid_path,
+    config_dir, daemon_path, default_jawn_dir, held_path, home, is_held,
     jawn_stdout_log_path, set_held, settings_path, state_dir,
 )
 from .core_process import (
@@ -95,7 +95,9 @@ def load_settings():
     data = {
         "jawn_dir": default_jawn_dir(),
         "autostart": False,
-        "ble_with_jawn": True,
+        # The BLE bridge is BlueZ-only; Windows has no daemon to tie the start
+        # or stop to. The panel hides the setting there as well.
+        "ble_with_jawn": not IS_WINDOWS,
         # The window's state on the last quit, so the next launch (and the
         # post-update restart) comes back the same way: fullscreen or
         # maximized, otherwise at the last normal size and position. A size of
@@ -557,6 +559,8 @@ def restart_if_stale(jawn_dir, with_ble=True):
 # not -- the two now share these wrappers.
 
 def start_all(jawn_dir, with_ble=True):
+    if IS_WINDOWS:
+        with_ble = False
     ok, message = start_jawn(jawn_dir)
     if ok and with_ble:
         _ok, ble_message = start_ble()
@@ -565,6 +569,8 @@ def start_all(jawn_dir, with_ble=True):
 
 
 def stop_all(jawn_dir, with_ble=True, wait=12.0):
+    if IS_WINDOWS:
+        with_ble = False
     message = ""
     # A deliberate stop is not a slow start: no amber "starting..." window.
     clear_start_requested()
@@ -575,6 +581,8 @@ def stop_all(jawn_dir, with_ble=True, wait=12.0):
 
 
 def restart_all(jawn_dir, with_ble=True):
+    if IS_WINDOWS:
+        with_ble = False
     ok, message = restart_jawn(jawn_dir)
     # a real restart takes the bridge down with the tree only if it was tied; if
     # it is actually down afterwards and the checkbox asks for it, bring it back

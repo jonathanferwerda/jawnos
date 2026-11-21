@@ -1,24 +1,24 @@
 """Process supervision for the desktop shell.
 
-Linux (today) spawns with ``subprocess.Popen(start_new_session=True)``, finds
-masters and zombies through ``/proc``, and signals with ``os.kill``. The
-platform branch points the macOS and Windows lanes fill in P2/P3 are:
+Linux spawns with ``subprocess.Popen(start_new_session=True)``, finds masters
+and zombies through ``/proc``, and signals with ``os.kill``. Windows uses the
+Windows process API instead:
 
-* spawn: ``start_new_session=True`` becomes ``CREATE_NEW_PROCESS_GROUP`` /
-  ``DETACHED_PROCESS`` on ``os.name == "nt"``; macOS keeps ``setsid``.
-* discovery: ``/proc/*/cmdline`` and ``/proc/*/stat`` become ``ps`` on
-  ``sys.platform == "darwin"`` and ``tasklist``/``Win32::Process::Info`` on
-  Windows.
-* kill: ``os.kill`` signals become ``TerminateProcess`` on Windows (``signal
-  .SIGTERM`` has no direct equivalent there).
-* reap: the ``waitpid``/``/proc`` zombie sweep becomes a handle wait on
-  Windows.
-* environment: ``_perl_env`` builds a POSIX ``PERL5LIB``; the Windows backend
-  joins with ``;`` and reads the Strawberry Perl local::lib layout.
+* spawn: ``CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`` so the tree outlives
+  the shell and gets no console window.
+* discovery: the master's ``~/.president/pid`` record, checked against the
+  running image (``QueryFullProcessImageNameW``); a recycled pid is never a
+  master.
+* kill: ``taskkill /PID <pid> /T /F`` for the forced path; the clean path is
+  still the tree's own ``manager_killer.pl``.
+* reap: only the ``Popen`` objects this process owns; Windows has no zombie
+  sweep to do.
+* environment: the bundled ``runtime\\perl\\bin`` and ``runtime\\c\\bin`` go first
+  on ``PATH``, with ``JAWNOS_PORTABLE`` / ``JAWNOS_TRANSPORT`` / ``JAWNOS_DIR``
+  matching ``launch.bat``.
 
-Every function here is still the Linux implementation. The supervision
-functions read the liveness helpers from ``core`` at call time so a test can
-monkeypatch ``core.jawn_up`` exactly as before.
+The supervision functions read the liveness helpers from ``core`` at call time
+so a test can monkeypatch ``core.jawn_up`` exactly as before.
 """
 
 import os
@@ -38,10 +38,52 @@ from .core_paths import (
     jawn_stdout_log_path,
 )
 
+IS_WINDOWS = os.name == "nt"
+
+
+def _windows_process_name(pid):
+    """The image name of a running pid, or ``""`` when it is gone.
+
+    ``os.kill(pid, 0)`` is not a liveness probe on Windows: Python maps any
+    other signal (including 0) to ``TerminateProcess``. Asking for the image
+    name is safe, and it also rejects a recycled pid that is not the master.
+    """
+    if not pid:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        # PROCESS_QUERY_LIMITED_INFORMATION is enough for the image name and
+        # is what a per-user process grants without elevation.
+        handle = kernel32.OpenProcess(0x1000, False, int(pid))
+        if not handle:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(len(buf))
+            if not kernel32.QueryFullProcessImageNameW(
+                    handle, 0, buf, ctypes.byref(size)):
+                return ""
+            return os.path.basename(buf.value)
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return ""
+
 
 def pid_alive(pid):
     if not pid:
         return False
+    if IS_WINDOWS:
+        return bool(_windows_process_name(pid))
     try:
         os.kill(pid, 0)
         return True
@@ -49,14 +91,36 @@ def pid_alive(pid):
         return False
 
 
-def _jawn_master_pids():
-    """PIDs of a running jawn master, however it was invoked (scans /proc).
+def _windows_master_pids():
+    """The master recorded in ``~/.president/pid``, if it is still perl.exe.
 
-    The desktop starts it as `perl ./jawn`, but an autostart or a terminal can
-    use the absolute path (`perl /home/.../jawn`). Matching only `./jawn` made
-    the guard miss a master that was merely mid-restart and start a second tree
-    (2026-10-21), so match the script's basename instead.
+    The master writes that file on every boot (``president/pid``), and the
+    Windows updater already reads it for the same purpose. A pid that is alive
+    but is not a perl image is a recycled pid, not the master.
     """
+    path = os.path.join(home(), ".president", "pid")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            pid = int(fh.read().strip())
+    except (OSError, ValueError):
+        return []
+    if not pid_alive(pid):
+        return []
+    name = _windows_process_name(pid)
+    if not name.lower().startswith("perl"):
+        return []
+    return [pid]
+
+
+def _jawn_master_pids():
+    """PIDs of a running jawn master, however it was invoked.
+
+    On Linux this scans ``/proc``: the desktop starts it as `perl ./jawn`, but
+    an autostart or a terminal can use the absolute path, so match the script's
+    basename instead. On Windows the master's own pid record is the source.
+    """
+    if IS_WINDOWS:
+        return _windows_master_pids()
     pids = []
     for name in os.listdir("/proc"):
         if not name.isdigit():
@@ -78,18 +142,49 @@ def _jawn_master_pids():
 # process helpers
 # --------------------------------------------------------------------------
 
-def _perl():
+def _perl(jawn_dir=None):
+    if IS_WINDOWS:
+        override = os.environ.get("JAWNOS_PERL")
+        if override and os.path.isfile(override):
+            return override
+        if jawn_dir:
+            root = os.path.dirname(os.path.abspath(jawn_dir))
+            candidate = os.path.join(root, "runtime", "perl", "bin", "perl.exe")
+            if os.path.isfile(candidate):
+                return candidate
+        return shutil.which("perl") or "perl"
     return shutil.which("perl") or "perl"
 
 
-def _perl_env():
-    """Environment for the spawned perl, with the user's local::lib on @INC.
+def _perl_env(jawn_dir=None):
+    """Environment for the spawned perl.
 
-    The user's PERL5LIB lives in ~/.zshrc, which a desktop-launched app never
-    sources -- so jawn (and the killer, which also uses local modules) came up
-    with only the system @INC and died on 'Can't locate Mojo/...'. Mirror the
-    shell: put ~/perl5/lib/perl5 (and its arch/version subdirs) first."""
+    On Linux the user's PERL5LIB lives in ~/.zshrc, which a desktop-launched app
+    never sources -- so jawn (and the killer, which also uses local modules)
+    came up with only the system @INC and died on 'Can't locate Mojo/...'.
+    Mirror the shell: put ~/perl5/lib/perl5 (and its arch/version subdirs)
+    first.
+
+    On Windows the bundle carries its own Strawberry tree; the same three
+    directories and the portable/tcp flags ``launch.bat`` sets are used here, so
+    a shell-started tree and a launcher-started tree are the same tree."""
     env = dict(os.environ)
+    if IS_WINDOWS:
+        if jawn_dir:
+            root = os.path.dirname(os.path.abspath(jawn_dir))
+            c_bin = os.path.join(root, "runtime", "c", "bin")
+            perl_bin = os.path.join(root, "runtime", "perl", "bin")
+            if os.path.isdir(perl_bin):
+                env.setdefault("JAWNOS_PORTABLE", "1")
+                env.setdefault("JAWNOS_TRANSPORT", "tcp")
+                env["JAWNOS_DIR"] = os.path.abspath(jawn_dir)
+                existing = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+                merged = []
+                for path in (c_bin, perl_bin) + tuple(existing):
+                    if path and path not in merged:
+                        merged.append(path)
+                env["PATH"] = os.pathsep.join(merged)
+        return env
     roots = [os.path.join(home(), "perl5", "lib", "perl5")]
     extra = []
     for root in roots:
@@ -122,11 +217,22 @@ def spawn_detached(argv, cwd, log_path, env=None):
     _core.cap_log(log_path)
     logf = open(log_path, "ab", buffering=0)
     try:
-        proc = subprocess.Popen(
-            argv, cwd=cwd, stdin=subprocess.DEVNULL,
-            stdout=logf, stderr=subprocess.STDOUT,
-            start_new_session=True, close_fds=True, env=env,
-        )
+        if IS_WINDOWS:
+            # DETACHED_PROCESS keeps the tree out of the shell's console and
+            # lets it outlive the shell; CREATE_NEW_PROCESS_GROUP keeps the
+            # tree's own signals from reaching this process.
+            proc = subprocess.Popen(
+                argv, cwd=cwd, stdin=subprocess.DEVNULL,
+                stdout=logf, stderr=subprocess.STDOUT,
+                creationflags=0x00000008 | 0x00000200,
+                close_fds=True, env=env,
+            )
+        else:
+            proc = subprocess.Popen(
+                argv, cwd=cwd, stdin=subprocess.DEVNULL,
+                stdout=logf, stderr=subprocess.STDOUT,
+                start_new_session=True, close_fds=True, env=env,
+            )
     finally:
         logf.close()
     # A detached process is still our child (start_new_session only moves its
@@ -154,6 +260,9 @@ def reap_detached():
                 _detached_children.remove(proc)
         except OSError:
             _detached_children.remove(proc)
+    if IS_WINDOWS:
+        # Windows has no zombie state and no /proc entries to sweep.
+        return
     me = os.getpid()
     try:
         entries = os.listdir("/proc")
@@ -190,8 +299,12 @@ def start_jawn(jawn_dir):
         return True, "a jawn master is already running (mid-restart); not starting a second"
     if not os.path.exists(os.path.join(jawn_dir, "jawn")):
         return False, "no 'jawn' launcher in %s" % jawn_dir
-    argv = [_perl(), "./jawn"]
-    spawn_detached(argv, jawn_dir, jawn_stdout_log_path(), env=_perl_env())
+    argv = [_perl(jawn_dir), "jawn" if IS_WINDOWS else "./jawn"]
+    try:
+        spawn_detached(argv, jawn_dir, jawn_stdout_log_path(),
+                       env=_perl_env(jawn_dir))
+    except OSError as exc:
+        return False, "could not start jawn (%s)" % exc
     return True, "starting jawn"
 
 
@@ -208,21 +321,33 @@ def stop_jawn(jawn_dir, wait=12.0):
     killer = os.path.join(jawn_dir, "scripts", "manager_killer.pl")
     if not os.path.exists(killer):
         return False, "no scripts/manager_killer.pl in %s" % jawn_dir
-    subprocess.run([_perl(), "scripts/manager_killer.pl", "master"], cwd=jawn_dir, env=_perl_env())
+    subprocess.run([_perl(jawn_dir), "scripts/manager_killer.pl", "master"],
+                   cwd=jawn_dir, env=_perl_env(jawn_dir))
     deadline = time.time() + wait
     while time.time() < deadline:
         if not _core.jawn_up(jawn_dir) and not _jawn_master_pids():
             return True, "jawn stopped"
         time.sleep(0.3)
-    for signum in (signal.SIGTERM, signal.SIGKILL):
-        for pid in _jawn_master_pids():
+    pids = _jawn_master_pids()
+    if IS_WINDOWS:
+        for pid in pids:
             try:
-                os.kill(pid, signum)
-            except OSError:
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                               capture_output=True, timeout=15)
+            except (OSError, subprocess.SubprocessError):
                 pass
-        time.sleep(0.5)
         if not _jawn_master_pids():
             return True, "jawn stopped"
+    else:
+        for signum in (signal.SIGTERM, signal.SIGKILL):
+            for pid in _jawn_master_pids():
+                try:
+                    os.kill(pid, signum)
+                except OSError:
+                    pass
+            time.sleep(0.5)
+            if not _jawn_master_pids():
+                return True, "jawn stopped"
     return False, "jawn still answering after the sweep"
 
 
@@ -254,6 +379,11 @@ def start_ble():
     """Bring up the BLE bridge daemon. No-op if the port already answers."""
     from . import core as _core
 
+    if IS_WINDOWS:
+        # The bridge is a BlueZ (D-Bus) central; Windows has no BlueZ. A no-op
+        # that reports success keeps Start from failing for a feature that is
+        # simply not part of this platform yet.
+        return True, "the BLE bridge is not available on Windows"
     if _core.ble_up():
         return True, "BLE bridge already running"
     daemon = daemon_path()
@@ -275,6 +405,8 @@ def stop_ble(wait=6.0):
     or wedged bridge) fall back to the pid file, so stop is never a no-op."""
     from . import core as _core
 
+    if IS_WINDOWS:
+        return True, "the BLE bridge is not available on Windows"
     if not _core.ble_up():
         _remove_stale_pidfile()
         return True, "BLE bridge is not running"

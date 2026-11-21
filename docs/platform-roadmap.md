@@ -416,8 +416,10 @@ installed to `%LOCALAPPDATA%\JawnOS`, seeded the database, wrote `unlock-code.tx
 `/manager` and `/manager/health` 200, ran the master and every worker from the bundled
 `runtime\perl\bin\perl.exe`, created the Start Menu/Desktop/Startup shortcuts, and added a
 program-scoped private firewall rule for the bundled perl. Uninstall removed the folder, rule and
-all three shortcuts; a reinstall was clean. This is the **web** install; the Qt shell/tray is still
-P3.
+all three shortcuts; a reinstall was clean. The desktop shell and tray now have their Windows
+lane wired: `webview\JawnOSShell.exe` is a C# WebView2 window with the Linux tray's controls,
+built by `prepare-webview.ps1` and started by `launch.ps1` when the machine has the Evergreen
+WebView2 runtime. The Qt shell is the fallback when the payload carries `runtime\python`.
 
 **Next:**
 
@@ -445,8 +447,13 @@ P3.
   build reproducible (download the portable Strawberry and `cpanm` the pinned set from
   `.github/workflows/platform-p0.yml`) instead of trusting a prepared runtime, and seed
   `verify-manifest` at install time.
-- Build the Qt shell/tray and "Start with Windows" polish, then repeat the clean install on a fresh
-  Windows VM with no Perl, Python or WSL.
+- The desktop is wired on Windows in two lanes: `webview\JawnOSShell.exe` (C# WebView2, the
+  default where the Evergreen runtime exists — it renders on a VM without a 3D GPU) and the Qt
+  shell (`core_paths`, `core_process`, `core_secrets` with DPAPI, `core_shell`, `core_autostart`,
+  `gpu`, `bridge`) when `runtime\python` is bundled. `install.ps1` mints the desktop ticket and
+  prefers the WebView2 shell; both keep the tray and stop a running shell on upgrade and
+  uninstall. Still to do: bundle the Python/PySide6 runtime through `-PythonDir` in the release
+  build, and repeat the clean install on a fresh Windows VM with no Perl, Python or WSL.
 - Acceptance: a `device=computer` house on a real Windows box with no WSL, Docker, Perl or Python
   installed by the user.
 

@@ -2211,9 +2211,13 @@ def main(argv=None):
     def tray_status(jawn_up, ble_up):
         if tray is None:
             return
-        tray.setToolTip("JawnOS - jawn %s, BLE %s" % (
-            "running" if jawn_up else "stopped",
-            "running" if ble_up else "stopped"))
+        if os.name == "nt":
+            tray.setToolTip("JawnOS - jawn %s" % (
+                "running" if jawn_up else "stopped"))
+        else:
+            tray.setToolTip("JawnOS - jawn %s, BLE %s" % (
+                "running" if jawn_up else "stopped",
+                "running" if ble_up else "stopped"))
         _label, tone = core.jawn_status(jawn_up)
         try:
             tray.setIcon(tray_icon(icon_path, theme.TONES[tone]))

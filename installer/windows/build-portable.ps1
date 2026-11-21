@@ -9,6 +9,11 @@
 # set, as .github/workflows/platform-p0.yml does on a runner - is the next
 # slice. Until then a bundle is only as complete as the runtime it was given.
 #
+# -PythonDir is the desktop shell's runtime: a relocatable CPython with PySide6
+# (Qt WebEngine) installed. It is copied as runtime\python\. Without it the
+# bundle still works, but the shortcut opens the web interface in the default
+# browser instead of the desktop window and tray.
+#
 # The staged payload is <OutDir>\JawnOS-<version>\ (app\, runtime\ and the
 # install scripts). The zip beside it holds that same folder. Nothing is
 # signed yet.
@@ -20,6 +25,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$RuntimeDir,
+    [string]$PythonDir,
     [string]$TreeDir,
     [string]$OutDir,
     [switch]$NoZip
@@ -134,6 +140,7 @@ try {
             (Join-Path $TreeDir 'dist'),
             (Join-Path $TreeDir 'releases'),
             (Join-Path $TreeDir '.shots'),
+            (Join-Path $TreeDir 'installer\windows\webview'),
             (Join-Path $TreeDir 'qa\docker'),
             (Join-Path $TreeDir 'desktop\mkosi'),
             'node_modules',
@@ -162,6 +169,26 @@ try {
     Write-Host 'Copying the Perl runtime ...'
     Invoke-Robocopy $RuntimeDir (Join-Path $stage 'runtime')
 
+    # --- runtime\python is the desktop shell -------------------------------
+    # PySide6's Qt WebEngine is the one UI engine; pythonw.exe runs the shell
+    # without a console. Validate the two modules the shell imports before the
+    # copy, so a broken PythonDir fails the build rather than the shortcut.
+    if (-not [string]::IsNullOrWhiteSpace($PythonDir)) {
+        $pythonDir = [System.IO.Path]::GetFullPath($PythonDir).TrimEnd('\')
+        foreach ($required in @(
+            'python.exe', 'pythonw.exe',
+            'Lib\site-packages\PySide6\QtWebEngineCore.pyd',
+            'Lib\site-packages\PySide6\QtWebEngineWidgets.pyd')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $pythonDir $required))) {
+                throw "PythonDir is not a Python + PySide6 tree ($required missing): $pythonDir"
+            }
+        }
+        Write-Host 'Copying the Python/Qt desktop runtime ...'
+        Invoke-Robocopy $pythonDir (Join-Path $stage 'runtime\python')
+    } else {
+        Write-Warning 'No -PythonDir: the bundle has no desktop shell or tray; its shortcut opens the web interface in a browser.'
+    }
+
     # --- the installer scripts and the note a person reads -----------------
     Write-Host 'Copying the installer scripts ...'
     foreach ($name in @('install.ps1', 'Install.bat', 'uninstall.ps1', 'firewall.ps1', 'jawnos.ico')) {
@@ -169,6 +196,20 @@ try {
         if (-not (Test-Path -LiteralPath $from)) { throw "missing installer file: $from" }
         Copy-Item -LiteralPath $from -Destination $stage -Force
     }
+
+    # --- webview\ is the Windows shell -------------------------------------
+    # A small C# WebView2 window plus tray, compiled here. The SDK DLLs and the
+    # native loader travel with it; the Evergreen runtime is the machine's.
+    $webview = Join-Path $PSScriptRoot 'webview'
+    if (-not (Test-Path -LiteralPath (Join-Path $webview 'JawnOSShell.exe'))) {
+        Write-Host 'Building the WebView2 shell ...'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'prepare-webview.ps1')
+        if ($LASTEXITCODE -ne 0) { throw "prepare-webview.ps1 failed (exit $LASTEXITCODE)" }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $webview 'JawnOSShell.exe'))) {
+        throw "the WebView2 shell was not built at $webview"
+    }
+    Invoke-Robocopy $webview (Join-Path $stage 'webview')
 
     $readme = @"
 JawnOS $version
@@ -182,9 +223,12 @@ INSTALL
      (the installer is not code-signed yet).
   3. Keep the unlock code it shows. It is also saved as
      %LOCALAPPDATA%\JawnOS\unlock-code.txt.
-  4. JawnOS opens in your browser. The Start menu and desktop shortcuts open
-     the web interface (starting JawnOS first if it is not running); the
-     Startup entry only starts it in the background.
+  4. JawnOS opens in its desktop window and tray (WebView2, the same Chromium
+     engine the Edge browser uses). The Start menu and desktop shortcuts open
+     it, starting JawnOS first if it is not running. It needs the Microsoft
+     Edge WebView2 runtime, which Windows 11 ships; without it the shortcut
+     opens the interface in your default browser instead. The Startup entry
+     only starts the service in the background.
 
 THE UNLOCK CODE
   The six-digit code opens the web interface and is the only key to your

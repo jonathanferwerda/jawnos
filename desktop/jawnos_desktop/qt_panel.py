@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 from . import DESKTOP_DIR, core, theme
 
 LOGO = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
+IS_WINDOWS = os.name == "nt"
 
 
 class StatusDot(QWidget):
@@ -183,7 +184,11 @@ class ControlPanel(QDialog):
 
         status = self._card(column, "Status")
         self.jawn_dot, self.jawn_state = self._status_row(status)
-        self.ble_dot, self.ble_state = self._status_row(status)
+        # The BLE bridge is BlueZ-only; Windows has no daemon and no row.
+        if IS_WINDOWS:
+            self.ble_dot = self.ble_state = None
+        else:
+            self.ble_dot, self.ble_state = self._status_row(status)
         self.env_state = self._dim_label()
         status.addWidget(self.env_state)
         self.live = self._dim_label()
@@ -213,19 +218,25 @@ class ControlPanel(QDialog):
                   self._button("Import ticket", self._import_ticket),
                   self._button("Forget ticket", self._forget_ticket))
 
-        bluetooth = self._card(column, "Bluetooth")
-        self._row(bluetooth,
-                  self._button("Start bridge", self._start_ble),
-                  self._button("Stop bridge", self._stop_ble))
+        if not IS_WINDOWS:
+            bluetooth = self._card(column, "Bluetooth")
+            self._row(bluetooth,
+                      self._button("Start bridge", self._start_ble),
+                      self._button("Stop bridge", self._stop_ble))
 
         settings = self._card(column, "Settings")
         self.dir_entry = QLineEdit()
         self.dir_entry.setPlaceholderText("jawn folder (default ~/jawnos)")
-        self.autostart = QCheckBox("Start the BLE bridge at login")
-        self.ble_with_jawn = QCheckBox("Start/stop the BLE bridge with jawn")
+        self.autostart = None
+        self.ble_with_jawn = None
+        if not IS_WINDOWS:
+            self.autostart = QCheckBox("Start the BLE bridge at login")
+            self.ble_with_jawn = QCheckBox("Start/stop the BLE bridge with jawn")
         settings.addWidget(self.dir_entry)
-        settings.addWidget(self.autostart)
-        settings.addWidget(self.ble_with_jawn)
+        if self.autostart is not None:
+            settings.addWidget(self.autostart)
+        if self.ble_with_jawn is not None:
+            settings.addWidget(self.ble_with_jawn)
         settings.addWidget(self._button("Save settings", self._save, primary=True))
 
         app = self._card(column, "App")
@@ -250,20 +261,28 @@ class ControlPanel(QDialog):
     def _load_settings(self):
         if not self._busy:
             self.dir_entry.setText(self.settings.get("jawn_dir", ""))
-            self.autostart.setChecked(core.autostart_enabled())
-            self.ble_with_jawn.setChecked(bool(self.settings.get("ble_with_jawn", True)))
+            if self.autostart is not None:
+                self.autostart.setChecked(core.autostart_enabled())
+            if self.ble_with_jawn is not None:
+                self.ble_with_jawn.setChecked(
+                    bool(self.settings.get("ble_with_jawn", True)))
 
     def _save(self):
         self.settings["jawn_dir"] = os.path.expanduser(
             self.dir_entry.text().strip() or core.default_jawn_dir())
-        self.settings["ble_with_jawn"] = self.ble_with_jawn.isChecked()
+        if self.ble_with_jawn is not None:
+            self.settings["ble_with_jawn"] = self.ble_with_jawn.isChecked()
         core.save_settings(self.settings)
-        core.set_autostart(self.autostart.isChecked())
-        self.settings["autostart"] = self.autostart.isChecked()
+        if self.autostart is not None:
+            enabled = self.autostart.isChecked()
+            core.set_autostart(enabled)
+            self.settings["autostart"] = enabled
         self._say("settings saved")
         self.refresh()
 
     def _with_ble(self):
+        if IS_WINDOWS:
+            return False
         return bool(self.settings.get("ble_with_jawn", True))
 
     def _dir(self):
@@ -417,10 +436,11 @@ class ControlPanel(QDialog):
         self.jawn_state.setText("jawn  \u2014  " + label)
         self.jawn_dot.set_colour(theme.TONES[tone])
 
-        ble = bool(data.get("ble"))
-        self.ble_state.setText(
-            "BLE bridge  \u2014  " + ("running" if ble else "stopped"))
-        self.ble_dot.set_colour(theme.GREEN if ble else theme.DIM)
+        if self.ble_state is not None:
+            ble = bool(data.get("ble"))
+            self.ble_state.setText(
+                "BLE bridge  \u2014  " + ("running" if ble else "stopped"))
+            self.ble_dot.set_colour(theme.GREEN if ble else theme.DIM)
 
         tail = data.get("tail") or {}
         state = tail.get("state") or ("Running" if tail.get("running") else "Stopped")

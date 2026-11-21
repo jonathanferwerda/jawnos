@@ -12,16 +12,22 @@ two things on a desktop:
     jawnos_desktop.qt_panel  the Qt control panel (the admin window)
     jawnos_desktop.shell  the Qt session bar
 
-Only ``core`` and ``bridge`` are meant to be portable; ``ble``, ``qt_shell``
-and ``shell`` are Linux-specific.
+The supervisor, ticket storage, shell command and GPU seam have Windows
+branches; ``ble`` and the Wayland session bar remain Linux-only.
 """
 
 import os
+import sys
 
 # Qt auto-selects its GTK platform theme on XFCE/GNOME, which maps libgtk-3
 # into every Qt process. The desktop is Qt only now, so ask for a non-GTK
-# theme; an explicit choice from the user still wins.
-os.environ.setdefault("QT_QPA_PLATFORMTHEME", "generic")
+# theme on Linux; an explicit choice from the user still wins.
+#
+# This is deliberately Linux-only. The generic platform-theme plugin is not in
+# the Windows Qt build, and asking for it there crashes qwindows.dll with an
+# access violation before the first window (VM200, 2026-11-21).
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("QT_QPA_PLATFORMTHEME", "generic")
 
 __version__ = "0.1.0"
 

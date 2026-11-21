@@ -69,10 +69,12 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#PayloadDir}\JawnOS-{#AppVersion}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-; The Start menu and desktop icons open the web interface (launch.vbs starts
-; the house first when it is not listening). The Startup entry must not: it
-; starts the service only, so a logon never pops a browser. All three carry
-; the house mark, not the generic wscript icon.
+; The Start menu and desktop icons open launch.vbs: when the bundle carries
+; the Python/Qt shell it starts that window and its tray (and starts the house
+; if needed); without the shell it opens the web interface in a browser. The
+; Startup entry must not open a window: it starts the service only, so a logon
+; never pops a browser or a shell. All three carry the house mark, not the
+; generic wscript icon.
 Name: "{group}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\jawnos.ico"; IconIndex: 0
 Name: "{autodesktop}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\jawnos.ico"; IconIndex: 0; Tasks: desktopicon
 Name: "{userstartup}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\jawnos.ico"; IconIndex: 0; Tasks: autostart

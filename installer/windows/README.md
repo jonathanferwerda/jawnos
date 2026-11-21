@@ -16,9 +16,10 @@ prepared Strawberry Perl runtime. Two entry points install the same bundle:
 - The manager, the web interface (`https://127.0.0.1:<working_port>/manager`),
   the database, and the verified restart path (the web UI's Restart button is a
   kill and a start).
-- A Start menu shortcut and an optional desktop icon that open the web
-  interface. The launcher starts the house first when it is not listening, so
-  a second click while it runs only opens the browser. Autostart with Windows
+- A Start menu shortcut and an optional desktop icon that open the WebView2
+  window and its tray (or the web interface when the WebView2 runtime is
+  absent). The launcher starts the house first when it is not listening, so
+  a second click while it runs only shows the window. Autostart with Windows
   by default (`-NoAutostart` turns it off) uses a separate service-only
   launcher, so a logon does not pop a browser. All three shortcuts carry the
   JawnOS mark (`jawnos.ico`), the same logo as the Linux `.desktop` and the
@@ -35,8 +36,10 @@ prepared Strawberry Perl runtime. Two entry points install the same bundle:
   optional private-profile firewall rule does, and `firewall.ps1` raises UAC
   for that one step.
 
-Not here yet: the Qt desktop shell (P3). The web interface is the whole surface
-this installer delivers.
+Not here yet: the Qt desktop shell (P3; it needs `-PythonDir`). The Windows
+surface is the WebView2 window `webview\JawnOSShell.exe` (built from
+`JawnOSShell.cs` by `prepare-webview.ps1`) with the same tray as Linux; a
+machine without the Evergreen WebView2 runtime falls back to the browser.
 
 ## Build
 

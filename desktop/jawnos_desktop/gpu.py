@@ -44,6 +44,8 @@ import os
 
 from . import core
 
+IS_WINDOWS = os.name == "nt"
+
 INTEL_VENDOR = "0x8086"
 
 # DRM vendor IDs, mapped to the family that picks a VA-API driver. The virtual
@@ -243,6 +245,13 @@ def prepare_env(environ=None, config_dir=None, cards=None,
         if key not in real:
             environ[key] = value
             applied[key] = value
+
+    if IS_WINDOWS:
+        # VA-API, /dev/dri and the DRM sysfs are Linux only. Chromium on
+        # Windows picks D3D/ANGLE itself; treating the absent render node as a
+        # reason to add --disable-gpu would turn the GPU off on every Windows
+        # box. A qt.env value above still wins.
+        return applied
 
     if "LIBVA_DRIVER_NAME" not in environ:
         driver = choose_vaapi_driver(
