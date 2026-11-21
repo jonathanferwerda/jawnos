@@ -62,9 +62,13 @@
 //!
 //! The transport follows the same shape: it owns one output thread, so a take
 //! that asks for no monitor may record beside it and the transport plays its
-//! clips. A take that does ask for a monitor (files, live input or a click)
-//! still needs an output of its own, so it refuses while the transport plays.
-//! `status` leads with the take and reports the transport beside it.
+//! clips. A take that asks for monitor files or its own click still needs an
+//! output of its own, so it refuses while the transport plays: the transport
+//! already plays the takes and owns the metronome. Its live input is the one
+//! exception, because it rides the transport's own bus through the same master
+//! chain; `record` attaches that ring to the transport's render thread, and
+//! `{"cmd":"record","action":"stop"}` detaches it while the transport keeps
+//! playing. `status` leads with the take and reports the transport beside it.
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -87,8 +91,8 @@ use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
     monitor_start, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device, DiskWriter,
     InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack,
-    Playback, Producer, TransportClip, TransportControl, TransportPlan, TransportSource,
-    MASTER_ORDER,
+    Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
+    TransportSource, MASTER_ORDER,
 };
 
 use crate::patchbay::{PatchSummary, Patchbay};
@@ -1774,6 +1778,48 @@ impl Server {
             .map(|session| session.live)
             .unwrap_or(false);
         if !has_live_session {
+            // A take armed with `monitor_input` off beside the transport parked
+            // its ring in `Running`; the transport is the output, so pressing
+            // Monitor mid-take attaches the ring there. Opening a playback here
+            // would ask for the output the transport already owns.
+            let transport_playing = self
+                .transport
+                .as_ref()
+                .map(TransportSession::is_playing)
+                .unwrap_or(false);
+            if transport_playing {
+                let consumer = match self
+                    .current
+                    .as_mut()
+                    .and_then(|running| running.consumer.take())
+                {
+                    Some(consumer) => consumer,
+                    None => {
+                        return error_line(
+                            "the take's monitor has ended; the live input cannot be reattached",
+                        )
+                    }
+                };
+                let attached = self
+                    .transport
+                    .as_mut()
+                    .map(|session| session.attach_live(consumer, Arc::clone(&gain)))
+                    .unwrap_or(false);
+                if !attached {
+                    return error_line(
+                        "the transport is no longer playing; the take's live input could not be attached",
+                    );
+                }
+                armed.store(true, Ordering::Release);
+                if let Some(running) = &self.current {
+                    let mut status = running
+                        .status
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    status.monitor_input = true;
+                }
+                return input_line(clamped, true);
+            }
             // Two outputs on one device would fail mid-block; a plain playback
             // that is still running is refused exactly as `record` refuses it.
             if self
@@ -2353,6 +2399,13 @@ impl Server {
     }
 
     fn record(&mut self, object: &Object) -> String {
+        // `{"cmd":"record","action":"stop"}` ends the take and nothing else.
+        // It exists because a take beside the transport borrows the transport's
+        // one output: stopping the take must hand that output back rather than
+        // stop the transport with it.
+        if matches!(get(object, "action"), Some(Value::Str(action)) if action == "stop") {
+            return self.record_stop();
+        }
         // One capture stream, one owner: a take cannot also feed the monitor
         // yet. Sharing one capture between listen and record is the next step.
         if let Some(session) = &self.listen {
@@ -2396,23 +2449,33 @@ impl Server {
         // One playback at a time: a take over the monitor it names is the
         // point, but a second monitor cannot join a playback already running.
         // A click-only monitor is still output, so it follows the same rule.
-        // The transport owns an output of its own, so a take may capture beside
-        // it only when the take asks for no monitor; files, live input and a
-        // click each open the device the transport already holds.
-        if !monitor.is_empty() || monitor_input || click.is_some() {
-            if let Some(session) = &self.transport {
-                if session.is_playing() {
-                    return error_line(
-                        "the transport is playing; a take cannot also open a monitor. Stop the transport, or record without monitoring",
-                    );
-                }
-            }
+        //
+        // The transport owns one output. A take may record beside it only when
+        // the take asks for no output of its own: the transport already plays
+        // the takes and owns the metronome, so monitor files and the take's own
+        // click are refused. The take's live input is the exception, because
+        // it rides the transport's own bus instead of opening a second device.
+        let transport_playing = self
+            .transport
+            .as_ref()
+            .map(TransportSession::is_playing)
+            .unwrap_or(false);
+        if transport_playing && (!monitor.is_empty() || click.is_some()) {
+            return error_line(
+                "the transport is playing; it already plays the takes and owns the metronome, so a take cannot open monitor files or its own click. Record with \"monitor_input\" alone, or stop the transport",
+            );
+        }
+        if !transport_playing && (!monitor.is_empty() || monitor_input || click.is_some()) {
             if let Some(session) = &self.playback {
                 if session.is_playing() {
                     return error_line("a playback is already running");
                 }
             }
         }
+        // The live input is the one monitor part that may share the transport's
+        // output. It is attached after the files exist, so every other refusal
+        // still leaves no thread or file behind.
+        let transport_live = transport_playing && monitor_input;
         let path = match get(object, "out") {
             Some(Value::Str(path)) => path.clone(),
             _ => return error_line("record needs \"out\": an absolute path"),
@@ -2498,12 +2561,10 @@ impl Server {
             Err(error) => return error_line(&error),
         };
         let tracks = plans.len();
-        if tracks > self.config.channels {
-            return error_line(&format!(
-                "a {tracks}-track take needs at least {tracks} input channels, but the engine has {} channel(s): restart it with a larger --channels",
-                self.config.channels
-            ));
-        }
+        // A take may carry more tracks than the device has inputs. Every track
+        // still has to name a real input below, and several tracks may share
+        // one: a source can split into more than one chain through the same
+        // input. The per-track bound is the only device bound.
         for (index, plan) in plans.iter().enumerate() {
             let claimed = plan.input + plan.channels;
             if claimed > self.config.channels {
@@ -2566,10 +2627,11 @@ impl Server {
             }
         }
         let monitor_files = monitor_tracks.len();
-        if !monitor_tracks.is_empty() || monitor_input || click.is_some() {
+        if !transport_live && (!monitor_tracks.is_empty() || monitor_input || click.is_some()) {
             // A monitor with no files is still a monitor: a live input or a
             // click needs a backend that can play and a free output, exactly as
-            // a monitor file does.
+            // a monitor file does. A live input on the transport's bus owns
+            // neither: the transport's output is already open and playing.
             if let Err(error) = crate::play_support(self.config.backend) {
                 return error_line(&error);
             }
@@ -2727,12 +2789,42 @@ impl Server {
         // The socket keeps the read side unless a monitor takes it here.
         let mut parked_consumer = Some(input_consumer);
 
+        // A take beside the transport does not open an output of its own: its
+        // live ring is attached to the transport's render thread, which sums it
+        // into the same master chain as the clips. The consumer leaves the take
+        // here, and the transport owns it for the life of the take.
+        if transport_live {
+            let attached = parked_consumer
+                .take()
+                .map(|consumer| {
+                    self.transport
+                        .as_mut()
+                        .map(|session| session.attach_live(consumer, Arc::clone(&input_gain)))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if !attached {
+                for disk in disks {
+                    let _ = disk.finish();
+                }
+                for track_path in &paths {
+                    let _ = fs::remove_file(track_path);
+                }
+                return error_line(
+                    "the transport is no longer playing; the take's live input could not be attached",
+                );
+            }
+        }
+
         // The monitoring bus: its own thread and its own device handle, fed by
         // `Playback` and never by the capture loop. Started before the take so
         // a player that cannot start is still a refusal rather than a take that
         // records without the monitor the caller asked for. A live-only monitor
-        // has no files but still runs for the take's length.
-        let mut monitor_session = if monitor_tracks.is_empty() && !monitor_input && click.is_none() {
+        // has no files but still runs for the take's length. A take beside the
+        // transport has no monitor here: the transport's output is the monitor.
+        let mut monitor_session = if transport_live
+            || (monitor_tracks.is_empty() && !monitor_input && click.is_none())
+        {
             None
         } else {
             let status = Arc::new(Mutex::new(PlayStatus {
@@ -2837,8 +2929,13 @@ impl Server {
         let handle = match spawned {
             Ok(handle) => handle,
             Err(error) => {
-                // No worker, no take: stop the monitor and do not leave WAVs
-                // nobody will finish.
+                // No worker, no take: detach the transport's live ring, stop the
+                // monitor and do not leave WAVs nobody will finish.
+                if transport_live {
+                    if let Some(session) = &mut self.transport {
+                        session.detach_live();
+                    }
+                }
                 if let Some(mut session) = monitor_session.take() {
                     session.finish();
                 }
@@ -2851,6 +2948,7 @@ impl Server {
 
         // A take with no monitor leaves a running playback alone; a monitor
         // replaces whatever finished session was kept as a status line.
+        let monitor_owned = monitor_session.is_some();
         if let Some(session) = monitor_session {
             self.playback = Some(session);
         }
@@ -2864,6 +2962,7 @@ impl Server {
             total_frames: frames,
             consumer: parked_consumer,
             master: master_for_monitor,
+            monitor_owned,
         });
         let monitor_part = if monitor_files == 0 && !monitor_input && click.is_none() {
             String::new()
@@ -2880,6 +2979,57 @@ impl Server {
             tracks_json(&track_status),
             alignment_json(alignment)
         )
+    }
+
+    /// `{"cmd":"record","action":"stop"}`: end the take and nothing else.
+    ///
+    /// A take beside the transport borrowed the transport's one output, so
+    /// stopping it hands that output back: the live ring is detached at the
+    /// next block, the transport keeps playing its takes and its click, and its
+    /// status reports `monitor_input:false`. A take that owns its own monitor
+    /// stops that monitor too; an independent playback is left alone.
+    fn record_stop(&mut self) -> String {
+        let was_recording = self
+            .current
+            .as_ref()
+            .map(Running::is_recording)
+            .unwrap_or(false);
+        if !was_recording {
+            return error_line("no take is recording");
+        }
+        // Signal the take and its monitor before joining either, exactly as
+        // `stop` does, so neither waits on the other's block.
+        if let Some(running) = &self.current {
+            running.stop.store(true, Ordering::SeqCst);
+        }
+        let monitor_owned = self
+            .current
+            .as_ref()
+            .map(|running| running.monitor_owned)
+            .unwrap_or(false);
+        if monitor_owned {
+            if let Some(session) = &self.playback {
+                session.stop.store(true, Ordering::SeqCst);
+            }
+        }
+        if let Some(running) = &mut self.current {
+            running.finish();
+        }
+        if monitor_owned {
+            if let Some(session) = &mut self.playback {
+                session.finish();
+            }
+        }
+        // The transport keeps its output and its clock; only the take's live
+        // input leaves it. The edge lands at the next block, so the clips and
+        // the click never gap.
+        if let Some(session) = &mut self.transport {
+            session.detach_live();
+        }
+        match &self.current {
+            Some(running) => running.line(),
+            None => idle_line(),
+        }
     }
 
     /// `{"cmd":"play","files":["/abs/a.wav"],"start_at":0}`: play takes back
@@ -3230,8 +3380,10 @@ impl Server {
         let error = Arc::new(Mutex::new(String::new()));
         // The control thread sends replacement plans; the render thread receives
         // them at a block edge. Nothing is shared under a lock, so a plan never
-        // stalls the device.
+        // stalls the device. A take's live input rides its own channel and the
+        // same block edge, so attaching one never stops or reopens the device.
         let (plan_tx, plan_rx) = std::sync::mpsc::channel();
+        let (live_tx, live_rx) = std::sync::mpsc::channel();
         let spawned = {
             let control = Arc::clone(&control);
             let error = Arc::clone(&error);
@@ -3247,6 +3399,7 @@ impl Server {
                         master,
                         master_values,
                         plan_rx,
+                        live_rx,
                     )
                 })
         };
@@ -3264,6 +3417,9 @@ impl Server {
             clips: clip_count,
             master: master_count,
             plan_tx,
+            live_tx,
+            monitor_input: false,
+            monitor_gain: None,
         });
         self.transport_status()
     }
@@ -3366,6 +3522,10 @@ impl Server {
     /// where it stopped and a `start` can resume from there.
     fn transport_stop(&mut self) -> String {
         if let Some(mut session) = self.transport.take() {
+            // The output is about to close, so the take's live ring has no
+            // reader left. Clear the attachment before the render thread leaves,
+            // so `status` never reports a monitor on a stopped transport.
+            session.detach_live();
             session.finish();
             self.transport = Some(session);
         }
@@ -3374,14 +3534,41 @@ impl Server {
 
     /// The dedicated transport status: state, seconds, tempo, signature and the
     /// loop bounds. The historical `status` command keeps its own shape.
-    fn transport_status(&self) -> String {
+    fn transport_status(&mut self) -> String {
+        self.reconcile_transport_monitor();
         match &self.transport {
             Some(session) => session.line(self.config.rate),
             None => default_transport_line(),
         }
     }
 
-    fn status_line(&self) -> String {
+    /// A take that ends on its own (its `seconds` ran out) has no command to
+    /// detach its live input. Any status request notices first, so the transport
+    /// stops claiming a monitor whose take is no longer recording and the ring
+    /// is dropped at the next block instead of being read forever.
+    fn reconcile_transport_monitor(&mut self) {
+        let attached = self
+            .transport
+            .as_ref()
+            .map(|session| session.monitor_input)
+            .unwrap_or(false);
+        if !attached {
+            return;
+        }
+        let recording = self
+            .current
+            .as_ref()
+            .map(Running::is_recording)
+            .unwrap_or(false);
+        if !recording {
+            if let Some(session) = &mut self.transport {
+                session.detach_live();
+            }
+        }
+    }
+
+    fn status_line(&mut self) -> String {
+        self.reconcile_transport_monitor();
         // A take that is recording is the transport, so its line leads and the
         // monitor reports beside it. An engine transport may be playing beside
         // it, so its object rides the same line. A finished take stays a status
@@ -3506,6 +3693,9 @@ impl Server {
             session.finish();
         }
         if let Some(session) = &mut self.transport {
+            // The take, if any, is going too; detach its live ring so a stopped
+            // transport never claims a monitor it can no longer carry.
+            session.detach_live();
             session.finish();
         }
         if was_patching {
@@ -4474,6 +4664,10 @@ struct Running {
     /// The take's master rack, so a monitor armed mid-take runs the same
     /// mastering chain as one `record` started.
     master: Vec<InsertKind>,
+    /// Whether this take owns the playback slot's monitor output. A take
+    /// beside the transport does not: the transport owns the output and the
+    /// live ring rides it, so `record` stop must leave the transport playing.
+    monitor_owned: bool,
 }
 
 impl Running {
@@ -4676,11 +4870,49 @@ struct TransportSession {
     /// Replacement plans to the render thread. A send never waits for the audio
     /// thread; the receiver's `try_recv` at a block edge is the only consumer.
     plan_tx: Sender<TransportPlan>,
+    /// Attach and detach edges for a take's live input, read at a block edge.
+    live_tx: Sender<TransportLive>,
+    /// Whether a take's live ring is attached right now. `false` is the state
+    /// before any take and again after `record` stop detaches it.
+    monitor_input: bool,
+    /// The attached take's trim, the same `Arc` its own `param` writes. Kept
+    /// only while attached, so `transport status` reports the value the take
+    /// reports without a second copy to drift.
+    monitor_gain: Option<Arc<AtomicU32>>,
 }
 
 impl TransportSession {
     fn is_playing(&self) -> bool {
         self.control.is_playing() && !self.control.is_stopping()
+    }
+
+    /// Attach a take's live ring to this transport's render thread. False means
+    /// the thread has gone; the caller then refuses the take rather than
+    /// starting one whose live input nobody will read.
+    fn attach_live(&mut self, consumer: Consumer, gain: Arc<AtomicU32>) -> bool {
+        if self
+            .live_tx
+            .send(TransportLive::Attach {
+                consumer,
+                gain: Arc::clone(&gain),
+            })
+            .is_err()
+        {
+            return false;
+        }
+        self.monitor_input = true;
+        self.monitor_gain = Some(gain);
+        true
+    }
+
+    /// Detach the take's live input at the next block. The transport's clips
+    /// and click keep playing; the live part of its bus becomes silence.
+    fn detach_live(&mut self) {
+        if self.monitor_input {
+            let _ = self.live_tx.send(TransportLive::Detach);
+        }
+        self.monitor_input = false;
+        self.monitor_gain = None;
     }
 
     /// Signal the render thread and wait for it. When this returns the device
@@ -4730,8 +4962,13 @@ impl TransportSession {
                 jawn_audio::loopback::json_escape(&error)
             )
         };
+        let monitor_gain = self
+            .monitor_gain
+            .as_ref()
+            .map(|gain| f32::from_bits(gain.load(Ordering::Acquire)))
+            .unwrap_or(1.0);
         format!(
-            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{}{}}}",
+            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"monitor_input\":{},\"monitor_gain\":{}{}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
@@ -4740,6 +4977,8 @@ impl TransportSession {
             control.loop_end() as f64 / rate,
             self.clips,
             self.master,
+            self.monitor_input,
+            monitor_gain,
             error
         )
     }
@@ -4749,17 +4988,17 @@ impl TransportSession {
 /// default tempo and signature, with no loop. The route always has a shape to
 /// answer with, exactly as an idle `status` does.
 fn default_transport_line() -> String {
-    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0}}"
+    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"monitor_input\":false,\"monitor_gain\":1}}"
         .to_string()
 }
 
 /// The transport's worker. It owns the output for as long as it runs; the
 /// socket never opens a second output for a playback, listen or patch while it
 /// does. A take may still capture beside it, because a take's capture stream
-/// and its monitor are separate: the take refuses only when it asks for a
-/// monitor of its own. The device loop never returns on its own: `stop` makes
-/// the source's next block fail, which is the same clean path a stopped
-/// playback takes.
+/// and its monitor are separate. A take's live input may also join this
+/// output through `live`, while its own monitor files and click still refuse.
+/// The device loop never returns on its own: `stop` makes the source's next
+/// block fail, which is the same clean path a stopped playback takes.
 fn run_transport(
     config: Config,
     control: Arc<TransportControl>,
@@ -4768,12 +5007,14 @@ fn run_transport(
     master: Vec<InsertKind>,
     master_values: Vec<(String, f32)>,
     plans: std::sync::mpsc::Receiver<TransportPlan>,
+    live: std::sync::mpsc::Receiver<TransportLive>,
 ) {
     let source = TransportSource::new(Arc::clone(&control))
         .with_clips(clips)
         .with_master(master)
         .with_master_values(master_values)
-        .with_plan_rx(plans);
+        .with_plan_rx(plans)
+        .with_live_rx(live);
     let outcome = match config.backend {
         BackendKind::Null => transport_null(&config, source, &control),
         BackendKind::Alsa | BackendKind::PipeWire => {
@@ -6804,6 +7045,8 @@ break"}"#).is_err());
             total_frames: 0,
             consumer: None,
             master: Vec::new(),
+            // No monitor output was started for this stand-in take.
+            monitor_owned: false,
         }
     }
 
@@ -7810,6 +8053,7 @@ break"}"#).is_err());
         ));
         control.set_playing(true);
         let (plan_tx, _plan_rx) = std::sync::mpsc::channel();
+        let (live_tx, _live_rx) = std::sync::mpsc::channel();
         TransportSession {
             control,
             handle: None,
@@ -7817,6 +8061,9 @@ break"}"#).is_err());
             clips: 0,
             master: 0,
             plan_tx,
+            live_tx,
+            monitor_input: false,
+            monitor_gain: None,
         }
     }
 
@@ -8102,15 +8349,21 @@ break"}"#).is_err());
             "{stopped}"
         );
 
-        // A record that asks for a monitor needs an output of its own, so it
-        // is still refused while the transport plays. The other output users
-        // keep their refusals too.
+        // A record that asks for monitor files or its own click still needs an
+        // output of its own, so those are refused while the transport plays.
+        // The live input is the exception; it rides the transport's bus and is
+        // covered by the tests below. The other output users keep their
+        // refusals too.
         let mut server = socket_server();
         server.transport = Some(playing_transport(0));
-        let answer = reply(server.handle(
-            r#"{"cmd":"record","out":"/tmp/transport-take.wav","monitor_input":true}"#,
-        ));
-        assert!(answer.contains("cannot also open a monitor"), "{answer}");
+        for request in [
+            r#"{"cmd":"record","out":"/tmp/transport-take.wav","monitor":["/tmp/a.wav"]}"#,
+            r#"{"cmd":"record","out":"/tmp/transport-take.wav","click":{"bpm":120,"beats_per_bar":4}}"#,
+        ] {
+            let answer = reply(server.handle(request));
+            assert!(answer.contains("owns the metronome"), "{request}: {answer}");
+            assert!(answer.contains("monitor files"), "{request}: {answer}");
+        }
         for (command, needle) in [
             (r#"{"cmd":"play","files":["/tmp/a.wav"]}"#, "before starting a playback"),
             (r#"{"cmd":"listen"}"#, "before listening"),
@@ -8120,5 +8373,164 @@ break"}"#).is_err());
             assert!(answer.contains("transport is playing"), "{command}: {answer}");
             assert!(answer.contains(needle), "{command}: {answer}");
         }
+    }
+
+    #[test]
+    fn a_live_take_monitors_beside_the_playing_transport() {
+        // The transport owns the output; the take's live ring joins its master
+        // chain instead of opening a second device. This is the one monitor a
+        // take may carry while the transport plays.
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        let out = temp_take("transport-live");
+        let recorded = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":30,"monitor_input":true,"monitor_gain":0.5}}"#
+        )));
+        assert!(recorded.contains("\"ok\":true"), "{recorded}");
+        assert!(recorded.contains("\"state\":\"recording\""), "{recorded}");
+        assert!(recorded.contains("\"monitor_input\":true"), "{recorded}");
+
+        // The transport reports the attachment and the trim the take will use.
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"monitor_input\":true"), "{status}");
+        assert!(status.contains("\"monitor_gain\":0.5"), "{status}");
+
+        // `param` moves the same `Arc` the take reports, so the transport sees
+        // the new trim at the next block without a second knob to update.
+        let param = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":0.75}"#,
+        ));
+        assert!(param.contains("\"gain\":0.75"), "{param}");
+        assert!(param.contains("\"monitor_input\":true"), "{param}");
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"monitor_gain\":0.75"), "{status}");
+
+        // Stopping the take detaches the monitor and leaves the transport
+        // playing: one output, one take, one attachment.
+        let stopped = reply(server.handle(r#"{"cmd":"record","action":"stop"}"#));
+        assert!(stopped.contains("\"state\":\"done\""), "{stopped}");
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"state\":\"playing\""), "{status}");
+        assert!(status.contains("\"monitor_input\":false"), "{status}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_param_arms_a_live_input_on_a_take_beside_the_transport() {
+        // Pressing Monitor mid-take posts a positive gain. A take armed with
+        // `monitor_input` off parked its ring, so the trim must attach that ring
+        // to the transport instead of opening a playback the transport forbids.
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        let out = temp_take("transport-armed-later");
+        let recorded = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":30,"monitor_input":false}}"#
+        )));
+        assert!(recorded.contains("\"ok\":true"), "{recorded}");
+        assert!(recorded.contains("\"monitor_input\":false"), "{recorded}");
+
+        let armed = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":1}"#,
+        ));
+        assert!(armed.contains("\"ok\":true"), "{armed}");
+        assert!(armed.contains("\"gain\":1"), "{armed}");
+        assert!(armed.contains("\"monitor_input\":true"), "{armed}");
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"state\":\"playing\""), "{status}");
+        assert!(status.contains("\"monitor_input\":true"), "{status}");
+        assert!(status.contains("\"monitor_gain\":1"), "{status}");
+
+        // Zero is a mute, not a detach: the take is still monitoring.
+        let muted = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":0}"#,
+        ));
+        assert!(muted.contains("\"gain\":0"), "{muted}");
+        assert!(muted.contains("\"monitor_input\":true"), "{muted}");
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"monitor_gain\":0"), "{status}");
+
+        // Stopping the take detaches it; the transport keeps playing.
+        let stopped = reply(server.handle(r#"{"cmd":"record","action":"stop"}"#));
+        assert!(stopped.contains("\"state\":\"done\""), "{stopped}");
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"state\":\"playing\""), "{status}");
+        assert!(status.contains("\"monitor_input\":false"), "{status}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_record_stop_is_refused_when_no_take_is_recording() {
+        let mut server = socket_server();
+        let answer = reply(server.handle(r#"{"cmd":"record","action":"stop"}"#));
+        assert!(answer.contains("\"ok\":false"), "{answer}");
+        assert!(answer.contains("no take is recording"), "{answer}");
+    }
+
+    #[test]
+    fn four_tracks_may_share_one_input_on_a_two_input_engine() {
+        // The P2 gate records four tracks through the UM2's two inputs. A take
+        // may carry more tracks than the device has channels as long as every
+        // track names a real input; several tracks may share one source.
+        let mut server = socket_server();
+        server.config.channels = 2;
+        let out = temp_take("shared-input");
+        let request = format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":0.05,"tracks":[{{"input":0}},{{"input":0}},{{"input":0}},{{"input":0}}]}}"#
+        );
+        let line = reply(server.handle(&request));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"recording\""), "{line}");
+        assert!(
+            line.contains("\"tracks\":["),
+            "a four-track take did not report its tracks: {line}"
+        );
+
+        // Every track names input 0, and the status carries all four. Wait for
+        // the take's first block so the four files have a body, not only a
+        // header.
+        let produced = |line: &str| -> bool {
+            match parse_object(line) {
+                Ok(object) => {
+                    matches!(get(&object, "frames"), Some(Value::Num(frames)) if *frames > 0.0)
+                }
+                Err(_) => false,
+            }
+        };
+        let mut status = reply(server.handle(r#"{"cmd":"status"}"#));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !produced(&status) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+            status = reply(server.handle(r#"{"cmd":"status"}"#));
+        }
+        assert_eq!(
+            status.matches("\"input\":0").count(),
+            4,
+            "status did not report four tracks on input 0: {status}"
+        );
+        assert!(
+            produced(&status),
+            "the four-track take produced no frames: {status}"
+        );
+
+        // One WAV per track, all written from the same input.
+        let stopped = reply(server.handle(r#"{"cmd":"stop"}"#));
+        assert!(stopped.contains("\"state\":\"done\""), "{stopped}");
+        for track in 1..=4 {
+            let path = out.replace(".wav", &format!("-ch{track}.wav"));
+            let written = std::fs::metadata(&path)
+                .map(|meta| meta.len() > 44)
+                .unwrap_or(false);
+            assert!(written, "track {track} wrote no WAV body: {path}");
+            let _ = std::fs::remove_file(path);
+        }
+        let _ = std::fs::remove_file(&out);
     }
 }

@@ -491,7 +491,7 @@ sub run_take {
 		{ input => 1, frames => 4800, gain => 1, pan => 0.3, inserts => 'reverb' },
 	], 'status relays each track and the inserts it was armed with');
 
-	local *JawnOS::Audio::Engine::audio_engine_stop = sub {
+	local *JawnOS::Audio::Engine::audio_engine_record_stop = sub {
 		return { ok => 1, take => 1, state => 'done', frames => 48000 };
 	};
 	my $stop = run_take(action => 'stop');

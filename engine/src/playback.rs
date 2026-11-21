@@ -766,6 +766,31 @@ pub struct TransportPlan {
     pub master_values: Option<Vec<(String, f32)>>,
 }
 
+/// An attach or detach of a take's live input on a running transport.
+///
+/// The socket sends one of these when a take starts beside the transport or
+/// stops, so the transport's one output carries the take's live input without
+/// opening a second device. The render thread reads the newest edge at a block
+/// edge, exactly as it reads a [`TransportPlan`].
+pub enum TransportLive {
+    /// Sum this consumer into the transport's master chain, trimmed by `gain`.
+    Attach {
+        consumer: Consumer,
+        gain: Arc<AtomicU32>,
+    },
+    /// Stop summing the live input; the transport keeps playing its clips and
+    /// click, and the live part of its bus becomes silence.
+    Detach,
+}
+
+/// The take's live input on a transport: the monitoring ring's read side and
+/// the trim the socket can move mid-take.
+struct TransportLiveInput {
+    consumer: Consumer,
+    /// `f32` bits of the live trim, clamped to `0..=4` by the control path.
+    gain: Arc<AtomicU32>,
+}
+
 /// The transport's render source: the same click buffers as a take's
 /// metronome, read from the absolute song grid and blended with the mutable
 /// controls at the top of every block, plus the recorded takes placed on the
@@ -786,6 +811,17 @@ pub struct TransportSource {
     mixer: Mixer,
     /// One mono block per clip, reused by every block.
     voices: Vec<Vec<f32>>,
+    /// The take's live input, when one is attached to this transport. It joins
+    /// the clips before the master chain, so the person and the takes hear one
+    /// mastering pass; the click stays after it.
+    live: Option<TransportLiveInput>,
+    /// One stereo block for the live input, filled by the ring at the top of a
+    /// block. Sized in `prepared`, so an attach mid-song never allocates on the
+    /// audio thread.
+    live_block: Vec<f32>,
+    /// Attach and detach edges from the control thread. `try_recv` never
+    /// blocks, so an edge that is not ready waits for a later block.
+    live_rx: Option<Receiver<TransportLive>>,
     /// New placement plans from the control thread. `try_recv` never blocks, so
     /// a plan that is not ready waits for a later block instead of stalling the
     /// device.
@@ -814,6 +850,9 @@ impl TransportSource {
             master_values: Vec::new(),
             mixer: Mixer::new(&[], &[]),
             voices: Vec::new(),
+            live: None,
+            live_block: Vec::new(),
+            live_rx: None,
             plan_rx: None,
             rate: 0,
             period: 0,
@@ -857,6 +896,40 @@ impl TransportSource {
     pub fn with_plan_rx(mut self, plans: Receiver<TransportPlan>) -> Self {
         self.plan_rx = Some(plans);
         self
+    }
+
+    /// Attach the take's live input before the device opens. A take that starts
+    /// beside an already-running transport uses [`with_live_rx`] instead,
+    /// because the device is already open and the edge must reach the render
+    /// thread.
+    pub fn with_live_input(mut self, consumer: Consumer, gain: Arc<AtomicU32>) -> Self {
+        self.live = Some(TransportLiveInput { consumer, gain });
+        self
+    }
+
+    /// Attach/detach edges for the take's live input. The receiver lives on the
+    /// render thread and is drained at a block edge, so a take that starts or
+    /// stops beside a playing transport never stops or reopens the device.
+    pub fn with_live_rx(mut self, live: Receiver<TransportLive>) -> Self {
+        self.live_rx = Some(live);
+        self
+    }
+
+    /// Apply one attach or detach edge. Setup or a block-edge call, never a
+    /// steady-state one: the block is already sized in `prepared`, so neither
+    /// direction allocates here.
+    fn apply_live(&mut self, edge: TransportLive) {
+        match edge {
+            TransportLive::Attach { consumer, gain } => {
+                self.live = Some(TransportLiveInput { consumer, gain });
+            }
+            TransportLive::Detach => {
+                self.live = None;
+                // A later attach starts from silence rather than the block the
+                // old take left behind.
+                self.live_block.fill(0.0);
+            }
+        }
     }
 
     /// How many takes this transport carries, for the status line and a test.
@@ -1019,6 +1092,10 @@ impl RenderSource for TransportSource {
         );
         self.mixer = mixer;
         self.voices = voices;
+        // Sized even without a live input, so an attach beside a running
+        // transport is one assignment rather than an allocation on the audio
+        // thread.
+        self.live_block = vec![0.0; period.saturating_mul(2)];
         self.rate = rate;
         self.period = period;
         self.clip_position = self.control.seek_frames();
@@ -1033,9 +1110,37 @@ impl RenderSource for TransportSource {
         // The transport is the only producer of this buffer, so it starts each
         // block silent rather than trusting what the previous block left.
         out.fill(0.0);
+        if out.len() % 2 != 0 {
+            return Err(format!(
+                "the transport block must hold whole stereo frames, found {} samples",
+                out.len()
+            ));
+        }
         let frames = out.len() / 2;
         if self.click.is_none() {
             return Err("the transport was not prepared".to_string());
+        }
+        if frames > self.period {
+            return Err(format!(
+                "a {frames}-frame block is longer than the prepared {} frames",
+                self.period
+            ));
+        }
+
+        // A take that started or stopped beside this transport sends one edge;
+        // applying it here keeps the device open and the clips and click steady.
+        let live_edge = match self.live_rx.as_ref() {
+            Some(live) => {
+                let mut latest = None;
+                while let Ok(edge) = live.try_recv() {
+                    latest = Some(edge);
+                }
+                latest
+            }
+            None => None,
+        };
+        if let Some(edge) = live_edge {
+            self.apply_live(edge);
         }
 
         // A plan from the control thread (a take moved, trimmed, split, deleted
@@ -1091,36 +1196,63 @@ impl RenderSource for TransportSource {
             self.clip_loop = loop_bounds;
         }
 
-        // Clips first: `mix_with` overwrites the bus, then the click is added
-        // after the master chain exactly as it is for a take's monitor.
-        if !self.clips.is_empty() {
+        // Clips first: `mix_with_live` overwrites the bus and, when the take's
+        // live input is attached, adds it before the master chain so both hear
+        // the same mastering pass. The click is added after the master chain,
+        // exactly as it is for a take's monitor.
+        let has_clips = !self.clips.is_empty();
+        let has_live = self.live.is_some();
+        if has_clips || has_live {
             let TransportSource {
                 clips,
                 mixer,
                 voices,
+                live,
+                live_block,
                 clip_position,
                 clip_loop,
                 ..
             } = self;
-            let mut position = *clip_position;
-            for frame in 0..frames {
-                for (index, clip) in clips.iter().enumerate() {
-                    voices[index][frame] = match clip.source_at(position) {
-                        Some(at) => clip.samples[at] * clip.edge_gain(position),
-                        None => 0.0,
-                    };
+            if has_clips {
+                let mut position = *clip_position;
+                for frame in 0..frames {
+                    for (index, clip) in clips.iter().enumerate() {
+                        voices[index][frame] = match clip.source_at(position) {
+                            Some(at) => clip.samples[at] * clip.edge_gain(position),
+                            None => 0.0,
+                        };
+                    }
+                    // The clip timeline wraps on the same frame as the click,
+                    // so a loop repeats the section in time with the metronome.
+                    position += 1;
+                    if clip_loop.1 > clip_loop.0 && position >= clip_loop.1 {
+                        let length = clip_loop.1 - clip_loop.0;
+                        position = clip_loop.0 + (position - clip_loop.1) % length;
+                    }
                 }
-                // The clip timeline wraps on the same frame as the click, so a
-                // loop repeats the section in time with the metronome.
-                position += 1;
-                if clip_loop.1 > clip_loop.0 && position >= clip_loop.1 {
-                    let length = clip_loop.1 - clip_loop.0;
-                    position = clip_loop.0 + (position - clip_loop.1) % length;
-                }
+                *clip_position = position;
             }
-            *clip_position = position;
+            // Pop the live ring once per block and trim it at the armed gain.
+            // A short ring is zero-filled by the consumer, and a gain of zero
+            // is true silence, exactly as the take's own monitor does it.
+            let live_samples = match live.as_mut() {
+                Some(live) => {
+                    let samples = frames * 2;
+                    live.consumer.pop(&mut live_block[..samples]);
+                    let gain = f32::from_bits(live.gain.load(Ordering::Acquire));
+                    if gain == 0.0 {
+                        live_block[..samples].fill(0.0);
+                    } else if gain != 1.0 {
+                        for sample in &mut live_block[..samples] {
+                            *sample *= gain;
+                        }
+                    }
+                    Some(&live_block[..samples])
+                }
+                None => None,
+            };
             mixer
-                .mix_with(out, |index| &voices[index][..frames])
+                .mix_with_live(out, |index| &voices[index][..frames], live_samples)
                 .map_err(|error| format!("transport: {error}"))?;
         }
 
@@ -2528,6 +2660,151 @@ mod tests {
             assert!(
                 (sample - expected[frame]).abs() < 1e-6,
                 "frame {frame}: {left:?}"
+            );
+        }
+    }
+
+    // --- transport: a take's live input on the transport's own output --------
+
+    /// A transport with no clips, the transport's click silent, and the take's
+    /// live ring attached before the device opens.
+    fn live_transport(
+        consumer: crate::monbus::Consumer,
+        gain: Arc<AtomicU32>,
+        master: Vec<InsertKind>,
+        period: usize,
+    ) -> TransportSource {
+        let control = Arc::new(TransportControl::new(
+            click_spec(120.0, 4, 0.0),
+            0,
+            0,
+            0,
+        ));
+        let mut source = TransportSource::new(control)
+            .with_master(master)
+            .with_live_input(consumer, gain);
+        source.prepared(8_000, period).expect("prepare");
+        source
+    }
+
+    #[test]
+    fn a_transport_block_carries_the_live_input_at_its_armed_gain() {
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        let input = [0.5f32, -0.5, 0.25, -0.25, 1.0, 1.0, -1.0, -1.0];
+        producer.push(&input);
+        let mut source = live_transport(consumer, live_gain(0.5), Vec::new(), 4);
+        let mut out = vec![0.0f32; 8];
+        source.block(&mut out).expect("block");
+        for (sample, expected) in out.iter().zip(input.iter()) {
+            assert!(
+                (sample - expected * 0.5).abs() < 1e-6,
+                "the live trim did not reach the transport: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transport_with_no_clips_plus_a_live_input_renders() {
+        // No clips at all: the ring alone must still reach the bus, which is the
+        // click-only transport a take's live input joins beside the takes.
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        producer.push(&[0.25f32; 16]);
+        let mut source = live_transport(consumer, live_gain(1.0), Vec::new(), 4);
+        assert_eq!(source.clip_count(), 0);
+        for _ in 0..2 {
+            let mut out = vec![0.0f32; 8];
+            source.block(&mut out).expect("block");
+            assert!(
+                out.iter().all(|sample| (sample - 0.25).abs() < 1e-6),
+                "a clip-less transport did not render its live input: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transport_live_input_never_reaches_the_take_path() {
+        // The transport is monitoring the live ring; the take's own path is the
+        // capture mixer that feeds its DiskWriter. The same live block must not
+        // leak into it.
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        producer.push(&[0.75f32; 8]);
+        let mut source = live_transport(consumer, live_gain(1.0), Vec::new(), 4);
+        let mut monitor = vec![0.0f32; 8];
+        source.block(&mut monitor).expect("block");
+        assert!(
+            monitor.iter().all(|sample| (sample - 0.75).abs() < 1e-6),
+            "the transport did not hear the live input: {monitor:?}"
+        );
+
+        // What the take writes is its capture block through its own strip, with
+        // no ring in the path at all.
+        let mut take = Mixer::new(&[0], &["ch1"]);
+        take.prepare(8_000, 4);
+        let mut recorded = vec![0.0f32; 8];
+        take.process(0, &[0.0f32; 4], &mut recorded)
+            .expect("take block");
+        assert!(
+            recorded.iter().all(|sample| *sample == 0.0),
+            "the take path saw the transport's live input: {recorded:?}"
+        );
+    }
+
+    #[test]
+    fn a_transport_live_input_detaches_to_silence() {
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        let control = Arc::new(TransportControl::new(
+            click_spec(120.0, 4, 0.0),
+            0,
+            0,
+            0,
+        ));
+        let (live_tx, live_rx) = std::sync::mpsc::channel();
+        let mut source = TransportSource::new(control).with_live_rx(live_rx);
+        source.prepared(8_000, 4).expect("prepare");
+
+        producer.push(&[0.5f32; 8]);
+        live_tx
+            .send(TransportLive::Attach {
+                consumer,
+                gain: live_gain(1.0),
+            })
+            .expect("attach the live input");
+        let mut first = vec![0.0f32; 8];
+        source.block(&mut first).expect("block");
+        assert!(
+            first.iter().all(|sample| (sample - 0.5).abs() < 1e-6),
+            "the attached live input did not sound: {first:?}"
+        );
+
+        live_tx.send(TransportLive::Detach).expect("detach");
+        let mut second = vec![0.0f32; 8];
+        source.block(&mut second).expect("block");
+        assert!(
+            second.iter().all(|sample| *sample == 0.0),
+            "the detached live input still sounded: {second:?}"
+        );
+    }
+
+    #[test]
+    fn a_transport_live_input_runs_through_the_armed_master_limiter() {
+        // A full-scale live input through the default limiter settles at its
+        // -3 dBFS ceiling, proving the live ring joins the clips before the
+        // master chain rather than being added after it.
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        producer.push(&[1.0f32; 8]);
+        let mut source = live_transport(
+            consumer,
+            live_gain(1.0),
+            vec![InsertKind::Limiter],
+            4,
+        );
+        let mut out = vec![0.0f32; 8];
+        source.block(&mut out).expect("block");
+        let ceiling = 10f32.powf(-3.0 / 20.0);
+        for (frame, sample) in out.iter().enumerate() {
+            assert!(
+                (sample.abs() - ceiling).abs() < 1e-5,
+                "frame {frame} did not pass the master limiter: {out:?}"
             );
         }
     }

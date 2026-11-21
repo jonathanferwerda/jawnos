@@ -1,16 +1,15 @@
 // ===========================================================================
-// Track export
+// Mix export
 // ===========================================================================
-// Every track is rendered through its own output chain in an OfflineAudioContext,
-// encoded as a WAV in the browser, and posted to the manager, which transcodes it
-// and files it on the song as an audio appointment file. The song must already be
-// saved: the file joins an existing appointment, it never makes one.
+// The whole song is rendered once in an OfflineAudioContext through the same
+// graph the window plays - every channel's output inserts, then its fader and
+// pan, summed onto one bus, then optionally the mastering rack - encoded as a
+// WAV in the browser, and posted to the manager, which transcodes it and files
+// it on the song as an audio appointment file. The song must already be saved:
+// the file joins an existing appointment, it never makes one.
 //
-// The render is deliberately the same graph the window plays - the channel's
-// output inserts, then its fader and pan, then optionally the mastering rack -
-// so an export sounds like the track does. The live transport is not touched:
-// each track gets its own offline context and the window stays usable while the
-// tracks run one at a time.
+// The live transport is not touched: the mix gets its own offline context and
+// the window stays usable while it renders.
 
 var studioExportRunning = false;
 
@@ -45,12 +44,6 @@ function studioExportMasterWanted() {
 	return false;
 }
 
-function studioExportTrackName(channel) {
-	var value = $('.studio_track_name[channel="' + channel + '"]').val();
-	if (value === undefined || value === null) { return 'Track ' + channel; }
-	value = String(value).replace(/^\s+|\s+$/g, '');
-	return value.length ? value : ('Track ' + channel);
-}
 
 // Every numeric mixer channel that carries at least one take, in channel order.
 // A channel with no takes has nothing to render and is left out.
@@ -171,53 +164,71 @@ function studioExportMasterRestore(master) {
 	});
 }
 
-// Build one track's offline graph and return the context, its take input, and
-// the length the takes are laid out against.
-function studioExportOffline(channel, c, takes, includeMaster) {
+// Build the whole song's offline graph and return the context, each channel's
+// take input, and the length the takes are laid out against. Every channel with
+// takes keeps its own output inserts, fader and pan; their tails are summed on
+// one bus, which feeds the mastering rack when it is wanted, or the destination.
+function studioExportOffline(entries, includeMaster) {
 	var rate = 44100;
 	try {
 		var live = studioContext();
 		if (live && live.sampleRate > 0) { rate = live.sampleRate; }
 	}
 	catch (e) {}
+
+	var takes = [];
+	(entries || []).forEach(function (entry) {
+		(entry.takes || []).forEach(function (take) { takes.push(take); });
+	});
 	var songEnd = studioExportDuration(takes, (mixer && mixer['time']) ? mixer['time']['duration'] : 0);
 	var frames = Math.max(1, Math.ceil(songEnd * rate));
 	var off = new OfflineAudioContext(2, frames, rate);
-	var chain = studioExportInsertChain(off, c);
 
-	var volume = off.createGain();
-	volume.gain.value = (typeof studioVolumeFraction === 'function')
-		? studioVolumeFraction($('.channel_volume[channel="' + channel + '"]').val())
-		: 1;
-	var panValue = (studioExportNumber($('.knob_control[channel="' + channel + '"][control="pan"]').val(), 50) - 50) / 50;
-	var pan = off.createStereoPanner ? off.createStereoPanner() : null;
-	if (pan) { pan.pan.value = Math.max(-1, Math.min(1, panValue)); }
-
-	chain.output.connect(volume);
-	var tail = volume;
-	if (pan) { volume.connect(pan); tail = pan; }
-
+	var bus = off.destination;
 	if (includeMaster) {
 		var master = studioMasterChain(off);
 		studioExportMasterRestore(master);
-		tail.connect(master.input);
 		master.output.connect(off.destination);
+		bus = master.input;
 	}
-	else {
-		tail.connect(off.destination);
-	}
-	return { ctx: off, input: chain.input, duration: songEnd, rate: rate };
+
+	var inputs = [];
+	(entries || []).forEach(function (entry) {
+		var chain = studioExportInsertChain(off, entry.c);
+
+		var volume = off.createGain();
+		volume.gain.value = (typeof studioVolumeFraction === 'function')
+			? studioVolumeFraction($('.channel_volume[channel="' + entry.channel + '"]').val())
+			: 1;
+		var panValue = (studioExportNumber($('.knob_control[channel="' + entry.channel + '"][control="pan"]').val(), 50) - 50) / 50;
+		var pan = off.createStereoPanner ? off.createStereoPanner() : null;
+		if (pan) { pan.pan.value = Math.max(-1, Math.min(1, panValue)); }
+
+		chain.output.connect(volume);
+		var tail = volume;
+		if (pan) { volume.connect(pan); tail = pan; }
+		tail.connect(bus);
+
+		inputs.push({ input: chain.input, takes: entry.takes || [] });
+	});
+
+	return { ctx: off, inputs: inputs, duration: songEnd, rate: rate };
 }
 
-async function studioExportOne(entry, uuid, trackName, format, bitrate, includeMaster) {
-	var offline = studioExportOffline(entry.channel, entry.c, entry.takes, includeMaster);
-	for (var i = 0; i < entry.takes.length; i++) {
-		var take = entry.takes[i];
-		if (!take || take.status == 'recording') { continue; }
-		if (studioExportTakeIsVideo(take)) { continue; }
-		var buffer = await studioExportTakeBuffer(offline.ctx, take);
-		if (!buffer) { continue; }
-		studioExportSchedule(offline.ctx, offline.input, take, buffer, offline.duration);
+// Schedule every take of every channel into its channel's input, render the
+// song once, encode one WAV, and attach it to the song under the song's name.
+async function studioExportMix(entries, uuid, songName, format, bitrate, includeMaster) {
+	var offline = studioExportOffline(entries, includeMaster);
+	for (var i = 0; i < offline.inputs.length; i++) {
+		var input = offline.inputs[i];
+		for (var j = 0; j < input.takes.length; j++) {
+			var take = input.takes[j];
+			if (!take || take.status == 'recording') { continue; }
+			if (studioExportTakeIsVideo(take)) { continue; }
+			var buffer = await studioExportTakeBuffer(offline.ctx, take);
+			if (!buffer) { continue; }
+			studioExportSchedule(offline.ctx, input.input, take, buffer, offline.duration);
+		}
 	}
 
 	var rendered = await offline.ctx.startRendering();
@@ -225,11 +236,11 @@ async function studioExportOne(entry, uuid, trackName, format, bitrate, includeM
 
 	var form = new FormData();
 	form.append('uuid', uuid);
-	form.append('name', trackName);
+	form.append('name', songName);
 	form.append('format', format);
 	form.append('bitrate', String(bitrate));
 	form.append('master', includeMaster ? '1' : '0');
-	form.append('audio', wav, trackName + '.wav');
+	form.append('audio', wav, songName + '.wav');
 
 	var response = await fetch('/manager/studio/export', { method: 'POST', body: form });
 	var answer = null;
@@ -241,9 +252,9 @@ async function studioExportOne(entry, uuid, trackName, format, bitrate, includeM
 	return answer;
 }
 
-// Render every track, one at a time, and attach each file to the song. The
-// state line names the track and its place in the queue; the last line says how
-// many files were attached, or carries the server's own sentence on a failure.
+// Render the whole song once and attach the mixed file to it. The state line
+// says the mix is rendering, then names the attached file or carries the
+// server's own sentence on a failure.
 async function studioExportTracks() {
 	if (studioExportRunning) { return; }
 	studioExportRunning = true;
@@ -252,7 +263,7 @@ async function studioExportTracks() {
 		var uuid = song.attr('uuid');
 		var name = song.attr('name');
 		if (!uuid || !name) {
-			studioExportState(studioExportText('Save the song before exporting its tracks.'));
+			studioExportState(studioExportText('Save the song before exporting its mix.'));
 			return;
 		}
 
@@ -265,26 +276,13 @@ async function studioExportTracks() {
 			return;
 		}
 
-		var attached = 0;
-		var failures = [];
-		for (var i = 0; i < channels.length; i++) {
-			var entry = channels[i];
-			var trackName = studioExportTrackName(entry.channel);
-			studioExportState(trackName + ' (' + (i + 1) + ' of ' + channels.length + ')\u2026');
-			try {
-				await studioExportOne(entry, uuid, trackName, format, bitrate, includeMaster);
-				attached++;
-			}
-			catch (error) {
-				failures.push(trackName + ': ' + ((error && error.message) ? error.message : studioExportText('export failed')));
-			}
+		studioExportState(studioExportText('Rendering the mix\u2026'));
+		try {
+			await studioExportMix(channels, uuid, name, format, bitrate, includeMaster);
+			studioExportState(studioExportText('Mix attached.'));
 		}
-
-		if (failures.length) {
-			studioExportState(attached + ' ' + studioExportText('of ' + channels.length + ' tracks attached.') + ' ' + failures.join('; '));
-		}
-		else {
-			studioExportState(attached + ' ' + studioExportText(attached === 1 ? 'track attached.' : 'tracks attached.'));
+		catch (error) {
+			studioExportState(studioExportText('The export failed.') + ' ' + ((error && error.message) ? error.message : ''));
 		}
 	}
 	finally {

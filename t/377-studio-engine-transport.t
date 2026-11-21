@@ -21,6 +21,10 @@ use Cwd qw(abs_path);
 
 my $root = abs_path("$FindBin::Bin/..");
 
+# The page's take start is read beside the engine sources: arming the monitor
+# there is how the transport change is observed from this side.
+my $studio_js = read_file("$root/public/js/manager/studio.js");
+
 # --- the engine's command, status and absolute grid ---------------------------
 my $socket = read_file("$root/engine/src/socket.rs");
 ok(length $socket, 'the engine socket source is found');
@@ -64,9 +68,19 @@ like(
 	'an end not past its start is refused before a thread exists'
 );
 like(
-	$socket,
-	qr/the transport is playing; a take cannot also open a monitor/,
-	'a take without a monitor records beside the transport'
+	$studio_js,
+	qr/var monitor = \(typeof studioMonitoredChannel[\s\S]{0,200}monitor'\]\s*==\s*'yes'\)/,
+	'a monitored track or the Monitor setting arms the take while the transport plays'
+);
+unlike(
+	$studio_js,
+	qr/var monitor = !transportRunning/,
+	'the take start does not gate its monitor on the transport'
+);
+like(
+	$studio_js,
+	qr/monitor_input: monitor \? 'true' : 'false'/,
+	'the take start sends monitor_input whether or not the transport runs'
 );
 like(
 	$socket,
@@ -279,8 +293,8 @@ like(
 );
 like(
 	$socket,
-	qr/run_transport\([\s\S]{0,300}plan_rx,?\s*\)/,
-	'the master rack and the plan channel reach the transport worker'
+	qr/run_transport\([\s\S]{0,300}plan_rx,[\s\S]{0,120}live_rx,?\s*\)/,
+	'the master rack, the plan channel and the live-input channel reach the transport worker'
 );
 like(
 	$socket,
@@ -450,6 +464,21 @@ like(
 	$engine_pm,
 	qr/qw\(\s*position bpm beats_per_bar gain loop_start loop_end clips master master_values\s*\)/,
 	'only the promised fields, including the clip plan, master rack and values, are forwarded'
+);
+like(
+	$engine_pm,
+	qr/sub audio_engine_record_stop[\s\S]{0,220}cmd => 'record', action => 'stop'/,
+	'the client sends the record-specific stop'
+);
+like(
+	$controller,
+	qr/\$action eq 'stop'[\s\S]{0,220}audio_engine_record_stop/,
+	'Stop take uses it so the engine transport keeps playing'
+);
+like(
+	$controller,
+	qr/\$action eq 'listen_stop'[\s\S]{0,220}audio_engine_stop/,
+	'Listen stop keeps the global stop'
 );
 
 # --- the browser follows the engine clock and never doubles the click --------
@@ -746,7 +775,6 @@ like(
 );
 
 # --- the engine take start path and its count-in -----------------------------
-my $studio_js = read_file("$root/public/js/manager/studio.js");
 like($studio_js, qr/function studioEngineStartNow/, 'the take start is its own function');
 like(
 	$studio_js,
@@ -755,8 +783,8 @@ like(
 );
 like(
 	$studio_js,
-	qr/var monitor = !transportRunning/,
-	'the transport owns the output, so an engine take adds no monitor while it runs'
+	qr/monitor_input: monitor \? 'true' : 'false'/,
+	'the take start sends monitor_input for that monitor'
 );
 like($studio_js, qr/function studioEngineCountInStart/, 'the take starts a browser count-in');
 like($studio_js, qr/function studioEngineCountInDue/, 'the punch-in starts the take');

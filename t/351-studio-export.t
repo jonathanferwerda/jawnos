@@ -1,9 +1,10 @@
 # tests-for: public/js/manager/studio/12_export.js public/js/manager/studio/14_audio_file.js lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm templates/studio/markup.html.ep t/351-studio-export.t
-# covers:    Studio's track exporter: the Configure controls, the route row and
+# covers:    Studio's mix exporter: the Configure controls, the route row and
 #            its action, the three formats and the bit-rate clamp, the
-#            output-chain and master render (played out in node against the
-#            real client file), the WAV upload, the appointment `file` record
-#            typed audio and named after the track, and ffmpeg's list argv.
+#            whole-song render through every output chain into the master rack
+#            (played out in node against the real client file), the one WAV
+#            upload, the appointment `file` record typed audio and named after
+#            the song, and ffmpeg's list argv.
 
 use strict;
 use warnings;
@@ -34,7 +35,12 @@ for my $rate (qw(128 192 256 320)) {
 }
 like($markup, qr/type="checkbox" id="studio_export_master"/,
 	'the mastering-rack switch is a checkbox');
-like($markup, qr/id="studio_export_tracks"/, 'the Export tracks button is in Configure');
+like($markup, qr/id="studio_export_master"[^>]*checked/,
+	'the mastering rack starts switched on for a mastered bounce');
+like($markup, qr/id="studio_export_tracks"/, 'the Export mix button is in Configure');
+like($markup, qr/Export mix/, 'the button names the one mixed file');
+like($markup, qr/one mixed file named after the song/,
+	'the export block describes one file named after the song');
 like($markup, qr/id="studio_export_state"[^>]*aria-live="polite"/,
 	'the export status is a live region');
 
@@ -144,8 +150,9 @@ like($code, qr/studio_export_path\(\$folder, \$track, \$format\)/,
 like($code, qr/subs::path_name/, 'the name becomes a path component through path_name');
 like($code, qr/studio_export_ffmpeg/, 'a missing encoder is refused cleanly');
 
-# --- the client renders through the real track ---------------------------------
-like($export, qr/new OfflineAudioContext\(2,/, 'each track renders in a stereo OfflineAudioContext');
+# --- the client renders the whole song once -----------------------------------
+like($export, qr/new OfflineAudioContext\(2,/, 'the mix renders in one stereo OfflineAudioContext');
+like($export, qr/async function studioExportMix\(/, 'the whole song is rendered and uploaded once');
 like($export, qr/studioBufferToWav\(rendered\)/, 'the rendered buffer becomes a WAV');
 like($export, qr/c\.outInserts\) \|\| \[\]/, 'a song without an output chain passes through');
 like($export, qr/studioMasterChain\(off\)/, 'the mastering rack is built on the offline context');
@@ -153,10 +160,10 @@ like($export, qr/studioMasterSave\(\)/, 'the rack comes from the song, not a sec
 like($export, qr/decodeAudioData/, 'a take without a buffer is decoded from its source');
 like($export, qr/indexOf\('video'\)/, 'a video encoding is skipped');
 like($export, qr/fetch\('\/manager\/studio\/export'/, 'the WAV is posted to the export route');
-like($export, qr/form\.append\('audio', wav, trackName \+ '\.wav'\)/,
-	'the upload is named after the track');
+like($export, qr/form\.append\('name', songName\)/, 'the upload is named after the song');
+like($export, qr/form\.append\('audio', wav, songName \+ '\.wav'\)/,
+	'the one upload is named after the song');
 like($export, qr/#studio_export_state/, 'progress is written to the live status');
-like($export, qr/\(i \+ 1\) \+ ' of '/, 'the status names the track and its place in the queue');
 
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
@@ -450,27 +457,30 @@ function scenarioTwo() {
 	ui['#studio'] = { uuid: 'song-1', name: 'Song One' };
 	ui['#studio_export_master'] = true;
 	ui['.studio_track_name[channel="1"]'] = 'Bass';
+	ui['.studio_track_name[channel="2"]'] = 'Drums';
 	ui['.channel_volume[channel="1"]'] = '100';
+	ui['.channel_volume[channel="2"]'] = '50';
 	ui['.knob_control[channel="1"][control="pan"]'] = '50';
+	ui['.knob_control[channel="2"][control="pan"]'] = '0';
 	reset();
 	sandbox.mixer = {
 		time: { duration: 0 },
-		'1': { media: { out: [ { startTime: 0, duration: 1, buffer: buffer(1) } ] } }
+		'1': { media: { out: [ { startTime: 0, duration: 1, buffer: buffer(1) } ] } },
+		'2': { media: { out: [ { startTime: 0, duration: 1, buffer: buffer(1) } ] } }
 	};
 }
 
 (async function () {
-	// --- one render per track, through the track's own chain ----------------
+	// --- one render for the whole song, through every track's own chain -----
 	scenarioOne();
 	await api.tracks();
 
-	check(calls.contexts.length === 2, 'one OfflineAudioContext per track with takes', calls.contexts.length);
+	check(calls.contexts.length === 1, 'one OfflineAudioContext for the whole song', calls.contexts.length);
 	check(calls.contexts[0] && calls.contexts[0].numberOfChannels === 2, 'the render is stereo');
 	check(calls.contexts[0] && calls.contexts[0].sampleRate === 48000, 'the live sample rate is used');
 	check(calls.contexts[0] && calls.contexts[0].length === 192000,
-		'the render length is the last take end (4s at 48k)', calls.contexts[0] && calls.contexts[0].length);
-	check(calls.contexts[1] && calls.contexts[1].length === 48000,
-		'a short track renders only its own length', calls.contexts[1] && calls.contexts[1].length);
+		'the render length is the last take end across every track (4s at 48k)',
+		calls.contexts[0] && calls.contexts[0].length);
 
 	check(calls.inserts.length === 1, 'the output chain is built once for the one track that has one');
 	const ins = calls.inserts[0];
@@ -481,54 +491,55 @@ function scenarioTwo() {
 		'the chain feeds the insert');
 	check(connections.some(function (c) { return ins && c.from === ins.output && c.to.kind === 'gain'; }),
 		'the insert output reaches the fader');
-	check(calls.contexts[1] && calls.contexts[1].gains.length === 2,
-		'a track without outInserts is a pass-through, not a broken graph');
+	check(calls.contexts[0].gains.length === 4,
+		'a track without outInserts still gets its pass-through input and fader');
 
 	check(calls.contexts[0].gains[1].gain.value === 0.5, 'the channel fader is applied as a fraction');
+	check(calls.contexts[0].gains[3].gain.value === 1, 'the second channel keeps its own fader');
 	check(calls.contexts[0].panners[0].pan.value === 0, 'pan 50 is centre');
-	check(calls.contexts[1].panners[0].pan.value === 1, 'pan 100 is hard right');
+	check(calls.contexts[0].panners[1].pan.value === 1, 'pan 100 is hard right');
+	check(connections.filter(function (c) { return c.to.kind === 'destination'; }).length === 2,
+		'with the master rack off, both channels sum straight to the destination');
 
 	const ctx0 = calls.contexts[0];
 	const started = calls.sources.filter(function (s) { return s.ctx === ctx0; });
-	check(started.length === 2, 'a recording and a video take are not scheduled', started.length);
+	check(started.length === 3,
+		'every live take of every channel is scheduled, not the recording or the video', started.length);
 	check(started[0] && started[0].when === 0 && started[0].offset === 0.5 && started[0].duration === 2,
 		'a take plays at its song position and its own offset');
 	check(started[1] && started[1].when === 2 && started[1].offset === 0 && started[1].duration === 2,
 		'the next take keeps its position');
 	check(calls.fetches.indexOf('/take-b.wav') !== -1, 'a take without a buffer is fetched');
-	check(calls.sources.filter(function (s) { return s.ctx === calls.contexts[1]; }).length === 1,
-		'the decoded take is scheduled');
+	check(calls.sources.filter(function (s) { return s.ctx === ctx0; }).length === 3,
+		'the decoded take is scheduled into its own channel');
 
-	check(calls.wavs.length === 2, 'each track is encoded as a WAV', calls.wavs.length);
+	check(calls.wavs.length === 1, 'the whole song is encoded as one WAV', calls.wavs.length);
 	check(calls.wavs[0] && calls.wavs[0].rendered === true, 'the WAV is made from the rendered buffer');
 
-	check(calls.forms.length === 2, 'one upload per track', calls.forms.length);
+	check(calls.forms.length === 1, 'one upload for the whole mix', calls.forms.length);
 	const form = calls.forms[0] || {};
 	check(form.uuid === 'song-1', 'the upload names the saved song');
-	check(form.name === 'Bass', 'the upload is named after the track');
+	check(form.name === 'Song One', 'the mix is named after the song');
 	check(form.format === 'mp3', 'the chosen format is sent');
 	check(form.bitrate === '192', 'the chosen bit rate is sent');
 	check(form.master === '0', 'the master switch is sent as off');
-	check(form.audio__filename === 'Bass.wav', 'the WAV upload is named after the track');
-	check((calls.forms[1] || {}).name === 'Drums', 'the second track keeps its own name');
-	check((calls.forms[1] || {}).audio__filename === 'Drums.wav', 'and its own file name');
+	check(form.audio__filename === 'Song One.wav', 'the WAV upload is named after the song');
 
-	check(stateTexts[0] === 'Bass (1 of 2)\u2026', 'progress names the track and its place', stateTexts[0]);
-	check(stateTexts[1] === 'Drums (2 of 2)\u2026', 'the next track takes the next place', stateTexts[1]);
-	check(stateTexts[stateTexts.length - 1] === '2 tracks attached.',
-		'the last line says how many files were attached', stateTexts[stateTexts.length - 1]);
+	check(stateTexts[0] === 'Rendering the mix\u2026', 'progress says the mix is rendering', stateTexts[0]);
+	check(stateTexts[stateTexts.length - 1] === 'Mix attached.',
+		'the last line says the mix was attached', stateTexts[stateTexts.length - 1]);
 
 	// --- the mastering rack --------------------------------------------------
 	scenarioTwo();
 	await api.tracks();
 
-	check(calls.masterBuilt === 1, 'the master rack is built on the offline context');
+	check(calls.masterBuilt === 1, 'the master rack is built once on the offline context');
 	const master = calls.lastMaster || {};
 	check(master.comp && master.comp.values.thresh === '-12', 'the rack\'s controls are restored');
 	check(master.comp && master.comp._set && master.comp.bypassed === false, 'an effect that is on stays on');
 	check(master.eq && master.eq.bypassed === true, 'an effect that is off stays bypassed');
-	check(connections.some(function (c) { return c.from.kind === 'pan' && c.to === master.input; }),
-		'the channel output enters the master rack');
+	check(connections.filter(function (c) { return c.from.kind === 'pan' && c.to === master.input; }).length === 2,
+		'both channel outputs sum into the master rack');
 	check(connections.some(function (c) { return c.from === master.output && c.to.kind === 'destination'; }),
 		'the master rack reaches the destination');
 	check((calls.forms[0] || {}).master === '1', 'the master switch is sent as on');
@@ -539,7 +550,7 @@ function scenarioTwo() {
 	reset();
 	await api.tracks();
 	check(calls.contexts.length === 0, 'an unsaved song renders nothing', calls.contexts.length);
-	check(stateTexts[stateTexts.length - 1] === 'Save the song before exporting its tracks.',
+	check(stateTexts[stateTexts.length - 1] === 'Save the song before exporting its mix.',
 		'the status says the song must be saved first', stateTexts[stateTexts.length - 1]);
 
 	// --- a server refusal is shown, not hidden ------------------------------
@@ -549,7 +560,7 @@ function scenarioTwo() {
 	ui.__serverError = 'the audio encoder is not installed';
 	await api.tracks();
 	const refused = stateTexts[stateTexts.length - 1] || '';
-	check(/^0 of 1 tracks attached\./.test(refused), 'a failure still reports the count', refused);
+	check(/^The export failed\./.test(refused), 'a failure is reported as a failed export', refused);
 	check(refused.indexOf('the audio encoder is not installed') !== -1, 'the server error is shown', refused);
 
 	// --- a looping take wraps to the song end ------------------------------

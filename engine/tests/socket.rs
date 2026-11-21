@@ -2307,16 +2307,18 @@ fn a_monitorless_take_records_beside_the_playing_transport() {
     assert!(start.contains("\"ok\":true"), "start: {start}");
     assert!(start.contains("\"state\":\"playing\""), "start: {start}");
 
-    // A monitor (files, live input or a click) needs an output of its own, so
-    // that take still refuses while the transport plays.
+    // A take's own monitor files or click need an output of its own, so those
+    // still refuse while the transport plays. Its live input is the exception
+    // and is covered by its own test below.
     let monitored = TempFile::new("transport-share-monitored");
     let refused = client.ask(&format!(
-        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":1,\"monitor_input\":true}}",
-        monitored.text()
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":1,\"monitor\":[\"{}\"]}}",
+        monitored.text(),
+        clip.text()
     ));
     assert!(refused.contains("\"ok\":false"), "monitor: {refused}");
     assert!(
-        refused.contains("cannot also open a monitor"),
+        refused.contains("owns the metronome"),
         "monitor: {refused}"
     );
 
@@ -2350,6 +2352,63 @@ fn a_monitorless_take_records_beside_the_playing_transport() {
         transport.contains("\"state\":\"stopped\""),
         "transport: {transport}"
     );
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_live_take_monitors_beside_the_playing_transport() {
+    // A take's live input rides the transport's one output through the same
+    // master chain as the clips. `record` stop detaches it and leaves the
+    // transport playing, so one output, one take and one attachment are all
+    // the session ever has.
+    let clip = TempFile::new("transport-live-clip");
+    write_silent_wav(&clip.path, 4_800);
+
+    let server = Server::start("transport-live");
+    let mut client = server.connect();
+
+    let start = client.ask(&format!(
+        "{{\"cmd\":\"transport\",\"action\":\"start\",\"position\":0,\"bpm\":120,\"beats_per_bar\":4,\"gain\":0,\"clips\":[{{\"file\":\"{}\",\"start\":0}}]}}",
+        clip.text()
+    ));
+    assert!(start.contains("\"state\":\"playing\""), "start: {start}");
+
+    let take = TempFile::new("transport-live-take");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300,\"monitor_input\":true,\"monitor_gain\":0.5}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    assert!(reply.contains("\"state\":\"recording\""), "record: {reply}");
+    assert!(reply.contains("\"monitor_input\":true"), "record: {reply}");
+
+    // The transport carries the attachment and the same trim the take reports.
+    let status = client.ask("{\"cmd\":\"transport\",\"action\":\"status\"}");
+    assert!(status.contains("\"monitor_input\":true"), "status: {status}");
+    assert!(status.contains("\"monitor_gain\":0.5"), "status: {status}");
+
+    let param = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"input\",\"name\":\"gain\",\"value\":0.75}",
+    );
+    assert!(param.contains("\"gain\":0.75"), "param: {param}");
+    let status = client.ask("{\"cmd\":\"transport\",\"action\":\"status\"}");
+    assert!(status.contains("\"monitor_gain\":0.75"), "status: {status}");
+
+    // Stopping the take hands the output back to the transport.
+    let stopped = client.ask("{\"cmd\":\"record\",\"action\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    let status = client.ask("{\"cmd\":\"transport\",\"action\":\"status\"}");
+    assert!(status.contains("\"state\":\"playing\""), "status: {status}");
+    assert!(status.contains("\"monitor_input\":false"), "status: {status}");
 
     let reply = client.ask("{\"cmd\":\"quit\"}");
     assert_eq!(reply, "{\"ok\":true}");

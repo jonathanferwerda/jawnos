@@ -1245,15 +1245,16 @@ function studioEngineStartNow(punch) {
 	// A refused start must not hand the click back to the browser while an
 	// earlier take is still recording.
 	var wasRecording = studioEngineRecording;
-	// While the transport runs it owns the output: the take must not bring a
-	// click or a live monitor of its own, or the device would be opened twice.
-	// The transport's click is the metronome, so the take records silently.
+	// While the transport runs it owns the click: the take must not bring a
+	// click of its own, or a second metronome would play. The transport's click
+	// is the metronome, so the take records without one.
 	var transportRunning = !!(mixer['time'] && mixer['time']['engine_transport']);
 	var click = transportRunning ? null : studioEngineClick();
-	// A monitored track (or the config panel's Monitor setting) also sends the
-	// live input to the take's monitor. The transport's output takes that place.
-	var monitor = !transportRunning && ((typeof studioMonitoredChannel === 'function' && studioMonitoredChannel() !== null)
-		|| (mixer['time'] && mixer['time']['monitor'] == 'yes'));
+	// A monitored track (or the config panel's Monitor setting) sends the live
+	// input to the take's monitor, whether or not the transport runs: the engine
+	// records beside the transport and monitors its input on the same output.
+	var monitor = (typeof studioMonitoredChannel === 'function' && studioMonitoredChannel() !== null)
+		|| (mixer['time'] && mixer['time']['monitor'] == 'yes');
 	var request = {
 		action: 'start',
 		seconds: $('#studio_engine_seconds').val(),

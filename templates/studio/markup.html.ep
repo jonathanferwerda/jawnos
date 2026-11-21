@@ -455,7 +455,7 @@
 						<td><span id="studio_latency_info">&mdash;</span></td>
 					</tr>
 					<tr>
-						<td colspan="2" style="padding-top:14px;"><b>Export</b><br><span style="font-size:12px;">renders every track through its output pedals and fader, then saves it on this song as an audio file named after the track</span></td>
+						<td colspan="2" style="padding-top:14px;"><b>Export</b><br><span style="font-size:12px;">renders the whole song once through every track's output pedals and fader and the mastering rack, then saves one mixed file named after the song</span></td>
 					</tr>
 					<tr>
 						<td>Format</td>
@@ -480,11 +480,11 @@
 					</tr>
 					<tr>
 						<td>Master</td>
-						<td><label><input type="checkbox" id="studio_export_master" hint="<%= &subs::ui('Include the mastering rack') %>"> <%= &subs::ui('Include the mastering rack') %></label></td>
+						<td><label><input type="checkbox" id="studio_export_master" checked hint="<%= &subs::ui('Include the mastering rack') %>"> <%= &subs::ui('Include the mastering rack') %></label></td>
 					</tr>
 					<tr>
 						<td>Export now</td>
-						<td><button id="studio_export_tracks" class="hover" hint="<%= &subs::ui('Export every track as an audio file on this song') %>"><%= &subs::ui('Export tracks') %></button> <span id="studio_export_state" aria-live="polite"></span></td>
+						<td><button id="studio_export_tracks" class="hover" hint="<%= &subs::ui('Export the whole song as one mixed audio file') %>"><%= &subs::ui('Export mix') %></button> <span id="studio_export_state" aria-live="polite"></span></td>
 					</tr>
 					<tr>
 						<td>Round trip<br><span style="font-size:12px;">plays a few clicks through the speakers and times the echo on the mic; use speakers (not headphones) and stay quiet</span></td>

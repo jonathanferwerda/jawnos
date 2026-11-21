@@ -46,7 +46,7 @@ pub use mixer::{Mixer, ParamName, ParamQueue, Track, MASTER_ORDER};
 pub use monbus::{Consumer, MonitorBus, Producer};
 pub use playback::{
     monitor_json, monitor_start, ClickSpec, MonitorSpec, PlayTrack, Playback, TransportClip,
-    TransportControl, TransportPlan, TransportSource,
+    TransportControl, TransportLive, TransportPlan, TransportSource,
 };
 pub use params::Param;
 pub use proto::{
