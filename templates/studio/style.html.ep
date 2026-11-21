@@ -1379,6 +1379,24 @@
 		border-right-color: var(--studio-track-colour, var(--line));
 		border-left: 3px solid var(--studio-track-colour, transparent);
 	}
+	/* ---- the channel input/output selector ---------------------------------
+	   It floats at the pointer, so it must never grow past the window: a table's
+	   list of devices, apps and Screen Share is long, and an uncapped box runs
+	   off the bottom with its last dropdown unreachable. The 8px margin is the
+	   same one channelSelect() clamps left/top to. */
+	#studio_plug_select_container {
+		position: fixed;
+		display: none;
+		box-sizing: border-box;
+		max-width: calc(100vw - 16px);
+		max-height: calc(100vh - 16px);
+		overflow-x: hidden;
+		overflow-y: auto;
+		z-index: 50009;
+		border: solid;
+		border-radius: 4px;
+		background-color: var(--accent-soft, var(--panel-2));
+	}
 	/* ---- small context menus -----------------------------------------------
 	   One themed card for the timeline's clip menu and a beat's velocity menu.
 	   The caller positions it in viewport coordinates and removes it on the

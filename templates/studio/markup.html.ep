@@ -5,7 +5,10 @@
 	<script>window.jawnos_studio_effects = <%== Mojo::JSON::encode_json($gb::studio->{'effects'}) %>;
 	window.jawnos_studio_master = <%== Mojo::JSON::encode_json($gb::studio->{'master'}) %>;</script>
 	<audio id="metronome" autoplay style="display:none;"></audio>
-	<div id="studio_plug_select_container" style="position:fixed;display:none;background-color:var(--accent-soft, var(--panel-2));z-index:50009;border:solid;border-radius:4px;"></div>
+	<%# The selector's box (position, stacking, the window cap that lets a long
+	   list scroll) lives in studio/style so channelSelect() can clamp the same
+	   edges it enforces. %>
+	<div id="studio_plug_select_container"></div>
 	<%# The artwork covers these effect kinds; an effect with no artwork gets a
 	   text tile instead. Jtune is the chromatic tuner, not an effect, so it
 	   answers for nothing here and JawnPitch keeps its own text tile. %>

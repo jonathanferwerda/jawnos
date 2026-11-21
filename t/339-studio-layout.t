@@ -1,11 +1,13 @@
-# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
+# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
 # covers:    The Studio layout: a compact panel beside every track with its five
 #            controls, four remembered hide toggles, a Dock control and pointer
 #            drag/resize handlers, a packing grid where an ordered panel can span
 #            one or two columns, a channel-strips panel that scrolls its faders
 #            into reach, a jog wheel in the transport's button row, a dynamic
 #            track list with Add track / a twice-pressed Delete, and a help topic
-#            that names them. Structure only; pixels are not asserted here.
+#            that names them. Also the channel input/output selector: a bounded,
+#            scrollable box clamped to the window by channelSelect().
+#            Structure only; pixels are not asserted here.
 
 use strict;
 use warnings;
@@ -32,6 +34,7 @@ my $js     = slurp("$root/public/js/manager/studio.js");
 my $edit   = slurp("$root/public/js/manager/studio/03_editing.js");
 my $knobs  = slurp("$root/public/js/manager/studio/04_knobs.js");
 my $ctrl   = slurp("$root/public/js/manager/studio/06_controls.js");
+my $inputs = slurp("$root/public/js/manager/studio/05_inputs.js");
 my $layout = slurp("$root/public/js/manager/studio/07_layout.js");
 my $winjs  = slurp("$root/public/js/manager/windows.js");
 my $fitjs  = slurp("$root/public/js/manager/windows/02_fit.js");
@@ -564,5 +567,32 @@ like($style, qr/#studio\.studio_config_open #studio_viewer\s*\{\s*display:\s*non
 like($ctrl, qr/addClass\('studio_config_open'\)/, 'the Configure handler sets the open class');
 like($ctrl, qr/removeClass\('studio_config_open'\)/, 'and clears it on close');
 unlike($markup, qr/id="studio_config"\s+style="[^"]*width:/, 'the inline width moved into the stylesheet');
+
+# --- the input/output selector is a bounded, scrollable box ----------------
+like($markup, qr/id="studio_plug_select_container"/, 'the selector container is in the markup');
+unlike($markup, qr/id="studio_plug_select_container"\s+style="/,
+	'and its box is not a bare inline style any more');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*position:\s*fixed/s,
+	'the selector still floats over the console');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*z-index:\s*50009/s,
+	'and keeps its stacking above the panels');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*max-height:\s*calc\(100vh - 16px\)/s,
+	'the selector may never grow past the window');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*overflow-y:\s*auto/s,
+	'so a long device list scrolls inside it');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*overflow-x:\s*hidden/s,
+	'and never scrolls sideways');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*max-width:\s*calc\(100vw - 16px\)/s,
+	'nor wider than the window');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*box-sizing:\s*border-box/s,
+	'the cap includes the border');
+like($inputs, qr/sis\.html\(response\.html\)\.show\(\);[\s\S]*?outerWidth\(\)[\s\S]*?outerHeight\(\)/,
+	'channelSelect() measures the finished panel');
+like($inputs, qr/Math\.max\(8,\s*Math\.min\(x \+ 20,\s*\$\(window\)\.width\(\) - width - 8\)\)/,
+	'and clamps left to the window with an 8px margin');
+like($inputs, qr/Math\.max\(8,\s*Math\.min\(y,\s*\$\(window\)\.height\(\) - height - 8\)\)/,
+	'and clamps top the same way, for input and output alike');
+unlike($inputs, qr/sis\.css\(\s*'(?:right|bottom)'\s*\)/,
+	'the clamp no longer reads the right/bottom it just cleared');
 
 done_testing();

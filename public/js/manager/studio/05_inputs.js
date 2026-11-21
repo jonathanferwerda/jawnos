@@ -251,16 +251,23 @@ async function channelSelect(channel,direction) {
 			data: data,
 			success: function(response) {
 				sis.html(response.html).show();
-				sis.css({ 'left': (x + 20), 'top': y, 'right': '', 'bottom': '', 'width': '', 'height': '' });
-				var width = sis.width();
-				if (numeral(sis.css('right')).value() < 0 || sis.width() < 200) {
-					sis.css({ 'right': (($(window).width() - x) + 20), 'left': '' });
-				}
-				if (numeral(sis.css('bottom')).value() < 0) {
-					sis.css({ 'bottom': (($(window).height() - y) + 20), 'top': '' });
-				}
-
+				// The screen-share row is part of the panel's height: add it
+				// before measuring so the clamp sees the box that is drawn.
 				studioScreenSourceFill(sis);
+				// Measure the finished panel, then clamp it to the window. It is
+				// position:fixed, so left/top are viewport coordinates; when the
+				// panel is wider or taller than the window it pins to the 8px
+				// margin and the stylesheet's overflow does the scrolling.
+				sis.css({ 'width': '', 'height': '' });
+				var width = sis.outerWidth();
+				var height = sis.outerHeight();
+				sis.css({
+					'left': Math.max(8, Math.min(x + 20, $(window).width() - width - 8)),
+					'top': Math.max(8, Math.min(y, $(window).height() - height - 8)),
+					'right': '',
+					'bottom': ''
+				});
+
 				appointment_chron();
 			}
 		});
