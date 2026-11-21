@@ -29,8 +29,15 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	if (!$misses->{'video'}) {
 		$misses->{'video'} = &subs::random_string_creator(25,"Aa");
 	}
-	foreach my $ns ( keys %{$new_settings} ) {
-		&subs::setting_setter({ app => 'music', setting => $ns, value => $new_settings->{$ns} });
+	# A relayed search is this window asking another machine for its library;
+	# the answer is this window's, not that machine's. Writing the viewer's
+	# shuffle, layout and search onto the host is how changing the laptop's
+	# view changed the table's. Apply them to this render only.
+	my $remote_render = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	unless ($remote_render) {
+		foreach my $ns ( keys %{$new_settings} ) {
+			&subs::setting_setter({ app => 'music', setting => $ns, value => $new_settings->{$ns} });
+		}
 	}
 
 
@@ -38,25 +45,36 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	my $list = eval { return decode_json $c->param('list') } || [];
 	my $now_playing = eval { return decode_json $c->param('now_playing') } || {};
 	my $same_order = $c->param('same_order');
-	&subs::cache_delete({ app => 'music', context => 'content' });
+	&subs::cache_delete({ app => 'music', context => 'content' }) unless $remote_render;
 	my $artist = $c->param('artist');
 	my $album = $c->param('album');
 	my $misc_settings = &Manager::misc_setting_list();
 	$music_permissive = $unlocked;
 
 	
-	&subs::setting_setter({ app => 'music', setting => 'resizes', value => $resizes });
-	&subs::setting_setter({ app => 'music', setting => 'album', value => $album });
-	&subs::setting_setter({ app => 'music', setting => 'artist', value => $artist });
-	&subs::setting_setter({ app => 'music', setting => 'search', value => $search });
-	# the library choice rides in with the search: written as its own request it
-	# raced the search, and whenever the search won it relayed to the old
-	# machine again, which looked like being stuck on a remote library. It is a
-	# local-machine choice, so it is not forwarded as new_settings.
-	if (my $library = $c->param('library')) {
-		&subs::setting_setter({ app => 'music', setting => 'library', value => $library });
+	unless ($remote_render) {
+		&subs::setting_setter({ app => 'music', setting => 'resizes', value => $resizes });
+		&subs::setting_setter({ app => 'music', setting => 'album', value => $album });
+		&subs::setting_setter({ app => 'music', setting => 'artist', value => $artist });
+		&subs::setting_setter({ app => 'music', setting => 'search', value => $search });
+		# the library choice rides in with the search: written as its own request it
+		# raced the search, and whenever the search won it relayed to the old
+		# machine again, which looked like being stuck on a remote library. It is a
+		# local-machine choice, so it is not forwarded as new_settings.
+		if (my $library = $c->param('library')) {
+			&subs::setting_setter({ app => 'music', setting => 'library', value => $library });
+		}
 	}
 	my $settings = &subs::settings_grabber({ app => 'music' });
+	if ($remote_render) {
+		foreach my $ns ( keys %{$new_settings} ) {
+			$settings->{$ns} = $new_settings->{$ns};
+		}
+		$settings->{'resizes'} = $resizes if defined $resizes;
+		$settings->{'album'} = $album if defined $album;
+		$settings->{'artist'} = $artist if defined $artist;
+		$settings->{'search'} = $search;
+	}
 
 	if ($settings->{'library'} ne 'local' && $c->param('remoted') ne 'yes') {
 		$c->param('resizes' => undef);
@@ -132,14 +150,17 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 		);
 		$c->render(text => $contents);
 	}
-	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents });
+	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents }) unless $remote_render;
 });
 
 Manager::app->routes->post('/music/folder_toggle' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $location = $c->param('location');
 	my $status = $c->param('status');
-	&subs::setting_setter({ app => 'music_folder_toggle', setting => $location, value => $status, timestamp => $timestamp });
+	# A relayed click is the viewer's choice, not the library host's: the host
+	# is asked for its folders already, so its own saved buttons must not move.
+	my $remote_render = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	&subs::setting_setter({ app => 'music_folder_toggle', setting => $location, value => $status, timestamp => $timestamp }) unless $remote_render;
 	# the toggle flips the local button and also steers the scanning of the
 	# machine whose library is loaded, so a remote library gets the same click
 	my $settings = &subs::settings_grabber({ app => 'music' });
@@ -155,7 +176,8 @@ Manager::app->routes->post('/music/folder_toggle' => sub($c) {
 			}
 		}
 	}
-	my $setting = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $location, device => $music_device });
+	my $setting = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $location });
+	$setting = $status if $remote_render;
 	$c->render(text => $setting);
 });
 
@@ -164,7 +186,8 @@ Manager::app->routes->post('/music/folder_toggle' => sub($c) {
 # gets the same choice.
 Manager::app->routes->post('/music/archive_toggle' => sub($c) {
 	my $status = $c->param('status');
-	&subs::setting_setter({ app => 'music', setting => 'archive', value => $status, timestamp => $c->param('timestamp') });
+	my $remote_render = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	&subs::setting_setter({ app => 'music', setting => 'archive', value => $status, timestamp => $c->param('timestamp') }) unless $remote_render;
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	if ($settings->{'library'} ne 'local' && $c->param('remoted') ne 'yes') {
 		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
@@ -178,7 +201,7 @@ Manager::app->routes->post('/music/archive_toggle' => sub($c) {
 			}
 		}
 	}
-	$c->render(text => &subs::setting_grabber({ app => 'music', setting => 'archive' }));
+	$c->render(text => $remote_render ? $status : &subs::setting_grabber({ app => 'music', setting => 'archive' }));
 });
 
 Manager::app->routes->post('/music/audio_output_select' => sub ($c) {

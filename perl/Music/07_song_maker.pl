@@ -9,6 +9,24 @@ use File::Find;
 
 our ($music_thumb_files);
 
+# Local files first, then archived tracks in the slots that remain. An
+# archived row whose copy is on this disk has already been left out of
+# $files by music_search, so this only decides how many of each to show.
+sub music_budget_files($files, $archive, $max_files) {
+	my @all = @{ $files || [] };
+	$max_files = 30 unless defined $max_files && $max_files =~ /^\d+$/;
+	my (@local, @archived);
+	foreach my $path ( @all ) {
+		if ($archive && ref $archive eq 'HASH' && $archive->{$path}) { push @archived, $path; }
+		else { push @local, $path; }
+	}
+	splice @local, $max_files if scalar @local > $max_files;
+	my $remaining = $max_files - scalar @local;
+	$remaining = 0 if $remaining < 0;
+	splice @archived, $remaining if scalar @archived > $remaining;
+	return (@local, @archived);
+}
+
 sub song_maker($data) {
 	my $files = $data->{'files'};
 	my $settings = $data->{'settings'};
@@ -56,27 +74,10 @@ sub song_maker($data) {
 	# covers live in the album folder, so tracks that share one are listed once
 	my %thumb_cache;
 
-	# An archived track is not in the local walk's count, and its path lives on
-	# another machine ('/mnt/...' sorts after this disk's '/home/...'), so
-	# slicing the combined list outright dropped every archive row: a library
-	# with more than max_files local tracks never showed what the archive held.
-	# Spend the budget on local files and keep every archive row.
-	if (%{$archive}) {
-		my $local_budget = $max_files - scalar(keys %{$archive});
-		$local_budget = 0 if $local_budget < 0;
-		my (@kept, $locals);
-		$locals = 0;
-		foreach my $path ( @local_files ) {
-			if ($archive->{$path}) { push @kept, $path; next; }
-			next if $locals >= $local_budget;
-			push @kept, $path;
-			$locals++;
-		}
-		@local_files = @kept;
-	}
-	else {
-		splice @local_files, $max_files;
-	}
+	# A local copy is the one the person wants; the archive is the fallback for
+	# what is not on this disk. Spend the budget on local files first, in the
+	# order the window chose, then fill whatever is left with archived tracks.
+	@local_files = &music_budget_files(\@local_files, $archive, $max_files);
 	if ($now_playing->{'file'}) {
 		my @is = grep { $_ eq $now_playing->{'file'} } @local_files;
 		unshift @local_files, $now_playing->{'file'} unless grep { $_ eq $now_playing->{'file'} } @local_files;

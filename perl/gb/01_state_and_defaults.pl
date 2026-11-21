@@ -166,6 +166,13 @@ our $piano = [
 
 our @protected = qw/me misc __president music_folder_toggle __DEBRIEFING__ teletype budget ide config box_office studio synth cards terminal video gallery security/;
 
+# Settings that belong to the machine rather than to its device class. Two
+# computers are both 'computer', but the Music window one person left open on
+# the laptop is not the one on the table: its layout, shuffle, search, repeat
+# and whether it can see the archive drive are the machine's own. Keyed by the
+# signatorial, which is the identity a machine keeps across restores.
+our @machine_setting_apps = qw/music music_folder_toggle/;
+
 our @misc_settings = qw/homepage homepage_content manager start_menu gate configure store store_header soundroom_sidebar_container mail_sidebar_container ide_sidebar_container pseudonym pseudonym_home box_office notifications console keyboard calculator walkboy delorean controller remote_control /;
 
 # selectable pseudonym icon sets; each maps to public/icons/sets/<key>/*.svg.

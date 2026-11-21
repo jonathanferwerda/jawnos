@@ -126,6 +126,10 @@ sub process_thumbfile() {
 Manager::app->routes->get('/manager/music' => sub ($c) {
 	my $search = $c->param('search') || &subs::setting_grabber({ app => 'music', 'setting' => 'search' });
 	my $window_maker = $c->param('window_maker');
+	# A relayed open is this window asking another machine for its library; the
+	# shell built for it must not replace the host's own, which is handed back to
+	# the host's next local open under the same queue key.
+	my $remote_render = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
 	# an app opens locked: only the token this window holds, minted by the
 	# phone's unlock, may list a sealed track. A refresh after that unlock
 	# carries the token and stays open.
@@ -168,7 +172,7 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 	unless ($music_files || $c->param('library_name')) {
 		$remembered = &music_queue_recall($settings, $unlocked);
 		if ($remembered) { $shell_key .= '-q' . $remembered->{'key'}; }
-		if (my $cache = &subs::cache_get({ app => 'music', context => 'content', subcontext => $shell_key })) {
+		if (!$remote_render && (my $cache = &subs::cache_get({ app => 'music', context => 'content', subcontext => $shell_key }))) {
 			if ($cache->{'contents'}) {
 				# one line per app open: the three ways a window can come back are
 				# worth telling apart when someone reports the wrong list
@@ -240,12 +244,14 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 		);
 		$c->render(text => $contents);
 	}
-	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents });
-	# The shell just written is the only one a read can reach: it is keyed by
-	# this code revision and this queue. The shells left by an earlier version
-	# or an earlier queue are dead the moment this one lands, and they used to
-	# stay behind one per push; drop them so the music cache does not grow forever.
-	&subs::db_query("delete from cache where app = 'music' and context = 'content' and subcontext is not ?", $content_cache . ($queue_key ? '-q' . $queue_key : ''));
+	unless ($remote_render) {
+		&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents });
+		# The shell just written is the only one a read can reach: it is keyed by
+		# this code revision and this queue. The shells left by an earlier version
+		# or an earlier queue are dead the moment this one lands, and they used to
+		# stay behind one per push; drop them so the music cache does not grow forever.
+		&subs::db_query("delete from cache where app = 'music' and context = 'content' and subcontext is not ?", $content_cache . ($queue_key ? '-q' . $queue_key : ''));
+	}
 });
 
 

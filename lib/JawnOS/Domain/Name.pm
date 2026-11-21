@@ -247,6 +247,32 @@ sub event_time_ms {
 	return $event;
 }
 
+# Settings that belong to the machine, not to its device class. A laptop and a
+# table are both 'computer'; what Music last showed, searched for, shuffled or
+# repeated is the machine's own view, as is whether it can see the archive
+# drive. The signatorial is the identity that tells two computers apart, and it
+# survives a restore of the database. Rows written before this rule, and rows
+# from a peer that has not been taught it yet, stay keyed by the device class:
+# they are the fallback when the machine has no row of its own.
+sub setting_app_is_machine($app) {
+	return 0 unless defined $app && length $app;
+	return scalar grep { $_ eq $app } @gb::machine_setting_apps;
+}
+
+sub setting_machine_device() {
+	my $signatorial = &signatorial_designer();
+	return (defined $signatorial && length $signatorial) ? $signatorial : &device_setter();
+}
+
+# Whether a settings row's `device` names one machine rather than a device
+# class. The merge used to relabel every peer row with the local class; a row
+# carrying a signatorial is one machine's own and keeps its key across the wire.
+sub setting_device_is_signatorial($device) {
+	return 0 unless defined $device && length $device;
+	return 0 if grep { $_ eq $device } @gb::device_types;
+	return ($device =~ /^[0-9a-f]{16,64}$/i) ? 1 : 0;
+}
+
 sub setting_setter {
 	%setting_memo = ();
 	my $settings = shift;
@@ -281,7 +307,6 @@ sub setting_setter {
 	}
 	my $timestamp = $settings->{'timestamp'} || &rightNow();
 	my $browser_tab_id = $settings->{'browser_tab_id'};
-	my $dev = $settings->{'device'} || &device_setter();
 	# A row arriving from a peer's snapshot is a mirror of a change that already
 	# happened somewhere else. It must be written, but its side effects - a
 	# websocket reload, a BLE toggle push, a task re-registration, a name-change
@@ -289,6 +314,13 @@ sub setting_setter {
 	# person made the change. Replaying them here is what opened Libro Chequing
 	# on every machine and flipped jobs off during a merge.
 	my $sync = $settings->{'sync'} ? 1 : 0;
+	# A local write lands on this machine's own row. A peer replay keeps the
+	# device it arrived with, so a peer's saved Music state is never relabelled
+	# as ours.
+	my $dev = $settings->{'device'};
+	unless (defined $dev && length $dev) {
+		$dev = (!$sync && &setting_app_is_machine($app)) ? &setting_machine_device() : &device_setter();
+	}
 	# A warranty is one value for the house (warranty_device), so a local write
 	# lands on the house row every machine reads. A peer replay keeps the device
 	# it arrived with, so an older build's per-device row cannot take the house
@@ -594,11 +626,12 @@ sub setting_grabber {
 	$settings->{'app'} = $app;
 	my $device_defined = 0;
 	$device_defined = 1 if $settings->{'device'};
-	$settings->{'device'} = $settings->{'device'} || &device_setter();
 	# A warranty is one value for the house, so ask the house row first. A legacy
 	# per-device row is only the fallback, so a machine that has not been migrated
 	# still answers with what it used to hold.
 	my $warranty_house = (($settings->{'setting'} // '') eq 'warranty' && !$device_defined);
+	my $machine = (!$device_defined && !$warranty_house && &setting_app_is_machine($app));
+	$settings->{'device'} = $settings->{'device'} || ($machine ? &setting_machine_device() : &device_setter());
 	$settings->{'device'} = &warranty_device() if $warranty_house;
 	my $returner;
 	# benign and settings are parameters of this sub, not columns of the settings
@@ -606,6 +639,18 @@ sub setting_grabber {
 	# column: "benign"', and the eval below swallowed the answer with it
 	my $params = { %{$settings} };
 	delete @{$params}{qw/benign settings/};
+	# The first read after the upgrade has no machine row yet. Fall back to the
+	# device-class row until one is written, so the window keeps what it showed
+	# rather than snapping to an empty default. A row that exists with a blank
+	# value is a real answer (an empty search), so only a missing row falls back.
+	if ($machine && (($settings->{'device'} // '') ne (&device_setter() // ''))) {
+		my $probe = eval { &db_select_simple('settings', ['value'], $params) };
+		my $rows = $probe ? $probe->hashes : [];
+		unless (scalar @{$rows}) {
+			$settings->{'device'} = &device_setter();
+			$params->{'device'} = &device_setter();
+		}
+	}
 
 	# request-scoped memo: the same scalar answer is recomputed zero times per
 	# request. A worker handles one request at a time, so this is private to it.
@@ -799,34 +844,42 @@ sub settings_grabber {
 	my $app = defined $settings->{'app'} ? &subs::text_chars($settings->{'app'}) : undef;
 	my $device_defined = 0;
 	$device_defined = 1 if $settings->{'device'};
-	$settings->{'device'} = $settings->{'device'} || &device_setter();
+	my $machine = (!$device_defined && &setting_app_is_machine($app));
+	$settings->{'device'} = $settings->{'device'} || ($machine ? &setting_machine_device() : &device_setter());
 #	$settings->{'device'} = $device unless $settings->{'device'} ne '';
 	my $returner = { app => $app };
 
-	my $query = 'select * from settings where app=? and device=?';
-	my $q;
-	if ($settings->{'settings'}) {
-		if (scalar @{$settings->{'settings'}}) {
-
-			my $query = 'select * from settings where app=? and device=? and ( ';
-			for (my $n = 0; $n <= scalar @{$settings->{'settings'}}; $n++) {
-				if ($n == scalar @{$settings->{'settings'}}) {
-					$query .= ' setting = ? ';
-				} else {
-					$query .= ' setting = ? or ';
-				}
-
-			}
-			$query .= ')';
-			$q = &db_raw($query, $app,$settings->{'device'}, @{$settings->{'settings'}});
+	my $fetch = sub {
+		my ($device) = @_;
+		my $query = 'select * from settings where app=? and device=?';
+		my @args = ($app, $device);
+		if ($settings->{'settings'}) {
+			my @wanted = @{$settings->{'settings'}};
+			return [] unless scalar @wanted;
+			$query .= ' and ( ' . join(' or ', ('setting = ?') x scalar @wanted) . ' )';
+			push @args, @wanted;
 		}
-	}
-	else {
-		$q = &db_raw($query, $app,$settings->{'device'});
-	}
-	my $list = $q;
-	if ($settings->{'subsetting'}) {
-		@{$list} = grep { $_->{'subsetting'} eq $settings->{'subsetting'} } @{$list};
+		my $rows = &db_raw($query, @args) || [];
+		if ($settings->{'subsetting'}) {
+			@{$rows} = grep { (($_->{'subsetting'} // '') eq $settings->{'subsetting'}) } @{$rows};
+		}
+		return $rows;
+	};
+	my $list = $fetch->($settings->{'device'});
+	# The machine's own row is the answer; the device-class row is what the
+	# machine had before this rule and what an app born earlier still holds, so
+	# it fills only the keys the machine has not written yet. A key the machine
+	# does hold is never taken from the class - a peer's synced value must not
+	# win here just because it is newer.
+	if ($machine) {
+		my $class = &device_setter();
+		if (($settings->{'device'} // '') ne ($class // '')) {
+			my %have = map { ($_->{'setting'} // '') => 1 } @{$list};
+			foreach my $row ( @{ $fetch->($class) } ) {
+				next if $have{$row->{'setting'} // ''}++;
+				push @{$list}, $row;
+			}
+		}
 	}
 	foreach my $s ( @{$list } ) {
 		next unless defined $s->{'setting'};

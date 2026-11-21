@@ -870,6 +870,47 @@ sub guide_message_warranty {
 			# write paths now use the views, so only this at-rest copy is left.
 			return &subs::remote_machine_payload_backfill();
 		},
+		'music_settings_per_machine' => sub {
+			# Music's remembered view - layout, shuffle, search, repeat, the
+			# archive switch and which folder buttons are lit - is the machine's
+			# own, not its device class's: the laptop and the table are both
+			# 'computer', and the table's shuffle used to become the laptop's.
+			# Copy what this machine holds today onto its signatorial once, so
+			# the upgrade keeps the window it was showing; later writes go there
+			# directly and never touch the class row again.
+			my $machine = &subs::signatorial_designer();
+			my $class = &subs::device_setter();
+			return 0 unless defined $machine && length $machine && $machine ne $class;
+			my @apps = @gb::machine_setting_apps;
+			return 1 unless scalar @apps;
+			my $in = join ',', ('?') x scalar @apps;
+			my $rows = &subs::db_query("select * from settings where app in ($in) and device = ?", @apps, $class)->hashes || [];
+			my $copied = 0;
+			foreach my $row ( @{$rows} ) {
+				next unless defined $row->{'app'} && defined $row->{'setting'};
+				my $exists = &subs::db_query(
+					'select 1 from settings where app = ? and setting = ? and device = ? and subsetting is ? limit 1',
+					$row->{'app'}, $row->{'setting'}, $machine, $row->{'subsetting'}
+				)->hashes->[0];
+				next if $exists;
+				my $now = &subs::rightNow();
+				my %copy = (
+					app => $row->{'app'},
+					setting => $row->{'setting'},
+					value => $row->{'value'},
+					device => $machine,
+					timestamp => $now,
+					server_time => $now,
+					uuid => &subs::random_string_creator(20),
+				);
+				$copy{'subsetting'} = $row->{'subsetting'} if defined $row->{'subsetting'};
+				$copy{'seed'} = $row->{'seed'} if defined $row->{'seed'};
+				&subs::db_insert('settings', \%copy);
+				$copied++;
+			}
+			&subs::say_it("backfill music_settings_per_machine: copied $copied row(s) onto " . substr($machine, 0, 8));
+			return 1;
+		},
 	};
 }
 

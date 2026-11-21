@@ -8,6 +8,134 @@ use Mojo::JSON qw(decode_json encode_json);
 
 our ($music_device, $music_files, $music_permissive);
 
+# The local root each location type keeps its files in, as this machine sees
+# it. A configured <location>_location wins; when the row is absent the house's
+# folder list supplies the conventional folder (Videos, Music, ...), which is
+# what the configure panel offers and what an archive folder is named after.
+sub music_location_roots($misc_settings, $folders) {
+	$misc_settings = &Manager::misc_setting_list() unless ref $misc_settings eq 'HASH';
+	my $settings = $misc_settings->{$music_device} || {};
+	my @folders = ref $folders eq 'ARRAY' ? @{$folders} : @{ &subs::config_reader()->{'folders'} || [] };
+	my %roots;
+	foreach my $location ( &subs::location_types() ) {
+		my $root = $settings->{$location . '_location'};
+		unless (defined $root && length $root) {
+			my $name = lc &subs::archive_folder_name($location);
+			foreach my $folder ( @folders ) {
+				next unless defined $folder && length $folder;
+				my $base = $folder;
+				$base =~ s{/+$}{};
+				my ($leaf) = $base =~ m{([^/]+)$};
+				next unless defined $leaf && lc($leaf) eq $name;
+				$root = $folder;
+				last;
+			}
+		}
+		next unless defined $root && length $root && lc($root) ne 'null';
+		my $path = &subs::home($root);
+		$path =~ s{/+$}{};
+		$roots{$location} = $path if length $path;
+	}
+	return \%roots;
+}
+
+# The (location, relative path) a local file belongs to. The longest matching
+# root wins, so a scans folder inside documents resolves to scans; a tie, which
+# is two names for one folder, follows the location order, exactly as
+# archive_plan does.
+sub music_local_parts($path, $roots) {
+	return undef unless defined $path && length $path;
+	my $best;
+	my $order = 0;
+	foreach my $location ( &subs::location_types() ) {
+		$order++;
+		my $base = $roots->{$location};
+		next unless defined $base && length $base;
+		next unless ($path eq $base || $path =~ m{^\Q$base\E/});
+		my $relative = ($path eq $base) ? '' : substr($path, length($base) + 1);
+		next if $best && length($base) < length($best->{'base'});
+		next if $best && length($base) == length($best->{'base'}) && $order >= $best->{'order'};
+		$best = { location => $location, relative => $relative, base => $base, order => $order };
+	}
+	return $best;
+}
+
+# The (location, relative path) an archive path names. The machines advertise
+# their drive, and both the readable folder name and the older lower-case one
+# count, so a drive filled before the names moved still resolves. Undef when the
+# path is not under any advertised archive.
+sub music_archive_parts($path, $machines) {
+	return undef unless defined $path && length $path;
+	$path =~ s{\\}{/}g;
+	$path =~ s{/+$}{};
+	foreach my $rm ( @{ $machines || [] } ) {
+		next unless ref $rm eq 'HASH';
+		my $dir = $rm->{'archive_dir'};
+		next unless defined $dir && length $dir && lc($dir) ne 'null';
+		my $root = &subs::home($dir);
+		$root =~ s{/+$}{};
+		foreach my $location ( &subs::location_types() ) {
+			foreach my $name ( &subs::archive_folder_name($location), $location ) {
+				my $folder = $root . '/' . $name;
+				next unless ($path eq $folder || $path =~ m{^\Q$folder\E/});
+				my $relative = ($path eq $folder) ? '' : substr($path, length($folder) + 1);
+				return { location => $location, relative => $relative };
+			}
+		}
+	}
+	return undef;
+}
+
+# Where a location's relative path lives on this machine. Undef when the
+# location has no local root at all, which is not an error: the archive is the
+# fallback.
+sub music_local_path($location, $relative, $roots) {
+	my $root = $roots->{$location};
+	return undef unless defined $root && length $root;
+	return length($relative // '') ? $root . '/' . $relative : $root;
+}
+
+# The local walk and the archive lookups one window's selection makes. An
+# artist or album pick can name a local path or an archive path; both resolve to
+# the same location and relative path, so the local copy is walked and the
+# archive is asked for that folder. A pick under neither keeps the old
+# archive_plan behaviour.
+sub music_selection_plan($picks, $roots, $machines) {
+	my (@walk, @archive, %seen);
+	foreach my $pick ( @{ $picks || [] } ) {
+		next unless ref $pick eq 'HASH';
+		my $path = $pick->{'path'};
+		next unless defined $path && length $path;
+		$path = &subs::home($path);
+		$path =~ s{/+$}{};
+		next if $seen{$path}++;
+		my ($location, $relative);
+		if (defined $pick->{'location'} && length $pick->{'location'}) {
+			$location = $pick->{'location'};
+			$relative = $pick->{'relative'} // '';
+		}
+		else {
+			my $local = &music_local_parts($path, $roots);
+			my $archived = $local ? undef : &music_archive_parts($path, $machines);
+			if ($local) {
+				($location, $relative) = ($local->{'location'}, $local->{'relative'});
+			}
+			elsif ($archived) {
+				($location, $relative) = ($archived->{'location'}, $archived->{'relative'});
+			}
+		}
+		if (defined $location && length $location) {
+			my $walk = &music_local_path($location, $relative, $roots);
+			push @walk, $walk if defined $walk && length $walk;
+			push @archive, { location => $location, relative => $relative, path => $path };
+		}
+		else {
+			push @archive, { path => $path };
+		}
+	}
+	return { walk => \@walk, archive => \@archive };
+}
+
 # Which folders this device is looking at, by location name as well as by path.
 # The window sends the buttons it has lit and the names are the intent -
 # documents, downloads, and so on - while the path behind each one is this
@@ -17,30 +145,28 @@ our ($music_device, $music_files, $music_permissive);
 # with no path behind it on this machine is nothing to walk, and is left out
 # rather than guessed at.
 sub music_folder_selection($selected) {
-	my ($db,$database,$sql) = &subs::database_grabber();
 	my @picked = ();
-	my $settings = &Manager::misc_setting_list();
+	my $roots = &music_location_roots(&Manager::misc_setting_list());
 	my %wanted;
 	my $chosen = defined $selected;
 	foreach my $s ( @{$selected || []} ) {
 		next unless $s =~ /_location$/;
 		$wanted{$s} = 1;
 	}
-	foreach my $s ( sort keys %{$settings->{$music_device}} ) {
-		if ($s =~ /_location$/gi) {
-			my $status = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $s, device => $music_device });
-			if ($chosen) {
-				next unless $wanted{$s};
-			}
-			elsif ($status ne 'on') {
-				next;
-			}
-			my $path = $settings->{$music_device}->{$s};
-			next unless (defined $path && length $path);
-			my $location = $s;
-			$location =~ s/_location$//;
-			push @picked, { location => $location, path => $path };
+	foreach my $location ( &subs::location_types() ) {
+		my $s = $location . '_location';
+		my $path = $roots->{$location};
+		next unless defined $path && length $path;
+		# the lit buttons are this machine's memory, so the signatorial is the
+		# key; a class row from an older build is the fallback
+		my $status = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $s }) // '';
+		if ($chosen) {
+			next unless $wanted{$s};
 		}
+		elsif ($status ne 'on') {
+			next;
+		}
+		push @picked, { location => $location, path => $path };
 	}
 	return \@picked;
 }
@@ -58,13 +184,13 @@ sub music_archive_entries($data) {
 	my $picked = $data->{'picked'} || [];
 	my $misc = $data->{'misc_settings'} || &Manager::misc_setting_list();
 	my $device = &subs::device_setter();
-	my $machines = &subs::archive_machines();
+	my $machines = $data->{'machines'} || &subs::archive_machines();
 	my @lookups;
 	foreach my $pick ( @{$picked} ) {
 		if ($pick->{'location'}) {
 			my $rm = &subs::archive_machine_for($pick->{'location'}, $misc->{$device} || {}, $machines);
 			next unless ($rm && ($rm->{'self'} || $rm->{'uuid'}));
-			push @lookups, { location => $pick->{'location'}, rm => $rm, remote_uuid => ($rm->{'self'} ? '' : $rm->{'uuid'}), prefix => '' };
+			push @lookups, { location => $pick->{'location'}, rm => $rm, remote_uuid => ($rm->{'self'} ? '' : $rm->{'uuid'}), prefix => ($pick->{'relative'} // '') };
 		}
 		else {
 			my $plan = &subs::archive_plan({
@@ -99,7 +225,10 @@ sub music_archive_entries($data) {
 			next unless length $relative;
 			# a sealed track waits for the padlock only when its album is hidden
 			next if (!$music_permissive && $relative =~ /\.enc$/i && !music_app_visible($relative));
-			next if (length $lookup->{'prefix'} && index($relative, $lookup->{'prefix'}) != 0);
+			if (length $lookup->{'prefix'}) {
+				my $prefix = $lookup->{'prefix'};
+				next unless ($relative eq $prefix || index($relative, $prefix . '/') == 0);
+			}
 			push @entries, {
 				path => (length $folder ? $folder . '/' . $relative : $relative),
 				location => $lookup->{'location'},
@@ -190,34 +319,42 @@ sub music_search($data) {
 	# fresh open is locked even if an earlier window still holds one
 	$music_permissive = $data->{'permissive'} ? 1 : 0;
 
-	my @folders;
 	my %archive;
 	if ($data->{'files'}) {
 		$music_files = $data->{'files'};
 	}
 	else {
+		my $roots = &music_location_roots($misc_settings);
+		my $machines = &subs::archive_machines();
 		my $picked = [];
-		if (scalar @{$settings->{'album'}} > 0) { 
-			push @folders, map { $_->{'path'} } @{$settings->{'album'}};
+		if (scalar @{$settings->{'album'}} > 0) {
 			$picked = [ map { { path => $_->{'path'} } } @{$settings->{'album'}} ];
 		}
 		elsif (scalar @{$settings->{'artist'}} > 0) {
-			push @folders, map { $_->{'path'} } @{$settings->{'artist'}};
 			$picked = [ map { { path => $_->{'path'} } } @{$settings->{'artist'}} ];
 		}
 		else {
-			my $selection = &music_folder_selection($data->{'folders'});
-			@folders = map { $_->{'path'} } @{$selection};
-			$picked = $selection;
+			$picked = &music_folder_selection($data->{'folders'});
 		}
-		my @walk = grep { -d } map { &subs::home($_) } @folders;
+		# A local copy wins. The selection resolves to a location and a path
+		# inside it, whether the pick named this disk or the archive, so the
+		# local folder is walked first and the archive is asked only for what
+		# the walk did not find.
+		my $plan = &music_selection_plan($picked, $roots, $machines);
+		my @walk = grep { -d } @{ $plan->{'walk'} };
 		&process_file($_) for &subs::dir_listing(\@walk);
-		# the archive is part of the collection too, when the app is asked to
-		# look there: its manifest is the listing, and each row knows the
-		# machine its bytes come from
-		if ($settings->{'archive'} eq 'on') {
-			my $archived = &music_archive_entries({ picked => $picked, misc_settings => $misc_settings });
+		my %local_keys;
+		foreach my $file ( @{$music_files} ) {
+			my $parts = &music_local_parts(&subs::home($file), $roots);
+			$local_keys{$parts->{'location'} . '|' . $parts->{'relative'}} = 1 if $parts;
+		}
+		# the archive is the fallback, when the app is asked to look there: its
+		# manifest is the listing, and each row knows the machine its bytes come
+		# from. A row whose relative path is already on this disk is left out.
+		if (($settings->{'archive'} // '') eq 'on') {
+			my $archived = &music_archive_entries({ picked => $plan->{'archive'}, misc_settings => $misc_settings, machines => $machines });
 			foreach my $entry ( @{$archived->{'entries'}} ) {
+				next if $local_keys{($entry->{'location'} // '') . '|' . ($entry->{'relative'} // '')};
 				push @{$music_files}, $entry->{'path'};
 				$archive{$entry->{'path'}} = $entry;
 			}

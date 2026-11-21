@@ -360,7 +360,12 @@ sub merge_table_rows {
 										# somebody chose. The reverse still heals - a real value does
 										# replace a default here even when the default is newer - so a
 										# new machine catches up without losing anyone's setting.
-										my $target_device = $house_wide ? 'all' : $device;
+										# A row keyed by a machine's signatorial belongs to that machine, not
+										# to this one's device class. Flattening it onto our class is how
+										# one computer's Music view became the other's; keep the key so the
+										# two rows can stand side by side.
+										my $peer_machine_row = (!$house_wide && &subs::setting_device_is_signatorial($r->{'device'})) ? 1 : 0;
+										my $target_device = $house_wide ? 'all' : $peer_machine_row ? lc $r->{'device'} : $device;
 										# 'yes' marks setting_initializer's born default; 'no' marks a
 										# panel write, which is a choice even when it equals a default.
 										# A row from an older build has no mark, so its value decides.
@@ -412,7 +417,7 @@ sub merge_table_rows {
 													value => $r->{'value'},
 													server_time => $r->{'server_time'},
 													uuid => &subs::random_string_creator(20),
-													device => $house_wide ? 'all' : $device,
+													device => $target_device,
 													subsetting => $r->{'subsetting'},
 													seed => $r->{'seed'},
 													sync => 1
