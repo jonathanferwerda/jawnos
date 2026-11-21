@@ -309,15 +309,16 @@ sub audio_engine_status {
 
 # The engine's transport: `{"cmd":"transport","action":"start",
 # "position":0,"bpm":120,"beats_per_bar":4,"gain":0.5,
-# "loop_start":0,"loop_end":0}`. Positions are seconds on the song
-# timeline. Only the six fields the engine promised are forwarded, so a caller
-# cannot smuggle a seventh key through this helper; `action` is one of `start`,
+# "loop_start":0,"loop_end":0,"clips":[...]}`. Positions are seconds on the
+# song timeline. Only the fields the engine promised are forwarded, so a caller
+# cannot smuggle another key through this helper; `action` is one of `start`,
 # `stop`, `seek` or `status`, and the engine validates every value before a
-# thread or a device exists. This is the browser transport's clock and
-# metronome, not an engine take: a take and the transport own the output in
-# turns, never together.
+# thread or a device exists. `clips` is the optional plan of recorded takes
+# (absolute WAV path, timeline start, source offset, gain, pan and the rest);
+# an absent plan is the click-only clock. This is the browser transport, not an
+# engine take: a take and the transport own the output in turns, never together.
 our @audio_engine_transport_fields = qw(
-	position bpm beats_per_bar gain loop_start loop_end
+	position bpm beats_per_bar gain loop_start loop_end clips
 );
 
 sub audio_engine_transport {

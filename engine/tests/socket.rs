@@ -2220,3 +2220,71 @@ fn a_silent_gateway_bind_retries_until_the_source_appears() {
     let _ = fs::remove_dir_all(&tools);
     let _ = fs::remove_dir_all(&state);
 }
+
+#[test]
+fn the_transport_carries_a_clip_plan_and_reports_it() {
+    // A real take on disk, so `start` reads it the way it reads a staged
+    // browser take. The null backend renders the block and plays nothing.
+    let take = TempFile::new("transport-clip");
+    let mut writer =
+        jawn_audio::WavWriter::create(&take.path, 48_000, 1, 512).expect("create the take");
+    writer.write_f32(&vec![0.5f32; 4_800]).expect("write");
+    writer.finish().expect("finish the take");
+
+    let server = Server::start("transport-clip");
+    let mut client = server.connect();
+
+    let start = client.ask(&format!(
+        "{{\"cmd\":\"transport\",\"action\":\"start\",\"position\":0,\"bpm\":120,\"beats_per_bar\":4,\"gain\":0,\"clips\":[{{\"file\":\"{}\",\"start\":0,\"offset\":0,\"duration\":0.1,\"gain\":1,\"pan\":-1}}]}}",
+        take.text()
+    ));
+    assert!(start.contains("\"ok\":true"), "start: {start}");
+    assert!(start.contains("\"state\":\"playing\""), "start: {start}");
+    assert!(start.contains("\"clips\":1"), "start: {start}");
+
+    // A different take set needs a new render thread: the running transport
+    // refuses it rather than mixing two plans.
+    let swap = client.ask(&format!(
+        "{{\"cmd\":\"transport\",\"action\":\"start\",\"clips\":[{{\"file\":\"{}\",\"start\":0}}]}}",
+        take.text()
+    ));
+    assert!(swap.contains("\"ok\":false"), "swap: {swap}");
+    assert!(
+        swap.contains("stop it before changing its clips"),
+        "swap: {swap}"
+    );
+
+    // A seek keeps the clips and moves the position.
+    let seek = client.ask("{\"cmd\":\"transport\",\"action\":\"seek\",\"position\":0.05}");
+    assert!(seek.contains("\"ok\":true"), "seek: {seek}");
+    assert!(seek.contains("\"clips\":1"), "seek: {seek}");
+    assert_eq!(json_number(&seek, "position"), 0.05, "seek: {seek}");
+
+    // The clip rate is the device rate; another rate is refused by name,
+    // before a second thread or a device exists.
+    let other = TempFile::new("transport-clip-rate");
+    let mut writer =
+        jawn_audio::WavWriter::create(&other.path, 44_100, 1, 512).expect("create the take");
+    writer.write_f32(&vec![0.5f32; 4_410]).expect("write");
+    writer.finish().expect("finish the take");
+    let stopped = client.ask("{\"cmd\":\"transport\",\"action\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"stopped\""), "stop: {stopped}");
+    assert!(stopped.contains("\"clips\":1"), "stop: {stopped}");
+
+    let refused = client.ask(&format!(
+        "{{\"cmd\":\"transport\",\"action\":\"start\",\"clips\":[{{\"file\":\"{}\",\"start\":0}}]}}",
+        other.text()
+    ));
+    assert!(refused.contains("\"ok\":false"), "rate: {refused}");
+    assert!(refused.contains("44100"), "rate: {refused}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}

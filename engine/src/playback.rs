@@ -413,6 +413,158 @@ fn click_tone(length: usize, rate: u32, hz: f32, level: f32) -> Vec<f32> {
     samples
 }
 
+/// One recorded take placed on the transport timeline.
+///
+/// A browser take is a file on disk and a span on the song's timeline. The
+/// engine reads the file once, at `start`, and renders it on the same device
+/// clock as the metronome: `start` says where the clip begins, `offset` where
+/// inside the file it begins, and `duration` how long it occupies the timeline.
+/// A looping clip repeats every `duration` from `start`, which is how a drum
+/// loop or a punched phrase stays on the grid across a wrap.
+///
+/// `start` is signed on purpose. A take recorded with a negative latency
+/// correction starts before the timeline's zero, and the browser already places
+/// it there; the engine must hear the part that falls at or past zero, not drop
+/// the clip.
+pub struct TransportClip {
+    /// The path the report and diagnostics name.
+    pub path: String,
+    /// The file's rate; every clip in one transport must agree with the device.
+    pub rate: u32,
+    /// One mono sample per frame, averaged from the file. A take is a source,
+    /// not a strip output, so a stereo file is averaged rather than summed.
+    pub samples: Vec<f32>,
+    /// Timeline frame where the clip begins (may be negative).
+    pub start: i64,
+    /// Source frame the clip begins at when the timeline reaches `start`.
+    pub offset: u64,
+    /// Length on the timeline in frames; never zero after loading.
+    pub duration: u64,
+    /// Trim before the strip's inserts.
+    pub gain: f32,
+    /// -1 left ..= 1 right, after the inserts.
+    pub pan: f32,
+    /// Repeat every `duration` from `start` (a looping sample).
+    pub looped: bool,
+    /// Half-crossfade length in frames at each edge, matching the browser's
+    /// clip gain ramps. Zero is a hard edge.
+    pub fade_in: u64,
+    pub fade_out: u64,
+    /// The insert chain, in the order the caller gave it.
+    pub inserts: Vec<InsertKind>,
+}
+
+impl TransportClip {
+    /// Decode `path` and place it. The reader names the file and what it found
+    /// when it refuses a shape. `duration` of zero means the rest of the file.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_wav(
+        path: impl Into<String>,
+        start: i64,
+        offset: u64,
+        duration: u64,
+        gain: f32,
+        pan: f32,
+        looped: bool,
+        fade_in: u64,
+        fade_out: u64,
+        inserts: Vec<InsertKind>,
+    ) -> Result<Self, String> {
+        let path = path.into();
+        let audio = read_wav(&path).map_err(|error| error.to_string())?;
+        let samples: Vec<f32> = match audio.channels {
+            1 => audio
+                .samples
+                .iter()
+                .map(|sample| f32::from(*sample) / 32_768.0)
+                .collect(),
+            _ => audio
+                .samples
+                .chunks_exact(2)
+                .map(|pair| {
+                    (f32::from(pair[0]) + f32::from(pair[1])) / 2.0 / 32_768.0
+                })
+                .collect(),
+        };
+        let available = (samples.len() as u64).saturating_sub(offset);
+        let duration = if duration == 0 {
+            available
+        } else {
+            duration.min(available.max(1))
+        };
+        if duration == 0 {
+            return Err(format!(
+                "{path} has no frames after its start offset; a transport clip needs audio"
+            ));
+        }
+        Ok(TransportClip {
+            path,
+            rate: audio.rate,
+            samples,
+            start,
+            offset,
+            duration,
+            gain,
+            pan,
+            looped,
+            fade_in,
+            fade_out,
+            inserts,
+        })
+    }
+
+    /// One source sample for a timeline position, or `None` when the clip is
+    /// silent there. A looping clip repeats from its in-point; a one-shot clip
+    /// is silent outside its span.
+    fn source_at(&self, position: u64) -> Option<usize> {
+        let position = position as i64;
+        if !self.looped {
+            if position < self.start {
+                return None;
+            }
+            let into = (position - self.start) as u64;
+            if into >= self.duration {
+                return None;
+            }
+            return self.frame_at(self.offset + into);
+        }
+        if position < self.start {
+            return None;
+        }
+        let into = ((position - self.start) as u64) % self.duration;
+        self.frame_at(self.offset + into)
+    }
+
+    fn frame_at(&self, source: u64) -> Option<usize> {
+        if source < self.samples.len() as u64 {
+            Some(source as usize)
+        } else {
+            None
+        }
+    }
+
+    /// The clip-edge gain at a timeline position, matching the browser's
+    /// `studioTakeGain`: a fade in over `2 * fade_in` from `start - fade_in`,
+    /// and a fade out over `2 * fade_out` to `end + fade_out`. A looping clip
+    /// never fades out.
+    fn edge_gain(&self, position: u64) -> f32 {
+        let mut gain = 1.0f32;
+        if self.fade_in > 0 {
+            let position = position as i64;
+            let begin = self.start - self.fade_in as i64;
+            let span = (2 * self.fade_in) as f32;
+            gain *= (((position - begin) as f32) / span).clamp(0.0, 1.0);
+        }
+        if !self.looped && self.fade_out > 0 {
+            let end = self.start.saturating_add(self.duration as i64);
+            let finish = end + self.fade_out as i64;
+            let span = (2 * self.fade_out) as f32;
+            gain *= (((finish - position as i64) as f32) / span).clamp(0.0, 1.0);
+        }
+        gain
+    }
+}
+
 /// The transport's mutable controls, shared by the socket and the render
 /// thread. Every field is an atomic: a seek, tempo change or loop change takes
 /// effect at the next block without stopping the device or reallocating the
@@ -560,10 +712,19 @@ impl TransportControl {
 
 /// The transport's render source: the same click buffers as a take's
 /// metronome, read from the absolute song grid and blended with the mutable
-/// controls at the top of every block. It allocates nothing after `prepared`.
+/// controls at the top of every block, plus the recorded takes placed on the
+/// same timeline. It allocates nothing after `prepared`.
 pub struct TransportSource {
     control: Arc<TransportControl>,
     click: Option<ClickState>,
+    /// The takes this transport renders, each through its own strip.
+    clips: Vec<TransportClip>,
+    mixer: Mixer,
+    /// One mono block per clip, reused by every block.
+    voices: Vec<Vec<f32>>,
+    /// The clip timeline's absolute frame, advanced in step with the click.
+    clip_position: u64,
+    clip_loop: (u64, u64),
     seek_seq: u64,
     bpm_bits: u64,
     beats_per_bar: u32,
@@ -576,12 +737,30 @@ impl TransportSource {
         TransportSource {
             control,
             click: None,
+            clips: Vec::new(),
+            mixer: Mixer::new(&[], &[]),
+            voices: Vec::new(),
+            clip_position: 0,
+            clip_loop: (0, 0),
             seek_seq: 0,
             bpm_bits: 0,
             beats_per_bar: 0,
             gain_bits: 0,
             loop_bounds: (0, 0),
         }
+    }
+
+    /// The same source carrying recorded takes. The clips are read before the
+    /// device opens, so a missing or wrong-shaped file is a refusal from
+    /// `transport start`, never a silent gap in the audio.
+    pub fn with_clips(mut self, clips: Vec<TransportClip>) -> Self {
+        self.clips = clips;
+        self
+    }
+
+    /// How many takes this transport carries, for the status line and a test.
+    pub fn clip_count(&self) -> usize {
+        self.clips.len()
     }
 }
 
@@ -605,6 +784,25 @@ impl RenderSource for TransportSource {
             self.loop_bounds.0,
             self.loop_bounds.1,
         ));
+        // Every clip runs through the same kind of strip a playback uses, so a
+        // take's gain, pan and inserts read the same here as there. The strips
+        // are built on the render thread: an insert need not be `Send`.
+        let inputs: Vec<usize> = (0..self.clips.len()).collect();
+        let labels: Vec<String> = (1..=self.clips.len()).map(|n| format!("c{n}")).collect();
+        let label_refs: Vec<&str> = labels.iter().map(|label| label.as_str()).collect();
+        let mut mixer = Mixer::new(&inputs, &label_refs);
+        for (index, clip) in self.clips.iter().enumerate() {
+            let mut channel = Channel::new(clip.gain, clip.pan.clamp(-1.0, 1.0));
+            for kind in &clip.inserts {
+                channel.push(kind.build());
+            }
+            mixer.tracks_mut()[index].channel = channel;
+        }
+        mixer.prepare(rate, period);
+        self.mixer = mixer;
+        self.voices = vec![vec![0.0; period]; self.clips.len()];
+        self.clip_position = self.control.seek_frames();
+        self.clip_loop = self.loop_bounds;
         Ok(())
     }
 
@@ -612,6 +810,10 @@ impl RenderSource for TransportSource {
         if self.control.is_stopping() {
             return Err("stopped".to_string());
         }
+        // The transport is the only producer of this buffer, so it starts each
+        // block silent rather than trusting what the previous block left.
+        out.fill(0.0);
+        let frames = out.len() / 2;
         let click = self
             .click
             .as_mut()
@@ -623,6 +825,10 @@ impl RenderSource for TransportSource {
         if seq != self.seek_seq {
             self.seek_seq = seq;
             click.seek(self.control.seek_frames());
+            // The clip timeline jumps with the click, and the strips forget
+            // their tails so a seek does not carry the old place's reverb.
+            self.clip_position = self.control.seek_frames();
+            self.mixer.reset();
         }
         let bpm_bits = self.control.bpm_bits();
         if bpm_bits != self.bpm_bits {
@@ -643,6 +849,40 @@ impl RenderSource for TransportSource {
         if loop_bounds != self.loop_bounds {
             self.loop_bounds = loop_bounds;
             click.set_loop(loop_bounds.0, loop_bounds.1);
+            self.clip_loop = loop_bounds;
+        }
+
+        // Clips first: `mix_with` overwrites the bus, then the click is added
+        // after the master chain exactly as it is for a take's monitor.
+        if !self.clips.is_empty() {
+            let TransportSource {
+                clips,
+                mixer,
+                voices,
+                clip_position,
+                clip_loop,
+                ..
+            } = self;
+            let mut position = *clip_position;
+            for frame in 0..frames {
+                for (index, clip) in clips.iter().enumerate() {
+                    voices[index][frame] = match clip.source_at(position) {
+                        Some(at) => clip.samples[at] * clip.edge_gain(position),
+                        None => 0.0,
+                    };
+                }
+                // The clip timeline wraps on the same frame as the click, so a
+                // loop repeats the section in time with the metronome.
+                position += 1;
+                if clip_loop.1 > clip_loop.0 && position >= clip_loop.1 {
+                    let length = clip_loop.1 - clip_loop.0;
+                    position = clip_loop.0 + (position - clip_loop.1) % length;
+                }
+            }
+            *clip_position = position;
+            mixer
+                .mix_with(out, |index| &voices[index][..frames])
+                .map_err(|error| format!("transport: {error}"))?;
         }
 
         click.render_absolute_into(out);
@@ -1654,5 +1894,138 @@ mod tests {
         source.block(&mut second).expect("block");
         assert!(peak(&second[..320]) > 0.3, "the new grid did not sound");
         assert_eq!(control.position(), 8_000);
+    }
+
+    // --- transport clips: recorded takes on the same timeline ----------------
+
+    fn clip(samples: Vec<f32>, start: i64, duration: u64, looped: bool) -> TransportClip {
+        TransportClip {
+            path: "take.wav".to_string(),
+            rate: 8_000,
+            samples,
+            start,
+            offset: 0,
+            duration,
+            gain: 1.0,
+            // Hard left keeps the expected samples exact: the strip's equal
+            // power pan puts all of a hard-left source in the left channel.
+            pan: -1.0,
+            looped,
+            fade_in: 0,
+            fade_out: 0,
+            inserts: Vec::new(),
+        }
+    }
+
+    fn clip_transport(
+        clips: Vec<TransportClip>,
+        position: u64,
+        loop_start: u64,
+        loop_end: u64,
+        period: usize,
+    ) -> (Arc<TransportControl>, TransportSource) {
+        let control = Arc::new(TransportControl::new(
+            click_spec(120.0, 4, 0.0),
+            position,
+            loop_start,
+            loop_end,
+        ));
+        let source = TransportSource::new(Arc::clone(&control)).with_clips(clips);
+        let mut source = source;
+        source.prepared(8_000, period).expect("prepare");
+        (control, source)
+    }
+
+    fn left_channel(out: &[f32]) -> Vec<f32> {
+        out.chunks_exact(2).map(|frame| frame[0]).collect()
+    }
+
+    #[test]
+    fn a_transport_clip_plays_at_its_timeline_start() {
+        // Four loud frames placed at timeline frame 2: silent before, loud
+        // across 2..=5, silent after 6 in an eight-frame block.
+        let (_, mut source) = clip_transport(
+            vec![clip(vec![1.0; 4], 2, 4, false)],
+            0,
+            0,
+            0,
+            8,
+        );
+        let mut out = vec![0.0f32; 16];
+        source.block(&mut out).expect("block");
+        let left = left_channel(&out);
+        for (frame, sample) in left.iter().enumerate() {
+            if (2..6).contains(&frame) {
+                assert!((sample - 1.0).abs() < 1e-6, "frame {frame}: {left:?}");
+            } else {
+                assert!(sample.abs() < 1e-9, "frame {frame} should be silent: {left:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_looping_transport_clip_repeats_every_duration() {
+        // The four-frame sample repeats across a twelve-frame block.
+        let (_, mut source) = clip_transport(
+            vec![clip(vec![1.0, 2.0, 3.0, 4.0], 0, 4, true)],
+            0,
+            0,
+            0,
+            12,
+        );
+        let mut out = vec![0.0f32; 24];
+        source.block(&mut out).expect("block");
+        let left = left_channel(&out);
+        for (frame, sample) in left.iter().enumerate() {
+            let expected = (frame % 4 + 1) as f32;
+            assert!((sample - expected).abs() < 1e-6, "frame {frame}: {left:?}");
+        }
+    }
+
+    #[test]
+    fn a_transport_loop_restarts_the_clip_inside_the_region() {
+        // The clip covers the looped region 4..8, so both passes sound. The
+        // wrap moves the clip timeline with the click, not past it.
+        let (_, mut source) = clip_transport(
+            vec![clip(vec![1.0, 2.0, 3.0, 4.0], 4, 4, false)],
+            4,
+            4,
+            8,
+            8,
+        );
+        let mut out = vec![0.0f32; 16];
+        source.block(&mut out).expect("block");
+        let left = left_channel(&out);
+        let expected = [1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0];
+        for (frame, sample) in left.iter().enumerate() {
+            assert!(
+                (sample - expected[frame]).abs() < 1e-6,
+                "frame {frame}: {left:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transport_clip_that_starts_before_zero_hears_its_later_part() {
+        // A negative start is a take pulled earlier to cancel latency. Its
+        // first frames are before the timeline's zero, so a position of zero
+        // already sits inside the clip.
+        let (_, mut source) = clip_transport(
+            vec![clip(vec![1.0, 2.0, 3.0, 4.0], -2, 4, false)],
+            0,
+            0,
+            0,
+            4,
+        );
+        let mut out = vec![0.0f32; 8];
+        source.block(&mut out).expect("block");
+        let left = left_channel(&out);
+        let expected = [3.0, 4.0, 0.0, 0.0];
+        for (frame, sample) in left.iter().enumerate() {
+            assert!(
+                (sample - expected[frame]).abs() < 1e-6,
+                "frame {frame}: {left:?}"
+            );
+        }
     }
 }

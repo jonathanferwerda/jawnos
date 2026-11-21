@@ -274,6 +274,9 @@ function studioTrackSource(src, gain, kind) {
 
 var studioEngineTransportTimer = 0;
 var studioEngineTransportDrift = 0.05;
+// True while the takes are being staged for a first start. A second Play while
+// that upload runs must not start a second staging or a second transport.
+var studioEngineTransportStarting = false;
 
 function studioEngineTransportReady() {
 	if (typeof studioEngineAvailable === 'undefined' || !studioEngineAvailable) { return false; }
@@ -319,6 +322,146 @@ function studioEngineTransportLoop() {
 	return { start: 0, end: 0 };
 }
 
+// Build the engine's clip plan from the armed takes. Each clip carries the
+// same timeline start, in-point, length and crossfade the browser scheduler
+// would use, plus the channel fader and pan folded into its strip. A take the
+// engine cannot take (a video, or one with no length) is counted as `blocked`:
+// the caller then keeps the whole mix in the browser rather than losing it.
+function studioEngineClipPlan() {
+	var clips = [];
+	var blocked = 0;
+	var anySolo = studioAnySolo();
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
+		var armed = m.armed && (m.armed.state == 'rec' || m.armed.state == 'play' || m.armed.state == 'loop');
+		if (!armed) { return; }
+		var ordered = studioChannelTakes(ch);
+		var silent = m.mute || (anySolo && !m.solo);
+		var gain = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()) * (silent ? 0 : 1);
+		var pan = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
+		ordered.forEach(function (take, i) {
+			if (!take || take.status == 'recording') { return; }
+			if (take.encoding && take.encoding.indexOf('video') !== -1) { blocked++; return; }
+			var dom = take.duration || (take.buffer && take.buffer.duration) || 0;
+			if (!(dom > 0)) { blocked++; return; }
+			var prev = ordered[i - 1];
+			var next = ordered[i + 1];
+			var xf = studioCrossfade();
+			var fIn = 0, fOut = 0;
+			if (prev) {
+				var fi = Math.min(xf, prev.duration || 0, dom) / 2;
+				if (fi > 0 && prev.src !== take.src && Math.abs(take.startTime - (prev.startTime + (prev.duration || 0))) <= fi * 2) { fIn = fi; }
+			}
+			if (next && !take.loop) {
+				var fo = Math.min(xf, dom, next.duration || 0) / 2;
+				if (fo > 0 && next.src !== take.src && Math.abs(next.startTime - (take.startTime + dom)) <= fo * 2) { fOut = fo; }
+			}
+			clips.push({
+				take: take,
+				start: take.startTime,
+				offset: take.offset || 0,
+				duration: dom,
+				gain: gain,
+				pan: pan,
+				loop: !!take.loop,
+				fade_in: fIn,
+				fade_out: fOut
+			});
+		});
+	});
+	return { clips: clips, blocked: blocked };
+}
+
+// A take's audio as an AudioBuffer, decoded once and kept. The engine needs a
+// file, and this is the one decode the browser already knows how to do.
+function studioEngineClipBuffer(take) {
+	if (take.buffer) { return Promise.resolve(take.buffer); }
+	var ctx = studioAudio.ctx || studioContext();
+	if (!ctx) { return Promise.reject(new Error('no audio context')); }
+	return studioTakeArrayBuffer(take).then(function (ab) {
+		return new Promise(function (resolve, reject) { ctx.decodeAudioData(ab, resolve, reject); });
+	}).then(function (audio) {
+		take.buffer = audio;
+		if (!(take.duration > 0)) { take.duration = audio.duration || 0; }
+		return audio;
+	});
+}
+
+// Stage one take as a WAV the engine can read, once. The absolute path is kept
+// on the take, so a later play sends the same file rather than uploading it
+// again. A failed stage is remembered so the caller can fall back cleanly.
+function studioEngineClipStage(take) {
+	if (take.engine_file) { return Promise.resolve(take.engine_file); }
+	if (take.engine_staging) { return take.engine_staging; }
+	if (!take.engine_key) {
+		// A saved take keeps one file across reloads; an unsaved one gets a
+		// fresh name so a re-recording never reuses stale audio.
+		take.engine_key = take.uuid ? String(take.uuid) : ('clip_' + Date.now() + '_' + Math.floor(Math.random() * 1e9).toString(36));
+	}
+	var key = take.engine_key;
+	take.engine_staging = studioEngineClipBuffer(take).then(function (buffer) {
+		var wav = studioBufferToWav(buffer);
+		var data = new FormData();
+		data.append('key', key);
+		data.append('clip', wav, key + '.wav');
+		return new Promise(function (resolve, reject) {
+			$.ajax({
+				url: '/manager/studio/clip',
+				type: 'POST',
+				data: data,
+				processData: false,
+				contentType: false,
+				dataType: 'json',
+				success: function (answer) {
+					if (answer && answer.ok === true && answer.file) {
+						take.engine_file = answer.file;
+						resolve(answer.file);
+					}
+					else { reject(new Error((answer && answer.error) || 'the take was refused')); }
+				},
+				error: function (xhr) {
+					var answer = xhr && xhr.responseJSON;
+					reject(new Error((answer && answer.error) || 'the take could not be staged'));
+				}
+			});
+		});
+	}).catch(function (error) {
+		delete take.engine_staging;
+		take.engine_failed = true;
+		throw error;
+	}).then(function (file) {
+		delete take.engine_staging;
+		return file;
+	});
+	return take.engine_staging;
+}
+
+// Stage every clip's file. A failure rejects the whole set: the caller then
+// keeps the browser's audio rather than playing a partial mix.
+function studioEngineClipStageAll(plan) {
+	var jobs = plan.clips.map(function (clip) {
+		return studioEngineClipStage(clip.take).then(function (file) {
+			clip.file = file;
+			return clip;
+		});
+	});
+	return Promise.all(jobs).then(function (staged) {
+		return staged.map(function (clip) {
+			return {
+				file: clip.file,
+				start: clip.start,
+				offset: clip.offset,
+				duration: clip.duration,
+				gain: clip.gain,
+				pan: clip.pan,
+				loop: clip.loop,
+				fade_in: clip.fade_in,
+				fade_out: clip.fade_out
+			};
+		});
+	});
+}
+
 function studioEngineTransportPost(action, fields, done) {
 	var data = $.extend({ action: action }, fields || {});
 	$.ajax({
@@ -344,22 +487,56 @@ function studioEngineTransportStart(pos) {
 		mixer['time']['engine_transport'] = false;
 		return;
 	}
+	if (studioEngineTransportStarting) { return; }
 	var fields = studioEngineTransportFields(pos);
-	var running = !!mixer['time']['engine_transport'];
-	mixer['time']['engine_transport'] = true;
-	if (running) {
-		// A seek is position-only; tempo and loop changes ride a start below.
+	// A running engine only needs the new position; tempo and loop ride a
+	// retune `start` from studioEngineTransportSync. Its clips are fixed for
+	// the life of the transport, so the page never re-sends them.
+	if (mixer['time']['engine_transport']) {
 		studioEngineTransportPost('seek', { position: fields.position }, studioEngineTransportAnswer);
 		return;
 	}
-	studioEngineTransportPost('start', fields, studioEngineTransportAnswer);
+	var plan = studioEngineClipPlan();
+	if (plan.blocked > 0) {
+		// A video take (or one with no length yet) cannot be rendered by the
+		// engine. Keep the whole mix in the browser rather than muting it.
+		mixer['time']['engine_transport'] = false;
+		return;
+	}
+	// The engine owns the takes only after every file is staged. The flag goes
+	// up first so the browser scheduler does not start a second copy, and a
+	// staging refusal drops it again for a clean fallback.
+	studioEngineTransportStarting = true;
+	mixer['time']['engine_transport'] = true;
+	studioEngineClipStageAll(plan).then(function (clips) {
+		studioEngineTransportStarting = false;
+		if (!mixer['time']['engine_transport']) { return; }
+		// The upload took time, so start from where the playhead is now rather
+		// than where it was when Play was pressed.
+		var ctx = studioAudio.ctx;
+		var seg = studioAudio.playSeg;
+		var now = (ctx && seg) ? (seg.pos0 + (ctx.currentTime - seg.ctx0)) : (mixer['time']['position'] || 0);
+		var fields = studioEngineTransportFields(now);
+		// The plan rides as one JSON string: jQuery's own array encoding is not
+		// the shape the route reads.
+		fields.clips_json = JSON.stringify(clips);
+		studioEngineTransportPost('start', fields, studioEngineTransportAnswer);
+	}).catch(function (error) {
+		studioEngineTransportStarting = false;
+		console.log('studio: engine clip staging failed, keeping browser audio', error);
+		studioEngineTransportDrop();
+	});
 }
 
 function studioEngineTransportAnswer(data) {
 	if (!data || data.ok !== true) {
+		console.log('studio: engine transport refused, using the browser clock', (data && data.error) || '');
 		studioEngineTransportDrop();
 		return;
 	}
+	// The engine now owns the take audio: drop anything the browser had queued
+	// for this pass so the two never sound together.
+	studioFlushSources();
 	studioEngineTransportPollStart();
 	if (data.transport) { studioEngineTransportApply(data.transport); }
 }
@@ -369,14 +546,22 @@ function studioEngineTransportAnswer(data) {
 // it never touches a take, and it prevents an engine clock we can no longer
 // read from playing a second click beside the browser's.
 function studioEngineTransportDrop() {
+	studioEngineTransportStarting = false;
 	mixer['time']['engine_transport'] = false;
 	studioEngineTransportPollStop();
+	// Hand both clocks and the take audio back: re-anchor the scheduler at the
+	// playhead so a take already in progress starts mid-clip rather than
+	// staying silent until the next pass.
+	if (typeof studioTakesChanged === 'function') { studioTakesChanged(); }
 	if (typeof studioClickReanchor === 'function') { studioClickReanchor(); }
 	studioEngineTransportPost('stop', {}, function () {});
 }
 
 function studioEngineTransportSync() {
 	if (!mixer['time']['engine_transport']) { return; }
+	// A first start is still staging its clips; its own `start` will carry the
+	// current tempo and loop, so a retune now would race the initial `start`.
+	if (studioEngineTransportStarting) { return; }
 	var ctx = studioAudio.ctx;
 	var seg = studioAudio.playSeg;
 	var pos = (ctx && seg) ? (seg.pos0 + (ctx.currentTime - seg.ctx0)) : (mixer['time']['position'] || 0);
@@ -627,6 +812,9 @@ function studioTakeGain(winStart, fadeIn, winEnd, fadeOut, pos) {
 
 function studioScheduleTakes(p0, p1, ctx0) {
 	if (!(p1 > p0)) { return; }
+	// The engine renders the takes while it owns the transport, so the browser
+	// must not schedule a second copy under the same clock and click.
+	if (mixer['time'] && mixer['time']['engine_transport']) { return; }
 	studioApplyPlaybackMix();
 	$.each(mixer, function (ch, m) {
 		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }

@@ -1481,6 +1481,121 @@ sub action_44033 {
 	return;
 }
 
+# POST /manager/studio/clip
+#
+# Stage one browser take as a plain WAV the engine can read. The page decodes a
+# take to an AudioBuffer anyway; it exports that buffer to WAV, posts it here
+# once, and keeps the absolute path for its clip plan. The file lives in a
+# hidden `.engine` folder under the recording location and is deliberately
+# never encrypted: the engine reads raw PCM, and a sealed take would be a
+# silent clip. A stable `key` names the take, so re-posting overwrites the
+# same file instead of growing the folder.
+sub action_44034 {
+	my $c = shift;
+	require File::Spec;
+
+	my $key = $c->param('key');
+	$key = '' unless defined $key && !ref $key;
+	$key =~ s/\A\s+|\s+\z//g;
+	unless (length $key) {
+		$c->render(json => { ok => 0, error => 'a clip needs "key": a stable take name' }, status => 400);
+		return;
+	}
+
+	my $upload = $c->req->uploads('clip')->[0];
+	unless ($upload) {
+		$c->render(json => { ok => 0, error => 'a clip needs an uploaded WAV in "clip"' }, status => 400);
+		return;
+	}
+	my $type = $upload->headers->content_type || '';
+	my $said = $upload->filename || '';
+	unless ($type =~ m{audio/(?:wav|x-wav|x-pn-wav)}i || $said =~ /\.wav\z/i) {
+		$c->render(json => { ok => 0, error => 'a clip must be a WAV file' }, status => 400);
+		return;
+	}
+
+	my $folder = &studio_take_folder();
+	unless (length $folder) {
+		$c->render(json => { ok => 0, error => 'no recording folder is set, so a clip has nowhere to go' }, status => 400);
+		return;
+	}
+
+	my $dir = File::Spec->catdir($folder, 'studio', '.engine');
+	system('mkdir', '-p', $dir) unless -e $dir;
+	my $name = &subs::path_name($key) . '.wav';
+	my $path = File::Spec->catfile($dir, $name);
+	unless ($upload->move_to($path)) {
+		$c->render(json => { ok => 0, error => 'the clip could not be written' }, status => 500);
+		return;
+	}
+
+	$c->render(json => { ok => 1, file => $path });
+	return;
+}
+
+# The clip plan a transport `start` may carry: a JSON array of recorded takes.
+# Each is an absolute WAV `file`, a timeline `start` (which may be negative when
+# a take was pulled earlier to cancel latency), a source `offset`, an optional
+# `duration` (zero means the rest of the file), `gain`, `pan`, `loop` and the
+# two crossfade lengths. The route checks the shape and the numbers; the engine
+# reads each file and is the authority on its rate and contents. An empty plan
+# keeps the click-only transport.
+sub studio_transport_clips {
+	my ($c) = @_;
+
+	my $raw = $c->param('clips_json');
+	$raw = $c->param('clips') unless defined $raw && length $raw;
+	return (undef, []) unless defined $raw && length $raw;
+
+	my $data = eval { decode_json $raw };
+	return ('transport clips must be a JSON array', undef) unless ref $data eq 'ARRAY';
+	return ('transport clips may name at most 64 takes', undef) if @{$data} > 64;
+
+	my @clips;
+	for my $clip (@{$data}) {
+		return ('each transport clip must be an object', undef) unless ref $clip eq 'HASH';
+
+		my $file = $clip->{'file'};
+		return ('a transport clip needs an absolute "file" WAV path', undef)
+			unless defined $file && !ref $file && File::Spec->file_name_is_absolute($file);
+
+		my %out = (file => $file);
+		for my $key (qw(start offset duration gain pan fade_in fade_out)) {
+			next unless defined $clip->{$key};
+			my $value = &studio_transport_decimal($clip->{$key});
+			return ("transport clip \"$key\" must be a finite number", undef)
+				unless defined $value;
+			$out{$key} = $value;
+		}
+		for my $key (qw(offset duration gain fade_in fade_out)) {
+			return ("transport clip \"$key\" must not be negative", undef)
+				if exists $out{$key} && $out{$key} < 0;
+		}
+
+		my $loop = $clip->{'loop'};
+		# A JSON boolean decodes to a blessed scalar, so truthiness is the
+		# only test that stays right; the engine accepts a number too.
+		$out{'loop'} = $loop ? 1 : 0 if defined $loop;
+
+		my $inserts = $clip->{'inserts'};
+		if (defined $inserts) {
+			return ('a transport clip "inserts" must be an array of names', undef)
+				unless ref $inserts eq 'ARRAY';
+			my @names;
+			for my $name (@{$inserts}) {
+				return ('a transport clip insert must be a name', undef)
+					unless defined $name && !ref $name && length $name && length $name <= 32;
+				push @names, $name;
+			}
+			$out{'inserts'} = \@names;
+		}
+
+		push @clips, \%out;
+	}
+
+	return (undef, \@clips);
+}
+
 # One transport decimal: a finite JSON number, not a ref and not an empty
 # string. The exponent form is accepted, as the engine's parser accepts it.
 sub studio_transport_decimal {
@@ -1550,6 +1665,10 @@ sub studio_transport_fields {
 	if ($loop_end > 0 && $loop_end <= $loop_start) {
 		return ('transport loop_end must be greater than loop_start, or 0 for no loop', undef);
 	}
+
+	my ($clips_error, $clips) = &studio_transport_clips($c);
+	return ($clips_error, undef) if defined $clips_error;
+	$fields{'clips'} = $clips if @{$clips};
 
 	return (undef, \%fields);
 }

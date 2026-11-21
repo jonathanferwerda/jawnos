@@ -79,7 +79,7 @@ use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
     monitor_start, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device, DiskWriter,
     InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack,
-    Playback, Producer, TransportControl, TransportSource, MASTER_ORDER,
+    Playback, Producer, TransportClip, TransportControl, TransportSource, MASTER_ORDER,
 };
 
 use crate::patchbay::{PatchSummary, Patchbay};
@@ -3104,6 +3104,12 @@ impl Server {
                 "transport \"loop_end\" must be greater than \"loop_start\", or 0 for no loop",
             );
         }
+        // The takes to render are read before any device opens, so a missing or
+        // wrong-shaped file is this command's refusal, not a silent gap.
+        let clips = match transport_clips(object, self.config.rate) {
+            Ok(clips) => clips,
+            Err(error) => return error_line(&error),
+        };
         let spec = match ClickSpec::new(bpm, beats_per_bar, gain) {
             Ok(spec) => spec,
             Err(error) => return error_line(&error),
@@ -3113,6 +3119,14 @@ impl Server {
         // next block. This is the responsive path the page's knobs use.
         if let Some(session) = &self.transport {
             if session.is_playing() {
+                // Strips are built for the render thread, so a different take set
+                // needs a new thread and therefore a stop. Tempo and loop changes
+                // ride on without one.
+                if !clips.is_empty() {
+                    return error_line(
+                        "the transport is playing; stop it before changing its clips",
+                    );
+                }
                 session.control.set_tempo(bpm, beats_per_bar, gain);
                 session.control.set_loop(loop_start, loop_end);
                 session.control.seek(position);
@@ -3172,6 +3186,7 @@ impl Server {
         if let Some(mut previous) = self.transport.take() {
             previous.finish();
         }
+        let clip_count = clips.len();
         let control = Arc::new(TransportControl::new(spec, position, loop_start, loop_end));
         control.set_playing(true);
         let error = Arc::new(Mutex::new(String::new()));
@@ -3181,7 +3196,7 @@ impl Server {
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-transport".to_string())
-                .spawn(move || run_transport(config, control, error))
+                .spawn(move || run_transport(config, control, error, clips))
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -3194,6 +3209,7 @@ impl Server {
             control,
             handle: Some(handle),
             error,
+            clips: clip_count,
         });
         self.transport_status()
     }
@@ -3761,6 +3777,131 @@ fn transport_frames(
     Ok(frames.round() as u64)
 }
 
+/// One clip field in seconds, signed when `signed` is true (a take recorded
+/// with a negative latency correction starts before the timeline's zero).
+fn clip_seconds(fields: &Object, key: &str, default: f64, signed: bool) -> Result<f64, String> {
+    match get(fields, key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Num(value)) if value.is_finite() && (signed || *value >= 0.0) => Ok(*value),
+        _ => Err(format!(
+            "a transport clip \"{key}\" must be a finite number of seconds{}",
+            if signed { "" } else { ", not negative" }
+        )),
+    }
+}
+
+/// A seconds value rounded to device frames. `0` means "to the end of the
+/// file" for `duration` and "no fade" for a fade length.
+fn clip_frames(seconds: f64, rate: u32) -> Result<u64, String> {
+    let frames = seconds * f64::from(rate.max(1));
+    if !frames.is_finite() || frames.abs() > u64::MAX as f64 {
+        return Err("a transport clip field is too large for this device".to_string());
+    }
+    if frames <= 0.0 {
+        return Ok(0);
+    }
+    Ok(frames.round() as u64)
+}
+
+/// A signed seconds value rounded to device frames (a clip's timeline start).
+fn clip_signed_frames(seconds: f64, rate: u32) -> Result<i64, String> {
+    let frames = seconds * f64::from(rate.max(1));
+    if !frames.is_finite() || frames.abs() > i64::MAX as f64 {
+        return Err("a transport clip field is too large for this device".to_string());
+    }
+    Ok(frames.round() as i64)
+}
+
+/// The `clips` field: the recorded takes placed on the transport timeline.
+///
+/// Every entry is an object with an absolute WAV `file`, a timeline `start`,
+/// a source `offset`, an optional `duration`, `gain`, `pan`, `loop` and the
+/// two crossfade lengths. The whole set is read and checked against the device
+/// rate before any thread or device exists, so a bad take is a refusal from
+/// `start` rather than a missing voice in a running transport.
+fn transport_clips(object: &Object, rate: u32) -> Result<Vec<TransportClip>, String> {
+    let values = match get(object, "clips") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Arr(values)) => values,
+        _ => return Err("transport \"clips\" must be an array of clip objects".to_string()),
+    };
+    let mut clips = Vec::with_capacity(values.len());
+    for value in values {
+        clips.push(transport_clip(value, rate)?);
+    }
+    Ok(clips)
+}
+
+/// One clip object. Missing knobs default to a wire, and a `duration` of zero
+/// means the rest of the file after `offset`.
+fn transport_clip(value: &Value, rate: u32) -> Result<TransportClip, String> {
+    let fields = match value {
+        Value::Obj(fields) => fields,
+        _ => return Err("each transport clip must be an object".to_string()),
+    };
+    let path = match get(fields, "file").or_else(|| get(fields, "path")) {
+        Some(Value::Str(path)) => path.clone(),
+        _ => {
+            return Err("a transport clip needs \"file\": an absolute WAV path".to_string())
+        }
+    };
+    if !Path::new(&path).is_absolute() {
+        return Err("transport needs every clip \"file\" to be an absolute path".to_string());
+    }
+    let start = clip_signed_frames(clip_seconds(fields, "start", 0.0, true)?, rate)?;
+    let offset = clip_frames(clip_seconds(fields, "offset", 0.0, false)?, rate)?;
+    let duration = clip_frames(clip_seconds(fields, "duration", 0.0, false)?, rate)?;
+    let fade_in = clip_frames(clip_seconds(fields, "fade_in", 0.0, false)?, rate)?;
+    let fade_out = clip_frames(clip_seconds(fields, "fade_out", 0.0, false)?, rate)?;
+    let gain = match get(fields, "gain") {
+        None | Some(Value::Null) => 1.0,
+        Some(Value::Num(value)) if value.is_finite() => Channel::clamp_gain(*value as f32),
+        _ => return Err("a transport clip \"gain\" must be a finite number".to_string()),
+    };
+    let pan = match get(fields, "pan") {
+        None | Some(Value::Null) => 0.0,
+        Some(Value::Num(value)) if value.is_finite() => Channel::clamp_pan(*value as f32),
+        _ => return Err("a transport clip \"pan\" must be a finite number".to_string()),
+    };
+    let looped = match get(fields, "loop") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Num(value)) => *value != 0.0,
+        _ => return Err("a transport clip \"loop\" must be true or false".to_string()),
+    };
+    let inserts = match get(fields, "inserts") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Arr(names)) => {
+            let mut inserts = Vec::with_capacity(names.len());
+            for name in names {
+                let word = match name {
+                    Value::Str(word) => word.as_str(),
+                    _ => return Err("a transport clip \"inserts\" must hold insert names".to_string()),
+                };
+                let kind = InsertKind::parse(word)
+                    .ok_or_else(|| format!("no such insert: {word}"))?;
+                inserts.push(kind);
+            }
+            inserts
+        }
+        _ => {
+            return Err(
+                "a transport clip \"inserts\" must be an array of insert names".to_string(),
+            )
+        }
+    };
+    let clip = TransportClip::from_wav(
+        path, start, offset, duration, gain, pan, looped, fade_in, fade_out, inserts,
+    )?;
+    if clip.rate != rate {
+        return Err(format!(
+            "{} is {} Hz and the transport runs at {} Hz; every clip must share the device rate",
+            clip.path, clip.rate, rate
+        ));
+    }
+    Ok(clip)
+}
+
 /// The `click` object `record` echoes when it armed one, e.g.
 /// `,"click":{"bpm":120,"beats_per_bar":4,"gain":0.5}`. Empty otherwise, so a
 /// take without a click gains no key.
@@ -4215,6 +4356,9 @@ struct TransportSession {
     /// The worker's failure, empty while healthy. A stopped transport can still
     /// report why it stopped.
     error: Arc<Mutex<String>>,
+    /// How many recorded takes this transport renders. Zero is the click-only
+    /// clock the page used before its takes moved into the engine.
+    clips: usize,
 }
 
 impl TransportSession {
@@ -4264,13 +4408,14 @@ impl TransportSession {
             )
         };
         format!(
-            "{{\"ok\":true,\"transport\":{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6}{}}}}}",
+            "{{\"ok\":true,\"transport\":{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{}{}}}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
             control.beats_per_bar(),
             control.loop_start() as f64 / rate,
             control.loop_end() as f64 / rate,
+            self.clips,
             error
         )
     }
@@ -4280,7 +4425,7 @@ impl TransportSession {
 /// default tempo and signature, with no loop. The route always has a shape to
 /// answer with, exactly as an idle `status` does.
 fn default_transport_line() -> String {
-    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000}}"
+    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0}}"
         .to_string()
 }
 
@@ -4288,8 +4433,13 @@ fn default_transport_line() -> String {
 /// socket never opens a second device for a take, playback or listen while it
 /// does. The device loop never returns on its own: `stop` makes the source's
 /// next block fail, which is the same clean path a stopped playback takes.
-fn run_transport(config: Config, control: Arc<TransportControl>, error: Arc<Mutex<String>>) {
-    let source = TransportSource::new(Arc::clone(&control));
+fn run_transport(
+    config: Config,
+    control: Arc<TransportControl>,
+    error: Arc<Mutex<String>>,
+    clips: Vec<TransportClip>,
+) {
+    let source = TransportSource::new(Arc::clone(&control)).with_clips(clips);
     let outcome = match config.backend {
         BackendKind::Null => transport_null(&config, source, &control),
         BackendKind::Alsa | BackendKind::PipeWire => {
@@ -7320,6 +7470,7 @@ break"}"#).is_err());
             control,
             handle: None,
             error: Arc::new(Mutex::new(String::new())),
+            clips: 0,
         }
     }
 
