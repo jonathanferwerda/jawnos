@@ -1392,15 +1392,43 @@ sub report_missing {
 		. " the engine is optional, checking again every ${MISSING_RETRY}s\n";
 }
 
-sub stop_supervisor {
-	remove_system_mix();
-	if (defined $child_pid) {
+# Stop the engine and wait for it to let go of the machine, then hand the
+# virtual sink back. The old order was the reverse: `remove_system_mix` moved
+# the default and unloaded the sink while the child was still playing the tail
+# of its capture out the output, so the person heard the same audio on two
+# paths a few tens of milliseconds apart and then a step to silence. The
+# engine's own `quit` is the clean path - it ramps the output down, drains the
+# device, unlinks the socket - and is asked for first. TERM/KILL stays as the
+# ladder for an engine that will not answer. Returns 1 when a signal was
+# needed, which is the only case that can still cut the output.
+sub quiet_stop_engine {
+	return 0 unless defined $child_pid || $adopted;
+	# One request, and a reply is the promise the engine keeps: it answers after
+	# its worker threads have stopped and the device has been released. An
+	# engine that does not answer in time is not waited on - it has made no
+	# promise, and the ladder below is faster and just as safe.
+	my $reply = engine_command($socket, { cmd => 'quit' });
+	my $asked = $reply && $reply->{'ok'} ? 1 : 0;
+
+	if ( defined $child_pid ) {
+		if ($asked) {
+			my $deadline = time + $STOP_GRACE;
+			while ( time < $deadline ) {
+				my $got = waitpid($child_pid, POSIX::WNOHANG());
+				# Reaped, or already reaped elsewhere: the machine is free.
+				if ( $got == $child_pid || $got == -1 ) {
+					$child_pid = undef;
+					return 0;
+				}
+				sleep 0.05;
+			}
+		}
+		# Not answered, or still here after the promise: the ladder.
 		kill 'TERM', $child_pid;
 		my $deadline = time + $STOP_GRACE;
 		my $reaped   = 0;
-		while (time < $deadline) {
-			my $got = waitpid($child_pid, POSIX::WNOHANG());
-			if ($got == $child_pid) {
+		while ( time < $deadline ) {
+			if ( waitpid($child_pid, POSIX::WNOHANG()) == $child_pid ) {
 				$reaped = 1;
 				last;
 			}
@@ -1411,21 +1439,30 @@ sub stop_supervisor {
 			waitpid($child_pid, 0);
 		}
 		$child_pid = undef;
+		return 1;
 	}
-	elsif ($adopted) {
-		# The adopted engine is not our child, so it cannot be reaped and must
-		# be asked to leave. It is the engine this supervisor now owns; a clean
-		# stop should not leave one detached behind.
-		engine_command($socket, { cmd => 'quit' });
+
+	# An adopted engine is not our child: it cannot be reaped, only polled.
+	if ($asked) {
 		my $deadline = time + $STOP_GRACE;
-		while (time < $deadline) {
+		while ( time < $deadline ) {
 			last unless engine_answers($socket);
 			sleep 0.05;
 		}
-		if (engine_answers($socket)) {
-			print STDERR "audio supervisor: the adopted engine at $socket did not stop\n";
-		}
+		return 0 unless engine_answers($socket);
 	}
+	print STDERR "audio supervisor: the adopted engine at $socket did not stop\n"
+		if engine_answers($socket);
+	return 1;
+}
+
+sub stop_supervisor {
+	# The engine lets go first; only then is the sink taken away. A stop that
+	# is cut short between the two (the tree's sweep gives the supervisor a
+	# short grace) leaves the mix in place for the next supervisor to remove,
+	# which is the safe half of the handover, not the loud one.
+	quiet_stop_engine();
+	remove_system_mix();
 	unlink $status_path;
 	print "audio supervisor: stopped\n";
 	exit 0;

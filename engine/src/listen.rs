@@ -310,6 +310,94 @@ pub fn monitor_prefill_frames(buffer: usize, period: usize) -> usize {
     buffer.max(period).max(1)
 }
 
+/// How long the physical output takes to reach silence when the engine is told
+/// to stop, and to come back up when it starts. Twenty milliseconds is short
+/// enough to hand the device over inside the supervisor's stop grace, and long
+/// enough that the edge is a fade rather than a step. A step is a click, and a
+/// click at release is what the person hears as the engine letting go of the
+/// audio.
+pub const EDGE_FADE_MS: u32 = 20;
+
+/// The fade's length in frames at `rate`, and never zero.
+pub fn edge_fade_frames(rate: u32) -> usize {
+    ((u64::from(rate) * u64::from(EDGE_FADE_MS)) / 1000) as usize
+}
+
+/// A one-frame-at-a-time gain ramp for the device's edge.
+///
+/// The loop renders whole blocks, so a fade cannot be one ramp: the gain has to
+/// carry across blocks and land exactly on its target when the last frame of
+/// the fade has been written. [`Edge::new`] starts it at silence and fades in;
+/// [`Edge::toward`] reverses it, and [`Edge::silent`] is the caller's signal
+/// that the fade to silence has arrived and the device can be drained.
+#[derive(Clone, Copy, Debug)]
+pub struct Edge {
+    frames: usize,
+    left: usize,
+    gain: f32,
+    step: f32,
+    target: f32,
+}
+
+impl Edge {
+    pub fn new(frames: usize) -> Self {
+        let frames = frames.max(1);
+        // The first frame is silence and the last frame of the fade is unity,
+        // so the step spans the frames between them.
+        let span = frames.saturating_sub(1).max(1) as f32;
+        Edge {
+            frames,
+            left: frames,
+            gain: 0.0,
+            step: 1.0 / span,
+            target: 1.0,
+        }
+    }
+
+    /// Start a fade to `target` over the configured length. Asking for the
+    /// target already in flight changes nothing; asking for the other one
+    /// reverses the ramp from wherever the gain is now, so no step appears.
+    pub fn toward(&mut self, target: f32) {
+        let target = target.clamp(0.0, 1.0);
+        if (target - self.target).abs() < f32::EPSILON {
+            return;
+        }
+        self.target = target;
+        self.left = self.frames;
+        // The first frame keeps the gain it already had and the last frame of
+        // the fade lands on the target, so the ramp neither steps in nor out.
+        let span = self.frames.saturating_sub(1).max(1) as f32;
+        self.step = (target - self.gain) / span;
+    }
+
+    /// True once a fade to silence has written its last frame. The caller stops
+    /// there rather than at the stop flag, so the release is silent.
+    pub fn silent(&self) -> bool {
+        self.left == 0 && self.gain <= 0.0
+    }
+
+    /// Scale one interleaved block and advance the ramp.
+    pub fn apply(&mut self, block: &mut [i16], channels: usize) {
+        if channels == 0 {
+            return;
+        }
+        for frame in block.chunks_mut(channels) {
+            let gain = self.gain;
+            for sample in frame.iter_mut() {
+                *sample = (f32::from(*sample) * gain).round() as i16;
+            }
+            if self.left > 0 {
+                self.left -= 1;
+                self.gain = if self.left == 0 {
+                    self.target
+                } else {
+                    (self.gain + self.step).clamp(0.0, 1.0)
+                };
+            }
+        }
+    }
+}
+
 /// Add the machine's system mix to an already-rendered stereo i16 block. The
 /// listen strip's own input is the capture; the system mix is the machine's
 /// ordinary audio and stays at unity, exactly as the patchbay's fallback does.
@@ -540,6 +628,47 @@ mod tests {
         let mut untouched = vec![1234i16; 4];
         add_system_to_i16(&mut untouched, &[], 2);
         assert_eq!(untouched, vec![1234i16; 4], "an absent ring is silence");
+    }
+
+    #[test]
+    fn the_edge_starts_silent_and_rises_to_unity() {
+        let mut edge = Edge::new(4);
+        let mut block = vec![10_000i16; 8];
+        edge.apply(&mut block, 2);
+        // Frame 0 is silence, and the last frame of the fade is full scale.
+        assert_eq!(&block[0..2], &[0, 0]);
+        assert_eq!(block[6], 10_000);
+        assert!(!edge.silent());
+        // A second block is past the fade and passes through unchanged.
+        let mut after = vec![10_000i16; 4];
+        edge.apply(&mut after, 2);
+        assert_eq!(after, vec![10_000i16; 4]);
+    }
+
+    #[test]
+    fn a_stop_ramps_to_silence_and_reports_it() {
+        let mut edge = Edge::new(4);
+        // Finish the fade-in first, so the fade-out starts at unity.
+        let mut warm = vec![10_000i16; 8];
+        edge.apply(&mut warm, 2);
+        edge.toward(0.0);
+        let mut block = vec![10_000i16; 8];
+        edge.apply(&mut block, 2);
+        assert_eq!(block[0], 10_000, "the fade keeps the gain it had");
+        assert_eq!(block[6], 0, "the last frame of the fade is silent");
+        assert!(edge.silent(), "the loop can stop there, not one block later");
+    }
+
+    #[test]
+    fn an_edge_never_divides_by_zero_and_keeps_the_channels() {
+        let mut edge = Edge::new(0);
+        let mut block = vec![5_000i16; 6];
+        edge.apply(&mut block, 2);
+        assert_eq!(&block[0..2], &[0, 0], "a zero-frame fade is one frame of silence");
+        assert_eq!(block.len(), 6, "every channel is written");
+        let mut empty: [i16; 0] = [];
+        edge.apply(&mut empty, 2);
+        assert_eq!(edge_fade_frames(48_000), 960);
     }
 
     #[test]

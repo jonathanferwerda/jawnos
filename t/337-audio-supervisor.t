@@ -894,6 +894,9 @@ my $dir = $ENV{'FAKE_PACTL_DIR'} or exit 9;
 open(my $log, '>>', "$dir/pactl.log") or exit 9;
 print {$log} join(' ', @ARGV), "\n";
 close $log;
+open(my $order, '>>', "$dir/order.log") or exit 9;
+print {$order} join(' ', @ARGV), "\n";
+close $order;
 sub slurp {
 	my ($path) = @_;
 	open(my $fh, '<', $path) or return '';
@@ -960,6 +963,9 @@ while (my $client = $listener->accept) {
 	my $obj = eval { JSON::PP->new->decode($line) };
 	my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
 	if ($cmd eq 'quit') {
+		open(my $order, '>>', ($ENV{'FAKE_PACTL_DIR'} || '.') . '/order.log') or exit 9;
+		print {$order} "engine quit\n";
+		close $order;
 		print {$client} "{\"ok\":true}\n";
 		close $client;
 		last;
@@ -1031,6 +1037,11 @@ ENGINE
 	like(read_text("$dir/supervisor.log"), qr/asking it to restart on the saved choice/,
 		'after asking the old child to quit');
 
+	# The reset leaves only the stop's own order: the quit the old child answered
+	# for the plan change is not part of the handover under test.
+	open(my $ofh, '>', "$dir/order.log") or die "order log: $!";
+	close $ofh;
+
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the managing supervisor stops cleanly');
 	is(read_text($default), "alsa_output.real\n", 'the previous default is restored');
@@ -1039,6 +1050,16 @@ ENGINE
 	like(read_text($pactl_log), qr/unload-module 42/, 'and the sink is unloaded');
 	ok(!-e $rule, 'the card rule is removed so the desktop gets the card back');
 	ok(!-e "$dir/audio-system-mix.json", 'nothing is left behind');
+
+	# The handover order: the engine is asked to quit and lets go of the device
+	# before the sink goes. Removing it first left the same audio on two paths
+	# and then dropped the machine's own streams onto an output held at unity.
+	my $order = read_text("$dir/order.log");
+	my $quit_at = index($order, 'engine quit');
+	my $back_at = index($order, 'set-default-sink alsa_output.real');
+	ok($quit_at >= 0, 'the engine is asked to quit on a clean stop');
+	ok($back_at >= 0, 'and the machine is handed back');
+	ok($quit_at < $back_at, 'only after the engine has let go of the output');
 }
 
 # --- a table-like plan installs the duplex rule before the engine -----------

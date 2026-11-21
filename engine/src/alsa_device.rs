@@ -13,6 +13,7 @@ use alsa::pcm::{Access, Format, HwParams, State, PCM};
 use alsa::{Direction, ValueOr};
 
 use crate::backends::RunReport;
+use crate::listen::{edge_fade_frames, Edge};
 use crate::loopback::{self, LoopbackReport};
 use crate::monbus::Consumer;
 use crate::pipewire_guard::PlaybackGuard;
@@ -598,9 +599,18 @@ pub fn run_listen_with_system<S: crate::listen::ListenSink>(
     let mut remaining = total;
     let mut played = 0u64;
     let mut xruns = 0usize;
+    let mut edge = Edge::new(edge_fade_frames(rate));
+    let mut stopping = false;
 
     loop {
-        if stop.load(Ordering::SeqCst) {
+        if !stopping && stop.load(Ordering::SeqCst) {
+            // The device is handed back from silence: a step from the last
+            // sample to nothing is a click, and the capture tail left in the
+            // ring is the echo the next path does not have.
+            stopping = true;
+            edge.toward(0.0);
+        }
+        if stopping && edge.silent() {
             break;
         }
         let want = match remaining {
@@ -639,6 +649,7 @@ pub fn run_listen_with_system<S: crate::listen::ListenSink>(
             &system_block[..system_len],
             &mut output[..got * 2],
         )?;
+        edge.apply(&mut output[..got * 2], 2);
 
         // `writei` counts frames; a partial write is normal near the end of a
         // block, and an underrun is recovered and counted like `--run` does.
@@ -764,9 +775,18 @@ pub fn run_playback_with_system<S: crate::listen::ListenSink>(
     let mut remaining = total;
     let mut played = 0u64;
     let mut xruns = 0usize;
+    let mut edge = Edge::new(edge_fade_frames(rate));
+    let mut stopping = false;
 
     loop {
-        if stop.load(Ordering::SeqCst) {
+        if !stopping && stop.load(Ordering::SeqCst) {
+            // The device is handed back from silence: a step from the last
+            // sample to nothing is a click, and the capture tail left in the
+            // ring is the echo the next path does not have.
+            stopping = true;
+            edge.toward(0.0);
+        }
+        if stopping && edge.silent() {
             break;
         }
         let want = match remaining {
@@ -787,6 +807,7 @@ pub fn run_playback_with_system<S: crate::listen::ListenSink>(
             &system_block[..stereo],
             &mut output[..stereo],
         )?;
+        edge.apply(&mut output[..stereo], 2);
 
         let mut written = 0usize;
         while written < stereo {

@@ -9,8 +9,11 @@
 #            born with the replaced output's volume and mute, so the tray does
 #            not jump to 100%, while the output the engine plays through is
 #            held at unity; a repeated ensure leaves a level the person set but
-#            keeps that output at unity, and remove puts the level and mute
-#            back - after a failed unload and after a crash too. An output
+#            keeps that output at unity, and remove hands back the live mix's
+#            own level (the loudness the person hears today) - after a failed
+#            unload and after a crash too. The level is written to the output
+#            before the default moves, and the sink is unloaded last, so a
+#            stream that follows the handover never lands on unity. An output
 #            whose level cannot be read leaves both sinks alone and says why.
 #            A mix whose state file was wiped is still taken down: the module is
 #            found by the sink name it was loaded with, the default leaves
@@ -211,6 +214,13 @@ if ($cmd eq 'load-module') {
 		exit 0;
 	}
 if ($cmd eq 'get-sink-volume') {
+	# A live mix the server will not report, so the saved level is the
+	# only fallback; `FAKE_PACTL_LEVEL` fails every read instead.
+	if ( ($ARGV[1] // '') eq 'jawn_system'
+		&& ($ENV{FAKE_PACTL_MIX_LEVEL} || '') eq 'unreadable' ) {
+		print "Failure: No such entity\n";
+		exit 1;
+	}
 	if (($ENV{FAKE_PACTL_LEVEL} || '') eq 'unreadable') {
 		print "Failure: No such entity\n";
 		exit 1;
@@ -220,6 +230,11 @@ if ($cmd eq 'get-sink-volume') {
 	exit 0;
 }
 if ($cmd eq 'get-sink-mute') {
+	if ( ($ARGV[1] // '') eq 'jawn_system'
+		&& ($ENV{FAKE_PACTL_MIX_LEVEL} || '') eq 'unreadable' ) {
+		print "Failure: No such entity\n";
+		exit 1;
+	}
 	if (($ENV{FAKE_PACTL_LEVEL} || '') eq 'unreadable') {
 		print "Failure: No such entity\n";
 		exit 1;
@@ -399,9 +414,9 @@ is($twice->{skipped}, 1, 'and changes nothing');
 	is($off->{ok}, 1, 'the mix still removes cleanly');
 	is($off->{level_restored}, 1, 'and reports the level put back');
 	is(read_file("$dir/default"), "alsa_output.real\n", 'and the previous output comes back');
-	is((level_of('alsa_output.real'))[0], 65,
-		'the output is handed back at the volume it had');
-	is((level_of('alsa_output.real'))[1], 'yes', 'and muted as it was');
+	is((level_of('alsa_output.real'))[0], 40,
+		'the live mix is the loudness the person hears, so that is what is handed back');
+	is((level_of('alsa_output.real'))[1], 'no', 'and the unmuted state the mix carried');
 	write_levels('');
 }
 
@@ -426,6 +441,56 @@ is($twice->{skipped}, 1, 'and changes nothing');
 	my $retry = JawnOS::Audio::SystemMix::remove($out);
 	is($retry->{ok}, 1, 'the retry removes the mix');
 	is((level_of('alsa_output.real'))[0], 30, 'and the level stays where it belongs');
+	write_levels('');
+}
+
+# The order is the handover. A stream lands on the output when the default
+# moves and again when the sink is unloaded; if the level is written after
+# either, the person hears full scale until it catches up. The level first,
+# the default second, the unload last.
+{
+	reset_mix();
+	write_levels("alsa_output.real 100 no\n");
+	my $out = tempdir(CLEANUP => 1);
+	my $on = JawnOS::Audio::SystemMix::ensure($out, 'default');
+	is($on->{ok}, 1, 'the mix is up for the handover test');
+
+	# The person turns the tray down while the mix lives.
+	write_levels("alsa_output.real 100 no\njawn_system 35 no\n");
+	write_file("$dir/pactl.log", '');
+	my $off = JawnOS::Audio::SystemMix::remove($out);
+	is($off->{ok}, 1, 'the mix removes');
+
+	my $log    = read_file("$dir/pactl.log");
+	my $level  = index($log, 'set-sink-volume alsa_output.real 35%');
+	my $switch = index($log, 'set-default-sink alsa_output.real');
+	my $unload = index($log, 'unload-module 42');
+	ok($level >= 0, 'the level is written to the output');
+	ok($switch >= 0, 'and the default moves');
+	ok($level < $switch, 'the level lands before the default moves');
+	ok($switch < $unload, 'and the sink is unloaded last');
+	write_levels('');
+}
+
+# A live mix the server will not report is not a reason to leave the output at
+# unity: the level the mix was born with is the recorded fallback.
+{
+	reset_mix();
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/default", "jawn_system\n");
+	write_levels("alsa_output.real 100 no\njawn_system 30 no\n");
+	my $out = tempdir(CLEANUP => 1);
+	write_file("$out/audio-system-mix.json",
+		'{"sink":"jawn_system","source":"jawn_system.monitor",'
+			. '"previous_default":"alsa_output.real","module_id":42,'
+			. '"previous_level":{"volume":65,"mute":1}}');
+
+	local $ENV{FAKE_PACTL_MIX_LEVEL} = 'unreadable';
+	my $off = JawnOS::Audio::SystemMix::remove($out);
+	is($off->{ok}, 1, 'the mix removes without a readable mix level');
+	is((level_of('alsa_output.real'))[0], 65, 'the saved level is the fallback');
+	is((level_of('alsa_output.real'))[1], 'yes', 'and its mute');
 	write_levels('');
 }
 

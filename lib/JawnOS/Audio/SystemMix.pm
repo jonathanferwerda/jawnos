@@ -36,8 +36,17 @@ package JawnOS::Audio::SystemMix;
 # it once, and raises that output to unity: the mix carries the person's level,
 # the hardware sink only passes the engine's signal through. Leaving both at
 # the same level applied it twice - the engine read the mix at V and played it
-# out a sink still at V, so the room heard V squared. `remove` puts the
-# hardware level back before it unloads the sink, including after a crash.
+# out a sink still at V, so the room heard V squared.
+#
+# `remove` is the handover, and its order is the whole point. Moving the
+# default or unloading the sink lands a live app stream on the hardware output
+# at once; if that output is still at the unity the engine held it at, the
+# person hears a burst of full-scale audio until something lowers it. So the
+# level is written first, the default moves second, and the sink is unloaded
+# last, and the level written is the live mix's own - the loudness the person
+# hears today, not the level the mix was born with. Every step leaves the
+# machine somewhere honest if the process is killed in the middle (a stop is
+# routinely cut short by the tree's stop sweep), including after a crash.
 #
 # This is deliberately the same `pactl` idiom JawnOS::Sco::Mixer already uses,
 # through JawnOS::Platform::Audio::run so a test can inject the tool and a
@@ -829,6 +838,23 @@ sub _restore_output_level {
 	return $did;
 }
 
+# The level to carry off the mix. The live sink answers first, because it is
+# the loudness the person hears today: `ensure` copied the output's level into
+# the mix when it was made, so an untouched mix answers the record exactly, and
+# one the person moved answers what they moved it to. A key the server will not
+# report falls back to the saved level rather than being guessed.
+sub _handover_level {
+	my ($saved, $sinks) = @_;
+	my $level = ref $saved eq 'HASH' ? { %{$saved} } : {};
+	if ( $sinks && $sinks->{$system_sink} ) {
+		my $volume = JawnOS::Platform::Audio::get_volume('output', $system_sink);
+		my $mute   = JawnOS::Platform::Audio::get_mute('output', $system_sink);
+		$level->{'volume'} = $volume if defined $volume;
+		$level->{'mute'}   = $mute   if defined $mute;
+	}
+	return %{$level} ? $level : undef;
+}
+
 # Create the sink if it is not there, remember the default it replaced, and
 # make it the default. Repeating this while it is already active changes
 # nothing. The switch is verified rather than trusted: `set-default-sink` can
@@ -1094,27 +1120,37 @@ sub _recover_without_state {
 
 	my $current  = _current_default();
 	my $target   = '';
-	my $restored = 0;
 	if ( $current eq $system_sink ) {
 		$target = _real_output($order, $sinks, \%null);
-		if ( length $target ) {
-			$restored = JawnOS::Platform::Audio::set_default('output', $target) ? 1 : 0;
-			my $after = _current_default();
-			$target = $after if length $after && $after ne $system_sink;
-		}
 	}
 	elsif ( length $current && $current ne $system_sink && $sinks->{$current} ) {
 		# Something already handed the default back; the level still goes there.
 		$target = $current;
 	}
 
-	my $level_restored = 0;
-	if ( length $target && $target ne $system_sink && $sinks->{$target} ) {
-		$level_restored = 1
+	# Carry the level before the default moves: the same reason as the recorded
+	# path, and a crash is where an interrupted handover is most likely. The
+	# mix may have been muted; the machine handed back must not be.
+	my $carry = sub {
+		my ($where) = @_;
+		return 0 unless length $where && $where ne $system_sink && $sinks->{$where};
+		my $did = 0;
+		$did = 1
 			if defined $volume
-			&& JawnOS::Platform::Audio::set_volume('output', $target, $volume);
-		# The mix may have been muted; the machine handed back must not be.
-		JawnOS::Platform::Audio::set_mute('output', $target, 0);
+			&& JawnOS::Platform::Audio::set_volume('output', $where, $volume);
+		JawnOS::Platform::Audio::set_mute('output', $where, 0);
+		return $did;
+	};
+	my $level_restored = $carry->($target);
+
+	my $restored = 0;
+	if ( $current eq $system_sink && length $target ) {
+		$restored = JawnOS::Platform::Audio::set_default('output', $target) ? 1 : 0;
+		# A server that put the default somewhere else still gets the level.
+		my $after = _current_default();
+		if ( length $after && $after ne $system_sink && $after ne $target ) {
+			$level_restored = $carry->($after) || $level_restored;
+		}
 	}
 
 	my $unloaded = _unload($module->{'id'});
@@ -1158,15 +1194,21 @@ sub remove {
 	my $unloaded   = 0;
 
 	my $sinks = available() ? _sinks() : {};
+	# The mix carried the person's level while the hardware sink played at
+	# unity. Write that level back before the default moves: whatever stream
+	# lands on the output next must already find the person's level there, or
+	# it is heard at the unity the engine was holding. The live mix is the
+	# copy to read - `previous_level` only remembers what the mix was born
+	# with, and the tray may have moved since.
+	my $handover = available() ? _handover_level($saved_level, $sinks) : undef;
+	if ($handover) {
+		$level_restored = _restore_output_level($previous, $handover, $sinks);
+	}
 	if ( length $previous && $previous ne $system_sink && $sinks->{$previous} ) {
 		$restored = JawnOS::Platform::Audio::set_default('output', $previous) ? 1 : 0;
 	}
-	# The mix carried the person's level while the hardware sink played at
-	# unity. Put that level back before the sink goes - the normal path, a
-	# removal that cannot finish, and a mix a crash left behind all end here.
-	if ( available() && ref $saved_level eq 'HASH' ) {
-		$level_restored = _restore_output_level($previous, $saved_level, $sinks);
-	}
+	# Last: the unload is what moves the sink's streams to the output whose
+	# level was just set.
 	if ( available() ) {
 		$unloaded = _unload($module_id);
 	}
