@@ -401,14 +401,14 @@ function jawnosTimelineCachePrinterReady(layout) {
 }
 
 // Paint the stored view if it is still the view. Safe to call any number of
-// times: one attempt a page, never over a server answer, never in a private
-// place or under an open grant (the disk rule is private mode's, whatever the
-// server rendered), and never for the desk, which draws neither timeline nor
-// appointments.
+// times: one attempt a page, never over a server answer, never under an open
+// grant (the disk rule is private mode's, whatever the server rendered), and
+// never for the desk, which draws neither timeline nor appointments. A private
+// place is the safest place and keeps the view too.
 function jawnosTimelineCachePaint(data) {
 	if (jawnosTimelineCachePainted || jawnosTimelineCacheLive) { return false; }
 	if (typeof jawnosWindowsGet !== 'function' || typeof jawnosWindowsPublicNow !== 'function') { return false; }
-	if (!jawnosWindowsPublicNow()) { return false; }
+	if (!jawnosWindowsPublicNow(null, { allow_private_place: true })) { return false; }
 	if (!data || typeof data !== 'object') {
 		if (typeof deloreanBringer !== 'function') { return false; }
 		data = deloreanBringer();
@@ -435,8 +435,9 @@ function jawnosTimelineCachePaint(data) {
 
 // Keep the payload a fetch produced, for the next load. Debounced so the poll
 // does not write every second, and refused where the store is refused already:
-// the desk, and a private place or grant (the disk is what private mode
-// protects, even when the server's view itself excluded the private apps).
+// the desk and an open private grant. A private place is the safest place and
+// keeps the view; the open grant is the disk rule, even when the server's view
+// itself excluded the private apps.
 function jawnosTimelineCacheRemember(respons, data) {
 	if (!respons || !respons['appts'] || !respons['appts']['__specs']) { return; }
 	clearTimeout(jawnosTimelineCacheSaveTimer);
@@ -448,7 +449,7 @@ function jawnosTimelineCacheRemember(respons, data) {
 
 function jawnosTimelineCacheWrite(respons, data) {
 	if (typeof jawnosWindowsSave !== 'function' || typeof jawnosWindowsPublicNow !== 'function') { return; }
-	if (!jawnosWindowsPublicNow()) { return; }
+	if (!jawnosWindowsPublicNow(null, { allow_private_place: true })) { return; }
 	if (!data || !data['layout'] || data['layout'] == 'desk') { return; }
 	var view = { appts: respons['appts'], clothesline: respons['clothesline'] || [] };
 	var text;

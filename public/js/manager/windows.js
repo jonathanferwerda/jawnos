@@ -481,6 +481,9 @@ function windowMaker(response, fragment) {
 	// $(response).find('.window_contents').html(), read from the same parse
 	var contents_element = fragment.querySelector('.window_contents');
 	var contents_html = contents_element ? contents_element.innerHTML : '';
+	// The rendered header's own stamp, for the case where the window stamp says
+	// the whole render is older but the header it carries is the newer write.
+	var incoming_header = fragment.querySelector('.appointment_header_background');
 	var json_storage = storage || sessionStorage.getItem('window_storage');
 	var storage = JSON.parse(json_storage) ? JSON.parse(json_storage) : {};
 	var matches = 0;
@@ -559,10 +562,18 @@ function windowMaker(response, fragment) {
 					// next reload once the burst of frames has settled
 					if (typeof jawnosWindowsShellCaptureSoon == 'function') { jawnosWindowsShellCaptureSoon(wind_el, 1200); }
 				}
-				else { matches = 1; }
+				else {
+					// The window stamp is the shell's own; a delayed render can be
+					// older than it while its header is the newer write. Trust the
+					// header's own stamp, and let jawnosHeaderApply refuse an older one.
+					if (incoming_header && typeof jawnosHeaderApply == 'function') {
+						jawnosHeaderApply(app_attr, incoming_header.outerHTML, incoming_header.getAttribute('last_update') || incoming_header.getAttribute('last_updated') || 0);
+					}
+					matches = 1;
+				}
 			}
 		}
-		
+			
 		if (matches == 0 && response != "null") {
 			$('#browser').append('' + response + '');
 			made = 1;

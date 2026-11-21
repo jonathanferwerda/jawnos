@@ -9,6 +9,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use File::Temp qw(tempfile);
 use RepoSource;
 
 # A websocket can read OPEN while the machine slept or the server went silent.
@@ -115,6 +116,12 @@ like($watch, qr/function jawnosWebsocketStatus\(\)/,
 # the answer lands the same way a live header push does
 like($handler, qr/function jawnosHeaderApply\(app, html, timestamp\)/,
 	'one place applies a header');
+like($handler, qr/function jawnosHeaderStamp\(header\)/,
+	'the header order reads the header\'s own stamp');
+like($handler, qr/last_update'\) \|\| 0/,
+	'which is the template\'s last_update, not the frame\'s arrival time');
+like($handler, qr/incoming_stamp < existing_stamp/,
+	'an older header never replaces a newer one');
 like($handler, qr/else if \( data\['type'\] == 'header' \) \{\s*jawnosHeaderApply\(data\['app'\], data\['header'\], data\['timestamp'\]\);/,
 	'the live header push uses it');
 like($handler, qr/else if \( data\['type'\] == 'resync' \) \{.*?\$\.each\(data\['headers'\] \|\| \{\}, function \(app, html\) \{\s*jawnosHeaderApply\(app, html, data\['timestamp'\]\);/s,
@@ -236,6 +243,80 @@ unlike($ws_pm, qr/stop_seen => 'yes', type => 'start'/,
 
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
+SKIP: {
+	skip 'node is needed to play the header order', 1 unless $node && -x $node;
+
+	my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $fh <<'JS';
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+let failures = 0;
+function check(name, ok) { if (!ok) { failures++; console.log('not ok: ' + name); } }
+function header(attrs) {
+	attrs = attrs || {};
+	return {
+		attrs: attrs,
+		getAttribute: function (n) { return Object.prototype.hasOwnProperty.call(this.attrs, n) ? this.attrs[n] : null; }
+	};
+}
+let current = header({ last_update: '2000' });
+let replaced = 0;
+function coll(node) {
+	return {
+		length: node ? 1 : 0,
+		0: node,
+		find: function () { return coll(node); },
+		replaceWith: function () { replaced++; },
+		attr: function (name, value) {
+			if (value !== undefined) { node.attrs[name] = String(value); }
+			return node.attrs[name];
+		}
+	};
+}
+function jq() { return coll(current); }
+const sandbox = {
+	$: jq,
+	document: {
+		createElement: function () {
+			return {
+				set innerHTML(v) { this._html = v; },
+				querySelector: function () {
+					const m = /last_update="([^"]*)"/.exec(this._html || '');
+					return m ? header({ last_update: m[1] }) : null;
+				}
+			};
+		}
+	},
+	console: console
+};
+sandbox.window = sandbox;
+const ctx = vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx, { filename: '01_message_handler.js' });
+const stamp = ctx.jawnosHeaderStamp;
+const apply = ctx.jawnosHeaderApply;
+check('stamp reads last_update', stamp(header({ last_update: '1234' })) === 1234);
+check('stamp takes the newer last_updated', stamp(header({ last_update: '1000', last_updated: '2000' })) === 2000);
+check('no stamp is zero', stamp(header({})) === 0);
+apply('x', '<div class="appointment_header_background" last_update="1500"></div>', 9999);
+check('an older header is refused', replaced === 0);
+apply('x', '<div class="appointment_header_background" last_update="2500"></div>', 0);
+check('a newer header is applied', replaced === 1);
+check('the applied stamp is the header\'s own', current.attrs.last_updated === '2500');
+current = header({ last_update: '3000' });
+replaced = 0;
+apply('x', '<div class="appointment_header_background"></div>', 4000);
+check('the frame timestamp is only a fallback', replaced === 1 && current.attrs.last_updated === '4000');
+process.exit(failures ? 1 : 0);
+JS
+	close $fh;
+
+	my $out = `$node "$harness" "$root/public/js/manager/websocket/01_message_handler.js" 2>&1`;
+	my $rc = $? >> 8;
+	diag($out) if $rc;
+	is($rc, 0, 'the header\'s own stamp orders a resync, not the frame time');
+}
+
 if ($node && -x $node) {
 	my @files = map { "$root/$_" } qw(
 		public/js/manager/websocket.js

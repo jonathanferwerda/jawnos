@@ -34,6 +34,17 @@ like($grabber, qr/warranty => '-10d'/,
 like($grabber, qr/if \(\$@\) \{\s*eval \{ &subs::log_writer\('centre view cache set failed/,
 	'a failed inline write is logged instead of killing the window');
 
+# --- the header comes from the same rows as the centre view ------------------
+
+unlike($grabber, qr/cache_get\(\{ app => \$app, context => 'header' \}\)/,
+	'a centre view does not read a header cache that another device may have left stale');
+like($grabber, qr/&subs::appt_header_printer\(\{\s*appts => \$appts,\s*app => \$app,/s,
+	'the header is rendered from the rows the centre view is about to draw');
+like($grabber, qr/header_only => 1,/,
+	'an open does not re-arm the alarms the start/stop already set');
+like($grabber, qr/broadcast => 'no',/,
+	'and does not broadcast another header beside its own response');
+
 # --- the header is the fast half, with no fork of its own -------------------
 
 my ($header_sub) = $calendar =~ /(sub appt_header_printer \{.*?\n\}\n)/s;

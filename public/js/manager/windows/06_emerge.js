@@ -1414,13 +1414,16 @@ function jawnosEmergePreviewPrune() {
 	return jawnosWindowsPrune();
 }
 
-function jawnosEmergePreviewSave(record) {
-	if (!record || !record.app || typeof jawnosWindowsSave != 'function') { return Promise.resolve(); }
-	// Private mode is a place, or an open grant: the picture may still be drawn
-	// (it never leaves the page), but it must not be written to the disk. A
-	// preview from there would be the app's own window, and reopening it in
-	// public must not reveal what the place was showing.
-	if (typeof jawnosWindowsPublicNow == 'function' && !jawnosWindowsPublicNow()) { return Promise.resolve(); }
+function jawnosEmergePreviewSave(record, el) {
+	if (!record || !record.app || record.app == 'Denied' || typeof jawnosWindowsSave != 'function') { return Promise.resolve(); }
+	// A private place itself is kept; a live private grant, a private app, or a
+	// media app showing a fingerprint-unlocked private album is refused. The
+	// picture may still be drawn in memory (it never leaves the page), but no
+	// copy of that window is written to the disk.
+	if (typeof jawnosWindowsPublicNow == 'function' && !jawnosWindowsPublicNow(el, { allow_private_place: true })) {
+		if (typeof jawnosWindowsDelete == 'function') { jawnosWindowsDelete(jawnosWindowsIdentity(record.app, {})); }
+		return Promise.resolve();
+	}
 	// a preview is per app; the empty instance suffix is also the identity every
 	// single-window app's shell uses, so the two share one record
 	return jawnosWindowsSave(jawnosWindowsIdentity(record.app, {}), {
@@ -1444,20 +1447,36 @@ function jawnosEmergePreviewParse(html) {
 }
 
 // A reload should not start the previews over. Read once, at idle, and keep the
-// parsed node so a press never pays for a parse.
+// parsed node so a press never pays for a parse. A theme change while the page
+// was away left another dressing's records behind, so they are reaped before
+// the load; the memory map holds the newest desk of apps, within its own budget.
 function jawnosEmergePreviewLoad() {
-	jawnosEmergePreviewAll().then(function (rows) {
-		var theme = jawnosEmergeThemeNow();
-		for (var i = 0; i < rows.length; i++) {
-			var row = rows[i];
-			if (!row || !row.app || !row.preview || jawnosEmergePreviews[row.app]) { continue; }
-			// a record from another theme is not the picture the desk is about to
-			// wear; leave it in the store to be replaced by a fresh capture
-			if (String(row.theme || '') !== String(theme)) { continue; }
-			var node = jawnosEmergePreviewParse(row.preview);
-			if (node) { jawnosEmergePreviews[row.app] = { node: node, html: row.preview, at: row.at || 0, theme: String(row.theme || '') }; }
-		}
-	}).then(null, function () {});
+	var theme = jawnosEmergeThemeNow();
+	var load = function () {
+		jawnosEmergePreviewAll().then(function (rows) {
+			rows.sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
+			var held = 0;
+			var loaded = 0;
+			for (var i = 0; i < rows.length; i++) {
+				var row = rows[i];
+				if (!row || !row.app || !row.preview || jawnosEmergePreviews[row.app]) { continue; }
+				// a record from another theme is not the picture the desk is about to
+				// wear; the reap above should have removed it, but a race is left unread
+				if (String(row.theme || '') !== String(theme)) { continue; }
+				if (loaded >= JAWNOS_EMERGE_PREVIEW_APPS) { break; }
+				var html = String(row.preview || '');
+				if (held + html.length > JAWNOS_EMERGE_PREVIEW_MEMORY) { continue; }
+				var node = jawnosEmergePreviewParse(row.preview);
+				if (node) {
+					jawnosEmergePreviews[row.app] = { node: node, html: row.preview, at: row.at || 0, theme: String(row.theme || '') };
+					held += html.length;
+					loaded++;
+				}
+			}
+		}).then(null, function () {});
+	};
+	if (typeof jawnosWindowsReapTheme == 'function') { jawnosWindowsReapTheme(theme).then(load, load); }
+	else { load(); }
 }
 
 // Nothing live belongs in a picture: no scripts, no handlers, no sound and no
@@ -1505,9 +1524,9 @@ function jawnosEmergePreviewCapture(win) {
 	if (typeof document == 'undefined' || !document.body) { return false; }
 	// The window itself is kept for the next reload whether or not a picture is
 	// drawn: a desk with the motions off still wants its windows back at once.
-	// The shell's own capture refuses private mode; the picture is only refused
-	// the disk, below, so the predicted view still works while the place is
-	// private.
+	// The shell's own capture refuses a private app, a live grant or a media
+	// unlock; the picture follows the same rule, so a locked window never becomes
+	// the next press's prediction.
 	if (typeof jawnosWindowsShellCapture == 'function') { jawnosWindowsShellCapture(win); }
 	if (typeof jawnosWindowEffectsOn == 'function' && !jawnosWindowEffectsOn()) { return false; }
 	if (typeof jawnosWindowEmergeLevel == 'function' && jawnosWindowEmergeLevel() == 'off') { return false; }
@@ -1515,7 +1534,11 @@ function jawnosEmergePreviewCapture(win) {
 	if (!win || win.nodeType !== 1 || !win.parentNode) { return false; }
 	if (win.getClientRects && !win.getClientRects().length) { return false; }
 	var app = win.getAttribute ? (win.getAttribute('app') || '') : '';
-	if (!app) { return false; }
+	if (!app || app == 'Denied') { return false; }
+	if (typeof jawnosWindowsPublicNow == 'function' && !jawnosWindowsPublicNow(win, { allow_private_place: true })) {
+		delete jawnosEmergePreviews[app];
+		return false;
+	}
 	var node = null;
 	try { node = win.cloneNode(true); } catch (e) { node = null; }
 	if (!node) { return false; }
@@ -1542,7 +1565,7 @@ function jawnosEmergePreviewCapture(win) {
 		delete jawnosEmergePreviews[apps[cut]];
 	}
 	if (html && html.length <= JAWNOS_EMERGE_PREVIEW_BYTES) {
-		jawnosEmergePreviewSave({ app: app, html: html, at: at, theme: theme }).then(jawnosEmergePreviewPrune, function () {});
+		jawnosEmergePreviewSave({ app: app, html: html, at: at, theme: theme }, win).then(jawnosEmergePreviewPrune, function () {});
 	}
 	return true;
 }
@@ -1698,9 +1721,10 @@ function jawnosEmergePreviewSheet() {
 }
 
 // A live theme change makes every kept picture and the copied stylesheet a
-// picture of the old dressing. Drop both; a press then draws the current-theme
-// skeleton until a window is captured under the new theme. The store's own
-// theme stamp keeps a reload from reading an old picture back.
+// picture of the old dressing. Drop both, and let the load reap the store's
+// records from the other theme before it reads the current ones; a press then
+// draws the current-theme skeleton until a window is captured under the new
+// theme.
 function jawnosEmergePreviewThemeReset() {
 	jawnosEmergePreviews = {};
 	jawnosEmergePreviewSheetCache = null;
@@ -1804,6 +1828,7 @@ function jawnosEmergePreviewSweep() {
 		if (!win || !win.getAttribute) { continue; }
 		var app = win.getAttribute('app') || '';
 		if (!app) { continue; }
+		if (typeof jawnosWindowsPublicNow == 'function' && !jawnosWindowsPublicNow(win, { allow_private_place: true })) { continue; }
 		if (win.getClientRects && !win.getClientRects().length) { continue; }
 		var at = jawnosEmergePreviews[app] ? (jawnosEmergePreviews[app].at || 0) : 0;
 		if (!pick || at < oldest) { pick = win; oldest = at; }

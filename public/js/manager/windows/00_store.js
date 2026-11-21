@@ -13,7 +13,9 @@
 // SHA-256 of the app's identity, so the store does not even name the apps it
 // keeps. A private app is never written at all: window_maker marks it
 // data-private and the capture refuses it, which is the same rule the server's
-// cache follows (a hidden app never reads a cached render).
+// cache follows (a hidden app never reads a cached render). A private place
+// itself is the safest place and is kept; a live private grant, a private app,
+// or a media app with a fingerprint-unlocked private album is refused.
 //
 // A window's identity is its app plus its session id and its named window id, so
 // Terminal and Folders keep one shell per instance. A preview is per app, so it
@@ -25,9 +27,10 @@ var JAWNOS_WINDOWS_STORE = 'windows';
 var JAWNOS_WINDOWS_KEYS = 'keys';
 var JAWNOS_WINDOWS_KEY_ID = 'payload';
 var JAWNOS_WINDOWS_META_ID = 'meta';
-// The same budget the preview store kept: thirty-two apps is a day's desk with
-// the room a fifth more asks for, and fifty megabytes is the whole store. The
-// oldest go first when either limit is reached.
+// The preview's memory map keeps the desk's apps (thirty-two) and its own
+// eight-megabyte ceiling; the disk store is held to the fifty megabytes alone,
+// so a restart can keep a prediction for every app it has seen. The oldest go
+// first when the byte ceiling is reached.
 var JAWNOS_WINDOWS_MAX_APPS = 32;
 var JAWNOS_WINDOWS_MAX_BYTES = 52428800;
 // One window's markup: a gallery with its photographs trimmed is ~40KB and a
@@ -54,30 +57,25 @@ function jawnosWindowsSupported() {
 	return !!(window.indexedDB && window.crypto && window.crypto.subtle && jawnosWindowsEncoder && jawnosWindowsDecoder);
 }
 
-// The machine's own identity, the person signed in when the page was rendered,
-// and the build that wrote the shells. A cache from another house, another
-// session or another build can never be read back: a scope change wipes the
-// store and mints a new key. The build belongs in the scope because a shell is
-// markup painted before the server answers - one from the previous build shows
-// last build's chrome around a freshly rendered window until it is closed and
-// opened again. A plain restart keeps the same build, so its shells survive;
-// an update changes the build and reaps them.
+// The machine's own identity and the person signed in when the page was
+// rendered. A cache from another house or another session can never be read
+// back: a scope change wipes the store and mints a new key. The build is not
+// part of the scope: a restart, or an update, keeps the predictions; a theme
+// change reaps the shells that are no longer the desk's dressing.
 function jawnosWindowsScope() {
 	var machine = '';
 	var person = '';
-	var build = '';
 	try { machine = String(window.signatorial || ''); } catch (e) { machine = ''; }
 	try { person = String(window.jawnos_session_scope || ''); } catch (e) { person = ''; }
-	try { build = String(window.jawnos_version || ''); } catch (e) { build = ''; }
-	return machine + '|' + person + '|' + build;
+	return machine + '|' + person;
 }
 
-// Private mode is never written to the disk. A private place, or an open private
-// grant, turns the store off for every app - not just a private one - because a
-// public window opened there may still carry what the place holds, and reopening
-// it in public must not reveal that. The page carries both marks; the server also
-// writes one onto each window it renders in a private place, so a window built
-// under the grant is refused even before the page's own toggle catches up.
+// A private place is the safest place and is kept. What is refused is a live
+// private grant (the Security padlock, which marks the body), a private app
+// (window_maker marks it data-private), and a media app whose own root carries a
+// fingerprint-unlocked album token (Folders, Gallery, Music). Both the
+// app-window capture and the timeline view pass allow_private_place; a caller
+// without it keeps the older strict rule.
 // What the desk is wearing right now: the theme signature the layout set on the
 // body and a live bundle push updates. A shell or a picture captured under
 // another signature is never painted as the current one - a prediction must
@@ -87,15 +85,28 @@ function jawnosWindowsThemeNow() {
 	return document.body.getAttribute('data-theme-sig') || '';
 }
 
-function jawnosWindowsPublicNow(el) {
+function jawnosWindowsPublicNow(el, opts) {
 	if (typeof document == 'undefined' || !document.body) { return true; }
 	if (typeof $ == 'function' && el) { el = $(el)[0]; }
 	var body = document.body;
+	var allow_private_place = !!(opts && opts.allow_private_place);
 	if (body.getAttribute) {
-		if (body.getAttribute('data-private-place') === 'yes') { return false; }
+		if (!allow_private_place && body.getAttribute('data-private-place') === 'yes') { return false; }
 		if (body.getAttribute('data-private-mode') === 'yes') { return false; }
 	}
-	if (el && el.getAttribute && el.getAttribute('data-private-mode') === 'yes') { return false; }
+	if (el && el.getAttribute) {
+		if (el.getAttribute('data-private') === 'yes') { return false; }
+		if (el.getAttribute('data-private-mode') === 'yes') { return false; }
+	}
+	// a media app showing a private album after a fingerprint is private mode,
+	// whatever the place; its own root wears the grant as a non-empty unlock
+	if (el && typeof $ == 'function') {
+		var unlocked = false;
+		$(el).find('[unlock]').each(function () {
+			if (String($(this).attr('unlock') || '').length) { unlocked = true; return false; }
+		});
+		if (unlocked) { return false; }
+	}
 	return true;
 }
 
@@ -310,14 +321,19 @@ function jawnosWindowsSave(identity, patch) {
 						// A window shell and preview are markup; the timeline's view
 						// (07_timeshift.js) is one JSON object of its own, so it is counted
 						// by that. A shell-only patch pays nothing for the branch.
-						return jawnosWindowsRowPut({
+						var row = {
 							k: k,
 							iv: sealed.iv,
 							ct: sealed.ct,
 							at: value.at,
 							bytes: (String(value.shell || '')).length + (String(value.preview || '')).length
 								+ (value.view ? JSON.stringify(value.view).length : 0)
-						});
+						};
+						// kept in the clear so a theme change can reap without opening
+						// every row; the timeline view has no theme of its own and is named
+						if (typeof value.theme == 'string') { row.theme = value.theme; }
+						if (value.view && typeof value.app != 'string') { row.kind = 'view'; }
+						return jawnosWindowsRowPut(row);
 					});
 				});
 			});
@@ -369,8 +385,9 @@ function jawnosWindowsDelete(identity) {
 	return jawnosWindowsWriteChain;
 }
 
-// The oldest go first, by the time they were last written, and the store is also
-// held to the bytes it takes rather than only to a count.
+// The oldest go first, by the time they were last written. The disk store is
+// held to the fifty megabytes alone; the preview's memory map has its own count
+// and byte ceilings.
 function jawnosWindowsPrune() {
 	var run = function () {
 		return jawnosWindowsIdb().then(function (db) {
@@ -385,12 +402,50 @@ function jawnosWindowsPrune() {
 			var drop = [];
 			for (var i = 0; i < rows.length; i++) {
 				held += (rows[i].bytes || 0);
-				if (i < JAWNOS_WINDOWS_MAX_APPS && held <= JAWNOS_WINDOWS_MAX_BYTES) { continue; }
+				if (held <= JAWNOS_WINDOWS_MAX_BYTES) { continue; }
 				drop.push(rows[i].k);
 			}
 			return Promise.all(drop.map(function (k) { return jawnosWindowsRowDelete(k); }));
 		}).then(function () { return true; })
 		  .then(null, function () { return false; });
+	};
+	jawnosWindowsWriteChain = jawnosWindowsWriteChain.then(run, run);
+	return jawnosWindowsWriteChain;
+}
+
+// A theme change makes every shell and picture another dressing's. The live
+// theme reset and the next page load both ask for this, so a record from another
+// theme is reaped rather than merely refused. The timeline view has no theme of
+// its own and is left alone.
+function jawnosWindowsReapTheme(theme) {
+	var wanted = String(theme || '');
+	var run = function () {
+		return jawnosWindowsReady().then(function (key) {
+			return jawnosWindowsIdb().then(function (db) {
+				return new Promise(function (res, rej) {
+					var query = db.transaction(JAWNOS_WINDOWS_STORE, 'readonly').objectStore(JAWNOS_WINDOWS_STORE).getAll();
+					query.onsuccess = function () { res(query.result || []); };
+					query.onerror = function () { rej(query.error); };
+				});
+			}).then(function (rows) {
+				return Promise.all(rows.map(function (row) {
+					if (row.kind === 'view') { return null; }
+					if (typeof row.theme == 'string') {
+						return (String(row.theme) === wanted) ? null : row.k;
+					}
+					// a row written before the theme was put in the clear: open it
+					// once to see whether it is a themed window record
+					return jawnosWindowsUnseal(key, row).then(function (value) {
+						if (value && typeof value.theme == 'string' && String(value.theme) !== wanted) { return row.k; }
+						return null;
+					});
+				})).then(function (keys) {
+					var drop = [];
+					for (var i = 0; i < keys.length; i++) { if (keys[i]) { drop.push(keys[i]); } }
+					return Promise.all(drop.map(function (k) { return jawnosWindowsRowDelete(k); }));
+				});
+			});
+		}).then(function () { return true; }).then(null, function () { return false; });
 	};
 	jawnosWindowsWriteChain = jawnosWindowsWriteChain.then(run, run);
 	return jawnosWindowsWriteChain;
@@ -470,8 +525,13 @@ function jawnosWindowsShellCapture(win) {
 		jawnosWindowsDelete(jawnosWindowsIdentityOf(el));
 		return false;
 	}
-	// a private place or an open grant: nothing is written until it closes
-	if (!jawnosWindowsPublicNow(el)) { return false; }
+	// A live private grant, a private app or a fingerprint-unlocked media app:
+	// the record is not kept, and one from before the lock is removed. A private
+	// place itself is the safest place and is kept.
+	if (!jawnosWindowsPublicNow(el, { allow_private_place: true })) {
+		jawnosWindowsDelete(jawnosWindowsIdentityOf(el));
+		return false;
+	}
 	// A lockdown draws a denial instead of the app; do not keep either the
 	// denial as a shell or a window captured before the lockdown as one.
 	if (typeof $('#start_menu').hasClass == 'function' && $('#start_menu').hasClass('lockdown')) { return false; }

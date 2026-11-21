@@ -30,6 +30,10 @@ like( $storage, qr/appWindowOpener\(i, jawnosWindowTimestamp\(\), v\)/, 'restore
 unlike( $storage, qr/var timestamp = Date\.now\(\);/, 'the unused restore timestamp is gone' );
 like( $back, qr/timestamp = jawnosWindowTimestamp\(\)/, 'a centre view with no timestamp asks for one' );
 like( $media, qr/win_stamp \+ 1/, 'the media claim gives its second window its own stamp' );
+like( $core, qr/var incoming_header = fragment\.querySelector\('\.appointment_header_background'\)/,
+	'the render reads the header it carries' );
+like( $core, qr/jawnosHeaderApply\(app_attr, incoming_header\.outerHTML/,
+	'an older window stamp still lets a newer header land on the restored shell' );
 
 my ($helper) = $core =~ m{// \[\[window-timestamp\]\](.*?)// \[\[/window-timestamp\]\]}s;
 ok( defined $helper && $helper =~ /function jawnosWindowTimestamp/, 'the minter is marked for the runtime check' );

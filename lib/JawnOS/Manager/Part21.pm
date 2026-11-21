@@ -520,13 +520,22 @@ sub centre_view_grabber($data) {
 			my $markers = (ref $appts->{'__specs'} eq 'HASH') ? ($appts->{'__specs'}->{'markers'} || '') : '';
 			&appts_marker_builder($appts) if $markers ne 'yes';
 			$appts->{$app}->{'setting'}->{'app_measures'} = eval { return decode_json $appts->{$app}->{'setting'}->{'app_measures'} } || {};
+			# The header and the centre view must come from the same rows. A cached
+			# header can be another device's state - a start that never reached this
+			# server's cache - and would show the old session beside a started view.
+			# Render it here; the header printer still caches it for a reconnect's
+			# catch-up. The caller's response carries this header, so it does not
+			# broadcast or re-arm the alarms.
 			my $header = $data->{'header'};
-			unless ($header || $data->{'resetting'} eq 'yes' || $data->{'cached'} eq 'no') {
-				my $hc = &subs::cache_get({ app => $app, context => 'header' });
-				$header = $hc->{'header'} if ($hc->{'signature'} || '') eq $signature;
-			}
 			unless ($header) {
-				$header = &subs::appt_header_printer({ appts => $appts, app => $app, timestamp => $timestamp, source => 'centre_view_grabber', broadcast => (($data->{'source'} // '') eq 'ws' ? 'no' : 'yes') });
+				$header = &subs::appt_header_printer({
+					appts => $appts,
+					app => $app,
+					timestamp => $timestamp,
+					source => 'centre_view_grabber',
+					broadcast => 'no',
+					header_only => 1,
+				});
 			}
 			$string = $c->render_to_string(
 				template => 'appointment_wrapper',

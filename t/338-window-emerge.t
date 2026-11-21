@@ -1373,11 +1373,11 @@ like($emerge, qr/attachShadow\(\{ mode: 'closed' \}\)/,
 like($store, qr/JAWNOS_WINDOWS_DB = 'jawnos_windows'/,
 	'and the copies are kept in the encrypted windows store');
 like($store, qr/JAWNOS_WINDOWS_MAX_APPS = 32/,
-	'the cache holds the desk\'s apps, a day\'s use with room to spare');
+	'the preview\'s memory map holds the desk\'s apps');
 like($store, qr/JAWNOS_WINDOWS_MAX_BYTES = 52428800/,
-	'and the store is capped at the fifty megabytes asked for');
-like($store, qr/if \(i < JAWNOS_WINDOWS_MAX_APPS && held <= JAWNOS_WINDOWS_MAX_BYTES\) \{ continue; \}/,
-	'whose oldest copies go first when it is reached');
+	'and the disk store is capped at the fifty megabytes asked for');
+like($store, qr/if \(held <= JAWNOS_WINDOWS_MAX_BYTES\) \{ continue; \}/,
+	'whose oldest copies go first when the fifty megabytes is reached');
 like($emerge, qr/JAWNOS_EMERGE_PREVIEW_APPS = \(typeof JAWNOS_WINDOWS_MAX_APPS/,
 	'and the preview reads that one budget');
 like($emerge, qr/JAWNOS_EMERGE_PREVIEW_MEMORY = 8000000/,
@@ -1416,6 +1416,8 @@ like($emerge, qr/if \(String\(snapshot\.theme \|\| ''\) !== String\(jawnosEmerge
 like($emerge, qr/jawnosEmergePreviewSheetCache\.theme === theme/,
 	'the scoped stylesheet is cached per theme');
 like($emerge, qr/function jawnosEmergePreviewThemeReset\(\)/, 'a live change drops the kept pictures');
+like($store, qr/function jawnosWindowsReapTheme\(theme\)/, 'a theme change reaps the stored shells');
+like($emerge, qr/jawnosWindowsReapTheme\(theme\)/, 'the preview load asks for the reap before it reads');
 like($theme_js, qr/function jawnosThemeEmergeReset\(\)/, 'the theme path has one place to drop them');
 like($theme_js, qr/jawnosThemeEmergeReset\(\);/, 'both the Misc paint and the bundle call it');
 

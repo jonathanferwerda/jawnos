@@ -29,8 +29,8 @@ like($route, qr/console_command\('appointmentGrabberIfVisible'/,
 my $router = read_file("$root/public/js/manager/websocket/00_console_router.js");
 like($router, qr/appointmentGrabberIfVisible: function \(a\) \{\s*if \(!document\.hidden/,
 	'and that command refuses a hidden tab');
-like($part21, qr/broadcast => \(\(\$data->\{'source'\} \/\/ ''\) eq 'ws' \? 'no' : 'yes'\)/,
-	'the header printer is told whether to broadcast');
+like($part21, qr/broadcast => 'no'/,
+	'the centre view carries the header in its own reply, so it does not broadcast');
 like($calendar, qr/unless \(\(\$data->\{'broadcast'\} \/\/ ''\) eq 'no' \|\| \(\$data->\{'source'\} \/\/ ''\) eq 'ws'\)/,
 	'a source=ws header does not broadcast');
 like($calendar, qr/unless \(\(\$data->\{'broadcast'\}.*?Websocket::send\('tab', \{ type => 'header'/s,

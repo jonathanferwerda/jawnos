@@ -12,13 +12,38 @@ var wsMessageFlushTimer = null;
 // live push, a reset response and a reconnect's catch-up all carry one, so all
 // three land the same way: the wrapper, its timestamp, and the clock that reads
 // it. A window that is not open has no header to replace, so nothing happens.
+// The stamp a header wears: the template's last_update, or the live push's
+// last_updated. The frame's own timestamp is not the header's age - a resync
+// carries one timestamp for a batch of cached headers, some older than the one
+// on screen.
+function jawnosHeaderStamp(header) {
+	if (!header || !header.getAttribute) { return 0; }
+	var updated = Number(header.getAttribute('last_updated') || 0);
+	var at = Number(header.getAttribute('last_update') || 0);
+	if (!isFinite(updated)) { updated = 0; }
+	if (!isFinite(at)) { at = 0; }
+	return Math.max(updated, at);
+}
+
 function jawnosHeaderApply(app, html, timestamp) {
 	if (!app || !html) { return; }
 	var header = $('.wind[app="' + app + '"]').find('.appointment_header_background');
 	if (!header.length) { return; }
+	var incoming = null;
+	try {
+		var box = document.createElement('div');
+		box.innerHTML = html;
+		incoming = box.querySelector('.appointment_header_background');
+	} catch (e) { incoming = null; }
+	var incoming_stamp = jawnosHeaderStamp(incoming) || Number(timestamp || 0) || 0;
+	var existing_stamp = jawnosHeaderStamp(header[0]);
+	// An older header must not replace a newer one. A resync or a beat reply
+	// stamps the whole batch with the frame's time, so the header's own stamp is
+	// the only honest order.
+	if (incoming_stamp && existing_stamp && incoming_stamp < existing_stamp) { return; }
 	header.replaceWith('' + html + '');
 	header = $('.wind[app="' + app + '"]').find('.appointment_header_background');
-	header.attr('last_updated', timestamp || Date.now());
+	header.attr('last_updated', incoming_stamp || Date.now());
 	if (typeof appointment_chron === 'function') { appointment_chron(); }
 	if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
 	// The header is the half of a window that moves all day; keep the shell's

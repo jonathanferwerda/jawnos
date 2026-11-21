@@ -561,11 +561,11 @@ sub window_maker($type,$timestamp) {
 	# app's window is marked here so the client refuses to keep it (a lock that
 	# leaves a copy on the disk is not a lock).
 	my $private_attr = ($app ne 'Denied' && &subs::app_private_now($app)) ? ' data-private="yes"' : '';
-	# Private mode - a private place, or an open private grant - stops the
-	# browser's window store for every app, not just a private one: a public
-	# window opened here may still show what the place holds, and reopening it
-	# in public must not reveal that.
-	my $private_mode_attr = (&subs::private_reachable_now() || &subs::private_revealed()) ? ' data-private-mode="yes"' : '';
+	# A live private grant (the Security padlock) stops the browser's window
+	# store for every app; a private place itself is the safest place and is kept,
+	# and a media app's own fingerprint-unlocked album is checked on the window
+	# the client reads.
+	my $private_mode_attr = &subs::private_revealed() ? ' data-private-mode="yes"' : '';
 	my $http_name = &subs::http_name($type->{'app'});
 	my $apostrophe_escape = &subs::apostrophe_escape($type->{'app'});
 	my $terminal_attr = '';

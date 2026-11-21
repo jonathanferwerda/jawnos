@@ -4,9 +4,10 @@
 #            inputs must still match, and a "now" view must be younger than its
 #            own scope (5m scope -> five minutes, 10m -> ten, capped); an
 #            anchored view (time machine or timeshift) is not aged; a now view
-#            is re-centred through the drag path's own positions. A private place
-#            or grant and the desk never paint or write, the view rides the sealed
-#            windows store, and a server answer always wins.
+#            is re-centred through the drag path's own positions. An open private
+#            grant and the desk never paint or write; a private place is the
+#            safest place and keeps the view. It rides the sealed windows store,
+#            and a server answer always wins.
 
 use strict;
 use warnings;
@@ -58,8 +59,8 @@ like($timeshift, qr/if \(age < 0\) \{ age = 0; \}/,
 # --- the paint and the drag path --------------------------------------------
 like($timeshift, qr/function jawnosTimelineCachePaint\(data\)/,
 	'the paint is callable by name, so the layout chunk can trigger it');
-like($timeshift, qr/if \(!jawnosWindowsPublicNow\(\)\) \{ return false; \}/,
-	'a private place or grant paints nothing from the disk');
+like($timeshift, qr/if \(!jawnosWindowsPublicNow\(null, \{ allow_private_place: true \}\)\) \{ return false; \}/,
+	'a private place keeps the timeline too');
 like($timeshift, qr/if \(!layout \|\| layout == 'desk'\) \{ return false; \}/,
 	'the desk has no timeline to restore');
 like($timeshift, qr/function jawnosTimelineCachePrinterReady\(layout\)/,
@@ -88,8 +89,8 @@ like($timeshift, qr/if \(jawnosTimelineCachePainted \|\| jawnosTimelineCacheLive
 	'one attempt a page, never over a server answer');
 
 # --- the disk stays sealed and budgeted -------------------------------------
-like($timeshift, qr/if \(!jawnosWindowsPublicNow\(\)\) \{ return; \}/,
-	'private mode refuses the write as well as the read');
+like($timeshift, qr/if \(!jawnosWindowsPublicNow\(null, \{ allow_private_place: true \}\)\) \{ return; \}/,
+	'a private place keeps the write too; an open grant still refuses');
 like($timeshift, qr/if \(!data \|\| !data\['layout'\] \|\| data\['layout'\] == 'desk'\) \{ return; \}/,
 	'and the desk is never written');
 like($timeshift, qr/jawnosWindowsSave\(JAWNOS_TIMELINE_CACHE_IDENTITY, \{/,

@@ -274,11 +274,16 @@ $(document).on('mousemove mousedown keydown touchstart scroll wheel', function (
 function jawnosPrivateRefresh(opened) {
 	if (opened === 1) { jawnosPrivateIdleStart(); }
 	else if (opened === 0) { jawnosPrivateIdleStop(); }
-	// The browser's window store refuses every write while private mode is on.
-	// The page carries the place at load; this is the grant opening and closing.
+	// A live private grant marks the page and every window rendered under it;
+	// the window store refuses those until the grant closes.
 	try {
 		if (opened === 1 && document.body) { document.body.setAttribute('data-private-mode', 'yes'); }
-		else if (opened === 0 && document.body) { document.body.removeAttribute('data-private-mode'); }
+		else if (opened === 0 && document.body) {
+			document.body.removeAttribute('data-private-mode');
+			// a window rendered while the grant was open wears its own mark; the
+			// grant closing must clear it or the window store stays refused
+			if (typeof $ == 'function') { $('.wind').removeAttr('data-private-mode'); }
+		}
 	}
 	catch (e) {}
 	if (typeof calculator === 'function') { calculator(); }
