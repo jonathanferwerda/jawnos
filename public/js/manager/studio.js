@@ -58,7 +58,15 @@ function jawnosStudioButtonIcon(state, colour) {
 // The live input can be monitored through the pedals into the speakers when the
 // song asks for it (headphones only — an open mic plus speakers will howl).
 
-var studioAudio = { ctx: null, master: null, masterAnalyser: null, masterChain: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
+// `lookahead` is how far ahead of the AudioContext clock both the takes and
+// the clicks are placed. It has to outlast a normal main-thread stall (a big
+// canvas repaint, a GC, another window rendering): a horizon shorter than the
+// stall lets a beat fall into the past before it is scheduled, and the click
+// then sounds uneven. `clickStep` is how much of the click track is committed
+// per burst; it is the same size so a burst also covers the horizon. A tempo,
+// signature, metronome, loop or transport change re-anchors the clicks alone
+// (see 01_transport.js), so a long horizon costs no response time.
+var studioAudio = { ctx: null, master: null, masterAnalyser: null, masterChain: null, channels: {}, sources: [], lookahead: 2.0, clickStep: 2.0, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null, clickKey: null, engineLatency: 0 };
 var studioSelectedChannel = 1;
 
 function studioContext() {
@@ -143,7 +151,7 @@ function studioLatencyHint() {
 function studioRebuildWindow(setting, value) {
 	studioFlushSources();
 	if (studioAudio.ctx) { try { studioAudio.ctx.close(); } catch (e) {} }
-	studioAudio = { ctx: null, master: null, masterAnalyser: null, masterChain: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
+	studioAudio = { ctx: null, master: null, masterAnalyser: null, masterChain: null, channels: {}, sources: [], lookahead: 2.0, clickStep: 2.0, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null, clickKey: null, engineLatency: 0 };
 	setTimeout(function () {
 		studioInit({ settings: [{ setting: setting, value: value }] });
 	}, 500);
@@ -783,13 +791,19 @@ function studioLatencyMeasure() {
 		dataType: 'json',
 		success: function (data) {
 			if (data && data.ok === true && typeof data.ms === 'number') {
+				// The patch-cable loopback is the device's whole round trip, output
+				// plus capture. It is the one measured number a native take can use
+				// in place of the browser's separate guesses (see studioRecordOffset).
+				studioAudio.engineLatency = data.ms / 1000;
 				out.text(backend + ' ' + data.ms + ' ms' + (data.device ? ' (' + data.device + ')' : ''));
 				return;
 			}
+			studioAudio.engineLatency = 0;
 			out.text(backend + ': ' + ((data && data.error) ? data.error : studioAudioLabel('the audio engine did not answer')));
 		},
 		error: function (xhr) {
 			var data = xhr && xhr.responseJSON;
+			studioAudio.engineLatency = 0;
 			out.text(backend + ': ' + ((data && data.error) ? data.error : studioAudioLabel('the audio engine did not answer')));
 		}
 	});

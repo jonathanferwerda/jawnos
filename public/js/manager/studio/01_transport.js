@@ -206,6 +206,21 @@ function studioFlushSources() {
 	studioAudio.sources = [];
 }
 
+// A retime must not cut the takes. Clicks are tagged where every scheduled
+// source is parked, so this drops only them while studioFlushSources keeps its
+// whole-list meaning for stop, seek and a take edit.
+function studioFlushClicks() {
+	var list = studioAudio.sources || [];
+	var keep = [];
+	list.forEach(function (entry) {
+		if (!entry || entry.kind !== 'click') { keep.push(entry); return; }
+		try { entry.src.stop(0); } catch (e) {}
+		try { entry.src.disconnect(); } catch (e) {}
+		if (entry.gain) { try { entry.gain.disconnect(); } catch (e) {} }
+	});
+	studioAudio.sources = keep;
+}
+
 // A seek is allowed only while the transport is stopped or playing. While a
 // take records, moving the playhead would re-anchor the clock under the
 // recording, so every seek entry point asks this first.
@@ -228,12 +243,15 @@ function studioTakesChanged() {
 	studioAudio.playSeg = seg;
 	studioAudio.schedSeg = studioSegmentCopy(seg);
 	studioAudio.clickSeg = studioSegmentCopy(seg);
+	studioAudio.clickKey = studioClickKey();
 	studioScheduleTick();
 }
 
-// Park a scheduled source so it can be flushed on a stop, seek or wrap.
-function studioTrackSource(src, gain) {
-	var entry = { src: src, gain: gain };
+// Park a scheduled source so it can be flushed on a stop, seek or wrap. A
+// click is tagged so a settings change can retime the metronome without
+// touching the take sources.
+function studioTrackSource(src, gain, kind) {
+	var entry = { src: src, gain: gain, kind: kind || 'take' };
 	src.onended = function () {
 		var list = studioAudio.sources;
 		var at = list.indexOf(entry);
@@ -257,6 +275,7 @@ function studioClockStart(pos) {
 	studioAudio.playSeg = seg;
 	studioAudio.schedSeg = studioSegmentCopy(seg);
 	studioAudio.clickSeg = studioSegmentCopy(seg);
+	studioAudio.clickKey = studioClickKey();
 	mixer['time']['position'] = pos;
 	studioScheduleTick();
 }
@@ -285,11 +304,46 @@ function studioClockAdvance() {
 	mixer['time']['position'] = pos;
 }
 
+// What a click's timing depends on. The volume knob is deliberately absent:
+// turning it down does not retime the beats already in flight.
+function studioClickKey() {
+	return [
+		mixer['time']['bpm'],
+		mixer['time']['sig'],
+		mixer['time']['metronome'],
+		mixer['time']['loop'],
+		mixer['time']['status'],
+		mixer['time']['punch_in']
+	].join('|');
+}
+
+// Retime the clicks from the playhead and leave every take source alone. The
+// grid stays absolute (k * beat mapped through the segment's p0/ctx0), so a
+// beat already behind the clock is skipped by studioScheduleClicks and the
+// following beats keep their own places; nothing is moved later to catch up.
+function studioClickReanchor() {
+	var ctx = studioAudio.ctx;
+	var seg = studioAudio.playSeg;
+	if (!ctx || !seg) { return; }
+	var now = ctx.currentTime;
+	var pos = seg.pos0 + (now - seg.ctx0);
+	studioFlushClicks();
+	studioAudio.clickSeg = studioSegmentCopy(studioSegmentFrom(pos, now));
+}
+
 // Place everything that will be heard in the next `lookahead` seconds.
 function studioScheduleTick() {
 	var ctx = studioAudio.ctx;
 	if (!ctx || !studioAudio.schedSeg) { return; }
-	var horizon = ctx.currentTime + (studioAudio.lookahead || 0.12);
+	// A tempo, signature, metronome, loop or transport change retimes the click
+	// from the playhead. Only the click sources are dropped; the takes keep
+	// playing, and the burst below can stay long enough to survive a stall.
+	var key = studioClickKey();
+	if (studioAudio.clickKey !== key) {
+		studioAudio.clickKey = key;
+		studioClickReanchor();
+	}
+	var horizon = ctx.currentTime + (studioAudio.lookahead || 2.0);
 	var guard = 0;
 
 	// Takes: a bounded piece (one loop pass, or the run to the song's end) is
@@ -310,15 +364,16 @@ function studioScheduleTick() {
 		}
 	}
 
-	// Clicks: placed in short chunks so the metronome answers a toggle or a
-	// tempo change quickly, and so a wrap never schedules a beat on the wrong
-	// side of the loop point.
+	// Clicks: committed in bursts as large as the horizon, on the same segment
+	// grid as the transport. A normal main-thread stall therefore cannot leave
+	// the queue empty, and the settings check above re-anchors only the clicks
+	// when the grid itself changes.
 	var cguard = 0;
 	while (studioAudio.clickSeg && cguard++ < 256) {
 		var c = studioAudio.clickSeg;
 		if (c.ctx0 > horizon) { break; }
 		var span = (c.pos1 === Infinity) ? Infinity : (c.pos1 - c.pos0);
-		var step = 0.5;
+		var step = studioAudio.clickStep || 2.0;
 		var to2 = (span === Infinity) ? (c.pos0 + step) : Math.min(c.pos1, c.pos0 + step);
 		studioScheduleClicks(c.pos0, to2, c.ctx0);
 		if (span !== Infinity && to2 >= c.pos1 - 1e-9) {
@@ -495,6 +550,9 @@ function studioScheduleClicks(p0, p1, ctx0) {
 		// a count-in clicks even with the metronome off, but only up to the punch
 		if (counting && !on && pos >= punch) { continue; }
 		var when = studioTimeAt(pos, p0, ctx0);
+		// A stalled timer can leave this beat behind the clock. Skip that beat
+		// alone: the grid is absolute, so the next beat keeps its own place and
+		// is never dragged later to catch up.
 		if (when < ctx.currentTime) { continue; }
 		var accent = (Math.abs(k) % beatsPerBar) ? 0 : 1;
 		var osc = ctx.createOscillator();
@@ -505,7 +563,7 @@ function studioScheduleClicks(p0, p1, ctx0) {
 		osc.connect(gain).connect(ctx.destination);
 		osc.start(when);
 		osc.stop(when + 0.02);
-		studioTrackSource(osc, gain);
+		studioTrackSource(osc, gain, 'click');
 	}
 }
 

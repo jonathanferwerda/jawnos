@@ -518,15 +518,175 @@ $(document).on('click', '#studio_ruler_canvas', function (e) {
 	studioSeek(((e.clientX - rect.left) / rect.width) * studioTimelineDuration());
 });
 
+// ---- painting only what the viewer can show ---------------------------------
+// The transport tick calls studioDrawTracks every 25 ms. A lane is a canvas and
+// a strip carries ten LEDs, so painting all 32 tracks is main-thread work on a
+// 25 ms budget even when the frame is minimized, Configure covers the viewer,
+// or a lane has scrolled out of the viewer. The tick, the audio scheduling and
+// the analysers keep running: only this paint stops.
+
+// windows.js minimizes the frame by hiding it (view=minimized), so the
+// window's own :visible test is the first gate.
+function studioWindowVisible() {
+	var studio = $('#studio');
+	if (!studio.length || !studio.is(':visible')) { return false; }
+	var wind = studio.closest('.wind');
+	return !wind.length || wind.is(':visible');
+}
+
+function studioViewerVisible() {
+	if (document.hidden) { return false; }
+	if (!studioWindowVisible()) { return false; }
+	// Configure is a full-window sheet: .studio_config_open hides the viewer
+	// under it, so there is nothing below the sheet to keep up to date.
+	if ($('#studio_config').is(':visible')) { return false; }
+	return $('#studio_viewer').is(':visible');
+}
+
+// A lane's box in the viewer's own scrolling coordinates, measured once per
+// layout change instead of once per lane per tick. The key moves when a lane is
+// added or resized, the window resizes, or the scroll extent changes, so the
+// cache never outlives the layout it describes.
+var studioLaneRectsCache = null;
+var studioLaneRectsKey = '';
+
+function studioLaneRects(viewer) {
+	var rows = viewer.getElementsByClassName('studio_track');
+	var key = rows.length + ':' + viewer.clientWidth + 'x' + viewer.clientHeight + ':' + viewer.scrollHeight;
+	if (studioLaneRectsCache && studioLaneRectsKey === key) { return studioLaneRectsCache; }
+	var box = viewer.getBoundingClientRect();
+	var list = [];
+	var tallest = 0;
+	for (var i = 0; i < rows.length; i++) {
+		var ch = rows[i].getAttribute('data-channel') || '';
+		if (!/^[0-9]+$/.test(ch)) { continue; }
+		var rect = rows[i].getBoundingClientRect();
+		list.push({ ch: ch, top: rect.top - box.top + viewer.scrollTop, height: rect.height });
+		if (rect.height > tallest) { tallest = rect.height; }
+	}
+	studioLaneRectsCache = { list: list, overscan: tallest || 1 };
+	studioLaneRectsKey = key;
+	return studioLaneRectsCache;
+}
+
+// The same for the mixer strips, which scroll both ways and can be hidden with
+// their panel; an offscreen strip's LEDs are not worth toggling either.
+var studioStripRectsCache = null;
+var studioStripRectsKey = '';
+
+function studioStripRects(container) {
+	var strips = container.getElementsByClassName('channel');
+	var key = strips.length + ':' + container.clientWidth + 'x' + container.clientHeight
+		+ ':' + container.scrollWidth + 'x' + container.scrollHeight;
+	if (studioStripRectsCache && studioStripRectsKey === key) { return studioStripRectsCache; }
+	var box = container.getBoundingClientRect();
+	var list = [];
+	var widest = 0;
+	for (var i = 0; i < strips.length; i++) {
+		var match = /(?:^|\s)channel_([0-9]+)(?:\s|$)/.exec(strips[i].className || '');
+		if (!match) { continue; }
+		var rect = strips[i].getBoundingClientRect();
+		list.push({
+			ch: match[1],
+			left: rect.left - box.left + container.scrollLeft,
+			top: rect.top - box.top + container.scrollTop,
+			width: rect.width,
+			height: rect.height
+		});
+		if (rect.width > widest) { widest = rect.width; }
+	}
+	studioStripRectsCache = { list: list, overscan: widest || 1 };
+	studioStripRectsKey = key;
+	return studioStripRectsCache;
+}
+
+// One snapshot per paint: the scrollers' positions and sizes plus the cached
+// boxes, so the 25 ms path reads no lane rectangle at all.
+function studioPaintViewport() {
+	var viewer = document.getElementById('studio_viewer');
+	if (!viewer) { return null; }
+	var container = document.getElementById('studio_mixer_strips');
+	var strips = (container && $(container).is(':visible')) ? studioStripRects(container) : null;
+	return {
+		lanes: studioLaneRects(viewer),
+		scrollTop: viewer.scrollTop,
+		height: viewer.clientHeight,
+		strips: strips,
+		stripLeft: container ? container.scrollLeft : 0,
+		stripTop: container ? container.scrollTop : 0,
+		stripWidth: container ? container.clientWidth : 0,
+		stripHeight: container ? container.clientHeight : 0
+	};
+}
+
+function studioLaneVisible(view, ch) {
+	if (!view || !view.lanes) { return false; }
+	var lanes = view.lanes.list;
+	var over = view.lanes.overscan;
+	for (var i = 0; i < lanes.length; i++) {
+		if (lanes[i].ch !== ch) { continue; }
+		return lanes[i].top + lanes[i].height + over > view.scrollTop
+			&& lanes[i].top - over < view.scrollTop + view.height;
+	}
+	return false;
+}
+
+function studioStripVisible(view, ch) {
+	if (!view || !view.strips) { return false; }
+	var strips = view.strips.list;
+	var over = view.strips.overscan;
+	for (var i = 0; i < strips.length; i++) {
+		if (strips[i].ch !== ch) { continue; }
+		return strips[i].top + strips[i].height + over > view.stripTop
+			&& strips[i].top - over < view.stripTop + view.stripHeight
+			&& strips[i].left + strips[i].width + over > view.stripLeft
+			&& strips[i].left - over < view.stripLeft + view.stripWidth;
+	}
+	return false;
+}
+
+// A lane scrolled into view is blank until the next tick paints it, and while
+// the transport is stopped there is no next tick. One rAF after a scroll or
+// resize repaints what the viewer now shows; nothing is queued while the
+// window is hidden, because there is no on-screen lane to bring up to date.
+var studioRedrawQueued = false;
+
+function studioQueueRedraw() {
+	if (studioRedrawQueued || !studioViewerVisible()) { return; }
+	studioRedrawQueued = true;
+	var run = function () {
+		studioRedrawQueued = false;
+		if (!studioViewerVisible()) { return; }
+		studioDrawTracks();
+	};
+	if (window.requestAnimationFrame) { window.requestAnimationFrame(run); }
+	else { window.setTimeout(run, 16); }
+}
+
+// Scroll does not bubble, so this is bound in the capture phase; the viewer and
+// the mixer strips are the only scrollers a paint depends on.
+document.addEventListener('scroll', function (event) {
+	var target = event.target;
+	if (!target || (target.id !== 'studio_viewer' && target.id !== 'studio_mixer_strips')) { return; }
+	if (!studioViewerVisible()) { return; }
+	studioQueueRedraw();
+}, { capture: true, passive: true });
+
+window.addEventListener('resize', function () {
+	if (!studioViewerVisible()) { return; }
+	studioQueueRedraw();
+});
+
 function studioDrawTracks() {
-	// the transport keeps running while the tab is hidden, but there is no point
-	// repainting canvases nobody can see
-	if (document.hidden) { return; }
+	if (!studioViewerVisible()) { return; }
 	studioDrawRuler();
+	// The ruler is above the viewer, so it is painted whole; only the lanes the
+	// viewer can show, and the strips the mixer can show, are worth a canvas.
+	var view = studioPaintViewport();
 	$.each(mixer, function (ch) {
 		if (!/^[0-9]+$/.test(ch)) { return; }
-		studioDrawChannel(ch);
-		studioDrawMetre(ch);
+		if (studioLaneVisible(view, ch)) { studioDrawChannel(ch); }
+		if (studioStripVisible(view, ch)) { studioDrawMetre(ch); }
 	});
 }
 

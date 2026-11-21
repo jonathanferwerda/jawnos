@@ -32,15 +32,17 @@ unlike($saver // '', qr/tree\.songs\[0\]/,
 # --- the restore resolves the saved KEY first -------------------------------
 # A cache written before the saver read the element can name a stranger in
 # `file` while `key` still names the track the person was on, so the restore
-# resolves the key and plays the row it finds.
+# resolves the key and plays the entry it finds. The queue is the manifest now,
+# so the entry need not have a mounted row: a track beyond the first window
+# restores just the same.
 my ($restore) = $music =~ /(if \(method != 'files'\) \{.*?\n\t\t\})/s;
 ok(defined $restore, 'the restore block is found');
-like($restore // '', qr/musicCardByKey\(pd\.key\)/,
-	'the saved key is resolved through musicCardByKey');
-like($restore // '', qr/if \(!mf\.length && pd\.file\)/,
+like($restore // '', qr/var saved_entry = pd\.key \? musicEntryByKey\(pd\.key\) : null;/,
+	'the saved key is resolved through the queue manifest');
+like($restore // '', qr/if \(!saved_entry && pd\.file\) \{ saved_entry = musicEntryByFile\(pd\.file\); \}/,
 	'and the saved file is only the fallback');
-like($restore // '', qr/var saved_file = mf\.length \? \(mf\.attr\('file'\) \|\| ''\) : '';/,
-	'the file played is the resolved row\'s own');
+like($restore // '', qr/var saved_file = saved_entry \? \(saved_entry\.file \|\| ''\) : \(pd\.file \|\| ''\);/,
+	'the file played is the resolved entry\'s own');
 like($restore // '', qr/mediaMaker\(\{ file: saved_file,/,
 	'and that is what mediaMaker is handed');
 unlike($restore // '', qr/mediaMaker\(\{ file: pd\.file,/,

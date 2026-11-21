@@ -251,8 +251,13 @@ sub music_archive_entries($data) {
 # used to carry it is only kept for the running code revision - so a deploy lost
 # the list. These files are the list itself, in the order it was shown.
 sub music_queue_remember($crate, $settings, $permissive) {
-	return undef unless $crate && ref $crate->{'songs'} eq 'ARRAY';
-	my @files = map { $_->{'filename'} } grep { $_->{'filename'} } @{ $crate->{'songs'} };
+	return undef unless $crate && (ref $crate->{'queue'} eq 'ARRAY' || ref $crate->{'songs'} eq 'ARRAY');
+	# The queue is the whole ordered list, not the slice this render drew. A
+	# remembered slice would lose every track beyond the window on the next open.
+	my @files = ref $crate->{'queue'} eq 'ARRAY'
+		? @{ $crate->{'queue'} }
+		: map { $_->{'filename'} } grep { $_->{'filename'} } @{ $crate->{'songs'} || [] };
+	@files = grep { defined $_ && length $_ } @files;
 	# an empty result is not a queue: keep the one that is still worth coming
 	# back to rather than storing a window with nothing in it
 	return undef unless scalar @files;
@@ -369,7 +374,7 @@ sub music_search($data) {
 	if ($data->{'return_files'}) {
 		return { files => \@local_files, count => scalar @local_files };
 	}
-	my $crate = &song_maker({ c => $c, port => $port, files => \@local_files, archive => \%archive, settings => $settings, now_playing => $now_playing, same_order => $data->{'same_order'} });
+	my $crate = &song_maker({ c => $c, port => $port, files => \@local_files, archive => \%archive, settings => $settings, now_playing => $now_playing, same_order => $data->{'same_order'}, window => $data->{'window'} });
 	$music_permissive = 0;
 	return $crate;
 }

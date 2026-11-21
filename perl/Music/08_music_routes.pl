@@ -8,6 +8,23 @@ use Mojo::JSON qw(decode_json encode_json);
 
 our ($music_device, $music_config, $music_permissive);
 
+# A scroll or a details press looks at the machine whose library is loaded, the
+# same way /music/search does. The reply is handed back as text; the browser
+# parses it as JSON. A failed relay answers an empty object rather than reading
+# this machine's paths for a library that is not here.
+sub music_window_relay($c, $settings) {
+	return 0 unless (($settings->{'library'} // 'local') ne 'local' && ($c->param('remoted') // '') ne 'yes');
+	my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
+	# a saved library with no live machine stays a remote view: answer nothing
+	# rather than probing this machine's paths for files that are not here
+	unless ($rm->{'uuid'}) { $c->render(text => '{}'); return 1; }
+	$c->param('remote_uuid' => $rm->{'uuid'});
+	$c->param('subprocess' => 'yes');
+	my $result = &Manager::remote_relay_request($c);
+	$c->render(text => (defined $result && length $result) ? $result : '{}');
+	return 1;
+}
+
 Manager::app->routes->post('/music/search' => sub ($c) {
 	my $title = 'music';
 	my $search = lc $c->param('search');
@@ -103,12 +120,16 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 
 	$settings->{'artist'} = eval { return decode_json $settings->{'artist'} } || [];
 	$settings->{'album'} = eval { return decode_json $settings->{'album'} } || [];
+	# the window this render draws. A fresh search always starts at the top (the
+	# shell it caches must carry the initial slice); the client asks for other
+	# slices on its own route.
+	my $window = { offset => 0, limit => $c->param('limit') };
 	my $crate;
 	if (scalar @{$list} > 0) {
-		$crate = &song_maker({ c => $c, config => $music_config, port => $port, files => $list, settings => $settings, now_playing => $now_playing, same_order => $same_order, misc_settings => $misc_settings });
+		$crate = &song_maker({ c => $c, config => $music_config, port => $port, files => $list, settings => $settings, now_playing => $now_playing, same_order => $same_order, misc_settings => $misc_settings, window => $window });
 	}
 	else {
-		$crate = &music_search({ c => $c, search => $search, now_playing => $now_playing, settings => $settings, port => $port, misc_settings => $misc_settings, folders => $folders, permissive => $unlocked });
+		$crate = &music_search({ c => $c, search => $search, now_playing => $now_playing, settings => $settings, port => $port, misc_settings => $misc_settings, folders => $folders, permissive => $unlocked, window => $window });
 	}
 	$crate->{'unlock'} = $unlocked ? $unlock : '';
 	$crate->{'unlocked'} = $unlocked;
@@ -151,6 +172,56 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 		$c->render(text => $contents);
 	}
 	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents }) unless $remote_render;
+});
+
+# One slice of the queue, for a scroll. The client sends back the manifest
+# entries it already holds, so this never re-walks the library, and the reply
+# carries only the rows asked for plus their enriched manifest entries. It
+# must not touch the content cache or the saved settings: a scroll is a view,
+# not a new search.
+Manager::app->routes->post('/music/window' => sub ($c) {
+	my $settings = &subs::settings_grabber({ app => 'music' });
+	return if &music_window_relay($c, $settings);
+	my $rows = eval { return decode_json $c->param('rows') } || [];
+	my $now_playing = eval { return decode_json $c->param('now_playing') } || {};
+	my $offset = $c->param('offset');
+	$offset = 0 unless defined $offset && $offset =~ /^\d+$/;
+	my $unlocked = &Manager::media_unlock_open($c, 'music') ? 1 : 0;
+	my $payload = &music_window_songs($rows, {
+		permissive => $unlocked,
+		now_playing => $now_playing,
+		remote_uuid => $c->param('remote_uuid'),
+	});
+	my $html = $c->render_to_string(
+		template => 'apps/music/track_rows',
+		songs => $payload->{'songs'},
+		crate => { settings => $settings, remote_uuid => $c->param('remote_uuid') },
+		offset => $offset,
+	);
+	$c->render(json => { html => $html, rows => $payload->{'rows'}, offset => $offset });
+});
+
+# The details panel for one track, drawn on first press. Same partial the list
+# used to include in every card, so the labels are still settled on the server
+# and the words can never drift between the card and the panel.
+Manager::app->routes->post('/music/details' => sub ($c) {
+	my $settings = &subs::settings_grabber({ app => 'music' });
+	return if &music_window_relay($c, $settings);
+	my $entry = eval { return decode_json $c->param('row') } || {};
+	my $unlocked = &Manager::media_unlock_open($c, 'music') ? 1 : 0;
+	my $f = &music_row_from_entry($entry);
+	my $visible = length($f->{'filename'}) && &music_queue_file_visible($f->{'filename'}, $unlocked);
+	my $ctx = &music_probe_context();
+	$f = &music_song_probe($ctx, $f) if $visible;
+	&music_flush_information($ctx);
+	my $html = $visible
+		? $c->render_to_string(
+			template => 'apps/music/track_description',
+			f => $f,
+			crate => { remote_uuid => $c->param('remote_uuid') },
+		)
+		: '';
+	$c->render(json => { html => $html, row => $visible ? &music_manifest_entry($f, $c->param('remote_uuid')) : $entry });
 });
 
 Manager::app->routes->post('/music/folder_toggle' => sub($c) {

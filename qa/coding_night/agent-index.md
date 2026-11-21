@@ -38,7 +38,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - market (topic market): 3 file(s), 30 route(s)
 - measures (topic measures): 3 file(s), 4 route(s)
 - minesweeper (topic minesweeper): 2 file(s), 1 route(s)
-- music (topic music): 12 file(s), 1 route(s)
+- music (topic music): 13 file(s), 1 route(s)
 - network (topic network): 7 file(s), 19 route(s)
 - notes (topic notes): 5 file(s), 1 route(s)
 - notifications (topic notifications): 6 file(s), 7 route(s)

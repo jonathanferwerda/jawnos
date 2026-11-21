@@ -2311,6 +2311,18 @@ function musicContentCache(html) {
 	var shell = $(doc.body);
 	shell.find('.playing').removeClass('playing holla');
 	shell.find('#music_player_data').empty();
+	// The queue is the manifest; the cards are only the slice that happened to
+	// be mounted. Store the shell with that slice gone if it was scrolled away,
+	// so the next open asks for the first window instead of replaying a view of
+	// the middle of the queue at scrollTop 0. Any details panels are live state
+	// too and are fetched again on first press.
+	shell.find('.track_description').remove();
+	var window_shell = shell.find('#music_window');
+	if (window_shell.length && parseInt(window_shell.attr('data-offset') || '0', 10) > 0) {
+		window_shell.empty();
+		window_shell.attr('data-offset', '0');
+		window_shell.removeAttr('style');
+	}
 	shell.find('video.media_out').removeAttr('src');
 	shell.find('#video_subtitles').removeAttr('src');
 	// the visualiser is live state too: the canvas and the video it is played
@@ -2335,6 +2347,8 @@ function updateMusicMuteIcon() {
 }
 $(document).on('ready', function() { 
 	treeMaker();
+	// a window restored from storage is already in the DOM; measure its slice
+	if (typeof musicWindowInit == 'function') { musicWindowInit(); }
 });
 $(document).on('click', '#music_toggle', function() {
 	musicToggle();
@@ -2468,22 +2482,36 @@ async function musicInit(method) {
 		// whatever was last on. Volume, mute, theatre and layout still come back;
 		// only the track does not.
 		if (method != 'files') {
-			$('.music_file').removeClass('playing');
+			$('.music_file').removeClass('playing holla');
 			// The saved key names the track that was playing, so it is preferred over
 			// the saved file. The file can name a stranger: a cache written while a
 			// search re-rendered the list under a player that kept going (before the
 			// saver read the element), or one written by an older build. The key was
 			// right in both, so this also repairs a cache that would otherwise restore
 			// someone else's video at the old position.
-			var mf = pd.key ? musicCardByKey(pd.key) : $();
-			if (!mf.length && pd.file) { mf = $('.music_file[file="' + pd.file + '"]'); }
-			mf.addClass('playing');
-			var playing = $('.playing');
-			tree.current_track = musicKey(playing);
-			thisTrack(playing.closest('.track_item'));
-			$('#video_full_title').text(playing.find('.full_title').text());
+			//
+			// The queue is the manifest, so the restored track does not need its row
+			// to be mounted: a track beyond the first window still resolves here.
+			var saved_entry = pd.key ? musicEntryByKey(pd.key) : null;
+			if (!saved_entry && pd.file) { saved_entry = musicEntryByFile(pd.file); }
+			if (saved_entry) {
+				tree.current_track = musicSongKey(saved_entry);
+				thisTrack(saved_entry);
+				$('#video_full_title').text(saved_entry.display_track || saved_entry.song || '');
+			}
+			else {
+				tree.current_track = pd.key || '';
+			}
+			musicApplyPlaying(tree.current_track);
 
-			var saved_file = mf.length ? (mf.attr('file') || '') : '';
+			// a restored track beyond the first window was described from its path
+			// only; fetch that one row before it starts so the bar, the theatre and
+			// the appointment carry its real labels and chapters
+			if (saved_entry && !saved_entry.probed && !saved_entry.archive) {
+				await new Promise(function (resolve) { musicTrackEnrich(tree.current_track, function () { resolve(); }); });
+			}
+
+			var saved_file = saved_entry ? (saved_entry.file || '') : (pd.file || '');
 
 			// only a saved track is restored: a first-ever open (no player cache) must
 			// not start playing on its own
@@ -2493,6 +2521,9 @@ async function musicInit(method) {
 					tree.sound.currentTime = pd.currentTime;
 				}
 				tree.sound.state = pd.state;
+				// a restored track outside the first window has no cover or chapters
+				// yet; ask for the one row rather than trusting the DOM
+				musicTrackEnrich(tree.current_track);
 			}
 		}
 		$('#music_player_data').text(jpd);
@@ -2530,10 +2561,11 @@ async function musicInit(method) {
 	// a window with no player cache still wears the setting from its markup
 	musicNormalizeApply();
 
-
-	$('.file_duration').each(function(i,v) {
-		$(v).text(numeral($(v).text()).format('00:00:00'));
-	});
+	// the rendered slice is a window over the queue: measure it, pad the rows
+	// it hides and arm the scroll/resize watchers
+	musicWindowInit();
+	musicFormatDurations(document);
+	musicApplyPlaying(tree.current_track);
 	$('#video').trigger('mouseenter');
 	setTimeout(function() {
 		if ($('#video').attr('type') != 'video') {	
@@ -2675,55 +2707,136 @@ function musicCardByKey(key) {
 	return found;
 }
 
+// The whole ordered queue, parsed once per list. The server writes it as
+// #music_queue_data beside the rendered slice; this is what the player reads,
+// so scrolling a slice out of the DOM can never truncate or reorder the queue.
+var musicManifestEl = null, musicManifestToken = null, musicManifestCache = null;
+function musicManifestRead() {
+	var el = document.getElementById('music_queue_data');
+	if (!el) { musicManifestEl = null; musicManifestToken = null; musicManifestCache = null; return null; }
+	var token = el.getAttribute('token') || '';
+	if (el === musicManifestEl && token === musicManifestToken) { return musicManifestCache; }
+	var data = null;
+	try { data = JSON.parse(el.textContent || '{}'); } catch (e) { data = null; }
+	musicManifestEl = el;
+	musicManifestToken = token;
+	musicManifestCache = (data && Array.isArray(data.songs)) ? data : null;
+	return musicManifestCache;
+}
+
+function musicEntryByKey(key) {
+	if (!key || typeof tree != 'object' || !tree) { return null; }
+	return (tree.songs_by_key && tree.songs_by_key[key]) || null;
+}
+
+function musicEntryByFile(file) {
+	if (!file || typeof tree != 'object' || !tree || !tree.all_songs) { return null; }
+	for (var i = 0; i < tree.all_songs.length; i++) {
+		var entry = tree.all_songs[i];
+		if (entry && (entry.file === file || entry.filename === file)) { return entry; }
+	}
+	return null;
+}
+
+// The track the player is on, from the manifest. The four things that used to
+// read the .playing row (title, theatre cover, appointment, restore) ask this
+// instead, so they keep working when the row is not mounted.
+function musicCurrentEntry() {
+	if (typeof tree != 'object' || !tree) { return null; }
+	// a named current track that the queue no longer lists is not silently
+	// swapped for the first row: the element is still playing the old file, and
+	// naming the new first row would put a stranger's title in the bar
+	if (tree.current_track) { return musicEntryByKey(tree.current_track); }
+	return (tree.songs && tree.songs[0]) || null;
+}
+
+function musicMergeEntry(entry) {
+	if (!entry || typeof entry != 'object') { return; }
+	if (!entry.key) { entry.key = musicSongKey(entry); }
+	if (typeof tree != 'object' || !tree || !tree.songs_by_key) { return; }
+	var existing = tree.songs_by_key[entry.key];
+	if (existing) { $.extend(existing, entry); }
+	else { tree.songs_by_key[entry.key] = entry; }
+}
+
+function musicFormatDurations(root) {
+	$(root || document).find('.file_duration').each(function(i,v) {
+		if ($(v).attr('initialized') != 'yes') {
+			$(v).text(numeral($(v).text()).format('00:00:00'));
+			$(v).attr('initialized', 'yes');
+		}
+	});
+}
+
 function treeMaker() {
+	var manifest = musicManifestRead();
+	var entries = manifest ? manifest.songs : null;
 	var files = $('#files').find('.file');
-	var keys = [];
-	files.each(function () { keys.push(musicKey(this)); });
-	var signature = keys.join('\u0001');
 	// only a tree this file built is worth carrying over: the manager keeps its
 	// own global called tree, and reading it as if it were the player's crashed
 	// the whole page before anything rendered
 	var prev = (typeof tree == 'object' && tree && Array.isArray(tree.songs) && Array.isArray(tree.past_songs)) ? tree : null;
+	var all = [];
+	var by_key = {};
+	if (entries) {
+		// the manifest is the queue; the rendered slice is only a view of it
+		$.each(entries, function (i, entry) {
+			if (!entry || typeof entry != 'object') { return; }
+			if (!entry.key) { entry.key = musicSongKey(entry); }
+			if (!entry.file) { entry.file = entry.filename || ''; }
+			if (!entry.info) { entry.info = {}; }
+			all.push(entry);
+			by_key[musicSongKey(entry)] = entry;
+		});
+	}
+	else {
+		// a shell from before the manifest (or a bare test page): read the cards
+		files.each(function () {
+			var card = $(this).closest('.music_file');
+			// scoped to the card: the old global [file_uuid=...] query ran once per
+			// file, which made building the list quadratic in the tracks on screen
+			var json = card.find('.file_json').first().text();
+			var info = isJson(json) ? JSON.parse(json) : undefined;
+			var song = {
+				file_uuid: $(this).attr('file_uuid'),
+				encodedFile: encodeURI(this.textContent),
+				file: this.textContent,
+				type: $(this).attr('type'),
+				app: $(this).attr('app'),
+				remote_uuid: $(this).attr('remote_uuid'),
+				computer_name: $(this).attr('computer_name'),
+				colour: $(this).attr('colour'),
+				info: info
+			};
+			all.push(song);
+			by_key[musicSongKey(song)] = song;
+		});
+	}
+	var keys = [];
+	for (var k = 0; k < all.length; k++) { keys.push(musicSongKey(all[k])); }
+	// A hash/join of the QUEUE keys, never of the mounted rows: a scroll swaps
+	// the rendered slice without changing the queue, and a signature built from
+	// the DOM would rebuild (and truncate) the queue on every scroll.
+	var signature = keys.join('\u0001');
 	var sound = document.getElementById('video');
+	var same_entries = prev && prev.manifest_entries === (entries || null) && prev.signature === signature;
 	// The list only changes when it is re-rendered (a search, a crate change). Any
 	// other call keeps what it already has: rebuilding threw the queue away on
 	// every call, and that is why the position had to be remembered as a number in
 	// the list rather than as the track itself.
-	if (prev && prev.signature === signature) {
+	if (same_entries) {
 		prev.files = files;
 		prev.sound = sound;
 		return prev;
 	}
 	var queue = prev ? prev.songs.map(musicSongKey) : [];
 	var past = prev ? prev.past_songs.map(musicSongKey) : [];
-	var all = [];
-	var by_key = {};
-	files.each(function () {
-		var card = $(this).closest('.music_file');
-		// scoped to the card: the old global [file_uuid=...] query ran once per
-		// file, which made building the list quadratic in the tracks on screen
-		var json = card.find('.file_json').first().text();
-		var info = isJson(json) ? JSON.parse(json) : undefined;
-		var song = {
-			file_uuid: $(this).attr('file_uuid'),
-			encodedFile: encodeURI(this.textContent),
-			file: this.textContent,
-			type: $(this).attr('type'),
-			app: $(this).attr('app'),
-			remote_uuid: $(this).attr('remote_uuid'),
-			computer_name: $(this).attr('computer_name'),
-			colour: $(this).attr('colour'),
-			info: info
-		};
-		all.push(song);
-		by_key[musicSongKey(song)] = song;
-	});
 	var pick = function (list) {
 		var out = [];
 		$.each(list, function (i, k) { if (by_key[k]) { out.push(by_key[k]); } });
 		return out;
 	};
-	// a queue whose tracks are still on screen survives the re-render; one whose
+	// a queue whose tracks are still in the list survives the re-render; one whose
 	// tracks have all gone (a search that excluded them) starts again from the top
 	var songs = pick(queue);
 	var past_songs = pick(past);
@@ -2735,21 +2848,233 @@ function treeMaker() {
 		all_songs: all,
 		songs_by_key: by_key,
 		signature: signature,
+		manifest_entries: entries || null,
+		manifest: !!manifest,
 		seek: prev ? prev.seek : 0,
 		song_id: prev ? prev.song_id : 0,
 		current_track: prev ? prev.current_track : '',
 		sound: sound,
 		lastCache: prev ? prev.lastCache : 0
 	};
-	$('.file_duration').each(function(i,v) {
-		if ($(v).attr('initialized') != 'yes') {
-			$(v).text(numeral($(v).text()).format('00:00:00'));
-			$(v).attr('initialized', 'yes');
-		}
-	});
+	musicFormatDurations(document);
 	return tree;
 }
 treeMaker();
+
+// --- the window over the queue -------------------------------------------------
+// The server draws one slice of the ordered queue; this keeps the slice that is
+// near the viewport mounted and asks /music/window for another when the person
+// scrolls. The pitch is measured from a real card (list row or grid row), never
+// assumed, so the list and the phone's tighter rows keep their own sizes. The
+// queue itself is the manifest, so replacing the DOM never changes what plays
+// next.
+var musicWindowState = {
+	el: null, scroller: null, layout: 'list', offset: 0, total: 0, limit: 60,
+	baseTop: 0, baseBottom: 0, pitch: 0, gap: 0, columns: 1,
+	seq: 0, busy: false, frame: 0, ro: null
+};
+
+function musicWindowInit() {
+	var el = document.getElementById('music_window');
+	var s = musicWindowState;
+	if (!el) { s.el = null; return; }
+	s.el = el;
+	s.scroller = document.getElementById('music_files') || null;
+	// scroll does not bubble, so bind the scroller itself. musicInit runs after
+	// every search has replaced #music_files, so this is re-armed on the new one.
+	if (s.scroller) {
+		$(s.scroller).off('scroll.musicwindow').on('scroll.musicwindow', function () { musicWindowSchedule(); });
+	}
+	s.layout = el.classList.contains('music_grid') ? 'grid' : 'list';
+	s.offset = parseInt(el.getAttribute('data-offset') || '0', 10) || 0;
+	s.total = parseInt(el.getAttribute('data-total') || '0', 10) || 0;
+	s.limit = parseInt(el.getAttribute('data-limit') || '60', 10) || 60;
+	s.busy = false;
+	s.seq++;
+	// the base padding belongs to the stylesheet; the window adds scroll height
+	// to it, so put the stylesheet's own value back before measuring it
+	el.style.paddingTop = '';
+	el.style.paddingBottom = '';
+	s.baseTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
+	s.baseBottom = parseFloat(getComputedStyle(el).paddingBottom) || 0;
+	musicWindowMeasure();
+	musicWindowApply();
+	musicApplyRowState();
+	// a cached shell can arrive with the manifest but no slice (a save taken
+	// while scrolled); ask for the first window it should have carried
+	if (s.total > 0 && !el.querySelector('.music_track')) {
+		musicWindowFetch(0, Math.min(s.total, s.limit), true);
+	}
+	if (s.ro) { s.ro.disconnect(); s.ro = null; }
+	if (typeof ResizeObserver == 'function') {
+		s.ro = new ResizeObserver(function () {
+			musicWindowMeasure();
+			musicWindowApply();
+			musicWindowSchedule();
+		});
+		if (s.scroller) { s.ro.observe(s.scroller); }
+		var music = document.getElementById('music');
+		if (music) { s.ro.observe(music); }
+	}
+}
+
+function musicWindowMeasure() {
+	var s = musicWindowState, el = s.el;
+	if (!el) { return; }
+	var cards = el.querySelectorAll('.music_track');
+	var style = getComputedStyle(el);
+	s.gap = parseFloat(style.rowGap || style.gap) || 0;
+	s.columns = 1;
+	if (s.layout == 'grid') {
+		var cols = (style.gridTemplateColumns || '').split(' ').filter(function (v) { return v && v != 'none'; });
+		s.columns = Math.max(1, cols.length);
+		// computed columns can be unhelpful while the window is hidden; the
+		// first row's distinct left edges are the same answer
+		if (s.columns < 2 && cards.length > 1) {
+			var left = Math.round(cards[0].getBoundingClientRect().left);
+			var n = 1;
+			for (var c = 1; c < cards.length; c++) {
+				var next = Math.round(cards[c].getBoundingClientRect().left);
+				if (next <= left) { break; }
+				left = next; n++;
+			}
+			s.columns = Math.max(1, n);
+		}
+	}
+	var pitch = 0;
+	// an open details panel makes its row taller; measure from rows that are
+	// closed so opening one cannot change the pitch the padding is built from
+	var open = function (i) { return cards[i] && cards[i].classList.contains('music_window_open'); };
+	if (cards.length >= s.columns + 1 && !open(0) && !open(s.columns)) {
+		// the next grid row (or the next list row) gives the true pitch
+		pitch = cards[s.columns].getBoundingClientRect().top - cards[0].getBoundingClientRect().top;
+	}
+	if (!(pitch > 0) && cards.length) {
+		var maxH = 0;
+		var count = Math.min(cards.length, s.columns);
+		for (var i = 0; i < count; i++) {
+			if (open(i)) { continue; }
+			maxH = Math.max(maxH, cards[i].getBoundingClientRect().height);
+		}
+		pitch = maxH + s.gap;
+	}
+	if (!(pitch > 0)) { pitch = (s.layout == 'grid') ? 190 : 74; }
+	s.pitch = pitch;
+}
+
+function musicWindowApply() {
+	var s = musicWindowState, el = s.el;
+	if (!el || !(s.pitch > 0)) { return; }
+	var mounted = el.querySelectorAll('.music_track').length;
+	var before = Math.max(0, s.offset);
+	var after = Math.max(0, s.total - s.offset - mounted);
+	// a grid row holds `columns` cards, so the padding is in rows, not items;
+	// a slice is always snapped to a row boundary (see musicWindowFetch)
+	var before_rows = Math.floor(before / s.columns);
+	var after_rows = Math.ceil(after / s.columns);
+	el.style.paddingTop = (s.baseTop + before_rows * s.pitch) + 'px';
+	el.style.paddingBottom = (s.baseBottom + after_rows * s.pitch) + 'px';
+}
+
+function musicWindowSchedule() {
+	var s = musicWindowState;
+	if (s.frame) { return; }
+	var raf = window.requestAnimationFrame || function (fn) { return setTimeout(fn, 16); };
+	s.frame = raf(function () { s.frame = 0; musicWindowSync(); });
+}
+
+function musicWindowSync() {
+	var s = musicWindowState;
+	if (!s.el || !s.scroller || s.busy || s.total <= 0) { return; }
+	var cards = s.el.querySelectorAll('.music_track');
+	if (!cards.length) {
+		musicWindowFetch(0, Math.min(s.total, s.limit), true);
+		return;
+	}
+	var scRect = s.scroller.getBoundingClientRect();
+	var firstRect = cards[0].getBoundingClientRect();
+	// the first mounted row's content offset inside the scroller
+	var firstContentY = (firstRect.top - scRect.top) + s.scroller.scrollTop;
+	var rowDelta = Math.floor((s.scroller.scrollTop - firstContentY) / s.pitch);
+	if (!isFinite(rowDelta)) { rowDelta = 0; }
+	var topIndex = s.offset + rowDelta * s.columns;
+	topIndex = Math.max(0, Math.min(s.total - 1, topIndex));
+	var visible = Math.max(1, Math.ceil(s.scroller.clientHeight / s.pitch) + 1);
+	var mountedEnd = s.offset + cards.length;
+	// Fetch only when the viewport is within half a screen of an edge. The
+	// margin is what stops a rounding difference from asking for the same
+	// slice again and again; the new slice then has a full screen of overscan
+	// on each side of the viewport. The margin is in items, so a grid gets one
+	// whole screen of columns either side.
+	var margin = Math.max(1, Math.floor(visible / 2)) * s.columns;
+	var nearTop = s.offset > 0 && topIndex < s.offset + margin;
+	var nearBottom = mountedEnd < s.total && topIndex > mountedEnd - margin;
+	if (!nearTop && !nearBottom) { return; }
+	var start = Math.max(0, topIndex - visible * s.columns);
+	var end = Math.min(s.total, topIndex + visible * 2 * s.columns);
+	if (s.columns > 1) {
+		start = Math.floor(start / s.columns) * s.columns;
+		end = Math.min(s.total, Math.ceil(end / s.columns) * s.columns);
+	}
+	if (start === s.offset && end === mountedEnd) { return; }
+	musicWindowFetch(start, end, false);
+}
+
+function musicWindowFetch(start, end, force) {
+	var s = musicWindowState;
+	if (!s.el || s.total <= 0) { return; }
+	start = Math.max(0, Math.min(start, s.total));
+	end = Math.max(start, Math.min(end, s.total));
+	// the grid draws cards left to right; a slice that starts mid-row would
+	// lose its columns' alignment with the padding above it
+	if (s.columns > 1) {
+		start = Math.floor(start / s.columns) * s.columns;
+		end = Math.min(s.total, Math.ceil(end / s.columns) * s.columns);
+	}
+	if (end - start <= 0) { return; }
+	if (s.busy && !force) { return; }
+	var manifest = musicManifestRead();
+	if (!manifest || !Array.isArray(manifest.songs)) { return; }
+	var rows = manifest.songs.slice(start, end);
+	var nowPlaying = musicCurrentEntry();
+	var seq = ++s.seq;
+	s.busy = true;
+	$.ajax({
+		url: '/music/window',
+		type: 'POST',
+		dataType: 'json',
+		data: {
+			rows: JSON.stringify(rows),
+			now_playing: JSON.stringify(nowPlaying || {}),
+			offset: start,
+			unlock: $('#music').attr('unlock') || '',
+			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
+			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : ''
+		},
+		success: function (r) {
+			// a later scroll owns the window; drop this answer
+			if (seq !== s.seq) { return; }
+			if (!r || typeof r.html != 'string') { s.busy = false; return; }
+			s.offset = start;
+			// the cache saver reads this to tell a fresh top-of-list view from one
+			// the person had scrolled away before the shell was stored
+			s.el.setAttribute('data-offset', String(start));
+			s.el.innerHTML = r.html;
+			if (Array.isArray(r.rows)) { $.each(r.rows, function (i, entry) { musicMergeEntry(entry); }); }
+			s.busy = false;
+			musicFormatDurations(s.el);
+			musicWindowMeasure();
+			musicWindowApply();
+			musicApplyRowState();
+			// a scroll that arrived while this was out was refused; look again now
+			musicWindowSchedule();
+		},
+		error: function () {
+			if (seq === s.seq) { s.busy = false; musicWindowSchedule(); }
+		}
+	});
+}
+
 
 
 var musicSearchTimeout;
@@ -3035,20 +3360,22 @@ function mediaMaker(data) {
 						playing_now();
 					}
 					else {
-						var playing = $('.playing');
-						var current_track = musicKey(playing);
+						// the queue, not the mounted row, says which track this is
+						var current_track = tree.current_track;
 						treeMaker();
-						thisTrack(playing.closest('.track_item'));
+						thisTrack(current_track);
 						tree.current_track = current_track || musicSongKey(tree.songs[0]);
 						playing_now('update');
 					}
 					vidControls['video'] = [];
-					if (tree.songs[0].info.chapters) {
-
-						$.each(tree.songs[0].info.chapters, function(i,v) {
-							vidControls['video'].push(v.start_time);
-						});
-					}
+					// chapters live in the queue entry; the playing row may not be
+					// mounted, so read the manifest and fill it in on demand
+					var chapter_song = musicCurrentEntry() || {};
+					var chapter_list = chapter_song.chapters || (chapter_song.info && chapter_song.info.chapters) || [];
+					$.each(chapter_list, function(i,v) {
+						vidControls['video'].push(v.start_time);
+					});
+					if (!chapter_list.length) { musicTrackEnrich(musicSongKey(chapter_song)); }
 
 					tree['music_data'] = musicAppointmentWriter('start');
 					if ($('#video').attr('theatre_mode') == 'on') {
@@ -3245,12 +3572,62 @@ function remoteTrackToggle(data) {
 	}
 }
 
+// A queue entry that was never drawn (the track after the saved one, or a
+// restored track outside the first window) has no duration, cover or chapters
+// yet. Ask for that one row, once, and merge it back into the queue.
+var musicEnrichPending = {};
+function musicTrackEnrich(key, onDone) {
+	if (!key) { var current = musicCurrentEntry(); key = current ? musicSongKey(current) : ''; }
+	var entry = musicEntryByKey(key);
+	if (!entry || entry.probed || entry.archive) { if (onDone) { onDone(entry || null); } return; }
+	if (musicEnrichPending[key]) { if (onDone) { musicEnrichPending[key].push(onDone); } return; }
+	musicEnrichPending[key] = onDone ? [ onDone ] : [];
+	var settle = function (found) {
+		var waiters = musicEnrichPending[key] || [];
+		delete musicEnrichPending[key];
+		for (var i = 0; i < waiters.length; i++) { try { waiters[i](found); } catch (e) {} }
+	};
+	$.ajax({
+		url: '/music/details',
+		type: 'POST',
+		dataType: 'json',
+		data: {
+			row: JSON.stringify(entry),
+			unlock: $('#music').attr('unlock') || '',
+			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
+			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : ''
+		},
+		success: function (r) {
+			if (r && r.row) { musicMergeEntry(r.row); }
+			settle(r && r.row ? musicEntryByKey(key) : null);
+			musicRepaintCurrent();
+		},
+		error: function () { settle(null); },
+		complete: function () { if (musicEnrichPending[key]) { settle(null); } }
+	});
+}
+
+// Re-draw the parts of the player that read the queue rather than the DOM.
+function musicRepaintCurrent() {
+	var entry = musicCurrentEntry();
+	if (!entry) { return; }
+	$('#video_full_title').text(entry.display_track || entry.song || '');
+	if (typeof vidControls != 'undefined') {
+		vidControls['video'] = [];
+		$.each(entry.chapters || [], function (i, ch) { vidControls['video'].push(ch.start_time); });
+	}
+	if ($('#video').attr('theatre_mode') == 'on' && $('#video').attr('type') == 'audio' && entry.thumb) {
+		$('#music_album_cover').attr('src', entry.thumb).show();
+	}
+}
 
 function musicTitleMaker(object) {
-	var app = $('.playing').find('.file');
-	var album = app.attr('album');
-	var artist = app.attr('artist');
-	var song = app.attr('song');
+	// the labels live in the queue, so the title still reads correctly while
+	// the playing row has scrolled out of the mounted slice
+	var entry = musicCurrentEntry() || {};
+	var album = entry.display_album || entry.album || '';
+	var artist = entry.display_artist || entry.artist || '';
+	var song = entry.display_track || entry.song || '';
 	var video = document.getElementById('video');
 	var canvas = document.createElement('canvas');
 	var image;
@@ -3264,7 +3641,8 @@ function musicTitleMaker(object) {
 			canvas.height = ratio * video.videoHeight || 0;
 			canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
 			image = canvas.toDataURL('image/png');
-			playing = app.closest('.track_item').html();
+			var row = musicCardByKey(musicSongKey(entry));
+			playing = row.length ? row.html() : undefined;
 		}
 		else {
 
@@ -3327,8 +3705,16 @@ function theatreModeOn() {
 	$('#video').attr('theatre_mode', 'on');
 	if ($('#video').attr('type') == 'audio') {
 		$('#video').hide();
-		var src = $('.playing').closest('.track_item').find('.music_file_thumb').attr('src');
-		$('#music_album_cover').attr('src', src).show();
+		// the cover comes from the queue's thumb, not from whichever row is
+		// mounted; an unmounted playing track now still fills the theatre
+		var entry = musicCurrentEntry() || {};
+		if (entry.thumb) {
+			$('#music_album_cover').attr('src', entry.thumb).show();
+		}
+		else {
+			$('#music_album_cover').hide();
+			musicTrackEnrich(entry.key || musicSongKey(entry));
+		}
 	}
 	else if ($('#video').attr('src')) {
 		$('#video').show();
@@ -3378,11 +3764,12 @@ $(document).on('click', '#video_subtitle_toggle', function() {
 });
 
 function musicAppointmentWriter(type,mute) {
-	var app = $('.track_item.playing').find('.file');
+	// the appointment names the queue's track, mounted or not
+	var entry = musicCurrentEntry() || {};
 	var duration = tree.sound.duration;
-	var album = app.attr('album');
-	var artist = app.attr('artist');
-	var song = app.attr('song');
+	var album = entry.display_album || entry.album || '';
+	var artist = entry.display_artist || entry.artist || '';
+	var song = entry.display_track || entry.song || '';
 	// the appointment reads album - artist - track, and a part that is not there
 	// is left out rather than written as 'undefined'
 	var words = [];
@@ -3390,7 +3777,7 @@ function musicAppointmentWriter(type,mute) {
 	if (artist != undefined && artist != '') { words.push(artist); }
 	if (song != undefined && song != '') { words.push(song); }
 	words = words.join(' - ');
-	var filename = app.text();
+	var filename = entry.file || entry.filename || '';
 	var timestamp = Date.now();
 	var musicData = { 
 		app: musicTitleMaker(),
@@ -3509,11 +3896,10 @@ $(document).on('click', '#next', function() {
 
 $(document).on('click', '.track_item', function(e) {
 	var item = $(this);
-	var file = item.attr('file');
 	if ($(e.target).hasClass('music_information_toggle')) {
-		musicInformation(file);
+		musicInformation(musicKey(item));
 	}
-	else if ($(e.target).closest('.chapter_thumb')) {
+	else if ($(e.target).closest('.chapter_thumb').length) {
 		var ch = $(e.target).closest('.chapter_thumb');
 		thisTrack(item);
 		mediaMaker({ time: ch.attr('start_time') });
@@ -3524,29 +3910,155 @@ $(document).on('click', '.track_item', function(e) {
 	}
 });
 
+// Clicking a track sets the queue from that track, exactly as before. The key
+// is the manifest key now, so a row that is not mounted (a restored track) can
+// still be picked
 function thisTrack(item) {
-	var unformatted_filename = item.find('.file').text();
-	var filename = encodeURI(unformatted_filename);
+	var key = '';
+	if (item && item.jquery) { key = item.length ? musicKey(item[0]) : ''; }
+	else if (typeof item == 'string') { key = item; }
+	else if (item && typeof item == 'object') { key = musicSongKey(item); }
+	if (!key) { return; }
 	treeMaker();
 	for (var n = 0; n < tree.all_songs.length; n++) {
-		if (tree.all_songs[n] && tree.all_songs[n].encodedFile == filename) {
+		if (tree.all_songs[n] && musicSongKey(tree.all_songs[n]) === key) {
 			tree.past_songs = tree.all_songs.slice(0, n);
 			tree.songs = tree.all_songs.slice(n);
+			tree.current_track = key;
 			return;
 		}
 	}
-	// nothing on screen matches: leave the queue as it was rather than emptying it
+	// nothing in the queue matches: leave it as it was rather than emptying it
 	// (a restored track the current search no longer shows)
 }
 
-function musicInformation(file) {
-	var td = $('.track_description[file="' + file + '"]');
-	if (td.is(':visible')) {
-		td.hide();
+// Mark the playing row, if it happens to be mounted. The state belongs to the
+// queue (tree.current_track); a scroll may mount the row later, and
+// musicApplyRowState marks it then.
+function musicApplyPlaying(key) {
+	$('.music_file').removeClass('playing holla');
+	if (!key) { return; }
+	$('.music_file').each(function () {
+		if (musicKey(this) === key) { $(this).addClass('playing holla'); }
+	});
+}
+
+// The details panel is fetched the first time Details is pressed and cached by
+// key. Five thousand inlined panels were most of the page's weight; one panel
+// is now one small request, drawn from the same server partial as before.
+var musicDetailCache = {};
+var musicDetailOpen = {};
+var musicDetailPending = {};
+
+function musicDetailsShow(card, key) {
+	var html = musicDetailCache[key];
+	if (!html) { return false; }
+	var node = $(html);
+	var pending = card.find('.music_detail_pending');
+	var td = card.find('.track_description').first();
+	if (pending.length) { pending.replaceWith(node); }
+	else if (td.length) { td.replaceWith(node); }
+	else { card.append(node); }
+	node.show();
+	card.addClass('music_window_open');
+	return true;
+}
+
+function musicDetailsHide(card) {
+	card.find('.track_description').hide();
+	card.removeClass('music_window_open');
+}
+
+function musicDetailsFetch(key, card) {
+	if (musicDetailPending[key]) { return; }
+	var entry = musicEntryByKey(key);
+	if (!entry) { card.find('.music_detail_pending').remove(); return; }
+	musicDetailPending[key] = 1;
+	$.ajax({
+		url: '/music/details',
+		type: 'POST',
+		dataType: 'json',
+		data: {
+			row: JSON.stringify(entry),
+			unlock: $('#music').attr('unlock') || '',
+			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
+			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : ''
+		},
+		success: function (r) {
+			delete musicDetailPending[key];
+			if (!r || typeof r.html != 'string' || !r.html.length) {
+				// the queue cannot draw this panel (the track is no longer visible);
+				// stop the row from asking again on every remount
+				musicDetailOpen[key] = false;
+				return;
+			}
+			musicDetailCache[key] = r.html;
+			if (r.row) { musicMergeEntry(r.row); }
+			var fresh = musicCardByKey(key);
+			if (!fresh.length || !musicDetailOpen[key]) { return; }
+			var pending = fresh.find('.music_detail_pending');
+			var node = $(r.html);
+			if (pending.length) { pending.replaceWith(node); }
+			else if (!fresh.find('.track_description').length) { fresh.append(node); }
+			node.show();
+			fresh.addClass('music_window_open');
+			musicWindowMeasure();
+			musicWindowApply();
+		},
+		error: function () { delete musicDetailPending[key]; },
+		complete: function () {
+			delete musicDetailPending[key];
+			var fresh = musicCardByKey(key);
+			if (fresh.length && !musicDetailCache[key]) { fresh.find('.music_detail_pending').remove(); }
+		}
+	});
+}
+
+function musicInformation(key) {
+	var card = musicCardByKey(key);
+	if (!card.length) { return; }
+	var td = card.find('.track_description').first();
+	if (td.length) {
+		if (td.is(':visible')) { musicDetailOpen[key] = false; musicDetailsHide(card); }
+		else {
+			musicDetailOpen[key] = true;
+			card.addClass('music_window_open');
+			// a panel fetched while the row was closed is in the cache; a panel
+			// still waiting for its reply is shown and the request is kept going
+			if (!musicDetailsShow(card, key)) {
+				td.show();
+				if (!musicDetailPending[key]) { musicDetailsFetch(key, card); }
+			}
+		}
+		musicWindowMeasure();
+		musicWindowApply();
+		return;
 	}
-	else {
-		td.show();
-	}
+	musicDetailOpen[key] = true;
+	card.addClass('music_window_open');
+	if (musicDetailsShow(card, key)) { musicWindowMeasure(); musicWindowApply(); return; }
+	var waiting = (typeof jawnosT == 'function') ? jawnosT('Loading details…') : 'Loading details…';
+	card.append($('<div class="track_description music_detail_pending"></div>').text(waiting));
+	musicDetailsFetch(key, card);
+}
+
+// Put the player's state back on whatever rows the window just mounted: the
+// playing mark, and any details panel the person had opened for that track.
+function musicApplyRowState() {
+	var key = (typeof tree == 'object' && tree) ? (tree.current_track || '') : '';
+	$('#music_window .music_file').each(function () {
+		var el = $(this), k = musicKey(this);
+		if (key && k === key) { el.addClass('playing holla'); }
+		else { el.removeClass('playing holla'); }
+		if (k && musicDetailOpen[k]) {
+			if (!musicDetailsShow(el, k)) {
+				if (!el.find('.music_detail_pending').length) {
+					el.append($('<div class="track_description music_detail_pending"></div>').text((typeof jawnosT == 'function') ? jawnosT('Loading details…') : 'Loading details…'));
+				}
+				musicDetailsFetch(k, el);
+			}
+		}
+	});
 }
 
 function musicWindowResizes() {
@@ -3975,13 +4487,16 @@ function searchMusic(data) {
 				$('.music_album[album="' + v.album + '"][path="' + v.path + '"]').attr('active', 'yes');
 			});
 			
+			// a new list always starts at its first row; the <video> is untouched
+			$('#music_files').scrollTop(0);
+			var playing_key = nowPlaying ? musicSongKey(nowPlaying) : '';
 			if (state == 1) {
 				var v = document.getElementById('video');
 				v.state = 1;
-				var playing = $('.playing');
 				// the media element is the one that has been playing all along, so
-				// its src, position and style need no restore
-				tree.current_track = musicKey(playing) || musicSongKey(tree.songs[0]);
+				// its src, position and style need no restore; the queue is the new
+				// manifest, so the current key is carried by key rather than by row
+				tree.current_track = playing_key || musicSongKey(tree.songs[0]);
 				$('#video').attr('type', nowPlaying['type']);
 				if (nowPlaying['type'] == 'audio') {
 					$('#video').hide();
@@ -3990,7 +4505,8 @@ function searchMusic(data) {
 					$('#video').show();
 				}
 				musicVolumeApply();
-				thisTrack(playing.closest('.track_item'));
+				thisTrack(tree.current_track);
+				musicApplyPlaying(tree.current_track);
 				mediaMaker({ src: v.src, currentTime: v.currentTime, method: 'benign', timestamp: timestamp });
 				var html = $('#music').parent().html();
 				musicContentCache(html);
@@ -4030,12 +4546,10 @@ function playing_now(movement) {
 	}
 	// Marked by key, never by #track_<number>: after a search re-render the numbers
 	// have moved on, so a number marked whichever track now sat there - or nothing
-	// at all - and the bar kept the previous track's title.
-	$('.playing').removeClass('playing');
-	var card = musicCardByKey(tree.current_track || musicSongKey(tree.songs[0]));
-	card.addClass('playing');
-	$('.track_description').each(function() { $(this).hide() });
-	card.find('.track_description').show();
+	// at all - and the bar kept the previous track's title. A row that is not
+	// mounted is marked when the window mounts it (musicApplyRowState).
+	var key = tree.current_track || musicSongKey(tree.songs[0]);
+	musicApplyPlaying(key);
 
 	return tree.current_track;
 
@@ -4143,9 +4657,11 @@ $(document).on('click', '.music_shuffle', function() {
 	}
 	$(this).attr('enabled', shuffle);
 
+	// the whole queue, not the mounted slice: passing tree.files here would
+	// shuffle only the rows that happen to be in the DOM
 	var list = [];
-	$.each(tree.files, function(i,v) {
-		list.push($(v).text());
+	$.each(tree.all_songs, function(i,v) {
+		if (v && v.file) { list.push(v.file); }
 	});
 	searchMusic({ list: list, same_order: 0, new_settings: { 'shuffle': shuffle } });
 
@@ -4153,9 +4669,10 @@ $(document).on('click', '.music_shuffle', function() {
 
 $(document).on('click', '#music_layout_select', function() {
 	var layout = $(this).val();
+	// the whole queue, not the mounted slice
 	var list = [];
-	$.each(tree.files, function(i,v) {
-		list.push($(v).text());
+	$.each(tree.all_songs, function(i,v) {
+		if (v && v.file) { list.push(v.file); }
 	});
 	searchMusic({ list: list, same_order: 1, new_settings: { 'layout': layout } });
 

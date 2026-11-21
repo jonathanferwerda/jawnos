@@ -4,6 +4,13 @@ function studioRecordOffset(ch) {
 		var n = numeral(raw).value();
 		if (n !== null && n !== undefined && !isNaN(n)) { return n / 1000; }
 	}
+	// A native engine's patch-cable loopback measures the device's whole round
+	// trip, output plus capture. When it owns the interface that one number is
+	// the take's offset; adding the browser's separate guesses on top would
+	// count the output twice. With no measurement, fall back to the context and
+	// the input track's own report.
+	var backend = (typeof studioAudioBackend === 'function') ? studioAudioBackend() : 'browser';
+	if (backend !== 'browser' && studioAudio.engineLatency > 0) { return studioAudio.engineLatency; }
 	var ctx = studioAudio.ctx;
 	if (!ctx) { return 0; }
 	var offset = (ctx.baseLatency || 0) + (ctx.outputLatency || 0);

@@ -1,90 +1,31 @@
 <% use Mojo::Util qw/term_escape html_unescape url_unescape url_escape/; %>
 <% use Mojo::JSON qw/encode_json decode_json/; %>
-<%# One card draws a track in every layout. The list and the icons grid only
-    change how that card is laid out (music.css), so the words, the picture, the
-    time and the two buttons can never drift apart between the draws. The same
-    markup serves the phone, which dresses the card as a compact row.
+<%# The whole list is a window over the queue now. The server draws only the
+    slice it was asked for (crate->{songs}) and describes the rest of the queue
+    in #music_queue_data. music.js renders a slice near the viewport and asks
+    /music/window for the next one; the player's queue comes from the manifest,
+    not from whichever cards happen to be mounted.
 
-    What music.js reads must stay in place:
-      .file             the hidden filename text, one per track
-      #track_<number>   the id on that .file div; the player marks its parent
-      .file_json        the ffprobe tags, looked up by file_uuid
-      .track_item       the clickable card, carrying number= and file=
-      .full_title       the words the player copies into its title
-      .file_duration    the time, formatted once by treeMaker
-      .music_file_thumb the picture theatre mode reuses
-
-    The words themselves are settled on the server (music_media_labels in
-    Music.pl): the display_* fields are the artist, album and track, with a
-    video's release name already reduced to those three. Nothing here rebuilds
-    them from the raw folder or file name. %>
-<% my $phone_layout = $phone ? 1 : 0; %>
-<% my $dark = &subs::theme_is_dark(); %>
-<%# a track card's colour on a dark desk is the manager colour's dark
-    counterpart, the same swap the windows make, so a light manager colour does
-    not glare behind the list %>
-<% my $file_colour = sub { my $f = shift; return ($dark && $f->{'dark_colour'}) ? $f->{'dark_colour'} : $f->{'colour'}; }; %>
+    Five thousand rows drawn at once measured 17.4 MB of HTML, 365,008 elements
+    and 3.1-3.8 s of parse+DOM build in this WebEngine. The same 5,000 without
+    the inlined details panel is 9.3 MB and 80,008; only the window keeps that
+    bounded no matter how long the queue is. %>
 <% my $layout = $crate->{'settings'}->{'layout'} || 'list'; %>
-<%# the Misc icon set dresses every glyph, including the fall-back pictures %>
-<% my $icon_music = &subs::icon_path('music', '/images/decipherable/cdrom.png'); %>
-<% my $icon_video = &subs::icon_path('video', '/images/make believe/camera.png'); %>
-<% my $icon_info = &subs::icon_path('information', '/images/decipherable/information.png'); %>
-<% my $icon_download = &subs::icon_path('download', '/images/make believe/download.png'); %>
-<% my $icon_play = &subs::icon_path('play', '/images/make believe/play.png'); %>
+<% my $phone_layout = $phone ? 1 : 0; %>
+<% my $songs = $crate->{'songs'} || []; %>
+<% my $manifest = $crate->{'manifest'} || []; %>
+<% my $total = defined $crate->{'queue_total'} ? $crate->{'queue_total'} : scalar @{$songs}; %>
+<% my $offset = $crate->{'window_offset'} || 0; %>
+<% my $limit = $crate->{'window_limit'} || scalar @{$songs}; %>
+<% my $queue_json = &subs::json_chars({ total => $total, offset => $offset, limit => $limit, songs => $manifest }); %>
+<%# a filename may carry anything, including the bytes that would close the
+    script element; the JSON is HTML-safe once a '<' can never begin an end tag %>
+<% $queue_json =~ s{</}{<\\/}g; %>
 <div id="files" style="background-color:var(--panel); width:100%; max-width:100%; text-align:left;<% if ($phone_layout) { %> overflow:visible; border:none; border-radius:0;<% } else { %> overflow:auto;<% } %>">
-	<% if (scalar @{$crate->{'songs'}} > 0) { %>
-		<% my $n = 0; %>
-		<div class="<%= ($layout eq 'icons') ? 'music_grid' : 'music_list' %>">
-			<% foreach my $f (@{$crate->{'songs'}}) { %>
-				<% next unless $f->{'filename'}; %>
-				<% $n = $n + 1; %>
-				<% my $title = $f->{'display_track'} || $f->{'formatted_name'} || $f->{'full_title'} || $f->{'song'} || ''; %>
-				<% my $artist = $f->{'display_artist'} || ''; %>
-				<% my $album = $f->{'display_album'} || ''; %>
-				<% my $meta = $f->{'display_meta'} || ''; %>
-				<%# the card: every layout rules this same box; the hidden .file div is
-				    a direct child so the player's parent() marks the card itself %>
-				<div class="music_file music_track track_item link hover<% if (($f->{'playing'} // '') eq 'yes') { %> playing holla<% } %>" file="<%= $f->{'filename'} %>" file_uuid="<%= $f->{'file_uuid'} %>" number="<%= $n %>" style="background-color:<%= $file_colour->($f) %>">
-					<div style="display:none;" colour="<%= $file_colour->($f) %>" file_uuid="<%= $f->{'file_uuid'} %>" computer_name="<%= $f->{'computer_name'} %>" song="<%= $f->{'display_track'} %>" remote_uuid="<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" app="<%= $f->{'app'} %>" type="<%= $f->{'type'} %>" artist="<%= $f->{'display_artist'} %>" album="<%= $f->{'display_album'} %>" class="file" id="track_<%= $n %>"><%= $f->{filename} %></div>
-					<div style="display:none;" class="file_json" file="<%= $f->{'file'} %>" file_uuid="<%= $f->{'file_uuid'} %>"><%= &subs::json_chars($f->{'info'}) %></div>
-					<%# the picture: a cover, a still frame, or the Misc set's own glyph %>
-					<div class="music_track_art">
-						<% if ($f->{'type'} eq 'audio') { %>
-							<% if (scalar @{$f->{'thumbs'}} > 0) { %>
-								<img loading="lazy" decoding="async" alt="" class="music_track_thumb music_file_thumb" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-artwork="/file_open?file=<%= &subs::url_escape_utf8($f->{'thumbs'}->[0]) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
-							<% } else { %>
-								<img class="music_track_thumb music_file_thumb" alt="" src="<%= $icon_music %>">
-							<% } %>
-						<% } elsif ($f->{'type'} eq 'video' && $f->{'info'}->{'duration'} && $f->{'info'}->{'height'}) { %>
-							<%# a still frame of the video %>
-							<img loading="lazy" decoding="async" alt="" class="music_track_thumb music_file_thumb" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-artwork="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
-						<% } else { %>
-							<img class="music_track_thumb music_file_thumb" alt="" src="<%= $icon_video %>">
-						<% } %>
-						<span class="music_track_play"><img src="<%= $icon_play %>" alt=""></span>
-					</div>
-					<%# the three words: the track leads, the artist and album follow %>
-					<div class="music_track_words">
-						<span class="full_title" hint="<%= $title %>"><%= $title %></span>
-						<% if (length $meta) { %>
-							<span class="music_track_meta" hint="<%= $meta %>">
-								<% if (length $artist) { %><span class="music_track_artist"><%= $artist %></span><% } %>
-								<% if (length $artist && length $album) { %><span class="music_track_sep">&#183;</span><% } %>
-								<% if (length $album) { %><span class="music_track_album"><%= $album %></span><% } %>
-							</span>
-						<% } %>
-					</div>
-					<%# the time and the quiet buttons: fetch-home on a peer, then details %>
-					<span class="file_duration"><%= $f->{'info'}->{'duration'} %></span>
-					<div class="music_track_tools">
-						<% if ($f->{'remote_uuid'}) { %>
-							<img class="music_file_fetch_home little_thumb hover" src="<%= $icon_download %>" hint="<%= &subs::ui('Fetch home') %>" file="<%= $f->{'filename'} %>" remote_uuid="<%= $f->{'remote_uuid'} %>">
-						<% } %>
-						<img class="music_information_toggle little_thumb" src="<%= $icon_info %>" hint="<%= &subs::ui('Details') %>" file_uuid="<%= $f->{'file_uuid'} %>" file="<%= $f->{'filename'} %>">
-					</div>
-					<%= include 'apps/music/track_description', f => $f %>
-				</div>
-			<% } %>
+	<% if (scalar @{$songs} > 0) { %>
+		<div id="music_window" class="<%= ($layout eq 'icons') ? 'music_grid' : 'music_list' %>" data-total="<%= $total %>" data-offset="<%= $offset %>" data-limit="<%= $limit %>">
+			<%= include 'apps/music/track_rows', songs => $songs, crate => $crate, offset => $offset %>
 		</div>
 	<% } %>
 </div>
+<script type="application/json" id="music_queue_data" token="<%= $crate->{'queue_token'} || '' %>"><%== $queue_json %></script>
