@@ -523,4 +523,15 @@ if ($node && -x $node) {
 	is($rc, 0, 'node --check accepts the effects part');
 }
 
+# --- the close lets a lazy app release its own runtime -----------------------
+like($stack, qr/var jawnosAppTeardown = \{\};/, 'the shell carries a teardown registry');
+my $remove_at = index($stack, q{$('#window_' + timestamp ).remove();});
+my $hook_at   = index($stack, 'jawnosAppTeardown[app]');
+ok($remove_at != -1 && $hook_at != -1 && $remove_at < $hook_at,
+	'the registry runs after the window is out of the page');
+like($stack, qr/if \(jawnosAppTeardown\[app\]\) \{ jawnosAppTeardown\[app\]\(\); \}/,
+	'and only when the app registered a hook');
+like($stack, qr/app == 'twirl'/, 'the legacy branches are still there');
+like($stack, qr/app == 'travel'/, 'including Travel, which predates the registry');
+
 done_testing();

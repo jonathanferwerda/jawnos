@@ -166,6 +166,12 @@ function windowRefresher(app) {
 	}
 }
 
+// Lazy apps own runtimes the shell cannot name (timers, observers, object
+// URLs); each chunk registers its own cleanup here. The if-chain below stays
+// for the apps that still tear themselves down inline, so a registry entry is
+// additive, never a replacement.
+var jawnosAppTeardown = {};
+
 // The teardown is everything the close did before there was a motion: the app's
 // own shutdown, the window's removal, and the bookkeeping the server and the
 // desk keep. closeWindow() plays the level's farewell first and hands it this,
@@ -217,6 +223,11 @@ function windowCloseTearDown(timestamp, win, done) {
 	var was_full = win.hasClass('full_app_window');
 	if (typeof windowTiledGapClose === 'function') { windowTiledGapClose(win); }
 	$('#window_' + timestamp ).remove();
+	// The app's own cleanup runs after its DOM is gone: a Terminal view prunes
+	// by checking that its root left the page, and the Studio and Marker
+	// releases are DOM-independent. The legacy branches above predate the
+	// registry, so this runs for an app in either group.
+	if (jawnosAppTeardown[app]) { jawnosAppTeardown[app](); }
 	// closing the last launcher app hands the desk back; without this the body
 	// stayed in full-app mode with no window and the taskbar stayed hidden
 	if (was_full && !$('.wind.full_app_window').length) { document.body.classList.remove('full_app_mode'); }

@@ -92,10 +92,26 @@ function terminalPruneViews() {
 	$.each(terminalViews, function (key, v) {
 		if (!v.root || !v.root.isConnected) {
 			if (v.observer) { v.observer.disconnect(); }
+			// a pending resize or repaint owns the detached root too
+			if (v.resizeTimer) { window.clearTimeout(v.resizeTimer); }
+			if (v.state && v.state.raf) { window.cancelAnimationFrame(v.state.raf); }
 			delete terminalViews[key];
 		}
 	});
 }
+
+// A close removes the window, so prune at that moment instead of waiting for the
+// next Terminal to open. Dropping the current view also drops terminalVars, which
+// follows it and would otherwise keep the closed root and its grid reachable.
+function terminalTeardown() {
+	terminalPruneViews();
+	if (terminalCurrentView && (!terminalCurrentView.root || !terminalCurrentView.root.isConnected)) {
+		terminalCurrentView = null;
+		terminalVars = terminalNewState();
+	}
+}
+
+if (window.jawnosAppTeardown) { jawnosAppTeardown['terminal'] = terminalTeardown; }
 
 function terminalViewsForSession(id) {
 	var found = [];

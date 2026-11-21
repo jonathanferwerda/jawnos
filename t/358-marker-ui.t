@@ -403,4 +403,19 @@ else {
 	diag('node is not installed; the marker script checks are skipped');
 }
 
+# --- the stage observer follows the window that is open now ------------------
+like($marker_stage, qr/function markerStageTeardown\(\)/, 'Marker has a close hook of its own');
+my ($stage_init) = $marker_stage =~ /function markerStageInit\(\) \{(.*?)\n\}/s;
+ok(defined $stage_init, 'the stage init is found');
+$stage_init = '' unless defined $stage_init;
+like($stage_init, qr/if \(!markerStageObserver\) \{\s*markerStageObserver = new ResizeObserver/,
+	'the observer is created only when absent');
+like($stage_init, qr/markerStageObserver\.disconnect\(\);\s*markerStageObserver\.observe\(viewport\);/s,
+	'and re-attached to this open\'s viewport every time');
+unlike($marker_stage, qr/window\.ResizeObserver && !markerStageObserver/,
+	'the old guard no longer skips observing on a reopen');
+like($marker_stage, qr/jawnosAppTeardown\['marker'\] = markerStageTeardown/,
+	'the shell registry learns about it');
+
+
 done_testing();

@@ -188,6 +188,28 @@ like($edit, qr/if \(d\.mode == 'move' && to && to != from\) \{ studioMoveTake\(d
 like($edit, qr/if \(e\.button !== 0\) \{ return; \}/,
 	'a right-press does not start a drag or clear the selection');
 
+# --- a close releases the transport and the takes ---------------------------
+like($ctrl, qr/function studioReleaseTimers\(\)/, 'one place clears the transport timers');
+my ($timers) = $ctrl =~ /function studioReleaseTimers\(\) \{(.*?)\n\}/s;
+ok(defined $timers, 'the timer release is found');
+$timers = '' unless defined $timers;
+like($timers, qr/clearInterval\(mixer\['time'\]\['interval'\]\)/, 'the 25 ms transport tick is cleared');
+like($timers, qr/clearInterval\(v\['interval'\]\)/, 'and every button blink timer');
+like($ctrl, qr/function studioReleaseTakes\(\)/, 'takes are released in one place too');
+my ($takes) = $ctrl =~ /function studioReleaseTakes\(\) \{(.*?)\n\}/s;
+ok(defined $takes, 'the take release is found');
+$takes = '' unless defined $takes;
+like($takes, qr/URL\.revokeObjectURL\(take\.src\)/, 'each take object URL is revoked');
+like($takes, qr/URL\.revokeObjectURL\(take\.track\.src\)/, 'and the element\'s URL, which an import never copies onto the take');
+like($takes, qr/take\.data = null/, 'and its Blob dropped');
+like($takes, qr/!take\.track\.paused.*?take\.track\.pause\(\)/, 'a take still marked playing is paused first');
+like($ctrl, qr/function studioTeardown\(\)/, 'one close hook ties them together');
+like($ctrl, qr/jawnosAppTeardown\['studio'\] = studioTeardown/, 'the shell registry learns about it');
+my $release_at = index($knobs, 'studioTeardown');
+my $mixer_at = index($knobs, 'mixer = {');
+ok($release_at != -1 && $mixer_at != -1 && $release_at < $mixer_at,
+	'studioInit releases the previous mixer before replacing it');
+
 # --- the editing that was already there -------------------------------------
 like($edit, qr/on\('dblclick', '\.track'/, 'double-click still splits');
 like($edit, qr/if \(e\.key == 'Delete' \|\| e\.key == 'Backspace'\)/, 'Delete still removes the selected take');

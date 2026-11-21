@@ -96,6 +96,55 @@ function studioTime(command) {
 	},1000);
 }
 
+// The transport tick and the button blink both live in mixer, which studioInit
+// replaces wholesale. Clear them before that (and on close) or the old ids are
+// unreachable and keep a detached button subtree alive at 1 Hz.
+function studioReleaseTimers() {
+	if (mixer && mixer['time']) { clearInterval(mixer['time']['interval']); mixer['time']['interval'] = 0; }
+	if (mixer && mixer['buttons']) {
+		$.each(mixer['buttons'], function(i, v) { if (v) { clearInterval(v['interval']); v['interval'] = 0; } });
+	}
+}
+
+// A take holds a Blob and its object URL; the window's hidden <video> is the
+// only other owner. The transport is already stopped when this runs, so an
+// element still marked playing is paused first: nothing should outlive the
+// close, and revoking under a live element is the one case that would.
+function studioReleaseTakes() {
+	$.each(mixer, function(ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m || !m.media || !m.media.out) { return; }
+		m.media.out.forEach(function(take) {
+			if (!take) { return; }
+			if (take.track) {
+				try { if (!take.track.paused) { take.track.pause(); } } catch (e) {}
+				if (take.track.parentNode) { take.track.parentNode.removeChild(take.track); }
+			}
+			if (take.src) { try { URL.revokeObjectURL(take.src); } catch (e) {} take.src = ''; }
+			// studioImport never copies the URL onto take.src; there it lives only on
+			// the element, so both owners have to let go.
+			if (take.track && take.track.src) { try { URL.revokeObjectURL(take.track.src); } catch (e) {} take.track.src = ''; }
+			take.data = null;
+		});
+		m.media.out = [];
+	});
+}
+
+// Closing the Studio (or replacing it with another song) ends its transport and
+// lets go of every take; the shared AudioContext is deliberately left alone.
+function studioTeardown() {
+	studioReleaseTimers();
+	if (typeof studioFlushSources === 'function') { studioFlushSources(); }
+	if (mixer && mixer['time']) { mixer['time']['punch_in'] = null; mixer['time']['pending_takes'] = null; }
+	studioAudio.playSeg = null;
+	studioAudio.schedSeg = null;
+	studioAudio.clickSeg = null;
+	studioSelectedTake = null;
+	studioTakeDrag = null;
+	studioReleaseTakes();
+}
+
+if (window.jawnosAppTeardown) { jawnosAppTeardown['studio'] = studioTeardown; }
+
 // Loop takes finish themselves at the end of their region — a hair late, so
 // the phrase's tail (which the player heard and answered late) is still
 // captured — then start repeating on the spot. When nothing else is still

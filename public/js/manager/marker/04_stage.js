@@ -563,10 +563,17 @@ function markerStageInit() {
 	markerToolCursor();
 	markerRailsApply();
 	markerStageResize();
-	if (window.ResizeObserver && !markerStageObserver) {
+	// The window is rebuilt on each open, so re-attach to the viewport that is
+	// here now. Disconnecting first releases the closed stage: an observer left
+	// on the old viewport keeps that subtree alive and, worse, silently stops
+	// following the new one on the second open.
+	if (window.ResizeObserver) {
 		var viewport = document.getElementById('marker_viewport');
 		if (viewport) {
-			markerStageObserver = new ResizeObserver(function() { markerCanvasResize(); });
+			if (!markerStageObserver) {
+				markerStageObserver = new ResizeObserver(function() { markerCanvasResize(); });
+			}
+			markerStageObserver.disconnect();
 			markerStageObserver.observe(viewport);
 		}
 	}
@@ -586,3 +593,10 @@ function markerStageInit() {
 	// the sessions panel is fetched on demand; opening Marker is a good moment
 	if (typeof markerSessionPanel === 'function' && $('#marker_sessions').length > 0) { markerSessionPanel(); }
 }
+
+// Closing the window releases the observer; the next open makes a new one.
+function markerStageTeardown() {
+	if (markerStageObserver) { markerStageObserver.disconnect(); markerStageObserver = null; }
+}
+
+if (window.jawnosAppTeardown) { jawnosAppTeardown['marker'] = markerStageTeardown; }

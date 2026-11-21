@@ -11,6 +11,10 @@ function studioInit(data) {
 		data: { window_maker: 'yes', timestamp: timestamp, data: jdata },
 		success: function(response) {
 			windowMaker(response.html);
+			// The previous open's transport timers and take blobs belong to a window
+			// that is being replaced. Release them before `mixer` is reassigned, or the
+			// interval ids become unreachable and tick forever.
+			if (typeof studioTeardown === 'function') { studioTeardown(); }
 			var studio_defaults = response.settings || {};
 			mixer = {
 				time: {
