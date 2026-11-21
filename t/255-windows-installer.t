@@ -131,10 +131,18 @@ like($install, qr/IconLocation/, 'the shortcuts set their icon');
 like($install, qr/jawnos\.ico/, 'install.ps1 names the icon file');
 
 # The probe once froze the Setup: Inno's 32-bit PowerShell captured the 64-bit
-# perl through `2>&1 | Out-String` and never saw the pipeline close. Native
-# output goes through temp files now, and the wait is bounded.
-like($install, qr/RedirectStandardOutput/, 'native output is captured through a file');
+# perl through `2>&1 | Out-String` and never saw the pipeline close. It then
+# used Start-Process -PassThru without -Wait, whose ExitCode is empty on Windows
+# PowerShell 5.1: the probe printed "ok" and the installer still refused the
+# runtime. The capture owns a Process and drains both streams concurrently.
+like($install, qr/System\.Diagnostics\.ProcessStartInfo/, 'the capture owns a real Process object');
+like($install, qr/ReadToEndAsync/, 'both native streams are drained concurrently, not through a pipe');
+like($install, qr/\$proc\.ExitCode/, 'the capture reads the real exit code');
+like($install, qr/\$startInfo\.WorkingDirectory\s*=\s*\$PWD\.ProviderPath/,
+	'the capture runs in the caller\'s directory, so the seed\'s relative path resolves');
 like($install, qr/WaitForExit\(\$TimeoutSeconds \* 1000\)/, 'the capture wait is bounded');
+unlike($install, qr/Start-Process -FilePath \$FilePath -ArgumentList \$argLine -PassThru/,
+	'the capture does not use Start-Process -PassThru, whose ExitCode can be empty');
 unlike($install, qr/& \$FilePath \@Arguments 2>&1/, 'the probe does not capture through a pipeline');
 like($install, qr/ConvertTo-QuotedArgument/, 'an argument with spaces stays one argument');
 

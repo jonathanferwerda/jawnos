@@ -50,12 +50,17 @@ function Invoke-Robocopy {
     }
 }
 
-# Native commands are captured through temp files, not a pipeline. Inno runs
-# this script under 32-bit PowerShell ({sys} was SysWOW64); a `2>&1 | Out-String`
-# capture of the 64-bit perl.exe could block forever there with no child left to
-# wait on, freezing the Setup on "Checking the bundled Perl runtime". A file
-# redirect has no pipe for a grandchild to inherit, and the wait is bounded so a
-# wedged child is reported instead of waited on.
+# Native commands are captured without a pipeline. Inno runs this script under
+# 32-bit PowerShell ({sys} was SysWOW64); a `2>&1 | Out-String` capture of the
+# 64-bit perl.exe could block forever there with no child left to wait on,
+# freezing the Setup on "Checking the bundled Perl runtime". Both streams are
+# drained concurrently instead, so a grandchild inherits no pipe, and the wait
+# is bounded so a wedged child is reported instead of waited on.
+#
+# System.Diagnostics.Process is deliberate. Start-Process -PassThru without
+# -Wait returns a process object whose ExitCode is empty on Windows PowerShell
+# 5.1 even after WaitForExit; the probe printed "ok" but the installer read no
+# exit code and refused the bundled runtime.
 function ConvertTo-QuotedArgument {
     param([string]$Value)
     if ($null -eq $Value -or $Value -eq '') { return '""' }
@@ -73,22 +78,33 @@ function Invoke-Capture {
     )
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $outFile = [System.IO.Path]::GetTempFileName()
-    $errFile = [System.IO.Path]::GetTempFileName()
+    $proc = $null
     try {
         $argLine = (@($Arguments) | ForEach-Object { ConvertTo-QuotedArgument $_ }) -join ' '
-        $proc = Start-Process -FilePath $FilePath -ArgumentList $argLine -PassThru -NoNewWindow `
-            -RedirectStandardOutput $outFile -RedirectStandardError $errFile -ErrorAction Stop
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $FilePath
+        $startInfo.Arguments = $argLine
+        # Start-Process honored the PowerShell location; a bare Process would
+        # run the seed's relative scripts\... against the OS current directory.
+        $startInfo.WorkingDirectory = $PWD.ProviderPath
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $startInfo
+        [void]$proc.Start()
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
         if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
             try { $proc.Kill() } catch { }
             throw "$FilePath did not finish within $TimeoutSeconds seconds"
         }
-        $text = ''
-        if (Test-Path -LiteralPath $outFile) { $text += [string](Get-Content -LiteralPath $outFile -Raw) }
-        if (Test-Path -LiteralPath $errFile) { $text += [string](Get-Content -LiteralPath $errFile -Raw) }
+        [void]$proc.WaitForExit()
+        $text = [string]$outTask.Result + [string]$errTask.Result
         $code = $proc.ExitCode
     } finally {
-        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+        if ($proc) { $proc.Dispose() }
         $ErrorActionPreference = $saved
     }
     return [pscustomobject]@{ Text = $text; Code = $code }
