@@ -21,6 +21,7 @@ sub routes {
 	[25711, 'post', '/manager/configure/home_plate/manual', 'action_25711'],
 	[25725, 'post', '/manager/configure/home_plate/settings', 'action_25725'],
 	[25757, 'post', '/manager/configure/home_plate/settings/delete', 'action_25757'],
+	[54102, 'post', '/manager/configure/home_plate/shape', 'action_54102'],
 	[26620, 'post', '/manager/configure/environment/qr', 'action_26620'],
 	[41150, 'get', '/manager/configure/sms_list_check', 'action_41150'],
 	[41659, 'get', '/manager/configure/adopt_app', 'action_41659'],

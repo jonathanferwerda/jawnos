@@ -160,13 +160,8 @@
 				</div>
 				<% if ($me->{$d}->{'home_plate'}) { %>
 					<% my $location = eval { return decode_json $me->{$d}->{'home_plate'} } || {}; %>
-					<div class="cfg-row">
-						<label>lat</label>
-						<input type="text" class="manual_home_plate" app="me" setting="latitude" value="<%= $location->{'latitude'} %>" device="<%= $d %>">
-					</div>
-					<div class="cfg-row">
-						<label>long</label>
-						<input type="text" class="manual_home_plate" app="me" setting="longitude" value="<%= $location->{'longitude'} %>" device="<%= $d %>">
+					<div class="home_plate_configuration" app="me" device="<%= $d %>">
+						<%= include 'configure/home_plate_map', app => 'me', device => $d, base => $location, flags => [] %>
 					</div>
 				<% } %>
 			<% } %>

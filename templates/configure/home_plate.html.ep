@@ -1,75 +1,70 @@
+<% use Mojo::JSON qw/decode_json encode_json/; %>
 <% no warnings 'uninitialized'; %>
 <style>
-/* The home plate: a manual latitude/longitude, then one card per duty - where
-   a device is placed relative to home, how far, which app, and what it does.
-   Each field stacks its label over its control so the card wraps on a phone. */
+/* The home plate: one map for the selected flag, then one card per flag - where
+   a device is placed relative to the flag, its action and its device. The area
+   itself lives on the map (circle, box, path or polygon); the card only carries
+   the behaviour. Each field stacks its label over its control so the card wraps
+   on a phone. */
 .home_plate_setting_container .hp_field { display:flex; flex-direction:column; gap:2px; flex:0 1 auto; min-width:0; }
 .home_plate_setting_container .hp_field > label { font-size:11.5px; opacity:.7; }
 .home_plate_setting_container .hp_field .home_plate_setting { box-sizing:border-box; max-width:100%; padding:6px 8px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 .home_plate_setting_container .hp_field.hp_inline { flex-direction:row; align-items:center; gap:5px; }
 .home_plate_setting_container .hp_field.hp_inline > label { font-size:13px; opacity:.85; }
 .home_plate_setting_container .hp_actions { display:flex; align-items:flex-end; gap:6px; }
+.home_plate_setting_container .home_plate_edit { padding:5px 8px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; font-size:12px; cursor:var(--jawnos-cursor-pointer, pointer); }
+.home_plate_base_card { border-style:dashed; }
 </style>
-<div class="cfg-row">
-	<label>Latitude</label>
-	<input type="text" class="manual_home_plate" app="<%= $app %>" setting="latitude" value="<%= $settings->{'app_home_plate'}->{'latitude'} %>">
-</div>
-<div class="cfg-row">
-	<label>Longitude</label>
-	<input type="text" class="manual_home_plate" app="<%= $app %>" setting="longitude" value="<%= $settings->{'app_home_plate'}->{'longitude'} %>">
-</div>
-
-
-% my $home_plate_duties = eval { return decode_json $settings->{'home_plate_duties'} } || [];
-% my $signatorial = &subs::signatorial_designer();
-% my $uuid = &subs::random_string_creator(12);
-% push @{$home_plate_duties}, { uuid => $uuid, timestamp => &subs::rightNow() };
-<% foreach my $hpd ( sort { $b->{'timestamp'} <=> $a->{'timestamp'} } @{$home_plate_duties} ) { %>
-	<div class="home_plate_setting_container" uuid="<%= $hpd->{'uuid'} %>">
+<% my $base = $settings->{'app_home_plate'} || {}; %>
+<% my $home_plate_duties = eval { return decode_json $settings->{'home_plate_duties'} } || []; %>
+<%= include 'configure/home_plate_map', app => $app, device => '', base => $base, flags => $home_plate_duties %>
+<div class="home_plate_flags">
+	<div class="home_plate_setting_container home_plate_base_card" uuid="" app="<%= $app %>">
 		<span class="hp_field">
-			<label>Placement</label>
-			<select class="home_plate_setting" setting="placement" value="<%= $hpd->{'placement'} %>" uuid="<%= $hpd->{'uuid'} %>">
-				<% foreach my $dir ( qw/within without/ ) { %>
-					<option value="<%= $dir %>" <% if ($hpd->{'placement'} eq $dir) { %>selected<% } %>><%= &subs::format_name($dir) %></option>
-				<% } %>
-			</select>
-		</span>
-		<span class="hp_field">
-			<label>Distance (km)</label>
-			<input class="home_plate_setting" setting="distance" value="<%= $hpd->{'distance'} %>" placeholder="(km)" uuid="<%= $hpd->{'uuid'} %>" size="6">
-		</span>
-		<span class="hp_field">
-			<label>Latitude</label>
-			<input class="home_plate_setting" setting="latitude" value="<%= $hpd->{'latitude'} %>" placeholder="latitude" uuid="<%= $hpd->{'uuid'} %>" size="10">
-		</span>
-		<span class="hp_field">
-			<label>Longitude</label>
-			<input class="home_plate_setting" setting="longitude" value="<%= $hpd->{'longitude'} %>" placeholder="longitude" uuid="<%= $hpd->{'uuid'} %>" size="10">
-		</span>
-		<span class="hp_field">
-			<label>Action</label>
-			<select class="home_plate_setting" setting="action" value="<%= $hpd->{'action'} %>" uuid="<%= $hpd->{'uuid'} %>">
-				<% foreach my $o ( qw/none start record stop command kill/ ) { %>
-					<option value="<%= $o %>" <% if ($o eq $hpd->{'action'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
-				<% } %>
-			</select>
-		</span>
-
-		<span class="hp_field">
-			<label>Device</label>
-			<select class="home_plate_setting" setting="device" value="<%= $hpd->{'device'} %>" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>">
-				% my $devices = &subs::remote_machine_lister();
-				<option value="">None</option>
-				<% foreach my $d ( @{$devices} ) { %>
-					<option value="<%= $d->{'signatorial'} %>" <% if ($hpd->{'device'} eq $d->{'signatorial'}) { %>selected<% } %>><%= &subs::format_name($d->{'hostname'}) %></option>
-				<% } %>
-			</select>
+			<label><%= &subs::ui('Default place') %></label>
+			<span class="home_plate_summary" summary="base"></span>
 		</span>
 		<span class="hp_actions">
-			<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb home_plate_setting_save hover" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
-			<% if ($hpd->{'uuid'} ne $uuid) { %>
-				<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb hover home_plate_setting_deleter" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
-			<% } %>
+			<button type="button" class="home_plate_edit" uuid=""><%= &subs::ui('Edit on map') %></button>
 		</span>
 	</div>
-<% } %>
+	<% foreach my $hpd ( sort { ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @{$home_plate_duties} ) { %>
+		<div class="home_plate_setting_container" uuid="<%= $hpd->{'uuid'} %>" app="<%= $app %>">
+			<span class="hp_field">
+				<label><%= &subs::ui('Placement') %></label>
+				<select class="home_plate_setting" setting="placement" uuid="<%= $hpd->{'uuid'} %>">
+					<% foreach my $dir ( qw/within without/ ) { %>
+						<option value="<%= $dir %>" <% if (($hpd->{'placement'} || '') eq $dir) { %>selected<% } %>><%= &subs::format_name($dir) %></option>
+					<% } %>
+				</select>
+			</span>
+			<span class="hp_field">
+				<label><%= &subs::ui('Action') %></label>
+				<select class="home_plate_setting" setting="action" uuid="<%= $hpd->{'uuid'} %>">
+					<% foreach my $o ( qw/none start record stop command kill/ ) { %>
+						<option value="<%= $o %>" <% if (($hpd->{'action'} || '') eq $o) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+					<% } %>
+				</select>
+			</span>
+			<span class="hp_field">
+				<label><%= &subs::ui('Device') %></label>
+				<select class="home_plate_setting" setting="device" uuid="<%= $hpd->{'uuid'} %>">
+					% my $devices = &subs::remote_machine_lister();
+					<option value=""><%= &subs::ui('None') %></option>
+					<% foreach my $d ( @{$devices} ) { %>
+						<option value="<%= $d->{'signatorial'} %>" <% if (($hpd->{'device'} || '') eq $d->{'signatorial'}) { %>selected<% } %>><%= &subs::format_name($d->{'hostname'}) %></option>
+					<% } %>
+				</select>
+			</span>
+			<span class="hp_field">
+				<label><%= &subs::ui('Areas') %></label>
+				<span class="home_plate_summary" summary="<%= $hpd->{'uuid'} %>"></span>
+			</span>
+			<span class="hp_actions">
+				<button type="button" class="home_plate_edit" uuid="<%= $hpd->{'uuid'} %>"><%= &subs::ui('Edit on map') %></button>
+				<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb home_plate_setting_save hover" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
+				<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb hover home_plate_setting_deleter" app="<%= $app %>" uuid="<%= $hpd->{'uuid'} %>" style="vertical-align:bottom;">
+			</span>
+		</div>
+	<% } %>
+</div>

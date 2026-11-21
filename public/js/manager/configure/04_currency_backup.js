@@ -189,6 +189,7 @@ $(document).on('click', '#appointment_list_grabber', function() {
 		type:'GET',
 		success:function(response) {
 			$('#configure_appointment_list').html(response);
+			if (typeof homePlateInitAll === 'function') { homePlateInitAll($('#configure_appointment_list')); }
 			if (jawnosConfigureShow('appointment_list_grabber', $('#configure_appointment_list'))) {
 				b.text(text);
 				b.attr('status', 'active');

@@ -1,0 +1,74 @@
+<% use Mojo::JSON qw/encode_json/; %>
+<% no warnings 'uninitialized'; %>
+<% my $editor_app = defined $app ? $app : ''; %>
+<% my $editor_device = defined $device ? $device : ''; %>
+<% my $editor_key = &subs::html_name($editor_app) . '_' . &subs::html_name(length $editor_device ? $editor_device : 'app'); %>
+<% my $canvas_id = 'home_plate_map_' . $editor_key; %>
+<% my $payload = encode_json({ app => $editor_app, device => $editor_device, base => (ref $base eq 'HASH' ? $base : {}), flags => (ref $flags eq 'ARRAY' ? $flags : []) }); %>
+<% $payload =~ s{</}{<\\/}g; %>
+<style>
+/* The home-plate editor: one map for the selected flag, a flag on the toolbar
+   that can be dragged or pressed then clicked, and the four area shapes plus the
+   water trace. The map is the same jawnosMap canvas Travel uses. */
+.home_plate_editor { margin:8px 0; padding:8px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2, var(--panel)); }
+.home_plate_editor .home_plate_toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:6px; }
+.home_plate_editor .home_plate_toolbar button,
+.home_plate_editor .home_plate_toolbar select { box-sizing:border-box; padding:5px 8px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; font-size:12px; }
+.home_plate_editor .home_plate_toolbar button { cursor:var(--jawnos-cursor-pointer, pointer); }
+.home_plate_editor .home_plate_toolbar button[active="yes"] { background:var(--accent, #b4552f); color:#fff; border-color:var(--accent, #b4552f); }
+.home_plate_editor .home_plate_toolbar_space { flex:1 1 auto; }
+.home_plate_editor .home_plate_map_wrap { position:relative; width:100%; height:360px; overflow:hidden; border-radius:6px; border:1px solid var(--line); background:#e9e5dc; }
+.home_plate_editor .home_plate_map_wrap canvas.home_plate_map { display:block; width:100%; height:100%; }
+.home_plate_editor .home_plate_flag_tool { position:relative; display:inline-block; width:18px; height:24px; cursor:var(--jawnos-cursor-pointer, pointer); vertical-align:middle; }
+.home_plate_editor .home_plate_flag_marker { position:absolute; width:18px; height:24px; transform:translate(-50%, -100%); z-index:4; cursor:var(--jawnos-cursor-pointer, pointer); display:none; }
+.home_plate_editor .home_plate_flag_pole { position:absolute; left:4px; top:0; width:2px; height:24px; background:var(--ink); }
+.home_plate_editor .home_plate_flag_cloth { position:absolute; left:6px; top:1px; width:12px; height:10px; background:#c0392b; clip-path:polygon(0 0, 100% 18%, 0 100%); }
+.home_plate_editor .home_plate_shape_panel { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:6px; font-size:12px; }
+.home_plate_editor .home_plate_shape_panel input.home_plate_width,
+.home_plate_editor .home_plate_shape_panel input[type="text"],
+.home_plate_editor .home_plate_shape_panel input[type="number"] { width:82px; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+.home_plate_editor .home_plate_shape_panel input.home_plate_brand { width:150px; }
+.home_plate_editor .home_plate_shape_panel button { padding:5px 8px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; font-size:12px; cursor:var(--jawnos-cursor-pointer, pointer); }
+.home_plate_editor .home_plate_map_status,
+.home_plate_editor .home_plate_editor_status { font-size:12px; opacity:.75; }
+.home_plate_flags { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.home_plate_flags .home_plate_summary { font-size:12px; opacity:.75; }
+</style>
+<div class="home_plate_editor" app="<%= $editor_app %>" device="<%= $editor_device %>" editor="<%= $editor_key %>">
+	<div class="home_plate_toolbar">
+		<span class="home_plate_flag_tool" draggable="true" hint="<%= &subs::ui('Drag this flag onto the map, or press it and click the map') %>"><span class="home_plate_flag_pole"></span><span class="home_plate_flag_cloth"></span></span>
+		<button type="button" class="home_plate_tool" data-shape="circle" hint="<%= &subs::ui('Double-click the map to place a circle') %>"><%= &subs::ui('Circle') %></button>
+		<button type="button" class="home_plate_tool" data-shape="box" hint="<%= &subs::ui('Double-click two opposite corners') %>"><%= &subs::ui('Box') %></button>
+		<button type="button" class="home_plate_tool" data-shape="path" hint="<%= &subs::ui('Double-click each bend, then Finish') %>"><%= &subs::ui('Path') %></button>
+		<button type="button" class="home_plate_tool" data-shape="polygon" hint="<%= &subs::ui('Double-click each corner, then Finish') %>"><%= &subs::ui('Polygon') %></button>
+		<button type="button" class="home_plate_tool" data-shape="trace" hint="<%= &subs::ui('Draw a river and let the blue around it be found') %>"><%= &subs::ui('Trace') %></button>
+		<span class="home_plate_toolbar_space"></span>
+		<select class="home_plate_flag_select" hint="<%= &subs::ui('Flag') %>"></select>
+		<button type="button" class="home_plate_add_flag"><%= &subs::ui('Add flag') %></button>
+		<button type="button" class="home_plate_add_pattern"><%= &subs::ui('Add place pattern') %></button>
+		<select class="home_plate_provider" hint="<%= &subs::ui('Map') %>"></select>
+		<span class="home_plate_map_status"></span>
+	</div>
+	<div class="home_plate_map_wrap">
+		<canvas id="<%= $canvas_id %>" class="home_plate_map"></canvas>
+		<div class="home_plate_flag_marker" hint="<%= &subs::ui('Drag to move; right-click or long-press to delete') %>"><span class="home_plate_flag_pole"></span><span class="home_plate_flag_cloth"></span></div>
+	</div>
+	<div class="home_plate_shape_panel">
+		<label><%= &subs::ui('Radius / width (m)') %> <input class="home_plate_width" type="number" min="10" max="50000" step="10" value="200"></label>
+		<button type="button" class="home_plate_finish"><%= &subs::ui('Finish') %></button>
+		<button type="button" class="home_plate_shape_delete"><%= &subs::ui('Delete shape') %></button>
+		<button type="button" class="home_plate_save"><%= &subs::ui('Save plate') %></button>
+		<span class="home_plate_editor_status"></span>
+	</div>
+	<div class="home_plate_pattern_panel" style="display:none; margin-top:6px; padding:6px; border:1px dashed var(--line); border-radius:7px;">
+		<div class="home_plate_shape_panel">
+			<label><%= &subs::ui('Brand or place name') %> <input class="home_plate_brand" type="text" placeholder="Walmart"></label>
+			<label><%= &subs::ui('Search radius (km)') %> <input class="home_plate_pattern_radius" type="number" min="1" max="200" value="50"></label>
+			<button type="button" class="home_plate_find_branches"><%= &subs::ui('Find branches') %></button>
+			<button type="button" class="home_plate_add_branch"><%= &subs::ui('Add a branch on the map') %></button>
+			<span class="home_plate_pattern_status"></span>
+		</div>
+		<div class="home_plate_branch_list"></div>
+	</div>
+	<script type="application/json" class="home_plate_data"><%== $payload %></script>
+</div>

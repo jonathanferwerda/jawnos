@@ -493,6 +493,42 @@ sub guide_message_warranty {
 			}
 			return 1;
 		},
+		'home_plate_shapes_v1' => sub {
+			# A plate used to be a point and a radius. Give every existing plate the
+			# circle the map now draws (the radius it already had, else 200 m), and
+			# keep the point/radius copy at the top level for readers that predate
+			# areas. Pattern flags are left alone: their branches are the ground.
+			my $changed = 0;
+			my $rows = &subs::db_select('settings', undef, { setting => 'home_plate' })->hashes || [];
+			foreach my $row ( @{$rows} ) {
+				my $plate = eval { return decode_json($row->{'value'} // '') } || {};
+				next unless ref $plate eq 'HASH';
+				my $before = JSON::PP->new->canonical->encode($plate);
+				&subs::plate_normalize($plate);
+				my $after = JSON::PP->new->canonical->encode($plate);
+				next if $before eq $after;
+				&subs::db_update('settings', { value => $after }, { id => $row->{'id'} });
+				$changed++;
+			}
+			my $drows = &subs::db_select('settings', undef, { setting => 'home_plate_duties' })->hashes || [];
+			foreach my $row ( @{$drows} ) {
+				my $duties = eval { return decode_json($row->{'value'} // '') } || [];
+				next unless ref $duties eq 'ARRAY';
+				my $before = JSON::PP->new->canonical->encode($duties);
+				my @out;
+				foreach my $duty ( @{$duties} ) {
+					next unless ref $duty eq 'HASH';
+					&subs::plate_normalize($duty);
+					push @out, $duty;
+				}
+				my $after = JSON::PP->new->canonical->encode(\@out);
+				next if $before eq $after;
+				&subs::db_update('settings', { value => $after }, { id => $row->{'id'} });
+				$changed++;
+			}
+			&subs::say_it("backfill home_plate_shapes_v1: shaped $changed plate row(s)");
+			return 1;
+		},
 		'warehouse_money_ledger' => sub {
 			# needs the ledger column; defer until the schema migration has run
 			my $has = &subs::db_query('select 1 from pragma_table_info(?) where name=?', 'warehouse', 'kind')->hashes->[0];

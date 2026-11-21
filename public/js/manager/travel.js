@@ -104,6 +104,8 @@ function travelMapEngine() {
 		return 1;
 	});
 	travelMap.onChange(jawnosMarkerListHide);
+	// plates are areas now, not only points: draw their ground under the pins
+	travelMap.onDraw(travelPlateAreasDraw);
 	// remember the pan and zoom (after the move settles) so the next open starts here
 	travelMap.onChange(function() {
 		clearTimeout(travelViewSave);

@@ -8,6 +8,8 @@
      06_watch_pay.js        - Plat sub-tabs, DNS, crypto, pay, History type-ahead, payment proof
      07_qa_nightly.js       - Plat's QA tab: the nightly device, its readiness and the install
      08_where_audit.js      - the locator audit: run now and its cadence
+     09_home_plate_map.js   - the home-plate flag map: flags, shapes and the trace
+     10_home_plate_trace.js - trace water from a drawn line
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var global_constraints = { 'video': false, 'audio': false };
@@ -54,6 +56,7 @@ var jawnos_configure_intent = null;
 function jawnosConfigureShow(buttonId, c) {
 	if (jawnos_configure_intent !== buttonId) { return false; }
 	c.show();
+	setTimeout(function() { if (typeof homePlateInitAll === 'function') { homePlateInitAll(c); } }, 0);
 	// The chosen tab is part of the window's saved state, not just this page.
 	// Report it now that the panel is really on screen; a click alone is not a
 	// save, so a reopen (or a sync to another machine) used to draw whatever

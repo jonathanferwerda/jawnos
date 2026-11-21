@@ -621,9 +621,16 @@ sub action_25725 {
 	my $settings = &subs::settings_grabber({ app => $app, settings => [ 'home_plate', 'home_plate_duties'] });
 	my $home_plate_duties = eval { return decode_json $settings->{'home_plate_duties'} } || [];
 
-	if (grep { $_->{'uuid'} eq $home_plate->{'uuid'} } @{$home_plate_duties}) {
-		@{$home_plate_duties} = grep { $_->{'uuid'} ne $home_plate->{'uuid'} } @{$home_plate_duties};
+	# The card posts only the behaviour (placement, action, device). Merge it
+	# into the stored flag so its areas, answer and coordinates stay: the map is
+	# the only place the ground is edited now.
+	my ($existing) = grep { ($_->{'uuid'} || '') eq ($home_plate->{'uuid'} || '') } @{$home_plate_duties};
+	if ($existing) {
+		foreach my $k ( keys %{$home_plate} ) { $existing->{$k} = $home_plate->{$k}; }
+		$home_plate = $existing;
+		@{$home_plate_duties} = grep { ($_->{'uuid'} || '') ne ($home_plate->{'uuid'} || '') } @{$home_plate_duties};
 	}
+	&subs::plate_normalize($home_plate);
 	push @{$home_plate_duties}, $home_plate;
 
 	$settings->{'home_plate_duties'} = encode_json $home_plate_duties;
@@ -641,6 +648,71 @@ sub action_25725 {
 
 	$c->render(json => { home_plate => $home_plate, html => $html });
 
+}
+
+# POST /manager/configure/home_plate/shape
+# The map saves a whole flag: its areas (circle, box, path or polygon), its
+# placement/action/device, and - for a pattern - the brand and its cached
+# branches. A uuid joins home_plate_duties; an empty uuid is the app's default
+# place (or one device's plate under Me). The point and radius are mirrored so
+# every reader that predates areas still sees a plate.
+sub action_54102 {
+	my $c = shift;
+	my $app = $c->param('app') || '';
+	my $device = $c->param('device') || '';
+	my $uuid = $c->param('uuid') || '';
+	my $plate = eval { return decode_json $c->param('plate') } || {};
+	return $c->render(json => { error => 'an app and a plate are needed' })
+		unless length $app && ref $plate eq 'HASH';
+	$plate->{'self'} = 'on';
+	$plate->{'app'} = $app;
+	if (length $uuid) {
+		my $duties = eval { return decode_json(&subs::setting_grabber({ app => $app, setting => 'home_plate_duties' }) || '') } || [];
+		my ($existing) = grep { ($_->{'uuid'} || '') eq $uuid } @{$duties};
+		my %merged = $existing ? %{$existing} : ();
+		foreach my $k ( keys %{$plate} ) { $merged{$k} = $plate->{$k}; }
+		$merged{'uuid'} = $uuid;
+		$merged{'timestamp'} ||= &subs::rightNow();
+		$merged{'self'} = 'on';
+		$merged{'app'} = $app;
+		$plate = \%merged;
+		&subs::plate_normalize($plate);
+		@{$duties} = grep { ($_->{'uuid'} || '') ne $uuid } @{$duties};
+		push @{$duties}, $plate;
+		&subs::setting_setter({ app => $app, setting => 'home_plate_duties', value => encode_json($duties) });
+	}
+	else {
+		my %where = ( app => $app );
+		$where{'device'} = $device if $app eq 'me' && length $device;
+		my $existing = eval { return decode_json(&subs::setting_grabber({ %where, setting => 'home_plate' }) || '') } || {};
+		# The map owns the ground now: replace it, keeping only the row's
+		# identity. A merge would keep the areas the person has just deleted.
+		if (ref $existing eq 'HASH') {
+			foreach my $keep ( qw/uuid timestamp server_time/ ) {
+				$plate->{$keep} = $existing->{$keep}
+					if !exists $plate->{$keep} && defined $existing->{$keep};
+			}
+		}
+		$plate->{'timestamp'} ||= &subs::rightNow();
+		$plate->{'self'} = 'on';
+		$plate->{'app'} = $app;
+		&subs::plate_normalize($plate);
+		&subs::setting_setter({ %where, setting => 'home_plate', value => encode_json($plate) });
+	}
+	if ($app eq 'me') {
+		$c->render(json => { ok => 1, base => $plate });
+		return;
+	}
+	my $settings = &subs::settings_grabber({ app => $app, settings => [ 'home_plate', 'home_plate_duties' ] });
+	my $base = eval { return decode_json $settings->{'home_plate'} } || {};
+	$settings->{'app_home_plate'} = $base;
+	$settings->{'home_plate'} = ($base->{'latitude'} || '') . ' ' . ($base->{'longitude'} || '');
+	my $html = $c->render_to_string(
+		template => 'configure/home_plate',
+		app => $app,
+		settings => $settings
+	);
+	$c->render(json => { ok => 1, html => $html });
 }
 
 # POST /manager/configure/home_plate/settings/delete

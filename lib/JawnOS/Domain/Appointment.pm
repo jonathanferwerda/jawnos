@@ -1157,12 +1157,13 @@ sub home_plate_stop_armed {
 	return 0 unless ref $duties eq 'ARRAY';
 	my $plate = (ref $data->{'plate'} eq 'HASH') ? $data->{'plate'} : {};
 	my $house = (ref $data->{'house'} eq 'HASH') ? $data->{'house'} : {};
-	my $origin = ($plate->{'latitude'} && $plate->{'longitude'}) || ($house->{'latitude'} && $house->{'longitude'});
 	foreach my $duty ( @{$duties} ) {
 		next unless ref $duty eq 'HASH';
-		next unless (0 + ($duty->{'distance'} || 0)) > 0;
 		next unless (($duty->{'action'} || 'none') ne 'none');
-		next unless $origin || ($duty->{'latitude'} && $duty->{'longitude'});
+		my $ground = &subs::plate_ground_for($duty, $plate);
+		$ground = $house if !&subs::plate_has_ground($ground);
+		next unless &subs::plate_has_ground($ground);
+		next unless &subs::plate_reach_km($ground) > 0;
 		return 1;
 	}
 	return 0;
@@ -1199,35 +1200,30 @@ sub navigation_automation {
 	my $hpds = &subs::db_query('select * from settings where setting=? and value is not null and value != ?', 'home_plate_duties', '[]')->hashes;
 	foreach my $hpder ( @{$hpds} ) {
 		my $home_plate = eval { return decode_json &subs::setting_grabber({ app => $hpder->{'app'}, setting => 'home_plate' }) || &subs::setting_grabber({ app => 'me', setting => 'home_plate' }) } || {};
-		if ($home_plate->{'latitude'}) {
-			my $hpd = eval { return decode_json $hpder->{'value'} } || [];
+		my $hpd = eval { return decode_json $hpder->{'value'} } || [];
+		if (&subs::plate_has_ground($home_plate) || grep { ref $_ eq 'HASH' && &subs::plate_has_ground($_) } @{$hpd}) {
 			foreach my $hp ( @{$hpd} ) {
-				$hp->{'distance'} = 0.2 unless (defined $hp->{'distance'} && length $hp->{'distance'});
 				my $plate_device = $hp->{'device'} || '';
 				if (!$plate_device || $plate_device eq $signatorial || $plate_device eq $device) {
 				my $app = $hpder->{'app'};
 				next unless $app;
-				# a duty may carry its own ground (one app, many plates); otherwise
-				# the app's own home_plate is the plate
-				my $plate_lat = $hp->{'latitude'} || $home_plate->{'latitude'};
-				my $plate_lon = $hp->{'longitude'} || $home_plate->{'longitude'};
-				next unless $plate_lat && $plate_lon;
-				# the distance the duty is compared in, in kilometres, from the
-				# WGS84 ellipsoid a GPS actually reports against. One closure for
-				# the fix now and the recorded fixes the stop branch checks.
-				my $plate_km = sub {
-					return sprintf( '%.3f', &subs::geodesic_offset(
-						$plate_lat, $plate_lon, $_[0]->{'latitude'}, $_[0]->{'longitude'}
-					)->{'metres'} / 1000 );
-				};
-				my $distance = $plate_km->($returner);
+				# a duty may carry its own ground (one app, many flags); otherwise
+				# the app's own home_plate is the plate. The ground is a circle,
+				# box, path or polygon, and one rule serves every reader.
+				my $ground = &subs::plate_ground_for($hp, $home_plate);
+				next unless &subs::plate_has_ground($ground);
+				my $inside = &subs::plate_contains($ground, $returner->{'latitude'}, $returner->{'longitude'});
+				my $distance = &subs::plate_distance_km($ground, $returner->{'latitude'}, $returner->{'longitude'});
+				my $reach = &subs::plate_reach_km($ground);
+				# an empty pattern (no branches) has no ground to cross yet
+				next unless $reach > 0;
 					my $duty_key = $hp->{'uuid'};
-					$duty_key = join('|', $hpder->{'app'} || '', $app || '', $hp->{'placement'} || '', $hp->{'distance'} || '', $hp->{'action'} || '') unless $duty_key;
-					# A stop-side fix farther than three radii is a certain leave. The
+					$duty_key = join('|', $hpder->{'app'} || '', $app || '', $hp->{'placement'} || '', $reach, $hp->{'action'} || '') unless $duty_key;
+					# A stop-side fix farther than three reaches is a certain leave. The
 					# comparison only matters when the person comes back: that return
 					# starts a new session instead of reopening the closed one.
 					my $certain_exit = &subs::navigation_plate_certain_exit({
-						radius => $hp->{'distance'},
+						radius => $reach,
 						measured => $distance,
 						accuracy => $returner->{'accuracy'},
 					});
@@ -1244,7 +1240,7 @@ sub navigation_automation {
 						uuid => &subs::random_string_creator(22)
 					};
 					if (($hp->{'placement'} || '') eq 'within') {
-						if ($distance <= $hp->{'distance'}) {
+						if ($inside) {
 							if (($hset->{'site_type'} || '') eq 'dangerous') {
 							#	&subs::leave();
 							}
@@ -1314,8 +1310,7 @@ sub navigation_automation {
 									}
 									my $locals = &subs::db_query('select * from continent where app=? and uuid like ? and signatorial=?', $app, $lappt->{'uuid'} . '%',$signatorial)->hashes;
 									foreach my $local ( @{$locals} ) {
-										my $distance = $plate_km->($local);
-										if ($distance <= $hp->{'distance'}) {
+										if (&subs::plate_contains($ground, $local->{'latitude'}, $local->{'longitude'})) {
 											$stop_uuid = $lappt->{'uuid'};
 											last;
 										}
@@ -1335,7 +1330,7 @@ sub navigation_automation {
 						}
 					}
 					if (($hp->{'placement'} || '') eq 'without') {
-						if ($distance >= $hp->{'distance'}) {
+						if (!$inside) {
 							if (($tog || '') ne 'on') {
 								$actable = 1;
 								$cactable = 1;
@@ -1358,8 +1353,7 @@ sub navigation_automation {
 									}
 									my $locals = &subs::db_query('select * from continent where app=? and uuid like ? and signatorial=?', $app, $lappt->{'uuid'} . '%',$signatorial)->hashes;
 									foreach my $local ( @{$locals} ) {
-										my $distance = $plate_km->($local);
-										if ($distance >= $hp->{'distance'}) {
+										if (!&subs::plate_contains($ground, $local->{'latitude'}, $local->{'longitude'})) {
 											$stop_uuid = $lappt->{'uuid'};
 											last;
 										}

@@ -13,27 +13,27 @@ window.jawnosMap = (function () {
 	// they are not in this table; use another service, or a keyed URL you hold.
 	var providers = {
 		none:  { name: 'None (offline maps only)', url: null, group: 'none' },
-		osm:   { name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors', group: 'free' },
-		topo:  { name: 'OpenTopoMap',   url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', max: 17, credit: '© OpenTopoMap (CC-BY-SA)', group: 'free' },
-		osm_hot: { name: 'OSM Humanitarian', url: 'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors, HOT', group: 'free' },
-		cyclosm: { name: 'CyclOSM', url: 'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors, CyclOSM', group: 'free' },
-		esri:  { name: 'Esri Imagery',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri, Maxar, Earthstar Geographics', group: 'free' },
-		esri_street: { name: 'Esri Streets', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri', group: 'free' },
-		esri_topo: { name: 'Esri Topo', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri', group: 'free' },
-		esri_light: { name: 'Esri Light', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', max: 16, credit: 'Esri', group: 'free' },
-		esri_natgeo: { name: 'Esri NatGeo', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}', max: 16, credit: 'Esri, National Geographic', group: 'free' },
+		osm:   { name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors', group: 'free', cors: true },
+		topo:  { name: 'OpenTopoMap',   url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', max: 17, credit: '© OpenTopoMap (CC-BY-SA)', group: 'free', cors: true },
+		osm_hot: { name: 'OSM Humanitarian', url: 'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors, HOT', group: 'free', cors: true },
+		cyclosm: { name: 'CyclOSM', url: 'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors, CyclOSM', group: 'free', cors: true },
+		esri:  { name: 'Esri Imagery',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri, Maxar, Earthstar Geographics', group: 'free', cors: true },
+		esri_street: { name: 'Esri Streets', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri', group: 'free', cors: true },
+		esri_topo: { name: 'Esri Topo', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri', group: 'free', cors: true },
+		esri_light: { name: 'Esri Light', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', max: 16, credit: 'Esri', group: 'free', cors: true },
+		esri_natgeo: { name: 'Esri NatGeo', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}', max: 16, credit: 'Esri, National Geographic', group: 'free', cors: true },
 		// keyed services: pick one, set its key once under Configure -> Plat -> Maps,
 		// and the URL is made here — no need to assemble a template by hand
-		carto: { name: 'Carto Light', url: 'https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key={key}', max: 20, credit: '© OpenStreetMap, © CARTO', group: 'key', needs: 'key' },
-		maptiler: { name: 'MapTiler', url: 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key={key}', max: 20, credit: '© MapTiler © OpenStreetMap', group: 'key', needs: 'key' },
-		mapbox: { name: 'Mapbox', url: 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token={key}', max: 20, credit: '© Mapbox © OpenStreetMap', group: 'key', needs: 'key' },
-		stadia: { name: 'Stadia Maps', url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png?api_key={key}', max: 20, credit: '© Stadia Maps © OpenStreetMap', group: 'key', needs: 'key' },
-		thunderforest: { name: 'Thunderforest', url: 'https://tile.thunderforest.com/cycle/{z}/{x}/{y}.png?apikey={key}', max: 22, credit: '© Thunderforest © OpenStreetMap', group: 'key', needs: 'key' },
+		carto: { name: 'Carto Light', url: 'https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key={key}', max: 20, credit: '© OpenStreetMap, © CARTO', group: 'key', needs: 'key', cors: true },
+		maptiler: { name: 'MapTiler', url: 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key={key}', max: 20, credit: '© MapTiler © OpenStreetMap', group: 'key', needs: 'key', cors: true },
+		mapbox: { name: 'Mapbox', url: 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token={key}', max: 20, credit: '© Mapbox © OpenStreetMap', group: 'key', needs: 'key', cors: true },
+		stadia: { name: 'Stadia Maps', url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png?api_key={key}', max: 20, credit: '© Stadia Maps © OpenStreetMap', group: 'key', needs: 'key', cors: true },
+		thunderforest: { name: 'Thunderforest', url: 'https://tile.thunderforest.com/cycle/{z}/{x}/{y}.png?apikey={key}', max: 22, credit: '© Thunderforest © OpenStreetMap', group: 'key', needs: 'key', cors: true },
 		// Lambton (or any county) GIS: paste the service's tile template here. Most
 		// ArcGIS REST services are .../MapServer/tile/{z}/{y}/{x} — note y before x.
-		lambton: { name: 'Lambton / county GIS', url: null, max: 19, group: 'url', needs: 'url' },
+		lambton: { name: 'Lambton / county GIS', url: null, max: 19, group: 'url', needs: 'url', cors: true },
 		// any other service: paste its {z}/{x}/{y} template into the box next to this picker
-		custom: { name: 'Custom URL', url: null, group: 'url', needs: 'url' },
+		custom: { name: 'Custom URL', url: null, group: 'url', needs: 'url', cors: true },
 		// The house's own vector basemap. `vector` says there is no tile template:
 		// MapLibre draws the staged PMTiles archive in a layer behind this canvas
 		// (see create()'s `vector` option), and the archive's header sets its
@@ -153,6 +153,7 @@ window.jawnosMap = (function () {
 		var here = null;      // the current position { lat, lon, accuracy }
 		var tileCache = {};   // url -> Image (loaded) or true (loading) or null (failed)
 		var tileCount = 0;    // loaded tiles held; the cache is dropped past a cap
+		var tileReadFailed = {}; // provider key -> true: a CORS fetch fell back to a plain one
 		var imageCache = {};  // map file url -> loaded Image, so a refresh reuses it
 		var changing = [];    // callbacks fired after a pan/zoom
 		var drawHooks = [];   // callbacks fired after every draw (overlays on the same canvas)
@@ -160,6 +161,8 @@ window.jawnosMap = (function () {
 		var contextHandler = null; // called with the map under a right-click; 1 = it was handled
 		var longPressHandler = null; // called with (lat, lon, sx, sy) after a still press
 		var clickHandler = null; // called with the ground under a plain tap (lat, lon, sx, sy)
+		var doubleClickHandler = null; // called with (lat, lon, sx, sy) after a double-click
+		var pendingClick = null; // a single click waiting to see whether a second one follows
 
 		function size() {
 			var pw = typeof opts.width === 'function' ? opts.width() : opts.width;
@@ -213,6 +216,8 @@ window.jawnosMap = (function () {
 
 		function drawTiles(o, w, h) {
 			if (!tileUrl(view.z | 0, 0, 0)) { return; }
+			var key = effectiveKey();
+			var cors = !!(providers[key] && providers[key].cors);
 			var z = Math.max(0, Math.round(view.z));
 			var scale = Math.pow(2, view.z - z);
 			var ts = TILE * scale;
@@ -233,16 +238,30 @@ window.jawnosMap = (function () {
 						// one loader, keyed on the final URL, so the coords in url and in
 						// the request are the same tile (ArcGIS is {z}/{y}/{x}, not {z}/{x}/{y})
 						tileCache[url] = true;
-						(function (u) {
+						(function (u, wantCors, key) {
 							var im = new Image();
+							// set before src: an image only fetches with CORS if asked before the request
+							if (wantCors) { im.crossOrigin = 'anonymous'; }
 							im.onload = function () {
 								// bound what a long pan can hold; a dropped cache just re-fetches
 								if (tileCount > 600) { tileCache = {}; tileCount = 0; }
 								tileCache[u] = im; tileCount++; draw();
 							};
-							im.onerror = function () { tileCache[u] = null; };
+							im.onerror = function () {
+								if (!wantCors) { tileCache[u] = null; return; }
+								// the provider refused the CORS request: retry once without it so the
+								// map still draws, and remember that this provider's canvas cannot be read
+								tileReadFailed[key] = true;
+								var plain = new Image();
+								plain.onload = function () {
+									if (tileCount > 600) { tileCache = {}; tileCount = 0; }
+									tileCache[u] = plain; tileCount++; draw();
+								};
+								plain.onerror = function () { tileCache[u] = null; };
+								plain.src = u;
+							};
 							im.src = u;
-						})(url);
+						})(url, cors, key);
 						continue;
 					}
 					ctx.drawImage(img, sx, sy, ts, ts);
@@ -787,7 +806,19 @@ window.jawnosMap = (function () {
 			if (Date.now() - lastTouch < 500) { return; } // the touch tap already answered
 			var pt = markerHandler ? markerAt(e.offsetX, e.offsetY) : null;
 			if (pt) { markerHandler(pt, e.offsetX, e.offsetY); return; }
-			fireMapClick(e.offsetX, e.offsetY);
+			fireMapClickSoon(e.offsetX, e.offsetY);
+		});
+
+		// A double-click asks the page for the ground under the pointer, but
+		// only when a handler wants it; otherwise nothing changes.
+		canvas.addEventListener('dblclick', function (e) {
+			if (!doubleClickHandler) { return; }
+			if (inBand(e.clientY)) { return; }
+			cancelPendingClick();
+			var dim = size();
+			var o = originFor(view, dim.w, dim.h);
+			var g = geoAt(o.x + e.offsetX, o.y + e.offsetY, view.z);
+			try { doubleClickHandler(g.lat, g.lon, e.offsetX, e.offsetY); } catch (err) {}
 		});
 
 		// A plain tap asks the page for the ground under it (the pictures taken
@@ -799,6 +830,21 @@ window.jawnosMap = (function () {
 			var o = originFor(view, dim.w, dim.h);
 			var g = geoAt(o.x + sx, o.y + sy, view.z);
 			try { clickHandler(g.lat, g.lon, sx, sy); } catch (e) {}
+		}
+
+		// With a double-click handler, a plain click waits a moment: a second
+		// click (or the browser's dblclick) cancels it and reaches that handler
+		// instead, so one gesture never arrives as two single clicks.
+		function cancelPendingClick() {
+			if (pendingClick) { clearTimeout(pendingClick); pendingClick = null; }
+		}
+		function fireMapClickSoon(sx, sy) {
+			if (!doubleClickHandler) { fireMapClick(sx, sy); return; }
+			cancelPendingClick();
+			pendingClick = setTimeout(function () {
+				pendingClick = null;
+				fireMapClick(sx, sy);
+			}, 260);
 		}
 
 		// A right-click on a map: the topmost one under the point goes to the page,
@@ -898,15 +944,21 @@ window.jawnosMap = (function () {
 				}
 				else {
 					var now = Date.now();
+					var sx = touch.x - r.left, sy = touch.y - r.top;
 					if (tapAt && now - lastTap < 300) {
 						if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-						zoomAt(1, touch.x - r.left, touch.y - r.top);
+						if (doubleClickHandler) {
+							var dim = size();
+							var o = originFor(view, dim.w, dim.h);
+							var g = geoAt(o.x + sx, o.y + sy, view.z);
+							try { doubleClickHandler(g.lat, g.lon, sx, sy); } catch (err) {}
+						}
+						else { zoomAt(1, sx, sy); }
 						tapAt = null;
 					}
 					else {
 						tapAt = { x: touch.x, y: touch.y };
 						if (clickTimer) { clearTimeout(clickTimer); }
-						var sx = touch.x - r.left, sy = touch.y - r.top;
 						clickTimer = setTimeout(function() {
 							clickTimer = null;
 							fireMapClick(sx, sy);
@@ -926,6 +978,14 @@ window.jawnosMap = (function () {
 		var api = {
 			providers: providers,
 			canvas: canvas,
+			// Whether the page may read this canvas back (a water trace): only a
+			// CORS-capable raster provider, and only while every tile loaded with
+			// CORS (a provider that refused it fell back to plain images).
+			canReadTiles: function () {
+				var k = effectiveKey();
+				var p = providers[k];
+				return !!(p && p.cors) && !tileReadFailed[k];
+			},
 			draw: draw,
 			zoom: zoomBy,
 			setZoom: function (z) { view.z = clampZ(z); draw(); },
@@ -1035,6 +1095,7 @@ window.jawnosMap = (function () {
 			},
 			onMarkerClick: function (fn) { markerHandler = fn; },
 			onMapClick: function (fn) { clickHandler = fn; },
+			onMapDoubleClick: function (fn) { doubleClickHandler = fn; },
 			onLongPress: function (fn) { longPressHandler = fn; },
 			onMapContext: function (fn) { contextHandler = fn; },
 			onDraw: function (fn) { drawHooks.push(fn); },
@@ -1045,6 +1106,13 @@ window.jawnosMap = (function () {
 				var dim = size();
 				var o = originFor(view, dim.w, dim.h);
 				return screenFor(lat, lon, o, view.z);
+			},
+			// The ground under a screen point, by the same projection the pins
+			// and taps use - the inverse of project().
+			unproject: function (sx, sy) {
+				var dim = size();
+				var o = originFor(view, dim.w, dim.h);
+				return geoAt(o.x + sx, o.y + sy, view.z);
 			},
 			view: function () { return { lat: view.lat, lon: normLon(view.lon), z: view.z }; }
 		};

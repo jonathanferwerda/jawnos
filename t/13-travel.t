@@ -351,11 +351,11 @@ is( &subs::home_plate_stop_armed({}), 0, 'no data arms nothing' );
 is( &subs::home_plate_stop_armed({ duties => undef }), 0, 'undef duties arm nothing' );
 is( &subs::home_plate_stop_armed({ duties => [] }), 0, 'an app with no plate arms nothing' );
 is( &subs::home_plate_stop_armed({ duties => [ { action => 'stop' } ], plate => { latitude => 43, longitude => -81 } }),
-	0, 'an action with no radius arms nothing' );
+	1, 'an action with the base plate ground arms the switch now' );
 is( &subs::home_plate_stop_armed({ duties => [ { distance => '0.200' } ], plate => { latitude => 43, longitude => -81 } }),
 	0, 'a radius with the action left on none arms nothing' );
 is( &subs::home_plate_stop_armed({ duties => [ { distance => 0, action => 'stop' } ], plate => { latitude => 43, longitude => -81 } }),
-	0, 'a zero radius arms nothing' );
+	1, 'a legacy zero radius still uses the base plate ground' );
 is( &subs::home_plate_stop_armed({ duties => [ { distance => '0.200', action => 'stop', latitude => 43, longitude => -81 } ] }),
 	1, 'radius, action and its own ground arm the switch' );
 is( &subs::home_plate_stop_armed({ duties => [ { distance => '0.200', action => 'start' } ], plate => { latitude => 43, longitude => -81 } }),
@@ -368,6 +368,14 @@ is( &subs::home_plate_stop_armed({ duties => [
 	{ distance => '0.200', action => 'none', latitude => 43, longitude => -81 },
 	{ distance => '0.300', action => 'record', latitude => 43, longitude => -81 }
 ] }), 1, 'one armed duty is enough among several' );
+is( &subs::home_plate_stop_armed({ duties => [ { action => 'stop', areas => [ { shape => 'circle', lat => 43, lon => -81, radius_m => 200 } ] } ] }),
+	1, 'a circle flag with an action arms the switch' );
+is( &subs::home_plate_stop_armed({ duties => [ { action => 'stop', areas => [ { shape => 'path', width_m => 30, points => [ { lat => 43, lon => -81 }, { lat => 43.01, lon => -81 } ] } ] } ] }),
+	1, 'a path flag with an action arms the switch' );
+is( &subs::home_plate_stop_armed({ duties => [ { action => 'stop', areas => [] } ] }),
+	0, 'an area flag with no areas arms nothing' );
+is( &subs::home_plate_stop_armed({ duties => [ { kind => 'pattern', action => 'stop', branches => [] } ] }),
+	0, 'an empty pattern arms nothing' );
 
 # ------------------------------------------- how long a stopped visit can resume
 # The reopen window is three navigation intervals, capped at twenty minutes, so
@@ -409,6 +417,8 @@ unlike($appointment_src, qr/stop_timestamp >= \? order by stop_timestamp desc li
 # record route, the "anyway" route, the headless navigator and the plate
 # automation all ask it. A door that stops asking is the bug this test exists for.
 like($appointment_src, qr/movement_records_here/, 'the plate automation asks the one-device rule');
+like($appointment_src, qr/&subs::plate_ground_for\(\$hp, \$home_plate\)/, 'the plate automation asks the shared ground rule');
+like($appointment_src, qr/&subs::plate_contains\(\$ground/, 'and matches a fix against the shape, not a radius');
 foreach my $door (
 	'lib/JawnOS/Manager/Part13.pm',
 	'lib/JawnOS/Controller/manager_misc5.pm',

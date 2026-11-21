@@ -124,6 +124,26 @@ function travelPointsDraw() {
 	travelMap.setPoints(travelBasePoints.concat(travelPlaceGroups).concat(plates));
 }
 
+// A plate may be a circle, box, path or polygon now. Draw its ground under the
+// pins; an older row with only a radius gets the same circle the server matches.
+function travelPlateAreasDraw() {
+	if (!travelMap || typeof jawnosPlateAreaDraw !== 'function') { return; }
+	var ctx = travelMap.canvas.getContext('2d');
+	$.each(travelPlateList || [], function(i, p) {
+		var areas = p.areas || [];
+		if (!areas.length && (+p.radius) > 0 && p.latitude && p.longitude) {
+			areas = [{ shape: 'circle', lat: +p.latitude, lon: +p.longitude, radius_m: (+p.radius) * 1000 }];
+		}
+		$.each(areas, function(j, area) {
+			jawnosPlateAreaDraw(ctx, travelMap, area, {
+				stroke: 'rgba(111,79,159,0.75)',
+				fill: 'rgba(111,79,159,0.10)',
+				line: 1
+			});
+		});
+	});
+}
+
 // The place list under the map: a tap opens that app's appointment window, the
 // same as a tap on its dot on the map.
 $(document).on('click', '.travel_place', function() {

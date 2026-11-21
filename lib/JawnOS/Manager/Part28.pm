@@ -65,8 +65,9 @@ sub help_nearest_place($lat, $lon, $within_km = 0.15) {
 	my ($best, $best_km);
 	foreach my $r ( @{$rows} ) {
 		my $hp = eval { decode_json $r->{'value'} } || {};
-		next unless $hp->{'latitude'} && $hp->{'longitude'};
-		my $d = help_distance_km($lat, $lon, $hp->{'latitude'}, $hp->{'longitude'});
+		my $anchor = &subs::plate_anchor($hp);
+		next unless $anchor;
+		my $d = help_distance_km($lat, $lon, $anchor->{'lat'}, $anchor->{'lon'});
 		($best, $best_km) = ($r->{'app'}, $d) if !defined $best_km || $d < $best_km;
 	}
 	return undef unless defined $best_km && $best_km <= $within_km;

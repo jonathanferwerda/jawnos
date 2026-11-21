@@ -441,15 +441,18 @@ sub action_32830 {
 		next unless ref $duties eq 'ARRAY';
 		my $base = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'home_plate' }) } || {};
 		foreach my $d ( @{$duties} ) {
-			my $lat = $d->{'latitude'} || $base->{'latitude'};
-			my $lon = $d->{'longitude'} || $base->{'longitude'};
-			next unless $lat && $lon;
+			# a flag with its own ground keeps it; one without uses the app's base
+			my $ground = &subs::plate_ground_for($d, $base);
+			my $anchor = &subs::plate_anchor($ground);
+			next unless $anchor;
 			$covered{$app} = 1;
 			push @out, {
 				app => $app, name => &subs::format_name($app),
-				latitude => 0 + $lat, longitude => 0 + $lon,
-				radius => 0 + ($d->{'distance'} || 0), action => $d->{'action'} || '',
-				uuid => $d->{'uuid'} || '', plate => 1
+				latitude => 0 + $anchor->{'lat'}, longitude => 0 + $anchor->{'lon'},
+				radius => 0 + ($ground->{'distance'} || 0), action => $d->{'action'} || '',
+				uuid => $d->{'uuid'} || '', plate => 1,
+				kind => $d->{'kind'} || 'area',
+				areas => &subs::plate_areas($ground),
 			};
 		}
 	}
@@ -458,11 +461,14 @@ sub action_32830 {
 		my $app = $row->{'app'} || next;
 		next if $covered{$app};
 		my $b = eval { return decode_json $row->{'value'} } || {};
-		next unless $b->{'latitude'} && $b->{'longitude'};
+		my $anchor = &subs::plate_anchor($b);
+		next unless $anchor;
 		push @out, {
 			app => $app, name => &subs::format_name($app),
-			latitude => 0 + $b->{'latitude'}, longitude => 0 + $b->{'longitude'},
-			radius => 0, action => '', uuid => $b->{'uuid'} || '', plate => 1
+			latitude => 0 + $anchor->{'lat'}, longitude => 0 + $anchor->{'lon'},
+			radius => 0 + ($b->{'distance'} || 0), action => '', uuid => $b->{'uuid'} || '', plate => 1,
+			kind => $b->{'kind'} || 'area',
+			areas => &subs::plate_areas($b),
 		};
 	}
 	@out = grep { !&subs::app_hidden_now($_->{'app'}) } @out;

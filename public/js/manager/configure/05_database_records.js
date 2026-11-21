@@ -88,26 +88,11 @@ $(document).on('click', '.appointment_distance', function() {
 	}
 });
 
-$(document).on('change', '.manual_home_plate', function() {
-	var setting = $(this).attr('setting');
-	var value = $(this).val();
-	var device = $(this).attr('device');
-	var app = $(this).attr('app');
-
-	$.ajax({
-		url: '/manager/configure/home_plate/manual',
-		type: 'POST',
-		data: { app: app, device: device, value: value, setting: setting },
-		success: function(response) {
-		}
-	});
-});
-
 $(document).on('click', '.home_plate_setting_save', function() {
 	var uuid = $(this).attr('uuid');
 	var app = $(this).attr('app');
 	var hpSettings = { uuid: uuid };
-	$('.home_plate_setting[uuid="' + uuid + '"').each(function(i,v) {
+	$('.home_plate_setting[uuid="' + uuid + '"]').each(function(i,v) {
 		var setting = $(v).attr('setting');
 		var value = $(v).val();
 		if ($(v).attr('type') == 'checkbox') {
@@ -131,8 +116,11 @@ $(document).on('click', '.home_plate_setting_save', function() {
 			app: app
 		},
 		success: function(response) {
-			console.log(response);
-			$('.home_plate_configuration[app="' + app + '"]').html(response.html);
+			var wrap = $('.home_plate_configuration[app="' + app + '"]');
+			wrap.html(response.html);
+			if (typeof homePlateReload === 'function') {
+				homePlateReload(wrap.find('.home_plate_editor').first());
+			}
 		}
 	});
 });
@@ -160,8 +148,10 @@ $(document).on('click', '.home_plate_setting_deleter', function() {
 			type: 'POST',
 			data: { uuid: uuid, app: app },
 			success: function(response) {
-				console.log(response);
 				$('.home_plate_setting_container[uuid="' + uuid + '"]').remove();
+				if (typeof homePlateDropFlag === 'function') {
+					homePlateDropFlag(app, uuid);
+				}
 			}
 		});
 	}

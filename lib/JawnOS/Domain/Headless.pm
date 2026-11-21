@@ -277,16 +277,16 @@ sub navigation_information {
 		my $hpds = &subs::db_query('select * from settings where setting=? and value is not null and value != ?', 'home_plate_duties', '[]')->hashes;
 		foreach my $hpder ( @{$hpds} ) {
 			my $home_plate = eval { return decode_json &subs::setting_grabber({ app => $hpder->{'app'}, setting => 'home_plate' }) || &subs::setting_grabber({ app => 'me', setting => 'home_plate' }) } || {};
-			if ($home_plate->{'latitude'}) {
-				my $hpd = eval { return decode_json $hpder->{'value'} } || [];
+			my $hpd = eval { return decode_json $hpder->{'value'} } || [];
+			if (&subs::plate_has_ground($home_plate) || grep { ref $_ eq 'HASH' && &subs::plate_has_ground($_) } @{$hpd}) {
 				foreach my $hp ( @{$hpd} ) {
 					my $parent_app = $hpder->{'app'};
 					# a plate only triggers its own app; a duty may carry its own ground
 					my $app = $parent_app;
 					next unless $app;
-					my $plate_lat = $hp->{'latitude'} || $home_plate->{'latitude'};
-					my $plate_lon = $hp->{'longitude'} || $home_plate->{'longitude'};
-					next unless $plate_lat && $plate_lon;
+					my $ground = &subs::plate_ground_for($hp, $home_plate);
+					next unless &subs::plate_has_ground($ground);
+					next unless &subs::plate_reach_km($ground) > 0;
 					foreach my $returner ( @{$current_locations} ) {
 						next if grep { $_ eq $returner->{'signatorial'}} @{$hp->{'signatorials'}};
 						push @{$hp->{'signatorials'}}, $returner->{'signatorial'};
@@ -294,10 +294,10 @@ sub navigation_information {
 						$pset->{$returner->{'signatorial'}} = &subs::settings_grabber({ app => '__president', settings => [ $returner->{'signatorial'} . '_site_type', $returner->{'signatorial'} . '_site_rating' ] })
 							unless $pset->{$returner->{'signatorial'}};
 
-						my $distance = sprintf('%.3f', &subs::geodesic_offset(
-							$plate_lat, $plate_lon,
-							$returner->{'latitude'}, $returner->{'longitude'}
-						)->{'metres'} / 1000 );
+						my $inside = &subs::plate_contains($ground, $returner->{'latitude'}, $returner->{'longitude'});
+						my $distance = sprintf('%.3f', &subs::plate_distance_km(
+							$ground, $returner->{'latitude'}, $returner->{'longitude'}
+						));
 
 						my $hset = &subs::settings_grabber({ app => $app, settings => [ 'warranty', 'toggle', 'site_type'] });
 						my $tog = $hset->{'toggle'};
@@ -309,7 +309,7 @@ sub navigation_information {
 					#		coordinates => $home_plate
 						};
 						if (($hp->{'placement'} || '') eq 'within') {
-							if ($distance <= $hp->{'distance'}) {
+							if ($inside) {
 								push @{$navigation_information->{$returner->{'signatorial'}}->{'within'}}, $ndata;
 								push @{$navigation_information->{$returner->{'signatorial'}}->{'site_types'}}, $hset->{'site_type'} || 'public';
 							} else {
@@ -317,7 +317,7 @@ sub navigation_information {
 							}
 						}
 						elsif (($hp->{'placement'} || '') eq 'without') {
-							if ($distance > $hp->{'distance'}) {
+							if (!$inside) {
 								push @{$navigation_information->{$returner->{'signatorial'}}->{'without'}}, $ndata;
 							} else {
 								push @{$navigation_information->{$returner->{'signatorial'}}->{'other'}}, $ndata;

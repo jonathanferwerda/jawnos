@@ -745,6 +745,99 @@ sub action_34302 {
 	return $c->render( json => { ok => 1, what => join(',', @done), output => $tail } );
 }
 
+# POST /manager/travel/branches
+# "Find branches" on a pattern home-plate flag: the person types a brand and the
+# house asks OpenStreetMap for the shops around a point. Overpass is a public,
+# slow service, so the trimmed answer is cached for a week; a second press on the
+# same plate costs no request. The brand only ever reaches the query escaped -
+# quotemeta and a quoted string - never as raw text.
+sub action_54031 {
+	my $c = shift;
+	my $brand = $c->param('brand') // '';
+	# control characters have no place in a store name, and trimming them can
+	# leave the field empty, which is the same as not having typed one
+	$brand =~ s/[\x00-\x1f\x7f]//g;
+	$brand =~ s/^\s+|\s+$//g;
+	return $c->render(json => { error => 'type a brand to search for' })
+		unless length $brand && length($brand) <= 80;
+
+	my $lat_raw = $c->param('lat') // '';
+	my $lon_raw = $c->param('lon') // '';
+	$lat_raw =~ s/^\s+|\s+$//g;
+	$lon_raw =~ s/^\s+|\s+$//g;
+	my $lat = ($lat_raw =~ /^-?\d+(?:\.\d+)?$/) ? 0 + $lat_raw : undef;
+	my $lon = ($lon_raw =~ /^-?\d+(?:\.\d+)?$/) ? 0 + $lon_raw : undef;
+	return $c->render(json => { error => 'that place is not valid' })
+		unless defined $lat && defined $lon && $lat >= -90 && $lat <= 90 && $lon >= -180 && $lon <= 180;
+
+	my $radius = 50000;
+	my $radius_raw = $c->param('radius');
+	if (defined $radius_raw && length $radius_raw) {
+		return $c->render(json => { error => 'the radius is not valid' })
+			unless $radius_raw =~ /^\d+$/;
+		$radius = 0 + $radius_raw;
+		return $c->render(json => { error => 'the radius is outside 1 to 200 km' })
+			unless $radius >= 1000 && $radius <= 200000;
+	}
+	# defensive: the query never carries a radius outside the contract, even if
+	# a caller reaches this action by a path that skipped the check above
+	$radius = 1000 if $radius < 1000;
+	$radius = 200000 if $radius > 200000;
+
+	my $key = lc($brand) . '|' . sprintf('%.3f,%.3f', $lat, $lon) . '|' . $radius;
+	my $week = 7 * 24 * 60 * 60 * 1000;
+	my $cached = eval { &subs::cache_get({ app => 'travel', context => 'home_plate_branches', subcontext => $key }) };
+	if (ref $cached eq 'HASH' && ref $cached->{'branches'} eq 'ARRAY'
+		&& (($cached->{'at'} || 0) + 0) > &subs::rightNow() - $week) {
+		$c->render(json => { branches => $cached->{'branches'} });
+		return;
+	}
+
+	my $escaped = &subs::plate_branch_escape($brand);
+	my $at = sprintf('%.7f', $lat) . ',' . sprintf('%.7f', $lon);
+	my $query = "[out:json][timeout:25];\n"
+		. "(\n"
+		. '  nwr["brand"~"^' . $escaped . '$",i](around:' . $radius . ',' . $at . ");\n"
+		. '  nwr["name"~"' . $escaped . '",i](around:' . $radius . ',' . $at . ");\n"
+		. ");\n"
+		. "out center tags;\n";
+
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 30, request_timeout => 35);
+	my $res = eval { $ua->post('https://overpass-api.de/api/interpreter' => form => { data => $query })->result };
+	unless ($res && $res->is_success) {
+		$c->render(json => { error => 'the branch lookup did not answer' });
+		return;
+	}
+	my $body = eval { $res->json } || {};
+	my @branches;
+	foreach my $el ( @{ (ref $body eq 'HASH' && ref $body->{'elements'} eq 'ARRAY') ? $body->{'elements'} : [] } ) {
+		next unless ref $el eq 'HASH';
+		my $tags = ref $el->{'tags'} eq 'HASH' ? $el->{'tags'} : {};
+		my $center = ref $el->{'center'} eq 'HASH' ? $el->{'center'} : {};
+		my $el_lat = $el->{'lat'} // $center->{'lat'};
+		my $el_lon = $el->{'lon'} // $center->{'lon'};
+		next unless defined $el_lat && defined $el_lon;
+		my $name = $tags->{'name'} // $tags->{'brand'} // $tags->{'operator'} // $tags->{'shop'} // $brand;
+		$name =~ s/^\s+|\s+$//g;
+		push @branches, {
+			name => $name,
+			brand => ($tags->{'brand'} // $brand),
+			lat => 0 + $el_lat,
+			lon => 0 + $el_lon,
+			id => (defined $el->{'id'} ? $el->{'id'} : ''),
+		};
+	}
+	my $kept = &subs::plate_branch_dedupe(\@branches, 150);
+	# nearest first is the order a person reads a list in
+	my @sorted = map { $_->[1] }
+		sort { $a->[0] <=> $b->[0] }
+		map { [ &subs::geodesic_offset($lat, $lon, $_->{'lat'}, $_->{'lon'})->{'metres'}, $_ ] }
+		@{ $kept };
+
+	eval { &subs::cache_set({ app => 'travel', context => 'home_plate_branches', subcontext => $key, warranty => '-7d' }, { at => &subs::rightNow(), branches => \@sorted }) };
+	$c->render(json => { branches => \@sorted });
+}
+
 # The last few lines a script printed: enough for a person to see it worked, and
 # for a failure to say why, without carrying a build log into a phone's page.
 sub travel_libs_output_tail {

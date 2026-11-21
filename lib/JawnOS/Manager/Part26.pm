@@ -440,16 +440,17 @@ sub travel_atlas_home_plates {
 	my %seen;
 	foreach my $row ( @{$rows} ) {
 		my $hp = eval { return decode_json $row->{'value'} } || {};
-		next unless $hp->{'latitude'} && $hp->{'longitude'};
-		my $key = $row->{'app'} . '|' . $hp->{'latitude'} . '|' . $hp->{'longitude'};
+		my $anchor = &subs::plate_anchor($hp);
+		next unless $anchor;
+		my $key = $row->{'app'} . '|' . $anchor->{'lat'} . '|' . $anchor->{'lon'};
 		next if $seen{$key}++;
 		my $set = &subs::settings_grabber({ app => $row->{'app'} });
 		push @{$out}, {
 			app => $row->{'app'},
 			name => &subs::format_name($set->{'name'} || $row->{'app'}),
 			colour => $set->{'colour'},
-			latitude => $hp->{'latitude'} + 0,
-			longitude => $hp->{'longitude'} + 0
+			latitude => $anchor->{'lat'} + 0,
+			longitude => $anchor->{'lon'} + 0
 		};
 	}
 	return $out;

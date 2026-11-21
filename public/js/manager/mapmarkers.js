@@ -163,3 +163,74 @@ function jawnosGuessDropped(uuid) {
 	}
 	if (typeof jawnosContinentAt != 'undefined') { jawnosContinentAt = 0; }
 }
+
+// Draw one home-plate area on a jawnosMap canvas. The configure editor and the
+// Travel map share this, so a circle, box, corridor or polygon looks the same in
+// both places. Areas are the same JSON the server matches: circle (lat/lon/
+// radius_m), box (nw/se), path (points/width_m) and polygon (points).
+function jawnosPlateAreaDraw(ctx, map, area, opts) {
+	if (!ctx || !map || !area) { return; }
+	opts = opts || {};
+	var stroke = opts.stroke || '#b4552f';
+	var fill = opts.fill || 'rgba(180,85,47,0.14)';
+	var line = opts.line || 2;
+	var shape = area.shape || area.kind || '';
+	var metresPerDegLat = 111194.9;
+	var at = function (lat, lon) { return map.project(lat, lon); };
+	ctx.save();
+	ctx.strokeStyle = stroke;
+	ctx.fillStyle = fill;
+	ctx.lineWidth = line;
+	ctx.lineCap = 'round';
+	ctx.lineJoin = 'round';
+	if (opts.dash) { ctx.setLineDash(opts.dash); }
+	if (shape === 'circle') {
+		var centre = at(area.lat, area.lon);
+		var radius = area.radius_m || 200;
+		var edge = at(area.lat + (radius / metresPerDegLat), area.lon);
+		var rp = Math.max(2, Math.abs(centre[1] - edge[1]));
+		ctx.beginPath();
+		ctx.arc(centre[0], centre[1], rp, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.stroke();
+	}
+	else if (shape === 'box' && area.nw && area.se) {
+		var nw = at(area.nw.lat, area.nw.lon);
+		var se = at(area.se.lat, area.se.lon);
+		ctx.beginPath();
+		ctx.rect(Math.min(nw[0], se[0]), Math.min(nw[1], se[1]), Math.abs(se[0] - nw[0]), Math.abs(se[1] - nw[1]));
+		ctx.fill();
+		ctx.stroke();
+	}
+	else if (shape === 'path' && area.points && area.points.length) {
+		var first = area.points[0];
+		var w0 = at(first.lat, first.lon);
+		var w1 = at(first.lat + (((area.width_m || 30) / 2) / metresPerDegLat), first.lon);
+		ctx.beginPath();
+		for (var i = 0; i < area.points.length; i++) {
+			var q = at(area.points[i].lat, area.points[i].lon);
+			if (i === 0) { ctx.moveTo(q[0], q[1]); } else { ctx.lineTo(q[0], q[1]); }
+		}
+		ctx.lineWidth = Math.max(2, Math.abs(w0[1] - w1[1]) * 2);
+		ctx.stroke();
+		ctx.lineWidth = line;
+		ctx.strokeStyle = opts.centre || stroke;
+		ctx.beginPath();
+		for (var j = 0; j < area.points.length; j++) {
+			var c = at(area.points[j].lat, area.points[j].lon);
+			if (j === 0) { ctx.moveTo(c[0], c[1]); } else { ctx.lineTo(c[0], c[1]); }
+		}
+		ctx.stroke();
+	}
+	else if (shape === 'polygon' && area.points && area.points.length >= 3) {
+		ctx.beginPath();
+		for (var k = 0; k < area.points.length; k++) {
+			var p = at(area.points[k].lat, area.points[k].lon);
+			if (k === 0) { ctx.moveTo(p[0], p[1]); } else { ctx.lineTo(p[0], p[1]); }
+		}
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+	}
+	ctx.restore();
+}
