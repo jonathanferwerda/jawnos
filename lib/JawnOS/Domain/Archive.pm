@@ -1251,6 +1251,36 @@ sub archive_file_attach {
 	return $files;
 }
 
+# The path a file can be read from now: itself while it is still here, otherwise
+# its copy on the archive drive. A caller resolving several files in one read
+# passes a scratch hash so the drive's manifest is read once per location rather
+# than once per file; the common case (a file that is present) answers from one
+# -e and never touches settings or the rail. A file with no archived copy is
+# returned unchanged, so the caller can always use the answer as the file to
+# show.
+sub archive_file_path {
+	my ($path, $cache) = @_;
+	return $path unless (defined $path && length $path);
+	return $path if -e $path;
+	$cache ||= {};
+	my $misc = $cache->{'misc'} ||= &subs::misc_setting_list();
+	my $settings = $cache->{'settings'} ||= ($misc->{&subs::device_setter()} || {});
+	my ($location, $base) = &archive_location_for($path, $settings);
+	return $path unless ($location && defined $base && length $base);
+	my $key = $location . '|' . $base;
+	my $lookups = $cache->{'lookups'} ||= {};
+	$lookups->{$key} ||= &archive_file_lookup({
+		misc_settings => $misc,
+		settings => $settings,
+		location => $location,
+		base => $base
+	});
+	my $lookup = $lookups->{$key};
+	my $found = $lookup->{'locate'} ? $lookup->{'locate'}->($path) : undef;
+	return $path unless ($found && defined $found->{'path'} && length $found->{'path'});
+	return $found->{'path'};
+}
+
 # Where a photo that has left this disk can still be found. The archive machine
 # holding photo_location is asked for its manifest once, and `locate` then
 # answers for one path at a time, by the path's place inside the location. Only

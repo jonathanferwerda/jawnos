@@ -801,14 +801,60 @@ sub cache_get {
 	my ($params) = @_;
 	$params->{'device'} = $device;
 	my $returner;
-	my $query = &subs::db_select_simple('cache', ['data'], $params);
+	my $query = &subs::db_select_simple('cache', ['data','uuid','warranty'], $params);
 	my $results = $query ? $query->hashes : [];
 	my $result = $results->[0];
 	my $json_data = $result ? $result->{'data'} : undef;
 	if ($json_data) {
 		$returner = eval { return decode_sereal $json_data };
-		return $returner if $returner;
+		if ($returner) {
+			&_music_cache_repair($params, $result, $returner);
+			return $returner;
+		}
 	}
+}
+
+# A track that has moved to the archive drive keeps its old home path in the
+# Music cache, so the restored player and the replayed queue used to name a
+# file that is no longer there. Only the two Music contexts that carry paths
+# are repaired, and only when this house actually has an archive copy; a path
+# that is still present is never touched. Every lookup after the first is free
+# for a path on the same drive location, and the row keeps its warranty. A
+# repaired queue bumps `saved`, because Music.pl keys the rendered shell to it
+# - otherwise a stale shell (old paths) would be replayed instead of rebuilt.
+sub _music_cache_repair {
+	my ($params, $row, $data) = @_;
+	return unless (ref $data eq 'HASH' && ($params->{'app'} // '') eq 'music');
+	my $context = $params->{'context'} // '';
+	my %cache;
+	my $changed = 0;
+	if ($context eq 'player') {
+		my $file = $data->{'file'};
+		return unless (defined $file && length $file);
+		my $resolved = &subs::archive_file_path($file, \%cache);
+		if (defined $resolved && $resolved ne $file) {
+			$data->{'file'} = $resolved;
+			$changed = 1;
+		}
+	}
+	elsif ($context eq 'queue') {
+		my $files = $data->{'files'};
+		return unless (ref $files eq 'ARRAY');
+		my @repaired;
+		foreach my $file ( @{$files} ) {
+			my $resolved = &subs::archive_file_path($file, \%cache);
+			$changed = 1 if (defined $resolved && defined $file && $resolved ne $file);
+			push @repaired, $resolved;
+		}
+		return unless $changed;
+		$data->{'files'} = \@repaired;
+		$data->{'saved'} = &subs::rightNow();
+	}
+	return unless ($changed && ref $row eq 'HASH' && defined $row->{'uuid'} && length $row->{'uuid'});
+	my $value = { data => encode_sereal($data) };
+	$value->{'warranty'} = $row->{'warranty'} if defined $row->{'warranty'};
+	eval { &subs::db_update('cache', $value, { uuid => $row->{'uuid'} }) };
+	return 1;
 }
 
 # A command that reached another machine twice (the direct relay and the queue,
