@@ -631,6 +631,8 @@ sub active_manager_background {
 # Tell every open manager to re-paint its body for the current active theme.
 # A theme is more than a colour: the message carries the whole bundle, so the
 # icons, cursor, material, face and corner change with it and no reload is needed.
+# The payload is returned as well: the press that moved the theme carries it back
+# in its own reply, so that screen does not depend on a live socket either.
 sub appointment_theme_push {
 	# the running set may have just changed: a warm memo would send the room the
 	# desk is leaving, so forget every theme cache before asking
@@ -672,6 +674,7 @@ sub appointment_theme_push {
 	# changes, so a stop/start on the same theme does not churn sync.
 	&native_theme_record({ %send, theme => $bundle->{'slug'} // '' });
 	&Websocket::send('server', { console => &Websocket::console_command('jawnosThemeBundleApply', \%send)});
+	return \%send;
 }
 
 # The native surfaces (the launcher and the lock screen) wear the desk's paint.

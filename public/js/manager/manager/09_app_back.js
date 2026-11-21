@@ -203,6 +203,13 @@ function appointmentResetDrain(key) {
 			if (response && response['header'] && typeof jawnosHeaderApply === 'function') {
 				jawnosHeaderApply(item.data.app, response['header'], response['server_time']);
 			}
+			// The theme is pushed over the websocket too, but this press must not
+			// depend on a live socket to change the room it just moved into. The
+			// bundle is the same one the push carries; the apply is in place and the
+			// signature drops a duplicate that the push already landed.
+			if (response && response['theme'] && typeof jawnosThemeBundleApply === 'function') {
+				jawnosThemeBundleApply(response['theme']);
+			}
 			// The reply carries the line the press just changed, so the rail is
 			// redrawn at once instead of waiting for the next poll. The height is
 			// held to the rail's band, or to nothing when the line has emptied.

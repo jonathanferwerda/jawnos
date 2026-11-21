@@ -1175,7 +1175,14 @@ elsif ($type eq 'delay') {
 			&subs::file_encrypter({ app => $app, suds => $suds });
 		}, { name => 'reset file encrypt' });
 	}
-	&subs::appointment_theme_push() if ($theme_movement =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/);
+	if ($theme_movement =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/) {
+		# The push reaches every open manager, but the press's own screen must not
+		# depend on the socket either: send the same bundle back in this reply, so
+		# the desk repaints the moment the press lands (and Music/Studio keep their
+		# state, because the live apply never re-opens a window).
+		my $theme = &subs::appointment_theme_push();
+		$returner->{'theme'} = $theme if $theme;
+	}
 	# The header and the id are already in the reply; re-hanging the line is the
 	# slow half and none of the reply needs it. Fork it, return the header now,
 	# and push the finished line when it is ready: the press's second request
