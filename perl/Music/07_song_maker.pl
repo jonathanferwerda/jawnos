@@ -6,6 +6,7 @@ use feature 'signatures';
 
 use List::Util qw(shuffle);
 use File::Find;
+use Mojo::JSON qw(decode_json);
 
 our ($music_thumb_files);
 
@@ -292,6 +293,20 @@ sub music_row_from_entry($entry) {
 		archive => $entry->{'archive'} ? 1 : 0,
 		probed => $entry->{'probed'} ? 1 : 0,
 	};
+}
+
+# One JSON value the window handed back as a form param. Mojolicious decodes a
+# form value to text, but Mojo::JSON reads UTF-8 bytes: one accented title in
+# the slice made decode_json die, the route answered an empty slice, and the
+# client mounted it - the list went blank on the first scroll and only a fresh
+# search brought it back. Encode before decoding, the same guard a route that
+# reads a JSON param by hand already uses.
+sub music_json_param($c, $name) {
+	my $raw = $c->param($name);
+	return undef unless defined $raw && length $raw;
+	$raw = "$raw";
+	utf8::encode($raw) if utf8::is_utf8($raw);
+	return eval { return decode_json($raw) };
 }
 
 # The rows a scroll asks for: the client hands back the manifest entries it

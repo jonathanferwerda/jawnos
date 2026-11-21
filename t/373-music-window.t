@@ -11,6 +11,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file write_file);
+use Mojo::JSON qw(encode_json);
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
 use JawnOSTest;
@@ -230,6 +231,28 @@ ok(defined $remember, 'music_queue_remember is found');
 like($remember // '', qr/\$crate->\{\x27queue\x27\}/,
 	'the queue saver stores the whole manifest queue, not the drawn slice');
 
+# A form value arrives as text and Mojo::JSON reads bytes: a track name with an
+# accent in the slice made decode_json die, so the window answered no rows and
+# the client mounted the empty slice on the first scroll.
+{
+	my $title = "Caf\x{e9}";
+	my $entry = { key => 'k1', file => "Music/$title/Track One.mp3", display_track => $title };
+	my $raw = encode_json([$entry]);
+	utf8::decode($raw);
+	my $c = bless { rows => $raw }, 'MusicWindowParamC';
+	my $rows = &Manager::music_json_param($c, 'rows');
+	is(ref $rows, 'ARRAY', 'a JSON form value with a non-ASCII title still decodes');
+	is($rows->[0]->{'display_track'}, $title, 'and keeps the title intact');
+	ok(!defined &Manager::music_json_param($c, 'missing'), 'a missing param decodes to undef');
+}
+like($window_route // '', qr/&music_json_param\(\$c, \x27rows\x27\)/,
+	'the window decodes its rows through the text-safe helper');
+like($window_route // '', qr/&music_json_param\(\$c, \x27now_playing\x27\)/,
+	'and its now-playing row too');
+my ($details_route) = $routes =~ /(post\(\x27\/music\/details\x27.*?)(?=post\(\x27\/music\/folder_toggle\x27)/s;
+like($details_route // '', qr/&music_json_param\(\$c, \x27row\x27\)/,
+	'the details press decodes its row the same way');
+
 # ---------------------------------------------------------- the client window
 like($js, qr/function musicWindowFetch\(start, end, force\)/, 'the client can fetch a slice');
 like($js, qr/if \(seq !== s\.seq\) \{ return; \}/,
@@ -258,5 +281,8 @@ done_testing();
 
 package MusicWindowFakeC;
 sub param { return undef; }
+
+package MusicWindowParamC;
+sub param { my ($self, $name) = @_; return $self->{$name}; }
 
 1;

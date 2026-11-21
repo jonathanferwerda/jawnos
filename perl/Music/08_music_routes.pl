@@ -182,8 +182,8 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 Manager::app->routes->post('/music/window' => sub ($c) {
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	return if &music_window_relay($c, $settings);
-	my $rows = eval { return decode_json $c->param('rows') } || [];
-	my $now_playing = eval { return decode_json $c->param('now_playing') } || {};
+	my $rows = &music_json_param($c, 'rows') || [];
+	my $now_playing = &music_json_param($c, 'now_playing') || {};
 	my $offset = $c->param('offset');
 	$offset = 0 unless defined $offset && $offset =~ /^\d+$/;
 	my $unlocked = &Manager::media_unlock_open($c, 'music') ? 1 : 0;
@@ -207,7 +207,7 @@ Manager::app->routes->post('/music/window' => sub ($c) {
 Manager::app->routes->post('/music/details' => sub ($c) {
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	return if &music_window_relay($c, $settings);
-	my $entry = eval { return decode_json $c->param('row') } || {};
+	my $entry = &music_json_param($c, 'row') || {};
 	my $unlocked = &Manager::media_unlock_open($c, 'music') ? 1 : 0;
 	my $f = &music_row_from_entry($entry);
 	my $visible = length($f->{'filename'}) && &music_queue_file_visible($f->{'filename'}, $unlocked);
