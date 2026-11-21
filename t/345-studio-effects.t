@@ -47,7 +47,7 @@ for my $name (@contract) {
 }
 
 # The legacy names stay accepted, and reverb2 is the alias of reverb, so old
-# songs still load and the shelf pedal still reaches the same implementation.
+# songs still load and the legacy pedal name still reaches the same implementation.
 like($fx, qr/\breverb2\s*:\s*'reverb'/, 'reverb2 is still an alias of reverb');
 like($fx, qr/\bCompressionX\s*:\s*'compressor'/, 'CompressionX still maps to compressor');
 like($fx, qr/\bDistorjawn\s*:\s*'distortion'/, 'Distorjawn still maps to distortion');
@@ -79,12 +79,12 @@ for my $model (qw(Room Spring Plate Hall Cave)) {
 like($fx, qr/studioReverbModel\(value\)/, 'the model is quantised to a whole number');
 like($fx, qr/fx\.setters\['model'\] = function \(v\) \{[\s\S]*?studioReverbImpulse\(ctx, m\)/,
 	'set(model) rebuilds the impulse');
-like($markup, qr/class="studio_pedal_model[^"]*"[^>]*channel="<%= \$ch %>"[^>]*control="model"/,
-	'the reverb shelf pedal carries the model dropdown');
-like($markup, qr/reverb_models/, 'the dropdown lists the models from the studio data');
+like($rack, qr/class="studio_insert_control studio_insert_select"/,
+	'a choice control is a dropdown on the rack row');
+like($rack, qr/control\['options'\]\.forEach/, 'the dropdown lists the options the contract carries');
 like($knobs, qr/studioApplyPedals\(\);[\s\S]*studioRackRenderAll\(\);/,
 	'a model change is pushed through the insert setters');
-like($rack, qr/'\.studio_pedal_model'/, 'the shelf model dropdown is wired to the rack');
+like($rack, qr/'\.studio_pedal_model'/, 'the model dropdown handler is wired to the rack');
 
 # --- the rack: add, order, bypass, remove ----------------------------------
 unlike($markup, qr/id="studio_effect_palette"/, 'the old layout-bar effect palette is gone');
@@ -126,13 +126,17 @@ like($knobs, qr/studioSetInsert\(i, name, true\)/, 'the stored order is rebuilt 
 unlike($knobs, qr/if \(name === 'Jtune'\) \{ return; \}/, 'Jtune restores like any insert');
 unlike($knobs, qr/typeof entry === 'string' && name === 'Jtune'/, 'there is no Jtune-to-autotune migration');
 unlike($knobs, qr/studioSetInsert\(i, 'autotune', true\)/, 'a legacy Jtune is not turned into autotune');
-like($knobs, qr/data-tuner': 'yes'/, 'the Jtune shelf tile is marked a tuner');
-like($knobs, qr/#pedalboard \.pedal'\)\.draggable\(\{/, 'every pedal, the tuner included, drags into a rack');
-like($knobs, qr/distance: 4,/, 'a plain click on a tile is never a drag');
-like($knobs, qr/cancel: '\.knob,[^']*studio_pedal_foot/, 'the knobs and the footswitch cancel the drag');
-like($rack, qr/studioTunerPaintLamp\(tile\)/, 'the tuner owns its lamp, not the effect lamp');
-like($rack, qr/if \(typeof studioTunerSync === 'function'\) \{ studioTunerSync\(\); \}/,
-	'one lamp paint keeps the tuner in step with its insert');
+like($markup, qr/<option value="Jtune">/, 'Jtune is offered in the Add dropdown');
+like($rack, qr/function studioPaletteAdd\(\)/, 'the Add list has one handler');
+like($rack, qr/var name = \$\('#studio_palette_effect'\)\.val\(\);/, 'Add reads the chosen effect');
+like($rack, qr/studioRackFind\(ch, name, chain\)/, 'Add refuses a second copy already in the chain');
+like($rack, qr/studioSetInsert\(ch, name, true, chain\);/, 'Add puts it in the chain the switch shows');
+like($rack, qr/studioPaletteLabel\(\);/, 'the label is refreshed after Add');
+like($rack, qr/row\.attr\('data-tuner', 'yes'\)/, 'the Jtune rack row is marked a tuner');
+like($rack, qr/class="studio_tuner" aria-live="polite"/, 'the Jtune row carries the tuner display');
+like($rack, qr/studio_tuner_letter/, 'and the note letter');
+like($rack, qr/studio_tuner_cents/, 'and the cents line');
+like($rack, qr/studioTunerSync\(\)/, 'one lamp paint keeps the tuner in step with its insert');
 unlike($rack, qr/if \(name === 'Jtune'\) \{ return; \}/, 'the tuner toggles like any pedal');
 unlike($fx, qr/^\s*Jtune\s*:\s*'/m, 'Jtune has no builder, so the engine plan leaves it out');
 
@@ -167,30 +171,24 @@ like($knobs, qr/studioMasterRestore\(master_records\)/,
 like($master, qr/function studioMasterSave\(\)/, 'studioMasterSave collects the rack');
 like($master, qr/function studioMasterRestore\(records\)/, 'studioMasterRestore applies it');
 
-# --- the shelf still works and text tiles reach the rack -------------------
-like($canvas, qr/studioEffectKind\(\$\(this\)\.attr\('hint'\)\) === kind/,
-	'a badge finds the shelf pedal by effect kind');
+# --- text badges and the rack still reach the track -------------------------
+like($canvas, qr/jawnos_studio_pedal_art/,
+	'a badge finds artwork from the pedal-art map the template hands over');
+like($canvas, qr/studioEffectKind\(pedal\) === kind/,
+	'and matches an effect by kind');
 like($canvas, qr/channel_fx_text/, 'an effect with no artwork gets a text tile');
 like($layout, qr/studioSetInsert\(ch, name, !\(channel && channel\.insertByName\[name\]\)\);/,
-	'dropping a shelf pedal still adds or removes it');
-like($layout, qr/studioSelectedChannel = ch;/, 'FX selects the track the palette adds to');
+	'a dropped effect still adds or removes it');
+like($layout, qr/studioSelectedChannel = ch;/, 'FX selects the track the Add list adds to');
 
-# --- the lamp on every pedal -------------------------------------------------
-like($markup, qr/class="studio_pedal_led" role="button" aria-pressed="false"/,
-	'a shelf pedal carries a lamp that starts dark');
+# --- the Add list and the rack lamp ------------------------------------------
+like($markup, qr/id="studio_palette_effect"/, 'the pedalboard bar carries the Add dropdown');
+like($markup, qr/id="studio_palette_add"/, 'and the Add button');
+like($markup, qr/id="studio_palette_channel"/, 'and the label naming the track and chain');
+like($markup, qr/\@\{\$gb::studio->\{'palette'\}\}/, 'the options come from the palette data');
 like($markup, qr/class="studio_rack_led studio_pedal_led"/, 'a rack row carries the same lamp');
-like($markup, qr/class="pedal pedal_graphic"[\s\S]*class="studio_pedal_led"/,
-	'a palette pedal carries the lamp too');
-like($markup, qr/class="pedal pedal_graphic"[\s\S]*class="pedal_body"/,
-	'a palette pedal is drawn from the theme, not left as text');
-like($markup, qr/class="pedal pedal_graphic"[\s\S]*class="pedal_knob"/,
-	'a palette pedal carries a real knob per slider');
-like($markup, qr/class="pedal pedal_graphic"[\s\S]*class="studio_pedal_model pedal_select"/,
-	'a palette pedal carries a dropdown per choice');
-like($markup, qr/class="pedal pedal_graphic"[\s\S]*class="studio_pedal_foot/,
-	'a palette pedal carries the footswitch');
-like($markup, qr/\$gb::studio->\{'palette_art'\}->\{\$name\}/,
-	'the knob colours come from the studio data');
+unlike($markup, qr/id="studio_pedalboard_pedals"/, 'the shelf of tiles is gone');
+unlike($markup, qr/class="pedal pedal_graphic"/, 'no drawn palette tiles remain in the markup');
 for my $name (qw(flanger fuzz amp limiter autotune equalizer tone)) {
 	like($studio, qr/\b\Q$name\E\s*=>\s*\[ qw\(/, "the palette art names $name's knob colours");
 }
@@ -203,10 +201,10 @@ like($rack, qr/if \(!ins\) \{ studioSetInsert\(ch, name, true\); \}/,
 like($rack, qr/studioSetInsertBypass\(ch, ins\.name, !ins\.bypassed\);/,
 	'clicking the lamp bypasses exactly as the rack does');
 like($rack, qr/studioUpdatePedalLamps\(\);\n\tstudioSaver\(\);/, 'the footswitch repaints the lamps');
-like($rack, qr/#pedalboard \.studio_pedal_led/, 'the shelf lamps are clickable');
+like($rack, qr/#pedalboard \.studio_pedal_led/, 'a pedalboard lamp is clickable');
 like($rack, qr/'\.studio_rack_led,/, 'the rack lamps are clickable');
 like($knobs, qr/studioTogglePedal\(studioPaletteChannel\(\), effect\);/,
-	'a shelf footswitch toggles the same insert as its lamp');
+	'a pedal button toggles the same insert as its lamp');
 like($style, qr/\.studio_pedal_led\s*\{[^}]*width:\s*14px/s, 'the lamp is 14px wide');
 like($style, qr/\.studio_pedal_led\s*\{[^}]*height:\s*14px/s, 'the lamp is 14px tall');
 like($style, qr/\.studio_pedal_led\s*\{[^}]*border-radius:\s*50%/s, 'the lamp is round');
@@ -224,27 +222,20 @@ like($rack, qr/studioLayoutText\(on \? 'On for this track' : 'Off for this track
 	'the label says On or Off for this track');
 like($rack, qr/title: studioPedalLampLabel\(on\)/, 'a rack lamp sets its browser title');
 like($rack, qr/hint: studioPedalLampLabel\(on\)/, 'a rack lamp sets the house hint too');
-like($rack, qr/title: label,[\s\S]*?hint: label/s, 'a shelf lamp sets title and hint from its state');
-like($markup, qr/class="studio_pedal_led" role="button" aria-pressed="false" title="[^"]*Off for this track/,
-	'a shelf lamp starts with an Off title');
+like($rack, qr/title: label,[\s\S]*?hint: label/s, 'a rack lamp sets title and hint from its state');
+like($markup, qr/class="studio_rack_led studio_pedal_led" role="button" aria-pressed="false" title="[^"]*Off for this track/,
+	'a rack lamp starts with an Off title');
 
-# --- every tile is one size, and a shelf tile has a footswitch ---------------
-like($style, qr/\.pedal\s*\{[^}]*height:\s*190px/s, 'every pedal tile is 190px tall');
-like($style, qr/\.pedal\s*\{[^}]*width:\s*170px/s, 'every pedal tile is 170px wide');
-like($style, qr/\.pedal_graphic\s*\{/, 'a palette pedal is styled from the same box');
-like($markup, qr/class="pedal pedal_graphic"/, 'the palette\'s drawn pedals are pedal tiles');
-like($markup, qr/class="studio_pedal_foot hover" effect="<%= \$p->\{'name'\} %>"/,
-	'a shelf pedal carries the same footswitch');
-unlike($markup, qr/<% if \(!\$p->\{'tuner'\}\) \{ %>/,
-	'no tile is left without a footswitch, the tuner included');
-like($style, qr/\.studio_pedal_foot\s*\{[^}]*position:\s*absolute/s, 'the footswitch sits at the tile\'s foot');
-like($style, qr/\.studio_pedal_foot\s*\{[^}]*bottom:\s*4px/s, 'the footswitch is clear of the knobs');
-like($style, qr/\.pedal \.pedal_model\s*\{[^}]*bottom:\s*30px/s,
-	'the reverb model dropdown sits above the footswitch, not over a knob');
-like($style, qr/\.pedal:hover,[\s\S]*?transform:\s*scale\(1\.05\)/, 'a hovered tile lifts so its knobs are readable');
+# --- the rack row is the one tile -------------------------------------------
+like($style, qr/\.studio_rack_row\s*\{/, 'a rack row is styled');
+like($style, qr/\.studio_rack_handle\s*\{/, 'a rack row has a drag handle');
+like($style, qr/\.studio_rack_controls\s*\{/, 'and a controls slot');
+like($style, qr/\.studio_tuner\s*\{/, 'the tuner display is styled inside a row');
+like($style, qr/\.studio_rack_placeholder\s*\{/, 'the drag marker is styled');
+unlike($markup, qr/id="pedal_/, 'no per-effect shelf tile remains in the markup');
+unlike($markup, qr/%shelf_kind = /, 'the shelf artwork map is gone from the markup');
+unlike($markup, qr/delete \$shelf_has/, 'the shelf artwork alias is gone too');
 unlike($markup, qr/Jtune\s*=>\s*'autotune'/, 'Jtune is not mapped to an audio effect');
-like($markup, qr/%shelf_kind = \(\s*CompressionX => 'compressor'/, 'the artwork map names only real pedals');
-unlike($markup, qr/delete \$shelf_has/, 'so JawnPitch needs no artwork alias to keep its drawn tile');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork is contained, not cropped');
 
 # --- the help topic speaks in the pedalboard's words ------------------------
@@ -269,17 +260,17 @@ for my $label (
 ) {
 	like($controls // '', qr/\Q$label\E/, "the help topic's controls list names $label");
 }
-like($help, qr/Drag a pedal from the pedalboard onto the track/, 'the help explains adding from the pedalboard');
+like($help, qr/the Add list at the top of the sheet offers every effect/, 'the help explains adding from the pedalboard');
 like($help, qr/Reverb has five models/, 'the help explains the reverb models');
 like($help, qr/footswitch bypasses the insert/, 'the help explains bypassing');
 like($help, qr/Drag a row by its handle/, 'the help explains reordering');
 like($help, qr/The master rack is the last of the channel strips, at their far right/,
 	'the help puts the master rack at the far right of the strips');
-like($help, qr/Every pedal tile wears a small lamp/, 'the help explains the lamp');
+like($help, qr/Every row of the pedalboard\\'s chain wears a small lamp/, 'the help explains the lamp');
 like($help, qr/The Jtune pedal is a chromatic tuner, not an audio effect/, 'the help explains Jtune the tuner');
 like($help, qr/The song keeps it in the chain like any pedal/, 'the help says the tuner is saved in the chain');
 like($help, qr/JawnPitch follows one note at a time/, 'the help names JawnPitch');
-like($help, qr/Every tile is the same size/, 'the help says every tile is one size');
+like($help, qr/A channel starts with an empty chain/, 'the help says a channel starts empty and is filled from Add');
 
 # --- the rack knobs reach the native engine -------------------------------
 # docs/studio-effects.md, "The control path": the browser maps 0..100 to the
@@ -351,20 +342,20 @@ like($fx, qr/name: insertName \+ '\.bypass'/,
 like($master, qr/studioEngineMasterBypass\(name, !on\);/,
 	'the master toggle posts its bypass change');
 
-# --- one pedal frame for artwork and drawn pedals ---------------------------
-# The frame is the .pedal box, so a palette pedal is a card, not a bare label.
-like($style, qr/\.pedal\s*\{[^}]*border:\s*5px solid var\(--line\)/s,
-	'every pedal tile wears the same border');
-like($style, qr/\.pedal\s*\{[^}]*border-radius:\s*10px/s, 'every tile has the same radius');
-like($style, qr/\.pedal\s*\{[^}]*background:\s*var\(--panel-2\)/s, 'every tile takes the theme panel');
-like($style, qr/\.pedal\s*\{[^}]*height:\s*190px/s, 'a tile box is one size whether or not it has artwork');
-like($style, qr/\.pedal_controls\s*\{[^}]*display:\s*flex/s, 'a drawn pedal lays its controls out in the same box');
-like($markup, qr/class="pedal pedal_graphic"/, 'a palette effect is the same .pedal card');
-like($markup, qr/class="pedal_title"/, 'the drawn tile keeps a label slot');
-like($markup, qr/class="studio_pedal_foot hover"/, 'a tile keeps its footswitch');
+# --- a drop reorders the chain, then draws it again ------------------------
+# The sortable only moves DOM nodes; the order has to reach the model and the
+# rows have to be redrawn from it, or the sound and the picture disagree.
+my ($reorder) = $rack =~ /^function studioRackReorder\(ch\) \{(.*?)^\}/ms;
+ok(defined $reorder, 'the reorder is one function');
+like($reorder // '', qr/studioRackRender\(ch\);/, 'a reorder redraws the rack after rebuilding its chain');
+like($rack, qr/^\t\t\tupdate: function \(event, ui\) \{/m, 'a completed drop fires update');
+like($rack, qr/^\t\t\tstop: function \(event, ui\) \{/m, 'stop is the fallback for a drop that changed nothing');
+like($rack, qr/studioRackReorder\(to\);[\s\S]*?studioRackRender\(to\);/, 'the drop redraws from the model');
+like($rack, qr/row\.attr\('channel', ch\)\.attr\('insert', ins\.name\)\.attr\('chain', chain \|\| 'in'\);/,
+	'each row carries its channel, insert and chain');
+like($rack, qr/spec\['controls'\]\.forEach/, 'the row builds a control per contract entry');
 
-# --- dragging a pedal reorders the chain, above every panel ----------------
-like($knobs, qr/zIndex:\s*90000,\s*appendTo:\s*'body'/, 'a shelf drag rides the body above the panels');
+# --- dragging a row reorders the chain, above every panel ------------------
 like($rack, qr/zIndex:\s*90000/s, 'a rack drag rides above the pedal sheet too');
 like($rack, qr/appendTo:\s*'body'/, 'the rack helper leaves its container');
 like($rack, qr/helper:\s*'clone'/, 'the rack drags a clone, so the row stays in place');

@@ -22,7 +22,6 @@
 var studioTunerTolerance = 5;   // cents inside which a note counts as in tune
 var studioTunerGate = 0.006;    // RMS below this is silence, not a note
 var studioTunerNotes = [ 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B' ];
-var studioTunerDragAt = 0;      // a drag that just ended must not read as a click
 
 var studioTuner = {
 	analyser: null, mute: null, tap: null, channel: 0,
@@ -96,7 +95,9 @@ function studioTunerPitch(samples, rate) {
 // ---- the tile --------------------------------------------------------------
 
 function studioTunerTile() {
-	return $('#pedal_Jtune');
+	// Jtune lives in the selected track's chain now, not on a shelf tile: the
+	// rack row carries the display, its lamp is the insert's state.
+	return $('#studio_pedalboard_rack .studio_rack_row[insert="Jtune"]');
 }
 
 // The tuner is a listen-only pedal in the selected track's rack, so its on/off
@@ -318,15 +319,4 @@ function studioTunerStop(keepError) {
 	studioTunerDraw();
 }
 
-// ---- the switch ------------------------------------------------------------
-//
-// The whole tile, its pink switch and its lamp all start or stop the tuner.
-// The switch and the lamp stop their click here so the tile's handler cannot
-// toggle it a second time.
 
-$(document).on('click', '#pedal_Jtune', function (e) {
-	if ($(e.target).closest('.button_control, .studio_pedal_led, .studio_pedal_foot').length) { return; }
-	// a drag that has just ended (or reverted over the tile) is not a press
-	if (studioTunerDragAt && (Date.now() - studioTunerDragAt) < 300) { return; }
-	studioTunerToggle();
-});

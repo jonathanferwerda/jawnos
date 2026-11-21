@@ -94,8 +94,8 @@ unlike($strip, qr/'keydown', '\.studio_strip_/,
 # --- a song load and a fresh window both get a repaint --------------------
 like($strip, qr/\$\(document\)\.on\('studio:mute-solo', function \(\) \{ studioStripMuteSoloRender\(\); \}\);/,
 	'loading a song asks the strip to repaint through one document event');
-like($strip, qr/\$\(document\)\.on\('jawnos_synth_panel', function \(\) \{ studioStripMuteSoloRender\(\); \}\);/,
-	'a window opened after this part loads paints mixer state, not the defaults');
+unlike($strip, qr/jawnos_synth_panel/,
+	'the synth panel event left with the synth panel; init paints the strip directly');
 
 # --- a recycled clone starts clean ----------------------------------------
 like($layout, qr/function studioResetChannelMarkup\(node, ch\)[\s\S]*?if \(mixer\[ch\]\) \{ mixer\[ch\]\.mute = false; mixer\[ch\]\.solo = false; \}/,

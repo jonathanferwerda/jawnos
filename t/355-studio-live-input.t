@@ -436,20 +436,52 @@ like($inputs_js, qr/function studioInputListenChannel\(/,
 like($inputs_js, qr/if \(direction == 'input' && type == 'usermedia' && av == 'a'\) \{ data\.input = input; \}/,
 	'the device number is stored with the plug when it is chosen');
 
-like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1\)/,
+like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1 && !studioMonitorEngineFailed/,
 	'a device on a native backend is the engine Listen');
-like($studio_js, qr/var tap = on && !!input && \(app \|\| !engine\)/,
-	'no input is silent and an app is the browser tap');
-like($studio_js, qr/if \(engine\) \{[\s\S]*?studioListenStart\(false, listen_channel, active\)/,
-	'a device starts the engine on its own input');
+like($studio_js, qr/&& \(typeof studioEngineAvailable === 'undefined' \|\| studioEngineAvailable !== false\)/,
+	'only while the engine is known to be available');
+like($studio_js, qr/function studioMonitorEngineFallback\(\)/,
+	'and a refused Listen has a browser fallback');
+like($studio_js, qr/var listening = engine && \(studioListenActive \|\| from_user\);/,
+	'a restored Monitor stays on the tap until the engine Listen runs');
+like($studio_js, qr/var tap = on && !!input && \(app \|\| !listening\)/,
+	'no input is silent, an app is the browser tap, and only a running engine Listen mutes it');
+like($studio_js, qr/if \(engine\) \{[\s\S]*?studioListenStart\(false, listen_channel, active, true\)/,
+	'a device starts the engine on its own input, asking for the fallback');
 like($studio_js, qr/else if \(studioListenActive\) \{ studioListenStop\(\); \}/,
 	'an app or no input does not start the engine Listen');
+like($studio_js, qr/function studioApplyMonitor\(from_user, force_tap_device\)/,
+	'the browser fallback can open a device capture without a fresh press');
+like($studio_js, qr/studioApplyMonitor\(false, true\)/,
+	'a refused engine Listen re-applies with the browser device');
+like($studio_js, qr/studioMonitorAttachDevice\(active\)/,
+	'a browser-monitored device opens its capture');
+like($inputs_js, qr/function studioMonitorAttachDevice\(ch\)/,
+	'and the device monitor knows when an armed track already owns the capture');
+like($inputs_js, qr/function studioMonitorDetachDevice\(ch\)/,
+	'leaving the monitor closes only the capture it opened');
 
-like($controls_js, qr/function studioListenStart\(quiet, channel, ch\)/,
-	'Listen can name the input and the monitored rack');
+like($controls_js, qr/function studioListenStart\(quiet, channel, ch, fallback\)/,
+	'Listen can name the input and the monitored rack, and take the fallback flag');
 like($controls_js, qr/channel: listen_channel/, 'and sends that input to the engine');
 like($controls_js, qr/inserts: studioListenInserts\(ch\)/,
 	'through the monitored track\'s pedals');
+
+# --- the engine is only the monitor while its socket is live ------------------
+# The status reply names `available`; studioEngineStatus stores it, and the
+# monitor side reads it before choosing the engine or the browser capture.
+like($controls_js, qr/var studioEngineAvailable = false;/,
+	'the page starts without a known live engine');
+like($studio_js, qr/studioEngineAvailable = \(data\.available === 1\);\n\t\t\tif \(typeof studioAudioBackendReset/,
+	'the status answer records the live socket');
+unlike($controls_js, qr/studioEngineAnswer = function/,
+	'no part monkey-patches the shared status hook');
+like($controls_js, qr/function studioSetMonitor\(ch, on, from_user\) \{[\s\S]{0,300}?studioMonitorEngineFailed = false;/,
+	'pressing Monitor tries the engine again');
+my $fallback_calls = () = $controls_js =~ /if \(fallback && typeof studioMonitorEngineFallback === 'function'\) \{ studioMonitorEngineFallback\(\); \}/g;
+is($fallback_calls, 2, 'both a refused Listen and a transport error fall back to the browser');
+like($controls_js, qr/if \(next_channel !== undefined\) \{ studioListenStart\(false, next_channel, ch, true\); \}/,
+	'moving the one Listen keeps the fallback request');
 
 # An app has no device behind it, so Monitor may build its graph itself on an
 # unarmed track; a device is the engine's Listen and never the browser capture.
@@ -473,6 +505,35 @@ unlike($app_attach // '', qr/getUserMedia/, 'the app attach path never opens a d
 
 unlike($studio_js, qr/c\.monGain\.gain\.value = \(on && !nativeish\) \? 1 : 0/,
 	'the tap is not muted for every native backend');
+
+# --- every audio device row names its interface input -----------------------
+# The UM2 has two inputs; a channel must be able to say which one it takes
+# instead of inferring it from the device's place in the list.
+my $template = read_file("$root/templates/studio/plug_selection.html.ep");
+like($template, qr/class="studio_input_channel"/,
+	'an audio input row carries its own interface-input selector');
+like($template, qr/<option value="0"[^>]*>.*?Input 1 \(channel 0\)/,
+	'Input 1 is channel 0');
+like($template, qr/<option value="1"[^>]*>.*?Input 2 \(channel 1\)/,
+	'and Input 2 is channel 1');
+like($template, qr/\$av->\{'kind'\} eq 'audioinput'\) \{\s*%>\s*<br><select class="studio_input_channel"/,
+	'a camera or an output row keeps no selector');
+like($template, qr/\$input \? ' selected' : ''/, 'the saved input is the row selected');
+like($inputs_js, qr/input = Number\(sis\.find\('\.studio_input_channel'\)\.val\(\)\) \|\| 0;/,
+	'a real audio input takes the interface input its row names');
+like($inputs_js, qr/if \(input > 1\) \{ input = 1; \}/, 'and the number is clamped to the two inputs');
+unlike($inputs_js, qr/\.index\(sis\)/, 'not its place in the device list');
+like($inputs_js, qr/data\.input = input;/, 'and that number is stored with the plug');
+
+# A real input is opened by the device the picker names; an audio interface is
+# asked for two channels, so the splitter can take Input 2. A screen share keeps
+# getDisplayMedia's stream.
+like($inputs_js, qr/if \(plug\['type'\] == 'usermedia'\) \{\s*if \(plug\['id'\]\) \{ audio\.deviceId = \{ exact: plug\['id'\] \}; \}/,
+	'a camera or microphone opens the device its plug names');
+like($inputs_js, qr/if \(plug\['type'\] == 'usermedia' && plug\['av'\] == 'a'\) \{\s*audio\.channelCount = Math\.max\(2, channels \|\| 0\);/,
+	'and an audio interface asks for both interface channels');
+like($inputs_js, qr/audio\.channelCount = Math\.max\(2, channels \|\| 0\);/,
+	'and asks for both interface channels');
 
 # --- the input picker opens on the saved source ------------------------------
 # A plan may name this machine explicitly: Sound's source form writes it and

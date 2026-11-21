@@ -498,21 +498,23 @@ unlike($body, qr/A take started with Monitor off armed no live input/,
 	'with the old start-the-next-take wording gone');
 
 like($markup, qr/id="studio_monitor_note"/, 'the transport carries a monitor note');
-like($studio_js, qr/function studioApplyMonitor\(from_user\)/, 'Monitor takes a user flag');
-like($studio_js, qr/studioListenStart\(false/, 'a user Monitor starts the engine Listen without a browser fallback');
+like($studio_js, qr/function studioApplyMonitor\(from_user, force_tap_device\)/, 'Monitor takes a user flag and the engine-refusal path');
+like($studio_js, qr/studioListenStart\(false, listen_channel, active, true\)/, 'a user Monitor starts the engine Listen with the browser fallback');
 like($studio_js, qr/studioListenStop\(\)/, 'and switching it off stops it');
 like($controls_js, qr/function studioAudioBackend/, 'a native backend is chosen');
 like($controls_js, qr/studioAudioBackendMemo = 'oboe'/, 'Oboe wins');
 like($controls_js, qr/studioEngineInstalled/, 'then the house engine');
 like($controls_js, qr/studioInputReleaseForMonitor/, 'the browser capture is released while a native stream monitors');
-like($controls_js, qr/function studioListenStart\(quiet, channel, ch\)/, 'Listen can start quietly and name its input and rack');
+like($controls_js, qr/function studioListenStart\(quiet, channel, ch, fallback\)/, 'Listen can start quietly, name its input and rack, and take the browser fallback flag');
 like($controls_js, qr/function studioListenNotRunning/, 'and knows the not-running sentence');
-like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1\)/,
-	'a real device on a native backend is the engine Listen');
-like($studio_js, qr/var tap = on && !!input && \(app \|\| !engine\)/,
-	'no input is silent, an app is the browser tap, and only an engine device mutes it');
-like($studio_js, qr/studioListenStart\(false, listen_channel, active\)/,
-	'Monitor names the device input and the monitored track');
+like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1 && !studioMonitorEngineFailed/,
+	'a real device on a native backend is the engine Listen while its socket is live');
+like($studio_js, qr/var listening = engine && \(studioListenActive \|\| from_user\);/,
+	'a restored Monitor stays on the tap until the engine Listen runs');
+like($studio_js, qr/var tap = on && !!input && \(app \|\| !listening\)/,
+	'no input is silent, an app is the browser tap, and only a running engine Listen mutes it');
+like($studio_js, qr/studioListenStart\(false, listen_channel, active, true\)/,
+	'Monitor names the device input and the monitored track, and asks for the fallback');
 like($studio_js, qr/else if \(studioListenActive\) \{ studioListenStop\(\); \}/,
 	'an app input or no input never starts the engine');
 like($inputs_js, qr/function studioChannelInput\(/,

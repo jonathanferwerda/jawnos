@@ -42,13 +42,12 @@ like($style, qr/\.studio_pedal_foot\[aria-pressed="true"\]\s*\{[\s\S]*?var\(--ac
 	'the lit treadle takes the theme accent');
 
 # --- the tuner's switch, screen and lamp -----------------------------------
-like($markup, qr/data-tuner="yes"[^>]*hint="[^"]*Start or stop the tuner/,
-	'the Jtune tile is marked a tuner and names its switch');
-like($markup, qr/class="studio_tuner"[^>]*aria-live="polite"/, 'the tuner display is announced');
-like($markup, qr/studio_tuner_arrow studio_tuner_up/, 'the display has an arrow on the left');
-like($markup, qr/studio_tuner_arrow studio_tuner_down/, 'the display has an arrow on the right');
-like($markup, qr/studio_tuner_letter/, 'the display has the note');
-like($markup, qr/studio_tuner_cents/, 'the display has the cents line');
+like($rack, qr/data-tuner', 'yes'/, 'the Jtune rack row is marked a tuner');
+like($rack, qr/class="studio_tuner"[^>]*aria-live="polite"/, 'the rack row carries the tuner display');
+like($rack, qr/studio_tuner_arrow studio_tuner_up/, 'the display has an arrow on the left');
+like($rack, qr/studio_tuner_arrow studio_tuner_down/, 'the display has an arrow on the right');
+like($rack, qr/studio_tuner_letter/, 'the display has the note');
+like($rack, qr/studio_tuner_cents/, 'the display has the cents line');
 like($gb, qr/control => 'automatic'[^\n]*hint => 'Start or stop the tuner'/,
 	'the pink switch names itself as the tuner power');
 like($style, qr/\.studio_tuner\s*\{[^}]*grid-template-columns:\s*18px minmax\(0, 1fr\) 18px/s,
@@ -61,18 +60,14 @@ like($style, qr/\.pedal\[data-tuner="yes"\] \.studio_pedal_led\.studio_tuner_lis
 	'the tuner lamp is amber while it listens');
 like($style, qr/\.pedal\[data-tuner="yes"\] \.studio_pedal_led\.studio_tuner_tuned\s*\{[^}]*#35e05a/s,
 	'the tuner lamp is green in tune');
-like($markup, qr/studio_pedal_foot hover" effect="<%= \$p->\{'name'\} %>"/,
-	'the tuner has the same footswitch as the other shelf pedals');
 
 # --- one power switch, wired the same from every press ---------------------
 like($knobs, qr/e\.stopPropagation\(\);[\s\S]*?studioTunerToggle\(\)/,
 	'the pink switch toggles the tuner and stops the tile toggling it twice');
-like($rack, qr/if \(typeof studioTunerPaintLamp === 'function'\) \{ studioTunerPaintLamp\(tile\); \}/,
-	'the tuner owns its lamp instead of the effect lamp');
+like($tuner, qr/studioTunerPaintLamp\(tile\);/, 'the tuner owns its lamp instead of the effect lamp');
 like($rack, qr/if \(typeof studioTunerSync === 'function'\) \{ studioTunerSync\(\); \}/,
 	'one lamp paint keeps the tuner in step with its insert');
-like($tuner, qr/\$\('#pedal_Jtune'\)/, 'the tile itself starts and stops the tuner');
-like($tuner, qr/studioTunerDragAt/, 'a drag that ends over the tile is not a press');
+like($tuner, qr/#studio_pedalboard_rack \.studio_rack_row\[insert="Jtune"\]/, 'the rack row itself is the tuner tile');
 like($tuner, qr/function studioTunerInsert\(ch\)/, 'the tuner reads its own insert');
 like($tuner, qr/studioRackFind\(ch, 'Jtune'\)/, 'the tuner follows its place in the track\'s rack');
 like($tuner, qr/ins\.input\.connect\(analyser\)/,

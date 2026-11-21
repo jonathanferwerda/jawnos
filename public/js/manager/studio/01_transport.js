@@ -4,6 +4,8 @@ function studioDetachInput(ch) {
 	var c = studioAudio.channels[ch];
 	if (!c) { return; }
 	if (c.source) { try { c.source.disconnect(); } catch (e) {} c.source = null; }
+	if (c.inputSource) { try { c.inputSource.disconnect(); } catch (e) {} c.inputSource = null; }
+	if (c.inputSplitter) { try { c.inputSplitter.disconnect(); } catch (e) {} c.inputSplitter = null; }
 	if (c.synthTap) {
 		try { c.synthTap.node.disconnect(c.synthTap.gain); } catch (e) {}
 		try { c.synthTap.gain.disconnect(); } catch (e) {}

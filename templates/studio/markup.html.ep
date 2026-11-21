@@ -3,115 +3,37 @@
 	<%# The effect contract (names, labels, controls) is data, not markup, so the rack
 	   and the master rack build the same controls the palette offers. %>
 	<script>window.jawnos_studio_effects = <%== Mojo::JSON::encode_json($gb::studio->{'effects'}) %>;
-	window.jawnos_studio_master = <%== Mojo::JSON::encode_json($gb::studio->{'master'}) %>;</script>
+	window.jawnos_studio_master = <%== Mojo::JSON::encode_json($gb::studio->{'master'}) %>;
+	window.jawnos_studio_pedal_art = <%== Mojo::JSON::encode_json({ map { $_->{'name'} => &subs::icon_for('/images/studio/' . $_->{'image'} . '.png') } @{$gb::studio->{'pedals'}} }) %>;</script>
 	<audio id="metronome" autoplay style="display:none;"></audio>
 	<%# The selector's box (position, stacking, the window cap that lets a long
 	   list scroll) lives in studio/style so channelSelect() can clamp the same
 	   edges it enforces. %>
 	<div id="studio_plug_select_container"></div>
-	<%# The artwork covers these effect kinds; an effect with no artwork gets a
-	   text tile instead. Jtune is the chromatic tuner, not an effect, so it
-	   answers for nothing here and JawnPitch keeps its own text tile. %>
-	<% my %shelf_kind = (
-		CompressionX => 'compressor', Distorjawn => 'distortion',
-		Delayed => 'delay', reverb2 => 'reverb', JawnSynth => 'synth',
-	); %>
-	<% my %shelf_has = map { ($shelf_kind{ $_->{'name'} } || $_->{'name'}) => 1 } @{$gb::studio->{'pedals'}}; %>
 	<%# The pedalboard is a bottom sheet over the foot of the window: it floats
-	   above the console instead of taking a grid row, its own bar carries
-	   Close, and the tiles scroll inside it. %>
+	   above the console instead of taking a grid row, and its own bar carries
+	   Close plus the Add list. A channel starts with an empty chain; the list
+	   offers every effect, and Add puts the chosen one in the chain the In/Out
+	   switch shows. %>
 	<div id="pedalboard" style="display:none;">
 		<div class="studio_pedalboard_bar">
 			<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
-		</div>
-		<%# The selected track's chain sits in the sheet with the shelf, never in the
-		   track panel: choosing a pedal changes this list, not the panel's height.
-		   studioRackRender() fills it and stamps it with the track it shows. %>
-		<div id="studio_pedalboard_rack" class="studio_channel_rack" hint="<%= &subs::ui('The effects in this track\'s chain, in order') %>"></div>
-		<div id="studio_pedalboard_pedals">
-		<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
-			<span id="pedal_<%= $p->{'name'} %>" class="pedal" data-effect="<%= $p->{'name'} %>"<% if ($p->{'tuner'}) { %> data-tuner="yes" hint="<%= &subs::ui('Start or stop the tuner') %>"<% } %>>
-				<% my $ch = $p->{'name'}; %>
-				<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
-				<img class="pedal_background" hint="<%= $p->{'name'} %>" src="<%= &subs::icon_for('/images/studio/' . $p->{'image'} . '.png') %>">
-				<%# Jtune's yellow panel is the tuner's own screen: the note sits
-				   between two arrows, and the line under it is the cents it is off
-				   by (or the words that say it is off). %>
-				<% if ($p->{'tuner'}) { %>
-					<span class="studio_tuner" aria-live="polite">
-						<span class="studio_tuner_arrow studio_tuner_up" aria-hidden="true">▲</span>
-						<span class="studio_tuner_note"><b class="studio_tuner_letter"><%= &subs::ui('TUNE') %></b><span class="studio_tuner_octave"></span></span>
-						<span class="studio_tuner_arrow studio_tuner_down" aria-hidden="true">▼</span>
-						<span class="studio_tuner_cents"><%= &subs::ui('press to tune') %></span>
-					</span>
-				<% } %>
-				<% foreach my $k ( @{$p->{'knobs'}} ) { %>
-					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
-
-				<% } %>
-				<% foreach my $b ( @{$p->{'buttons'}} ) { %>
-					<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;"  flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" hint="<%= &subs::ui($b->{'hint'} || &subs::format_name($b->{'control'})) %>" src="<%= $button_icon->('depressed', $b->{'colour'}) %>">
-				<% } %>
-				<%# The reverb family's model is a whole-number choice, not a knob: the
-				   pedal is the shelf's reverb, so its dropdown pushes a model to every
-				   reverb in the rack, and each insert can still keep its own. %>
-				<% if ($p->{'name'} eq 'reverb2') { %>
-					<select class="studio_pedal_model pedal_model" channel="<%= $ch %>" control="model" hint="<%= &subs::ui('Choose the reverb model') %>">
-						<% my $mi = 0; %>
-						<% foreach my $model ( @{$gb::studio->{'reverb_models'}} ) { %>
-							<option value="<%= $mi %>"<%= $mi == 2 ? ' selected' : '' %>><%= &subs::ui($model) %></option>
-							<% $mi++; %>
-						<% } %>
-					</select>
-				<% } %>
-				<%# Every tile carries the same footswitch at its foot, so a pedal is
-				   switched from the tile itself; the lamp reads the same state. Jtune
-				   is an insert like the rest now, so its foot bypasses it too. %>
-				<button class="studio_pedal_foot hover" effect="<%= $p->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
+			<span class="studio_effect_palette">
+				<span id="studio_palette_channel" class="studio_palette_channel"></span>
+				<select id="studio_palette_effect" hint="<%= &subs::ui('Choose an effect to add to this track\'s chain') %>">
+					<% foreach my $name ( @{$gb::studio->{'palette'}} ) { %>
+						<% my $effect = $gb::studio->{'effects'}->{$name} || {}; %>
+						<option value="<%= $name %>"><%= &subs::ui($effect->{'label'} || $name) %></option>
+					<% } %>
+					<option value="Jtune"><%= &subs::ui('Jtune') %></option>
+				</select>
+				<button id="studio_palette_add" class="hover" hint="<%= &subs::ui('Add the chosen effect to this chain') %>"><%= &subs::ui('Add') %></button>
 			</span>
-		<% } %>
-			<%# A palette effect with no hand-drawn artwork is drawn from the theme
-			   instead: the body, a knob per slider, a dropdown per choice and a
-			   footswitch, at the same size as the artwork tiles. %>
-			<% foreach my $name ( @{$gb::studio->{'palette'}} ) { next if $shelf_has{$name}; %>
-				<% my $effect = $gb::studio->{'effects'}->{$name} || {}; %>
-				<% my $art = $gb::studio->{'palette_art'}->{$name} || []; %>
-				<% my $fallback = $gb::studio->{'palette_knob_colours'} || [ 'grey_plain' ]; %>
-				<span id="pedal_<%= $name %>" class="pedal pedal_graphic" data-effect="<%= $name %>">
-					<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
-					<span class="pedal_body" aria-hidden="true"></span>
-					<b class="pedal_title"><%= &subs::ui($effect->{'label'} || $name) %></b>
-					<span class="pedal_controls">
-						<span class="pedal_knobs">
-						<% my $ki = 0; %>
-						<% foreach my $k ( @{$effect->{'controls'} || []} ) { next if $k->{'options'}; %>
-							<% my $colour = $art->[$ki] || $fallback->[ $ki % scalar(@$fallback) ]; %>
-							<label class="pedal_knob">
-								<input type="range" channel="<%= $name %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control" style="display:none;">
-								<img class="knob" channel="<%= $name %>" control="<%= $k->{'control'} %>" flip="180" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $colour . '.png') %>">
-								<span class="pedal_knob_label"><%= &subs::ui($k->{'label'} || $k->{'control'}) %></span>
-							</label>
-							<% $ki++; %>
-						<% } %>
-						</span>
-						<% foreach my $k ( @{$effect->{'controls'} || []} ) { next unless $k->{'options'}; %>
-							<label class="pedal_select_row">
-								<span class="pedal_knob_label"><%= &subs::ui($k->{'label'} || $k->{'control'}) %></span>
-								<select class="studio_pedal_model pedal_select" channel="<%= $name %>" control="<%= $k->{'control'} %>" hint="<%= &subs::ui($k->{'hint'} || 'Choose the option') %>">
-									<% my $oi = 0; %>
-									<% foreach my $option ( @{$k->{'options'}} ) { %>
-										<option value="<%= $oi %>"><%= &subs::ui($option) %></option>
-										<% $oi++; %>
-									<% } %>
-								</select>
-							</label>
-						<% } %>
-					</span>
-					<button class="studio_pedal_foot hover" effect="<%= $name %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
-				</span>
-			<% } %>
 		</div>
+		<%# The selected track's chain, never in the track panel: choosing a pedal
+		   changes this list, not the panel's height. studioRackRender() fills it and
+		   stamps it with the track it shows. %>
+		<div id="studio_pedalboard_rack" class="studio_channel_rack" hint="<%= &subs::ui('The effects in this track\'s chain, in order') %>"></div>
 	</div>
 	<%# One row of a track's rack. The rack clones this, so every action keeps a
 	   fixed on-screen label: the footswitch bypasses in place, the arrows
@@ -131,8 +53,8 @@
 	<div id="studio_layout_bar" class="studio_layout_bar">
 		<span id="studio_track_count" class="studio_track_count"></span>
 		<%# One button for the DAW-informed arrangement: transport across the top,
-		   the timeline under it, the synth left and the console right at the
-		   foot. On a narrow window every panel stacks instead. %>
+		   the timeline under it, and the console at the foot. On a narrow window
+		   every panel stacks instead. %>
 		<button id="studio_arrange" class="hover" hint="<%= &subs::ui('Arrange the panels') %>"><%= &subs::ui('Arrange') %></button>
 		<%# Always in reach, whatever the transport's height: it opens the bottom
 		   sheet, and Configure and Loop live here too so a short transport does
@@ -146,7 +68,6 @@
 		<button class="studio_float_toggle hover" data-panel="transport" hint="<%= &subs::ui('Float the transport') %>"><%= &subs::ui('Float transport') %></button>
 		<button class="studio_hide_toggle hover" data-panel="tracks" data-setting="hide_tracks" data-hide-label="Hide tracks" data-show-label="Show tracks" aria-pressed="false" hint="<%= &subs::ui('Hide the track listing') %>"><%= &subs::ui('Hide tracks') %></button>
 		<button class="studio_float_toggle hover" data-panel="tracks" hint="<%= &subs::ui('Float the track listing') %>"><%= &subs::ui('Float tracks') %></button>
-		<button class="studio_float_toggle hover" data-panel="synth" hint="<%= &subs::ui('Float the synth') %>"><%= &subs::ui('Float synth') %></button>
 		<button class="studio_hide_toggle hover" data-panel="drums" data-setting="hide_drums" data-hide-label="Hide drums" data-show-label="Show drums" aria-pressed="false" hint="<%= &subs::ui('Hide the drums') %>"><%= &subs::ui('Hide drums') %></button>
 		<button class="studio_float_toggle hover" data-panel="drums" hint="<%= &subs::ui('Float the drums') %>"><%= &subs::ui('Float drums') %></button>
 		<%# Effects are added from the pedalboard now, so this end of the bar
@@ -154,50 +75,8 @@
 		<button id="studio_add_track" class="hover" title="<%= &subs::ui('Add a track, up to 32') %>" hint="<%= &subs::ui('Add a track, up to 32') %>"><%= &subs::ui('Add track') %></button>
 	</div>
 	<div id="studio_grid" class="studio_grid">
-	<div id="studio_synth" class="studio_synth_panel">
-		<div class="studio_synth_bar">
-			<b class="hover studio_drag_handle" data-studio-drag="synth" hint="<%= &subs::ui('Drag to move the synth') %>">Synth</b>
-			<select class="studio_synth_select synth_preset" hint="Choose a synth sound"></select>
-			<button id="studio_synth_hide" class="hover" data-setting="hide_synth" hint="<%= &subs::ui('Collapse the synth panel') %>">Hide</button>
-			<button id="studio_synth_show" class="hover" data-setting="hide_synth" hint="<%= &subs::ui('Show the synth panel') %>" style="display:none;">Synth</button>
-			<button class="studio_dock hover" data-panel="synth" hint="<%= &subs::ui('Dock the synth') %>"><%= &subs::ui('Dock') %></button>
-			<button class="studio_span_toggle hover" data-panel="synth" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
-		</div>
-		<span class="studio_resize_handle" data-studio-resize="synth" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
-		<span class="studio_width_handle" data-studio-width="synth" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
-		<div class="studio_synth_body">
-			<div class="studio_synth_keys synth_keys"></div>
-			<div class="studio_synth_knobs">
-				<div class="studio_synth_knob"><label>Cutoff</label><input class="synth_param" param="filter.cutoff" type="range" min="0" max="100" value="55"></div>
-				<div class="studio_synth_knob"><label>Resonance</label><input class="synth_param" param="filter.q" type="range" min="0" max="100" value="15"></div>
-				<div class="studio_synth_knob"><label>Attack</label><input class="synth_param" param="amp.a" type="range" min="0" max="100" value="8"></div>
-				<div class="studio_synth_knob"><label>Release</label><input class="synth_param" param="amp.r" type="range" min="0" max="100" value="30"></div>
-				<div class="studio_synth_knob"><label>Detune</label><input class="synth_param" param="osc2.detune" type="range" min="0" max="100" value="55"></div>
-				<div class="studio_synth_knob"><label>Drive</label><input class="synth_param" param="drive" type="range" min="0" max="100" value="0"></div>
-				<span class="studio_synth_note">Play the keys; to record, set a channel's input to Synth.</span>
-			</div>
-		</div>
-	</div>
-	<style>
-		.studio_synth_panel { margin: 4px 0; }
-		.studio_synth_bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-		.studio_synth_select { font-size: 14px; border: solid 1px var(--line); border-radius: 5px; background: var(--panel); color: inherit; padding: 2px 4px; max-width: 220px; flex: 1 1 170px; min-width: 140px; }
-		.studio_synth_body { margin-top: 4px; }
-		.studio_synth_keys { position: relative; width: 100%; box-sizing: border-box; height: 96px; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
-		.studio_synth_keys .synth_keys_inner { position: relative; height: 92px; white-space: nowrap; }
-		.studio_synth_keys .piano_key { cursor: var(--jawnos-cursor-pointer, pointer); user-select: none; border: solid; border-width: 1px; box-sizing: border-box; }
-		.studio_synth_keys .piano_key.white { display: inline-block; vertical-align: top; width: 20px; height: 92px; background: var(--panel); color: var(--ink-muted, var(--ink)); font-size: 8px; text-align: center; padding-top: 76px; border-radius: 0 0 3px 3px; position: relative; z-index: 1; }
-		.studio_synth_keys .piano_key.black { position: absolute; top: 0; width: 13px; height: 58px; background: var(--ink); border-color: var(--line); border-radius: 0 0 3px 3px; z-index: 2; }
-		.studio_synth_keys .piano_key.white.piano_key_on { background: var(--accent-soft, var(--accent)); }
-		.studio_synth_keys .piano_key.black.piano_key_on { background: var(--accent); }
-		.studio_synth_knobs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
-		.studio_synth_knob { display: flex; flex-direction: column; align-items: center; width: 64px; }
-		.studio_synth_knob label { font-size: 11px; opacity: .7; }
-		.studio_synth_knob input[type=range] { width: 60px; }
-		.studio_synth_note { opacity: .55; font-size: 12px; }
-	</style>
-	<%# The drum machine is a docked instrument panel beside the synth; its own
-	   template carries its data, its markup and its script. %>
+	<%# The drum machine is a docked instrument panel; its own template carries
+	   its data, its markup and its script. %>
 	<%= include 'studio/drums' %>
 	<div id="studio_tracks_panel" class="studio_panel">
 		<div class="studio_panel_bar">

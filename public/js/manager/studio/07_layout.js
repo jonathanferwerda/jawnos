@@ -15,7 +15,6 @@ function studioLayoutText(text) {
 // ---- panels ----------------------------------------------------------------
 
 var studioPanelSelectors = {
-	synth: '#studio_synth',
 	drums: '#studio_drums',
 	mixer: '#studio_mixer',
 	transport: '#studio_transport_panel',
@@ -23,7 +22,6 @@ var studioPanelSelectors = {
 };
 
 var studioHideSettings = {
-	synth: 'hide_synth',
 	drums: 'hide_drums',
 	mixer: 'hide_channel_strips',
 	transport: 'hide_transport',
@@ -48,19 +46,14 @@ function studioUpdateHideButton(name, hidden) {
 
 function studioSetPanelHidden(name, hidden, persist) {
 	hidden = !!hidden;
-	if (name == 'synth') {
-		$('.studio_synth_body').toggle(!hidden);
-		$('#studio_synth_hide').toggle(!hidden);
-		$('#studio_synth_show').toggle(hidden);
-	}
-	else if (studioPanelSelectors[name]) {
+	if (studioPanelSelectors[name]) {
 		studioPanelElement(name).toggle(!hidden);
 	}
 	studioUpdateHideButton(name, hidden);
 	// a hidden panel leaves its row, so the rows below take the space
 	studioManualReflow();
 	// a hidden or floated drums panel hands its arranged column back to the
-	// timeline and the synth (see .studio_drums_open in style.html.ep)
+	// timeline (see .studio_drums_open in style.html.ep)
 	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
 	mixer = mixer || {};
 	mixer.settings = mixer.settings || {};
@@ -85,13 +78,13 @@ function studioApplyHideSettings() {
 // before that panel, and the ones after it reflow into the gaps. A floated panel
 // leaves the grid but keeps its order and span, so Dock puts it where it was dropped.
 
-// The drum machine is a fifth panel. It has no entry in the Arrange preset
-// below for the same reason the synth has none: arranged mode places panels by
-// the stylesheet's named areas, and the drums column exists only while the
-// panel is docked and visible. In manual packing it falls last until moved.
-var studioPanelNames = ['synth', 'drums', 'tracks', 'mixer', 'transport'];
+// The drum machine is a fourth panel. It has no entry in the Arrange preset
+// below: arranged mode places panels by the stylesheet's named areas, and the
+// drums column exists only while the panel is docked and visible. In manual
+// packing it falls last until moved.
+var studioPanelNames = ['drums', 'tracks', 'mixer', 'transport'];
 var studioPanelOrder = studioPanelNames.slice();
-var studioPanelSpan = { synth: 1, drums: 1, tracks: 1, mixer: 1, transport: 1 };
+var studioPanelSpan = { drums: 1, tracks: 1, mixer: 1, transport: 1 };
 var STUDIO_PANEL_MIN_SPAN = 1;
 var STUDIO_PANEL_MAX_SPAN = 2;
 var STUDIO_PANEL_MIN_WIDTH = 180;
@@ -99,19 +92,19 @@ var STUDIO_PANEL_MIN_WIDTH = 180;
 // ---- the Arrange preset ----------------------------------------------------
 //
 // A DAW reads top to bottom: the transport keeps its own height across the
-// top, the timeline takes the flexible middle with the synth beside it, and
-// the console gets a compact band at the foot with the master strip at its far
-// right. A narrow window stacks the same areas in one column. The arrangement
+// top, the timeline takes the flexible middle (the drums open a column beside
+// it), and the console gets a compact band at the foot with the master strip at
+// its far right. A narrow window stacks the same areas in one column. The arrangement
 // is a mode on the grid (the stylesheet's named areas, see style.html.ep); the
 // order/span values below are the manual packing it falls back to the moment
 // the person moves a panel.
 var studioArrangeWide = {
-	order: ['transport', 'tracks', 'synth', 'mixer'],
-	span: { transport: 2, tracks: 2, synth: 1, mixer: 1 }
+	order: ['transport', 'tracks', 'mixer'],
+	span: { transport: 2, tracks: 2, mixer: 2 }
 };
 var studioArrangeCompact = {
-	order: ['transport', 'tracks', 'mixer', 'synth'],
-	span: { transport: 2, tracks: 2, mixer: 2, synth: 2 }
+	order: ['transport', 'tracks', 'mixer'],
+	span: { transport: 2, tracks: 2, mixer: 2 }
 };
 
 function studioIsNarrow() {
@@ -156,10 +149,10 @@ function studioApplyArrange(persist) {
 	var preset = studioArrangePreset();
 	studioPanelOrder = preset.order.slice();
 	// the preset's literal order predates the drum panel; when the window
-	// falls back to manual packing the drums sit beside the synth, where
+	// falls back to manual packing the drums sit beside the tracks, where
 	// Arrange shows them
 	if (studioPanelOrder.indexOf('drums') < 0) {
-		var at = studioPanelOrder.indexOf('synth');
+		var at = studioPanelOrder.indexOf('tracks');
 		studioPanelOrder.splice(at < 0 ? studioPanelOrder.length : at + 1, 0, 'drums');
 	}
 	$.each(studioPanelNames, function (i, name) {
@@ -260,9 +253,9 @@ function studioPersistPanelHeight(name, h) {
 	}
 }
 
-// A docked panel's width is its own choice too. The stylesheet's content
-// widths (300px for the synth, 360px for the drums) are the default until a
-// person drags the right edge; the tracks panel then takes whatever is left.
+// A docked panel's width is its own choice too. The stylesheet's content width
+// (360px for the drums) is the default until a person drags the right edge; the
+// tracks panel then takes whatever is left.
 function studioApplyPanelWidth(name) {
 	var panel = studioPanelElement(name);
 	if (!panel.length) { return; }
@@ -329,7 +322,6 @@ function studioPackWidth(name) {
 	var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_width_' + name] : undefined;
 	var w = parseInt(raw, 10);
 	if (w > 0) { return w; }
-	if (name === 'synth') { return 300; }
 	if (name === 'drums') { return 360; }
 	return 280;
 }
@@ -1000,9 +992,6 @@ $(document).on('click', '.studio_dock', function () {
 	studioDockPanel($(this).attr('data-panel'));
 });
 
-// The synth keeps its own Hide/Show buttons; they also remember the choice.
-$(document).on('click', '#studio_synth_hide', function () { studioSetPanelHidden('synth', true, true); });
-$(document).on('click', '#studio_synth_show', function () { studioSetPanelHidden('synth', false, true); });
 
 $(document).on('click', '#studio_pedalboard_close', function () {
 	studioPedalboardOpen(false);

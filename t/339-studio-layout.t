@@ -60,7 +60,6 @@ like($markup, qr/id="studio_track_row_<%=\s*\$ch\s*%>"/, 'each row is addressabl
 
 # --- four independent hide toggles, each with a setting name ----------------
 my %hide = (
-	hide_synth           => 'synth',
 	hide_channel_strips  => 'mixer',
 	hide_transport       => 'transport',
 	hide_tracks          => 'tracks',
@@ -68,6 +67,8 @@ my %hide = (
 for my $setting (sort keys %hide) {
 	like($markup, qr/data-setting="$setting"/, "the $setting toggle is in the markup");
 }
+unlike($markup, qr/hide_synth/, 'the synth panel and its hide toggle are gone');
+unlike($layout, qr/hide_synth/, 'the layout maps no synth hide setting');
 like($markup, qr/data-panel="mixer"[^>]*data-setting="hide_channel_strips"/s,
 	'the channel-strip toggle names its panel');
 like($markup, qr/data-panel="transport"[^>]*data-setting="hide_transport"/s,
@@ -80,11 +81,12 @@ like($layout, qr/mixer\.settings\[studioHideSettings\[name\]\] = hidden \? 'yes'
 	'the hide choice is stored as a Studio setting');
 
 # --- floating panels: a Dock control and pointer drag for each --------------
-for my $panel (qw(synth mixer transport tracks)) {
+for my $panel (qw(mixer transport tracks)) {
 	like($markup, qr/class="studio_dock hover" data-panel="$panel"/,
 		"$panel has a Dock control");
 	like($markup, qr/data-studio-drag="$panel"/, "$panel has a drag handle");
 }
+unlike($markup, qr/data-panel="synth"/, 'the synth panel has no Dock or drag control');
 like($layout, qr/'pointerdown', '\.studio_drag_handle'/, 'dragging starts on pointerdown');
 like($layout, qr/'pointermove'/, 'the drag follows pointermove');
 like($layout, qr/'pointerup pointercancel'/, 'the drag ends on pointerup');
@@ -123,7 +125,7 @@ like($layout, qr/studioPedalboardOpen\(true\)/,
 like($layout, qr/click', '\.studio_track_fx'[\s\S]*?studioRackRender\(ch\);[\s\S]*?studioPedalboardOpen\(true\);/, 
 	'FX selects the track, draws its chain and opens the pedalboard');
 unlike($layout, qr/studio_fx_open/, 'FX no longer opens a rack inside the track row');
-like($edit, qr/studioPedalboardOpen\(true\);[\s\S]*scroller\.scrollLeft/, 'a channel badge opens the sheet and scrolls to the pedal');
+like($edit, qr/studioPedalboardOpen\(true\);[\s\S]*studio_rack_row\[insert=/, 'a channel badge opens the sheet on its chain row');
 like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_pedals"[^>]*hint="[^"]*Open or close the pedalboard/,
 	'the Pedals button sits in the layout bar');
 like($markup, qr/id="studio_pedals"[^>]*aria-pressed="false"/, 'the Pedals button starts closed');
@@ -137,11 +139,16 @@ like($style, qr/#pedalboard\s*\{[^}]*z-index:\s*70002/s, 'the sheet floats above
 like($style, qr/#pedalboard\s*\{[^}]*background-color:\s*var\(--panel-2\)/s, 'the sheet is opaque');
 like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_pedalboard_close"/,
 	'the close control sits in the sheet\'s own bar');
-like($markup, qr/id="studio_pedalboard_pedals"/, 'the tiles live in their own scroller');
-like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*position:\s*static/s, 'the flex row is static inside the dock');
-like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*display:\s*flex/s, 'the tiles are a flex row');
-like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*overflow:\s*auto/s, 'the row scrolls sideways and, only if it must, down');
-like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*scrollbar-width:\s*thin/s, 'the scrollbar is thin enough for the tile budget');
+like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_palette_effect"/,
+	'the effect palette select sits in the sheet\'s own bar');
+like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_palette_add"/,
+	'the Add button sits beside the palette select');
+like($style, qr/\.studio_pedalboard_bar\s*\{[^}]*justify-content:\s*space-between/s,
+	'the bar puts Close on the left and the palette on the right');
+like($style, qr/\.studio_pedalboard_bar\s*\{[^}]*height:\s*auto/s,
+	'the bar grows with what it holds');
+like($style, qr/#studio_palette_add\s*\{[^}]*font-size:\s*12px/s,
+	'the Add button keeps the bar\'s small size');
 like($style, qr/\.pedal\s*\{[^}]*flex:\s*0 0 auto/s, 'a tile keeps its width in the row');
 like($style, qr/\.pedal\s*\{[^}]*position:\s*relative/s, 'a tile is positioned in the row');
 like($style, qr/\.pedal\s*\{[^}]*left:\s*auto/s, 'the fixed left offset is gone');
@@ -150,7 +157,6 @@ like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*344px/s, 'the dock fits a sho
 like($style, qr/#pedalboard\s*\{[^}]*flex-direction:\s*column/s, 'the chain and the tiles stack in the sheet');
 like($style, qr/#studio_pedalboard_rack\s*\{[^}]*max-height:\s*110px/s, 'the chain keeps a compact bound in the sheet');
 like($style, qr/#studio_pedalboard_rack\s*\{[^}]*overflow-y:\s*auto/s, 'a long chain scrolls in place');
-like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*max-height:\s*214px/s, 'the tile row keeps within the dock');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork fits inside the tile');
 unlike($markup, qr/count\s*\*\s*175/, 'no tile is placed by counted pixels');
 
@@ -169,14 +175,15 @@ like($style, qr/\.studio_master_rack\s*\{[^}]*overflow:\s*auto/s, 'the master ra
 # --- Arrange is one button for the DAW-informed arrangement ----------------
 like($markup, qr/id="studio_arrange"[^>]*hint="[^"]*Arrange the panels/,
 	'the Arrange control names its preset');
-like($layout, qr/var studioArrangeWide = \{[\s\S]*?order: \['transport', 'tracks', 'synth', 'mixer'\]/,
-	'the wide preset runs transport, timeline, synth, console');
-like($layout, qr/var studioArrangeWide = \{[\s\S]*?span: \{ transport: 2, tracks: 2, synth: 1, mixer: 1 \}/,
-	'the transport and timeline span the window, the synth and console share the foot');
-like($layout, qr/var studioArrangeCompact = \{[\s\S]*?order: \['transport', 'tracks', 'mixer', 'synth'\]/,
+like($layout, qr/var studioArrangeWide = \{[\s\S]*?order: \['transport', 'tracks', 'mixer'\]/,
+	'the wide preset runs transport, timeline, console');
+like($layout, qr/var studioArrangeWide = \{[\s\S]*?span: \{ transport: 2, tracks: 2, mixer: 2 \}/,
+	'the wide preset gives every panel the full width');
+like($layout, qr/var studioArrangeCompact = \{[\s\S]*?order: \['transport', 'tracks', 'mixer'\]/,
 	'the compact preset stacks the panels');
-like($layout, qr/var studioArrangeCompact = \{[\s\S]*?span: \{ transport: 2, tracks: 2, mixer: 2, synth: 2 \}/,
+like($layout, qr/var studioArrangeCompact = \{[\s\S]*?span: \{ transport: 2, tracks: 2, mixer: 2 \}/,
 	'the compact preset gives every panel the full width');
+unlike($layout, qr/synth/i, 'the layout no longer names a synth panel');
 like($layout, qr/function studioApplyArrange\(persist\)/, 'one function applies a preset');
 like($layout, qr/\$\(document\)\.on\('click', '#studio_arrange'/, 'the button applies the preset');
 like($layout, qr/if \(!any_saved\) \{[\s\S]*?studioApplyArrange\(true\)/,
@@ -187,8 +194,10 @@ like($layout, qr/if \(studioPanelElement\(name\)\.hasClass\('studio_panel_floati
 # --- arranged mode is an explicit DAW grid, left by any manual move --------
 like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(90px,\s*1fr\) minmax\(120px,\s*45%\)/s,
 	'the arranged rows are auto, a dominant timeline, then auto');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?"transport transport transport"[\s\S]*?"tracks tracks synth"[\s\S]*?"mixer mixer mixer"/s,
-	'the wide areas run transport, tracks beside the synth, then the console');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?"transport transport"[\s\S]*?"tracks tracks"[\s\S]*?"mixer mixer"/s,
+	'the wide areas run transport, the full-width timeline, then the console');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\)/s,
+	'the wide grid is two equal columns, with no synth column');
 like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*grid-area:\s*transport !important/s,
 	'the transport owns the top area');
 like($style, qr/#studio_grid\.studio_arranged > #studio_tracks_panel\s*\{[^}]*grid-area:\s*tracks !important/s,
@@ -209,9 +218,9 @@ like($style, qr/#studio_grid\.studio_arranged_compact > #studio_transport_panel\
 	'the compact transport is content height too');
 like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
 	'the compact arranged grid is one column');
-like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto auto/s,
-	'the compact rows are transport, timeline, console, synth');
-like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?"transport"[\s\S]*?"tracks"[\s\S]*?"mixer"[\s\S]*?"synth"/s,
+like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/s,
+	'the compact rows are transport, timeline and console');
+like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?"transport"[\s\S]*?"tracks"[\s\S]*?"mixer"/s,
 	'the compact areas stack in that order');
 
 # --- the transport sizes to its controls, wide or narrow -------------------
@@ -257,7 +266,7 @@ like($layout, qr/var arranged = String\([\s\S]*?studio_panel_arranged[\s\S]*?== 
 like($layout, qr/if \(arranged && !\$\('\.studio_panel_floating'\)\.length\)/, 'a saved float hands the grid back');
 like($layout, qr/toggleClass\('studio_arranged_compact', studioIsNarrow\(\)\)/, 'a resize re-evaluates the compact mode');
 like($help, qr/Arrange is a mode, not a lock/, 'help says Arrange is a mode that manual moves leave');
-like($help, qr/the track timeline takes the large middle with the synth beside it/, 'help describes the arranged areas');
+like($help, qr/the transport is a single row across the top/, 'help describes the arranged areas');
 
 # --- the Studio window opens at a desk size and stays inside itself --------
 like($maker, qr/%app_default_size\s*=\s*\(\s*studio\s*=>\s*\{\s*width\s*=>\s*1000,\s*height\s*=>\s*760/,
@@ -308,7 +317,7 @@ like($layout, qr/function studioApplyPanelOrder/, 'the shared order is applied t
 like($layout, qr/order:\s*studioPanelOrderIndex\(name\)/, 'a docked panel saves its order');
 
 # --- the width control gives a docked panel a second column ----------------
-for my $panel (qw(synth mixer transport tracks)) {
+for my $panel (qw(mixer transport tracks)) {
 	like($markup, qr/class="studio_span_toggle hover" data-panel="$panel"/,
 		"$panel has a Narrow/Wide control");
 }
@@ -450,10 +459,6 @@ like($knobs, qr/if \(n == 'track_height'\)/, 'a saved height is restored');
 like($knobs, qr/if \(h < 64\) \{ return; \}/, 'a hidden track panel cannot save a zero height');
 
 # --- one transport row ------------------------------------------------------
-like($markup, qr/\.studio_synth_select\s*\{[^}]*min-width:\s*140px/s,
-	'the synth preset row keeps a readable width and wraps when the panel is narrow');
-like($markup, qr/\.studio_synth_select\s*\{[^}]*flex:\s*1 1 170px/s,
-	'the preset select grows into the bar before it wraps');
 like($markup, qr/id="studio_transport_row"/, 'the transport row is addressable');
 like($markup, qr/class="studio_transport_field"[^>]*id="studio_bpm"/, 'tempo sits in the row');
 like($markup, qr/class="studio_transport_field"[^>]*id="studio_signature"/, 'the signature sits in the row');
@@ -464,8 +469,8 @@ like($style, qr/\.studio_transport_row\s*\{[^}]*flex-wrap:\s*wrap/s,
 # --- the pedalboard is the one FX surface ----------------------------------
 my @racks = $markup =~ /class="studio_channel_rack"/g;
 is(scalar(@racks), 1, 'the markup carries exactly one chain container');
-like($markup, qr/id="pedalboard"[\s\S]*?id="studio_pedalboard_rack"[\s\S]*?id="studio_pedalboard_pedals"/,
-	'the chain sits in the pedalboard, between its bar and its tiles');
+like($markup, qr/id="pedalboard"[\s\S]*?class="studio_pedalboard_bar"[\s\S]*?id="studio_palette_add"[\s\S]*?id="studio_pedalboard_rack"/,
+	'the Add palette sits in the bar above the chain it adds to');
 unlike($markup, qr/studio_track_panel[\s\S]*?studio_channel_rack/,
 	'the track panel carries no effect list at all');
 like($markup, qr/class="studio_track_fx hover" channel="<%=\s*\$ch\s*%>" hint="<%=\s*&subs::ui\('Open the pedalboard for this track'\) %>"/,
@@ -506,25 +511,20 @@ like($help, qr/snaps to the eight-pixel grid/, 'help explains the snap');
 like($help, qr/Drag a track\\'s bottom edge/, 'help explains the track resize');
 
 # --- the instruments start at their content width, tracks take the rest ----
-like($style, qr/\.studio_grid_row > #studio_synth\s*\{[^}]*width:\s*300px/s,
-	'the synth starts at its preset-row width');
-like($style, qr/\.studio_grid_row > #studio_synth\s*\{[^}]*min-width:\s*220px/s,
-	'the synth keeps a sensible minimum width');
 like($style, qr/\.studio_grid_row > #studio_drums\s*\{[^}]*width:\s*360px/s,
 	'the drums start wide enough for sixteen steps');
 like($style, qr/\.studio_grid_row > #studio_drums\s*\{[^}]*min-width:\s*320px/s,
 	'the drums keep a sensible minimum width');
 like($style, qr/\.studio_grid_row > #studio_tracks_panel\s*\{[^}]*flex:\s*1 1 280px/s,
 	'the tracks panel takes the rest of its row');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\) minmax\(220px,\s*300px\)/s,
-	'the arranged synth column stops at its content width');
-like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) clamp\(260px,\s*28%,\s*320px\) clamp\(320px,\s*36%,\s*360px\)/s,
-	'arranged gives the synth and drums content-sized columns and the tracks the rest');
-like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[^}]*"tracks synth drums"/s,
-	'the arranged areas are unchanged by the sizing');
+unlike($style, qr/#studio_synth/, 'the stylesheet carries no synth panel rule');
+like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) clamp\(320px,\s*36%,\s*360px\)/s,
+	'arranged gives the drums a content-sized column and the tracks the rest');
+like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[^}]*"tracks drums"/s,
+	'the drums column sits beside the timeline');
 
 # --- every docked panel has a width grip ------------------------------------
-for my $panel (qw(synth drums tracks mixer transport)) {
+for my $panel (qw(drums tracks mixer transport)) {
 	my $file = $panel eq 'drums' ? $drums : $markup;
 	like($file, qr/class="studio_width_handle" data-studio-width="$panel"/,
 		"$panel has a width grip");

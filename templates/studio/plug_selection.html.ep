@@ -36,7 +36,14 @@
 				%>
 					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="usermedia" hint="<%= &subs::ui('Use this microphone or camera on the channel') %>" sid="<%= $av->{'deviceId'} %>" av="<%= $av->{'av'} %>" app="">
 						<td><img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/' . $av->{'icon'} . '.png') %>" hint="<%= &subs::format_name($av->{'icon'}) %>"></td>
-						<td style="font-size:20px;vertical-align:top;"><%= $label %></td>
+						<td style="font-size:20px;vertical-align:top;"><%= $label %>
+							<% if ($av->{'kind'} eq 'audioinput') { %>
+								<br><select class="studio_input_channel" hint="<%= &subs::ui('Choose which input of this device the channel uses') %>">
+									<option value="0"<%= $input ? '' : ' selected' %>><%= &subs::ui('Input 1 (channel 0)') %></option>
+									<option value="1"<%= $input ? ' selected' : '' %>><%= &subs::ui('Input 2 (channel 1)') %></option>
+								</select>
+							<% } %>
+						</td>
 					</tr>
 				<% } 
 				} %>

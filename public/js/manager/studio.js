@@ -216,6 +216,12 @@ function studioChannelEngine(ch) {
 	// live monitoring taps the same post-pedal signal the recorder gets, so you
 	// hear exactly what is being captured; it is muted until the song asks
 	c.monGain.gain.value = 0;
+	// One input on a stereo bus is played in both ears. Without this an input
+	// captured as two channels with only one carrying signal (the UM2's mono
+	// instrument input, a webcam's mono microphone) reaches one ear alone.
+	c.monGain.channelCount = 2;
+	c.monGain.channelCountMode = 'explicit';
+	c.monGain.channelInterpretation = 'speakers';
 	c.recGain.connect(c.monGain);
 	c.monGain.connect(studioAudio.master);
 	return c;
@@ -226,6 +232,11 @@ function studioRebuildInserts(ch) {
 	if (!c) { return; }
 	try { c.trim.disconnect(); } catch (e) {}
 	try { c.treble.disconnect(); } catch (e) {}
+	// Every insert's output is one edge in the old order. Drop all of them before
+	// wiring the new order, or a reorder leaves the old edges in place as well.
+	c.inserts.forEach(function (insert) {
+		if (insert.output) { try { insert.output.disconnect(); } catch (e) {} }
+	});
 	c.trim.connect(c.bass);
 	var node = c.treble;
 	c.inserts.forEach(function (insert) {
@@ -242,6 +253,9 @@ function studioRebuildOutputs(ch) {
 	var c = studioAudio.channels[ch];
 	if (!c || !c.outIn) { return; }
 	try { c.outIn.disconnect(); } catch (e) {}
+	c.outInserts.forEach(function (insert) {
+		if (insert.output) { try { insert.output.disconnect(); } catch (e) {} }
+	});
 	var node = c.outIn;
 	c.outInserts.forEach(function (insert) {
 		node.connect(insert.input);
@@ -329,13 +343,38 @@ function studioApplyChannel(ch) {
 }
 
 // Feed a live MediaStream (mic / camera / screen) into a channel and return its
-// processed recording stream.
+// processed recording stream. A capture from a real input device is narrowed to
+// the interface channel the picker names (Input 1 or Input 2) and played as one
+// signal in both ears; a screen share keeps its own stereo pair.
 function studioAttachInput(ch, stream) {
 	var ctx = studioContext();
 	var c = studioChannelEngine(ch);
 	if (!ctx || !c) { return null; }
 	if (c.source) { try { c.source.disconnect(); } catch (e) {} c.source = null; }
-	c.source = ctx.createMediaStreamSource(stream);
+	if (c.inputSource) { try { c.inputSource.disconnect(); } catch (e) {} c.inputSource = null; }
+	if (c.inputSplitter) { try { c.inputSplitter.disconnect(); } catch (e) {} c.inputSplitter = null; }
+	var source = ctx.createMediaStreamSource(stream);
+	c.inputSource = source;
+	var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+	var track = stream.getAudioTracks()[0];
+	var channels = 0;
+	try { if (track && track.getSettings) { channels = Number(track.getSettings().channelCount) || 0; } } catch (e) {}
+	// A camera or an interface is a single source with one signal per input; a
+	// screen share is a stereo mix and is left alone.
+	if (plug && plug['type'] === 'usermedia' && channels > 1) {
+		var pick = (typeof studioInputListenChannel === 'function') ? studioInputListenChannel(plug) : 0;
+		var splitter = ctx.createChannelSplitter(2);
+		var mono = ctx.createGain();
+		mono.channelCount = 1;
+		mono.channelCountMode = 'explicit';
+		source.connect(splitter);
+		splitter.connect(mono, Math.min(1, Math.max(0, pick)), 0);
+		c.inputSplitter = splitter;
+		c.source = mono;
+	}
+	else {
+		c.source = source;
+	}
 	c.source.connect(c.trim);
 	studioApplyChannel(ch);
 	studioRebuildInserts(ch);
@@ -434,7 +473,21 @@ function studioApplyCapture() {
 // The app channel Monitor attached while its track was unarmed, so turning
 // Monitor off or moving it can detach that graph again.
 var studioMonitorAppChannel = null;
-function studioApplyMonitor(from_user) {
+// The device Monitor opened in the browser when the engine was not the monitor.
+var studioMonitorDeviceChannel = null;
+// A device Monitor starts the engine's Listen. If that cannot start (the engine
+// is not running on this machine), the browser capture is the monitor instead,
+// so a guitar is never silent just because the engine is absent.
+var studioMonitorEngineFailed = false;
+function studioMonitorEngineFallback() {
+	if (studioMonitorEngineFailed) { return; }
+	studioMonitorEngineFailed = true;
+	if (typeof studioListenShowError === 'function' && typeof studioListenText === 'function') {
+		studioListenShowError(studioListenText('the engine is not running; monitoring through the browser input'));
+	}
+	studioApplyMonitor(false, true);
+}
+function studioApplyMonitor(from_user, force_tap_device) {
 	var active = (typeof studioMonitoredChannel === 'function') ? studioMonitoredChannel() : null;
 	var backend = (typeof studioAudioBackend === 'function') ? studioAudioBackend() : 'browser';
 	var nativeish = backend !== 'browser';
@@ -445,8 +498,11 @@ function studioApplyMonitor(from_user) {
 	var listen_channel = (device && typeof studioInputListenChannel === 'function')
 		? studioInputListenChannel(input) : 0;
 	// The engine's Listen names one of its two interface inputs; a device past
-	// them has no Listen, so its browser tap stays the only path.
-	var engine = !!(device && nativeish && listen_channel <= 1);
+	// them has no Listen, so its browser tap stays the only path. A device is
+	// only routed there while the engine says it is available and its last
+	// attempt did not fail; otherwise the browser tap is the monitor.
+	var engine = !!(device && nativeish && listen_channel <= 1 && !studioMonitorEngineFailed
+		&& (typeof studioEngineAvailable === 'undefined' || studioEngineAvailable !== false));
 	// An unarmed app track has no graph yet. Monitor builds one for the track it
 	// hears and removes it when it lets go; an armed track's input belongs to
 	// the arm button. Only an app is ever attached here: a device is the engine's
@@ -459,17 +515,33 @@ function studioApplyMonitor(from_user) {
 		&& typeof studioMonitorDetachApp === 'function') {
 		studioMonitorDetachApp(previous_app);
 	}
+	// A device heard through the browser needs its capture open. Only a person's
+	// press (or the engine's own refusal) opens one; a restored Monitor waits for
+	// a gesture rather than asking for the microphone on page load.
+	if (from_user || force_tap_device) {
+		var previous_device = studioMonitorDeviceChannel;
+		studioMonitorDeviceChannel = (!engine && device && active !== null
+			&& typeof studioMonitorAttachDevice === 'function'
+			&& studioMonitorAttachDevice(active)) ? String(active) : null;
+		if (previous_device !== null && previous_device !== studioMonitorDeviceChannel
+			&& typeof studioMonitorDetachDevice === 'function') {
+			studioMonitorDetachDevice(previous_device);
+		}
+	}
 	$.each(studioAudio.channels, function (ch, c) {
 		if (!c.monGain) { return; }
 		var on = active !== null && String(ch) === String(active);
 		// The tap is the monitor for an app input and for every browser-only
-		// path; only a device the engine listens to keeps it muted.
-		var tap = on && !!input && (app || !engine);
+		// path; a device the engine is actually listening to keeps it muted. A
+		// restored Monitor (not from the person) stays on the tap until the
+		// engine's Listen is running, so reloading a song is never silent.
+		var listening = engine && (studioListenActive || from_user);
+		var tap = on && !!input && (app || !listening);
 		c.monGain.gain.value = tap ? 1 : 0;
 	});
 	if (from_user && !studioEngineRecording && typeof studioListenStart === 'function') {
 		if (engine) {
-			if (!studioListenActive) { studioListenStart(false, listen_channel, active); }
+			if (!studioListenActive) { studioListenStart(false, listen_channel, active, true); }
 			else if (typeof studioListenChannel !== 'undefined' && studioListenChannel !== null
 				&& Number(studioListenChannel) !== listen_channel) {
 				// A different track (or a different input) is the monitor now: the
@@ -948,6 +1020,9 @@ function studioEngineStatus() {
 		success: function (data) {
 			data = studioEngineAnswer(data);
 			studioEngineInstalled = (data.installed === 1 || data.ok === true);
+			// The socket may be down while the binary is staged; Monitor reads this
+			// to choose the engine's Listen or the browser capture.
+			studioEngineAvailable = (data.available === 1);
 			if (typeof studioAudioBackendReset === 'function') { studioAudioBackendReset(); }
 			if (data.ok !== true) {
 				studioEnginePollStop();
@@ -955,6 +1030,8 @@ function studioEngineStatus() {
 				jQuery('#studio_engine_strips').empty();
 				jQuery('#studio_engine_monitor').text('');
 				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
+				// A dead socket means Monitor must return to the browser tap.
+				if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(); }
 				return;
 			}
 			if (typeof data.device_channels === 'number' && data.device_channels >= 1) {

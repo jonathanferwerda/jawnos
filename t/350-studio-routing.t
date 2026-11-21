@@ -122,7 +122,7 @@ like($render, qr/var list = \(chain === 'out'\) \? c\.outInserts : c\.inserts;/,
 like($render, qr/studioRackRow\(ch, ins, chain\)/, 'each row carries its chain');
 like($rack, qr/row\.attr\('channel', ch\)\.attr\('insert', ins\.name\)\.attr\('chain', chain \|\| 'in'\);/,
 	'the row’s chain travels with it');
-like($render, qr/studioRackDragChain = String\(ui\.item\.attr\('chain'\) \|\| studioChannelChain\(from\)\);/,
+like($render, qr/studioRackDragChain = chain \|\| studioChannelChain\(from\);/,
 	'a drop reads the dragged row’s chain');
 like($rack, qr/var chain = \(studioRackDragChain === 'out'\) \? 'out' : 'in';/,
 	'moving a row between tracks keeps it in the same chain');
@@ -139,6 +139,9 @@ my $reorder = body($rack, 'studioRackReorder');
 like($reorder, qr/var chain = studioChannelChain\(ch\);/, 'a reorder operates on the selected chain');
 like($reorder, qr/if \(out\) \{ c\.outInserts = next; studioRebuildOutputs\(ch\); \}/,
 	'and rebuilds that chain’s graph');
+like($reorder, qr/studioRebuildInserts\(ch\); \}[\s\S]*?studioRackRender\(ch\);/, 'then redraws the rack from the rebuilt chain');
+like($render, qr/^\t\t\tupdate: function \(event, ui\) \{/m, 'the sortable settles a drop on update');
+like($render, qr/studioRackReorder\(to\);/, 'the drop reorders the chain it was drawn for');
 my $move = body($rack, 'studioRackMove');
 like($move, qr/var list = out \? c\.outInserts : c\.inserts;/, 'Up and Down move within the selected chain');
 like($move, qr/if \(out\) \{ studioRebuildOutputs\(ch\); \} else \{ studioRebuildInserts\(ch\); \}/,
@@ -164,7 +167,7 @@ like($master, qr/return record && record\['on'\]\n\t\t\t&& studioEffectKind\(rec
 like($master, qr/\.map\(function \(record\) \{\n\t\treturn record\['name'\];/,
 	'while every other enabled master effect still reaches the take');
 like($js, qr/\$\.each\(\[c\.insertByName, c\.outInsertByName\], function \(j, map\) \{/,
-	'the shelf’s pedals push into both chains');
+	'a pedal macro pushes into both chains');
 
 # --- the song keeps both chains and the selected one ------------------------
 like($knobs, qr/song\[ch\]\['fx'\] = c\.inserts\.map\(function\(ins\) \{/,

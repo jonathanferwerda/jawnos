@@ -590,31 +590,38 @@ $(document).on('click', '.channel, .studio_track_panel', function (e) {
 	else if ($(this).attr('channel')) { studioSelectedChannel = $(this).attr('channel'); }
 });
 
-$(document).on('click', '.channel_fx_pedal', function () {
+$(document).on('click', '.channel_fx_pedal, .channel_fx_text', function () {
+	var holder = $(this).closest('.channel_fx');
+	if (holder.attr('channel')) { studioSelectedChannel = holder.attr('channel'); }
 	var name = $(this).attr('hint');
 	if (name) { studioRevealPedal(name); }
 });
 
-// Bring an inserted pedal's controls into view: open the pedalboard, scroll it
-// to the pedal and flag it, so a channel badge leads you to its settings. A
-// palette effect can be the same kind under another name (reverb vs reverb2),
-// so a miss falls back to the shelf pedal of that kind.
+// Bring an inserted pedal's row into view: open the pedalboard on the chain that
+// holds it, scroll the rack to it and flag it, so a channel badge leads you to
+// its controls. A palette effect can be the same kind under another name
+// (reverb vs reverb2), so a miss falls back to the row of that kind.
 function studioRevealPedal(name) {
-	var pedal = $('#pedal_' + name);
-	if (!pedal.length) {
-		$('#pedalboard .pedal').each(function () {
-			var id = String($(this).attr('id') || '').replace(/^pedal_/, '');
-			if (studioEffectKind(id) === studioEffectKind(name)) { pedal = $(this); return false; }
-		});
+	var ch = studioPaletteChannel();
+	var c = studioAudio.channels[ch];
+	if (c) {
+		var chain = c.insertByName[name] ? 'in' : (c.outInsertByName[name] ? 'out' : studioChannelChain(ch));
+		studioSetChannelChain(ch, chain);
 	}
-	if (!pedal.length) { return; }
-	var scroller = $('#studio_pedalboard_pedals');
 	studioPedalboardOpen(true);
-	var left = pedal.position().left + scroller.scrollLeft() - 40;
-	scroller.stop().animate({ scrollLeft: Math.max(0, left) }, 200);
-	pedal.addClass('pedal_revealed');
+	var row = $('#studio_pedalboard_rack .studio_rack_row[insert="' + name + '"]');
+	if (!row.length) {
+		row = $('#studio_pedalboard_rack .studio_rack_row').filter(function () {
+			return studioEffectKind($(this).attr('insert')) === studioEffectKind(name);
+		}).first();
+	}
+	if (!row.length) { return; }
+	var rack = $('#studio_pedalboard_rack');
+	var top = row.position().top + rack.scrollTop() - 8;
+	rack.stop().animate({ scrollTop: Math.max(0, top) }, 200);
+	row.addClass('pedal_revealed');
 	clearTimeout(studioRevealPedal.timer);
-	studioRevealPedal.timer = setTimeout(function () { pedal.removeClass('pedal_revealed'); }, 1600);
+	studioRevealPedal.timer = setTimeout(function () { row.removeClass('pedal_revealed'); }, 1600);
 }
 
 $(document).on('click', '#studio_new', function() {

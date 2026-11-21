@@ -603,6 +603,9 @@ function studioMonitoredChannel() {
 
 function studioSetMonitor(ch, on, from_user) {
 	ch = String(ch);
+	// Pressing Monitor tries the engine again after an earlier refusal, so the
+	// browser fallback is only for this attempt, not the rest of the session.
+	studioMonitorEngineFailed = false;
 	if (!mixer.monitor) { mixer.monitor = {}; }
 	if (on) {
 		$.each(mixer.monitor, function (other) { mixer.monitor[other] = 0; });
@@ -748,6 +751,9 @@ window.jawnosMediaSources.studioChannels = function () {
 // not quietly replaced by the browser.
 var studioAudioBackendMemo;
 var studioEngineInstalled = false;
+// Whether the engine's socket is live right now. The browser monitor reads it: a
+// device with no engine falls back to the browser capture rather than silence.
+var studioEngineAvailable = false;
 
 function studioAudioBackend() {
 	if (studioAudioBackendMemo !== undefined) { return studioAudioBackendMemo; }
@@ -987,8 +993,10 @@ function studioListenInserts(ch) {
 }
 
 // `channel` and `ch` let Monitor name the input and rack the track's own; the
-// Configure Listen control leaves both unset and uses its own pickers.
-function studioListenStart(quiet, channel, ch) {
+// Configure Listen control leaves both unset and uses its own pickers. `fallback`
+// is Monitor's: when the engine cannot start, the browser capture takes over
+// instead of a silent monitor.
+function studioListenStart(quiet, channel, ch, fallback) {
 	studioListenShowError('');
 	if (studioNativeAudio()) { studioNativeStart(quiet); return; }
 	var listen_channel = (channel === undefined || channel === null)
@@ -1007,6 +1015,7 @@ function studioListenStart(quiet, channel, ch) {
 			data = studioEngineAnswer(data);
 			if (data.ok !== true) {
 				studioListenSetActive(false);
+				if (fallback && typeof studioMonitorEngineFallback === 'function') { studioMonitorEngineFallback(); }
 				if (!(quiet && studioListenNotRunning(data.error))) {
 					studioListenShowError(data.error || studioListenText('the audio engine did not answer'));
 				}
@@ -1019,7 +1028,10 @@ function studioListenStart(quiet, channel, ch) {
 			studioListenRender(data);
 			studioListenPollStart();
 		},
-		error: function (xhr) { studioListenFailed(xhr, quiet); }
+		error: function (xhr) {
+			studioListenFailed(xhr, quiet);
+			if (fallback && typeof studioMonitorEngineFallback === 'function') { studioMonitorEngineFallback(); }
+		}
 	});
 }
 
@@ -1033,7 +1045,7 @@ function studioListenStop(next_channel, ch) {
 		studioListenSetActive(false);
 		if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
 		if (bridge) { try { bridge.stop(); } catch (e) {} }
-		if (next_channel !== undefined) { studioListenStart(false, next_channel, ch); }
+		if (next_channel !== undefined) { studioListenStart(false, next_channel, ch, true); }
 		return;
 	}
 	$.ajax({
@@ -1051,7 +1063,7 @@ function studioListenStop(next_channel, ch) {
 				return;
 			}
 			studioListenRender(data);
-			if (next_channel !== undefined) { studioListenStart(false, next_channel, ch); }
+			if (next_channel !== undefined) { studioListenStart(false, next_channel, ch, true); }
 		},
 		error: studioListenFailed
 	});

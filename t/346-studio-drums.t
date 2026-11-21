@@ -358,18 +358,18 @@ like($code, qr/mastering rack/, 'the panel names the master path');
 # --- the panel system and the arranged grid --------------------------------
 like($layout, qr/drums: '#studio_drums'/, 'the drums are a registered panel');
 like($layout, qr/drums: 'hide_drums'/, 'the drums have their own hide setting');
-like($layout, qr/var studioPanelNames = \['synth', 'drums', 'tracks', 'mixer', 'transport'\]/,
+like($layout, qr/var studioPanelNames = \['drums', 'tracks', 'mixer', 'transport'\]/,
 	'the drums are in the manual packing order');
-like($layout, qr/studioPanelSpan = \{ synth: 1, drums: 1,/, 'the drums have a span');
-like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[\s\S]*?"transport transport transport"[\s\S]*?"tracks synth drums"[\s\S]*?"mixer mixer mixer"/,
-	'arranged mode gives the drums a column beside the synth');
+like($layout, qr/studioPanelSpan = \{ drums: 1,/, 'the drums have a span');
+like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[\s\S]*?"transport transport"[\s\S]*?"tracks drums"[\s\S]*?"mixer mixer"/,
+	'arranged mode gives the drums a column beside the timeline');
 like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open > #studio_drums\s*\{[^}]*grid-area:\s*drums !important/s,
 	'the drums own that area');
-like($style, qr/#studio_grid\.studio_arranged_compact\.studio_drums_open\s*\{[\s\S]*?"transport"[\s\S]*?"tracks"[\s\S]*?"mixer"[\s\S]*?"synth"[\s\S]*?"drums"/s,
+like($style, qr/#studio_grid\.studio_arranged_compact\.studio_drums_open\s*\{[\s\S]*?"transport"[\s\S]*?"tracks"[\s\S]*?"mixer"[\s\S]*?"drums"/s,
 	'a narrow window stacks the drums last');
 like($layout, qr/studioDrumsGridState/, 'hiding or floating the panel hands its column back');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?"tracks tracks synth"/s,
-	'the drum-free three-column arrangement is unchanged');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?"tracks tracks"/s,
+	'the drum-free two-column arrangement is unchanged');
 like($style, qr/#studio_drums\s*\{[^}]*display:\s*flex/s, 'the panel is a flex column');
 like($style, qr/\.studio_drums_scroll\s*\{[^}]*overflow:\s*auto/s, 'the chart scrolls inside the panel');
 like($style, qr/\.studio_drums_head,[\s\S]*?repeat\(16, minmax\(12px, 1fr\)\)/s,

@@ -78,38 +78,23 @@ function studioInit(data) {
 			studioRackRenderAll();
 			studioMasterApply();
 			studioApplyCapture();
-			// the always-visible synth panel builds its own grid/presets/keys
-			$(document).trigger('jawnos_synth_panel');
+			// the strips paint their mute and solo state now that the window is up
+			if (typeof studioStripMuteSoloRender === 'function') { studioStripMuteSoloRender(); }
 			studioApplyLayoutSettings();
 			studioApplyMonitor();
+			// Ask the engine on the first frame: Monitor needs to know whether the
+			// engine is there before the person presses it, not only after Configure
+			// has been opened once.
+			if (typeof studioEngineStatus === 'function') { studioEngineStatus(); }
 			// the engine take's per-track Input/Source pickers come from the markup
 			// the window just inserted; two channels until a status reply says more
 			studioEngineInputRows();
 			studioUpdateLatencyInfo();
 
-			// Jtune is a chromatic tuner, a listen-only pedal in the rack: the tuner
-			// part owns its lamp, its pink switch and its display, and it drags like
-			// any other pedal now.
-			$('#pedal_Jtune').attr({ 'data-tuner': 'yes', hint: studioLayoutText('Start or stop the tuner') });
-			$('#pedal_Jtune .pedal_background').attr('hint', studioLayoutText('Jtune - press to tune'));
 			// a new window or song stops whatever the previous one was listening to
 			if (typeof studioTunerStop === 'function') { studioTunerStop(); }
-			// repaint the lamp now that the tile is marked a tuner
+			// repaint the lamps now that the window is on the page
 			if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
-
-			// Pedals are dragged from the pedalboard onto a channel strip. The whole
-			// tile is the handle, so a palette pedal (which has no artwork image)
-			// drags too, but its knobs, lamp, dropdown and footswitch are cancelled:
-			// they stay clickable, and a click that never travels 4px is a click,
-			// not a drag.
-			$('#pedalboard .pedal').draggable({
-				helper: 'clone', revert: 'invalid', scroll: false, zIndex: 90000, appendTo: 'body',
-				distance: 4,
-				start: function () { if (typeof studioTunerDragAt !== 'undefined') { studioTunerDragAt = Date.now(); } },
-				stop: function () { if (typeof studioTunerDragAt !== 'undefined') { studioTunerDragAt = Date.now(); } },
-				cancel: '.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, select, option, input, button'
-			});
-			studioBindChannelDrop($('.channel, .studio_track_panel'));
 
 			studioRetriever();
 			// the drum panel reads its state from the song (restored above) and

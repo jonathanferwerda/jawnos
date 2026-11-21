@@ -55,10 +55,8 @@ $(document).on('click', '.studio_strip_solo', function () {
 	studioSaver();
 });
 
-// studioInit fetches the window's markup after this part has loaded, and fires
-// this event once it is on the page; painting there means a freshly opened
-// window shows mixer state, not the markup's defaults.
-$(document).on('jawnos_synth_panel', function () { studioStripMuteSoloRender(); });
+// studioInit calls this once the window's markup is on the page, so a freshly
+// opened window shows mixer state, not the markup's defaults.
 
 // Loading a song restores mixer[ch].mute/solo outside this part, which then
 // asks for one repaint with this event instead of reaching into the strip.

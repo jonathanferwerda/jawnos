@@ -40,7 +40,7 @@ like($template, qr/my %device_number;/, 'the template numbers devices by kind');
 like($template, qr/my \$label = defined/, 'and keeps a label only when it has text');
 like($template, qr/&subs::ui\(\$word\) \. ' ' \. \$device_number/,
 	'blank devices get a translatable kind name');
-like($template, qr/<td style="font-size:20px;vertical-align:top;"><%= \$label %><\/td>/,
+like($template, qr/<td style="font-size:20px;vertical-align:top;"><%= \$label %>/,
 	'the row prints the resolved label');
 
 # --- the screen-share plug is a display capture, not a camera ----------------
@@ -81,7 +81,8 @@ like($inputs, qr/data\.screen_name = source\.name;/,
 	'a changed row stores the label with the plug');
 like($inputs, qr/if \(screen\.name\) \{ data\.screen_name = screen\.name; \}/,
 	'and a chosen row sends it when the plug opens');
-like($inputs, qr/\.index\(sis\)/, 'a real audio input is numbered by its place in the list');
+like($inputs, qr/input = Number\(sis\.find\('\.studio_input_channel'\)\.val\(\)\) \|\| 0;/,
+	'a real audio input takes the interface input its row names');
 like($inputs, qr/data\.input = input;/, 'and that number is stored with the plug');
 like($inputs, qr/if \(direction == 'input' && type == 'usermedia' && av == 'a'\)/,
 	'only an audio input gets the engine number');

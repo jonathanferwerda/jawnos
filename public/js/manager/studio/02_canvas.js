@@ -610,12 +610,14 @@ function studioUpdateFxBadges() {
 		var holder = $('.channel_fx[channel="' + ch + '"]');
 		holder.empty();
 		c.inserts.forEach(function (ins) {
-			// The shelf's artwork is keyed by its pedal name, which may be the old
-			// alias of the contract name (reverb2 for reverb), so match the kind.
+			// The pedal artwork is handed over once by the template, keyed by the
+			// pedal's own name; match the effect kind so an alias (reverb2 for
+			// reverb) finds the same picture.
 			var kind = studioEffectKind(ins.name);
-			var src = $('.pedal_background').filter(function () {
-				return studioEffectKind($(this).attr('hint')) === kind;
-			}).attr('src') || '';
+			var src = '';
+			$.each(window.jawnos_studio_pedal_art || {}, function (pedal, url) {
+				if (studioEffectKind(pedal) === kind) { src = url; return false; }
+			});
 			if (src) {
 				$('<img class="channel_fx_pedal">').attr('src', src).attr('hint', ins.name)
 					.toggleClass('studio_fx_bypassed', !!ins.bypassed).appendTo(holder);
@@ -624,6 +626,7 @@ function studioUpdateFxBadges() {
 			// An effect with no artwork is a text tile, so the badge still names it.
 			var spec = studioEffectSpec(ins.name);
 			$('<span class="channel_fx_text"></span>')
+				.attr('hint', ins.name)
 				.text(spec && spec['label'] ? studioLayoutText(spec['label']) : ins.name)
 				.toggleClass('studio_fx_bypassed', !!ins.bypassed)
 				.appendTo(holder);

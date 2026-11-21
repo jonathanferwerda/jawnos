@@ -205,7 +205,10 @@ function studioInputIsDevice(plug) {
 function studioInputListenChannel(plug) {
 	var n = plug ? Number(plug['input']) : 0;
 	if (!isFinite(n) || n < 0) { return 0; }
-	return Math.floor(n);
+	n = Math.floor(n);
+	// The interface has two inputs; an older saved plug stored a device index,
+	// so anything past the second input is Input 2 rather than a third channel.
+	return n > 1 ? 1 : n;
 }
 
 async function channelSelect(channel,direction) {
@@ -293,6 +296,28 @@ $(document).on('change', '.studio_screen_source', function() {
 	studioSaver();
 });
 
+// A device row carries its own Input 1/Input 2 picker. Clicking the picker must
+// not choose the row (that would save the channel before it is changed), and
+// changing it on an already chosen device updates the channel the engine uses.
+$(document).on('click', '.studio_input_channel', function(event) {
+	event.stopPropagation();
+});
+
+$(document).on('change', '.studio_input_channel', function() {
+	var select = $(this);
+	var channel = select.closest('.studio_plug_selection').attr('channel');
+	var info = $('.studio_channel_information[direction="input"][channel="' + channel + '"]');
+	if (!isJson(info.text())) { return; }
+	var data = JSON.parse(info.text());
+	if (!(data.type == 'usermedia' && data.av == 'a')) { return; }
+	var input = Number(select.val()) || 0;
+	if (input < 0) { input = 0; }
+	if (input > 1) { input = 1; }
+	data.input = input;
+	info.text(JSON.stringify(data));
+	studioSaver();
+});
+
 $(document).on('click', '.studio_plug_selection', function() {
 	var sis = $(this);
 	var channel = sis.attr('channel');
@@ -304,14 +329,15 @@ $(document).on('click', '.studio_plug_selection', function() {
 	var screen = (type == 'screen_share')
 		? studioScreenSourceValue(sis.closest('#studio_plug_select')) : { id: '', name: '' };
 	$('.studio_plug_selection[direction="' + direction + '"][channel="' + channel + '"]').removeClass('active_background');
-	// A real audio input's place in this list is the interface input the
-	// engine's Listen names: the first audio device is Input 1 (channel 0), the
-	// second Input 2 (channel 1). Keep that number with the plug so Monitor can
-	// start the engine on the same input without the list being open.
+	// The row's own picker names which interface input the channel takes: the
+	// UM2's Input 1 is channel 0 and Input 2 is channel 1. Keep that number with
+	// the plug so Monitor can start the engine on the same input without the
+	// list being open.
 	var input = 0;
 	if (direction == 'input' && type == 'usermedia' && av == 'a') {
-		input = sis.closest('tbody').find('.studio_plug_selection[direction="input"][type="usermedia"][av="a"]').index(sis);
-		if (!(input >= 0)) { input = 0; }
+		input = Number(sis.find('.studio_input_channel').val()) || 0;
+		if (input < 0) { input = 0; }
+		if (input > 1) { input = 1; }
 	}
 	var data = {
 		channel: channel,
@@ -479,6 +505,16 @@ async function studioInputStreamGrabber(channel,state) {
 	if (sample_rate > 0) { audio.sampleRate = sample_rate; }
 	var channels = studioSettingNumber('audio_channels', 0);
 	if (channels > 0) { audio.channelCount = channels; }
+	// A real input is opened by the device the picker names, camera or
+	// microphone. Both interface inputs are captured for an audio device so the
+	// channel can take Input 1 or Input 2. A screen share keeps getDisplayMedia's
+	// own stream and never a device id.
+	if (plug['type'] == 'usermedia') {
+		if (plug['id']) { audio.deviceId = { exact: plug['id'] }; }
+	}
+	if (plug['type'] == 'usermedia' && plug['av'] == 'a') {
+		audio.channelCount = Math.max(2, channels || 0);
+	}
 
 	var constraints = { audio: audio };
 	if (video) {
@@ -558,6 +594,30 @@ function studioAttachCapturedStream(ch, stream) {
 		if (mixer[ch].media.video) { $(monitor).show(); }
 	}
 	return combined;
+}
+
+// Monitor on a device while the engine is not the monitor opens the browser's
+// capture for that input, so the browser tap has a graph to play. An armed
+// track's capture belongs to the arm button, so Monitor leaves it alone.
+function studioMonitorAttachDevice(ch) {
+	ch = String(ch);
+	var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+	if (!plug || typeof studioInputIsDevice !== 'function' || !studioInputIsDevice(plug)) { return false; }
+	var state = $('.studio_track_arm[channel="' + ch + '"]').attr('state');
+	if (state === 'rec' || state === 'loop') { return true; }
+	var m = mixer[ch] && mixer[ch].media;
+	if (m && m.active) { return true; }
+	studioInputStreamGrabber(ch, 'rec');
+	return true;
+}
+
+function studioMonitorDetachDevice(ch) {
+	ch = String(ch);
+	var state = $('.studio_track_arm[channel="' + ch + '"]').attr('state');
+	if (state === 'rec' || state === 'loop') { return; }
+	var m = mixer[ch] && mixer[ch].media;
+	if (!m || !m.active) { return; }
+	studioInputStreamGrabber(ch, 'off');
 }
 
 // Monitor on an app input builds that app's channel graph even when the track

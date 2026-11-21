@@ -29,8 +29,8 @@
 	}
 	/* The pedalboard is a bottom sheet over the console, not a grid row: opening
 	   it never shrinks the arranged timeline and it cannot be pushed off the
-	   window. Its own bar holds Close, the selected track's chain sits under the
-	   bar, and the tiles scroll inside it. */
+	   window. Its own bar holds Close and the Add list, and the selected track's
+	   chain sits under the bar. */
 	#pedalboard {
 		display: flex;
 		flex-direction: column;
@@ -39,7 +39,7 @@
 		right: 0;
 		bottom: 0;
 		z-index: 70002;
-		/* the bar (20px), the chain's 110px cap and the 214px tiles */
+		/* the bar plus the chain's bounded scroll box */
 		max-height: 344px;
 		overflow: hidden;
 		background-color: var(--panel-2);
@@ -47,8 +47,8 @@
 		box-shadow: var(--shadow-2);
 		box-sizing: border-box;
 	}
-	/* The chain rides in the sheet with the shelf: it is bounded and scrolls in
-	   place, so a long chain never grows the sheet past the window's foot. */
+	/* The chain is bounded and scrolls in place, so a long chain never grows the
+	   sheet past the window's foot. */
 	#studio_pedalboard_rack {
 		flex: 0 0 auto;
 		min-height: 0;
@@ -65,9 +65,11 @@
 	.studio_pedalboard_bar {
 		display: flex;
 		align-items: center;
-		justify-content: flex-end;
+		justify-content: space-between;
 		gap: 8px;
-		height: 20px;
+		height: auto;
+		min-height: 20px;
+		flex-wrap: wrap;
 		padding: 0 6px;
 		box-sizing: border-box;
 		flex: 0 0 auto;
@@ -80,24 +82,12 @@
 		line-height: 16px;
 		padding: 0 4px;
 	}
-	#studio_pedalboard_pedals {
-		position: static;
-		display: flex;
-		align-items: flex-start;
-		gap: 12px;
-		min-height: 0;
-		max-height: 214px;
-		/* room for a tile's hover scale above it, so the lift never clips */
-		padding: 10px 10px 8px;
-		box-sizing: border-box;
-		/* sideways, and down only if the window really cannot give the row its
-		   190px; a thin scrollbar is part of the 214px budget */
-		overflow: auto;
-		scrollbar-width: thin;
-	}
-	#studio_pedalboard_pedals::-webkit-scrollbar {
-		width: 6px;
-		height: 6px;
+	#studio_palette_add {
+		font-size: 12px;
+		height: 18px;
+		min-height: 18px;
+		line-height: 16px;
+		padding: 0 6px;
 	}
 	.pedal_background {
 		display: block;
@@ -357,6 +347,20 @@
 	.studio_tuner_tuned .studio_tuner_letter,
 	.studio_tuner_tuned .studio_tuner_cents { color: #1f7a3a; }
 	.studio_tuner_off .studio_tuner_letter { font-size: 13px; letter-spacing: .08em; }
+	/* In a chain row the tuner is part of the row, not an overlay on a pedal tile. */
+	.studio_rack_row .studio_tuner {
+		position: static;
+		left: auto; right: auto; top: auto;
+		flex: 1 1 100%;
+		height: auto;
+		min-height: 36px;
+		margin-top: 2px;
+		background: var(--panel-2);
+		color: var(--ink);
+		border: 1px solid var(--line);
+		text-shadow: none;
+	}
+	.studio_rack_row .studio_tuner .studio_tuner_letter { font-size: 16px; line-height: 18px; }
 	.studio_rack_led {
 		position: static;
 		flex: 0 0 14px;
@@ -686,8 +690,7 @@
 	   the settings. Removing the class restores whatever the hide toggles set. */
 	#studio.studio_config_open #studio_viewer { display: none; }
 	#studio.studio_config_open #studio_grid,
-	#studio.studio_config_open > .studio_panel,
-	#studio.studio_config_open > .studio_synth_panel {
+	#studio.studio_config_open > .studio_panel {
 		display: none;
 	}
 	/* Manual packing is a column of flex rows. A row holds the panels that share
@@ -733,13 +736,8 @@
 		position: static;
 	}
 	/* Content widths in manual packing: the instruments start at a sensible
-	   width (the drums fit their sixteen steps, the synth its preset row) and
-	   the tracks panel grows into what is left. A saved width wins. */
-	.studio_grid_row > #studio_synth {
-		flex: 0 1 auto;
-		width: 300px;
-		min-width: 220px;
-	}
+	   width (the drums fit their sixteen steps) and the tracks panel grows into
+	   what is left. A saved width wins. */
 	.studio_grid_row > #studio_drums {
 		flex: 0 1 auto;
 		width: 360px;
@@ -762,17 +760,17 @@
 	}
 	/* ---- arranged mode ------------------------------------------------------
 	   Arrange gives the grid its explicit DAW areas: the transport keeps only
-	   its own height, the timeline takes the flexible middle with the synth
-	   beside it, and the console gets a compact band at the foot. The placement
-	   is `!important` so the manual order/span inline styles (kept for when
-	   arranged mode ends) cannot override the named areas. 07_layout.js removes
-	   .studio_arranged the moment a panel is moved, floated, docked, widened or
-	   re-ordered, and the manual packing takes over again. */
+	   its own height, the timeline takes the flexible middle, and the console
+	   gets a compact band at the foot. The placement is `!important` so the
+	   manual order/span inline styles (kept for when arranged mode ends) cannot
+	   override the named areas. 07_layout.js removes .studio_arranged the moment
+	   a panel is moved, floated, docked, widened or re-ordered, and the manual
+	   packing takes over again. */
 	#studio_grid.studio_arranged {
 		display: grid;
-		/* the tracks column takes what is left; the synth starts at its preset
-		   row's width and stops at 300px */
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(220px, 300px);
+		/* two equal columns: the timeline takes the whole middle band, and the
+		   drums (when open) take the right one */
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		grid-auto-flow: dense;
 		grid-auto-rows: minmax(0, 1fr);
 		/* the console row is auto: its own 132px cap sizes the band, and that is
@@ -783,9 +781,9 @@
 		   the strip's full height and leaving the timeline at zero */
 		grid-template-rows: auto minmax(90px, 1fr) minmax(120px, 45%);
 		grid-template-areas:
-			"transport transport transport"
-			"tracks tracks synth"
-			"mixer mixer mixer";
+			"transport transport"
+			"tracks tracks"
+			"mixer mixer";
 		grid-auto-flow: row;
 		/* a very short window scrolls the whole arranged grid rather than
 		   clipping an area; each panel still scrolls inside itself */
@@ -805,33 +803,28 @@
 	#studio_grid.studio_arranged > #studio_tracks_panel {
 		grid-area: tracks !important;
 	}
-	#studio_grid.studio_arranged > #studio_synth {
-		grid-area: synth !important;
-	}
-	/* The drum machine is a fifth panel. Arrange gives it a column of its own
-	   only while it is docked and visible; hide or float it and the three-column
-	   grid above returns, so the timeline and the synth reclaim the width. The
-	   timeline keeps its full height either way. */
+	/* The drum machine is a fourth panel. Arrange gives it a column of its own
+	   only while it is docked and visible; hide or float it and the two-column
+	   grid above returns, so the timeline reclaims the width. The timeline keeps
+	   its full height either way. */
 	#studio_grid.studio_arranged.studio_drums_open {
-		/* content-sized instrument columns beside a tracks column that takes the
-		   rest: the drums keep their sixteen steps readable, the synth its
-		   preset row, and the timeline gets everything else */
-		grid-template-columns: minmax(0, 1fr) clamp(260px, 28%, 320px) clamp(320px, 36%, 360px);
+		/* the drums keep their sixteen steps readable beside a tracks column that
+		   takes the rest */
+		grid-template-columns: minmax(0, 1fr) clamp(320px, 36%, 360px);
 		grid-template-areas:
-			"transport transport transport"
-			"tracks synth drums"
-			"mixer mixer mixer";
+			"transport transport"
+			"tracks drums"
+			"mixer mixer";
 	}
 	#studio_grid.studio_arranged.studio_drums_open > #studio_drums {
 		grid-area: drums !important;
 	}
 	#studio_grid.studio_arranged_compact.studio_drums_open {
-		grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+		grid-template-rows: auto minmax(0, 1fr) auto auto;
 		grid-template-areas:
 			"transport"
 			"tracks"
 			"mixer"
-			"synth"
 			"drums";
 	}
 	#studio_grid.studio_arranged_compact.studio_drums_open > #studio_drums {
@@ -850,16 +843,15 @@
 		max-height: 100%;
 	}
 	/* A phone-width window stacks the same areas: transport, dominant timeline,
-	   a compact console, then the synth. The fixed auto-row heights are small so
-	   a short window still leaves the timeline room; every panel scrolls. */
+	   then a compact console. The fixed auto-row heights are small so a short
+	   window still leaves the timeline room; every panel scrolls. */
 	#studio_grid.studio_arranged_compact {
 		grid-template-columns: minmax(0, 1fr);
-		grid-template-rows: auto minmax(0, 1fr) auto auto;
+		grid-template-rows: auto minmax(0, 1fr) auto;
 		grid-template-areas:
 			"transport"
 			"tracks"
-			"mixer"
-			"synth";
+			"mixer";
 		grid-auto-flow: row;
 		overflow-y: auto;
 	}
@@ -873,10 +865,6 @@
 	}
 	#studio_grid.studio_arranged_compact > #studio_mixer {
 		grid-area: mixer !important;
-		height: 104px;
-	}
-	#studio_grid.studio_arranged_compact > #studio_synth {
-		grid-area: synth !important;
 		height: 104px;
 	}
 	#studio_mixer {
@@ -939,11 +927,6 @@
 	}
 	#studio_time_display {
 		font-size: 18px;
-	}
-	#studio_synth {
-		min-width: 0;
-		min-height: 0;
-		overflow: auto;
 	}
 	/* Studio is a desk-wide app. The dock and the taskbar sit at 39997/39998;
 	   raising the Studio window above them keeps the transport clickable at
