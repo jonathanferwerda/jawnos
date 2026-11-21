@@ -326,6 +326,17 @@ ok(!$core_set{'/js/manager/timelineprinter.js'}, 'the timeline printer is not in
 ok($core_set{'/js/manager/printer_common.js'}, 'the shared header and hit areas stay core');
 ok($core_set{'/js/manager/backgroundprinter.js'}, 'the desk wallpaper printer stays core');
 
+# The press that opens a window from a canvas control has to be in the core
+# bundle: the desk draws its rail without ever requesting the layout chunk, so a
+# press left in a printer is dead there and the rail's buttons do nothing.
+my $common = read_file("$root/public/js/manager/printer_common.js");
+like($common, qr/\$\(document\)\.on\('click', '\.background'/,
+	'the canvas press that opens a window is core');
+like($common, qr/appointmentGrabber\(o\[4\]\['name'\],timestamp\);/,
+	'and it reaches the window opener');
+unlike(read_file("$root/public/js/manager/leaderboardprinter.js"), qr/\$\(document\)\.on\('click', '\.background'/,
+	'no layout printer carries a press the desk cannot load');
+
 ok($bundle{'/js/universal.js'}, 'universal.js is in the core bundle');
 ok($bundle{'/js/manager/websocket.js'}, 'websocket.js is in the core bundle');
 ok($bundle{'/js/manager/jp.js'}, 'jp.js is in the core bundle');

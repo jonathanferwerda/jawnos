@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/keyboard.js public/js/manager/keyboard/01_side_dock.js public/js/manager/soft_keyboard.js public/js/manager/leaderboardprinter.js
+# tests-for: public/js/manager/keyboard.js public/js/manager/keyboard/01_side_dock.js public/js/manager/soft_keyboard.js public/js/manager/leaderboardprinter.js public/js/manager/printer_common.js
 # covers:    Opening the keyboard or calculator from the dock with no field
 #            removed the dock (body.soft_kb_open) but never raised the keys,
 #            which sat at their closed translateY(100%) until a refresh. And the
@@ -121,10 +121,12 @@ like($dock, qr/if \(typeof pseudonymDockPointOnDock == 'function' && pseudonymDo
 	'a tap on the strip still calls the row out');
 like($dock, qr/pseudonymHomeHider\(1\);/,
 	'a tap elsewhere tucks without waiting out the idle interval');
-my $leader = js_source('public/js/manager/leaderboardprinter.js');
-like($leader, qr/if \(app_clicked == 0 && device == 'mobile' && typeof pseudonymHomeTapper == 'function'\) \{[\s\S]*?pseudonymHomeTapper\(e\.clientX, e\.clientY\);/,
+my $common = js_source('public/js/manager/printer_common.js');
+like($common, qr/if \(app_clicked == 0 && device == 'mobile' && typeof pseudonymHomeTapper == 'function'\) \{[\s\S]*?pseudonymHomeTapper\(e\.clientX, e\.clientY\);/,
 	'the background tap handler hands the touch to the tapper');
-unlike($leader, qr/pseudonymHomeShower\(ph\.left \+ 3, ph\.top \+ 3\);/,
+unlike($common, qr/pseudonymHomeShower\(ph\.left \+ 3, ph\.top \+ 3\);/,
 	'the reveal is no longer hand-rolled in the background handler');
+unlike(js_source('public/js/manager/leaderboardprinter.js'), qr/pseudonymHomeTapper\(e\.clientX, e\.clientY\);/,
+	'the tap handler is in the core file, not the lazy printer');
 
 done_testing();

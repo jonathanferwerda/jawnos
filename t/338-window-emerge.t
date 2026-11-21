@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows/00_store.js public/js/manager/windows/02_fit.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/js/manager/manager/09_app_back.js public/js/universal/05_theme_ink_icon_swap.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows/00_store.js public/js/manager/windows/02_fit.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/printer_common.js public/js/manager/lazy.js public/js/manager/manager/09_app_back.js public/js/universal/05_theme_ink_icon_swap.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
 # covers:    a new window pours out of the control that opened it - the press
 #            records a viewport rectangle and richer app metadata, pointerdown
 #            draws the chrome preview at once, windowMaker hands the real
@@ -28,6 +28,7 @@ my $theme_js = read_file("$root/public/js/universal/05_theme_ink_icon_swap.js");
 my $fit    = read_file("$root/public/js/manager/windows/02_fit.js");
 my $index  = read_file("$root/public/js/manager/windows.js");
 my $board  = read_file("$root/public/js/manager/leaderboardprinter.js");
+my $common = read_file("$root/public/js/manager/printer_common.js");
 my $lazy   = read_file("$root/public/js/manager/lazy.js");
 my $css    = read_file("$root/public/css/manager.css");
 my $universal = read_file("$root/public/css/universal.css");
@@ -47,12 +48,17 @@ like($index, qr/if \(edge && !\(group && group\.length\)\)/,
 	'a drag carrying its pile does not draw the half preview');
 
 # --- the press sources -------------------------------------------------------
-like($board, qr/jawnosWindowOriginFromPoint[\s\S]{0,1600}appointmentGrabber\(o\[4\]\['name'\],timestamp\)/,
+# The press lives in printer_common.js, the core file the desk already loads: a
+# desk page never requests the layout chunk. A press left in a printer is dead
+# there, and the rail's buttons stop opening windows.
+like($common, qr/jawnosWindowOriginFromPoint[\s\S]{0,1600}appointmentGrabber\(o\[4\]\['name'\],timestamp\)/,
 	'the canvas pill records its rectangle and preview before the opener');
-like($board, qr/jawnosWindowOriginFromPoint[\s\S]{0,1600}jawnosWindowEmergeGhostStart\(origin\)/,
+like($common, qr/jawnosWindowOriginFromPoint[\s\S]{0,1600}jawnosWindowEmergeGhostStart\(origin\)/,
 	'the canvas starts the preview from the hit path');
-like($board, qr/jawnosWindowEmergeOpen\(origin_app\)/,
+like($common, qr/jawnosWindowEmergeOpen\(origin_app\)/,
 	'but not when the app already has a window on the desk');
+unlike($board, qr/\$\(document\)\.on\('click', '\.background'/,
+	'no layout printer carries the press the desk cannot load');
 like($lazy, qr/jawnosWindowOriginFromElement\(target\[0\], app\); \}\s*target\.trigger\('click'\)/,
 	'the lazy replay stamps the origin again before the click');
 like($emerge, qr/jawnosWindowEmergeRaise\(jawnosWindowEmergeControl\(el, \{ reopen: true \}\)\)/,

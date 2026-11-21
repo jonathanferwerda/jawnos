@@ -314,7 +314,8 @@ our %manager_toggle_apps = (
 # canvas layout, and the first calculator() draw waits for it (see lazy.js).
 # printer_common.js and backgroundprinter.js stay core on purpose - the desk's
 # wallpaper fallback prints the header and hangs the clothesline, and the rail's
-# hit test reads appPosition, all without ever loading this chunk.
+# hit test and window-opening press live there too, all without ever loading
+# this chunk.
 our @manager_layout_files = qw(
 	/js/manager/clockfaceprinter.js
 	/js/manager/leaderboardprinter.js

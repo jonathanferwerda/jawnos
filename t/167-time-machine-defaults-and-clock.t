@@ -98,9 +98,9 @@ like($viewer, qr/\$appts->\{'__specs'\}->\{'time_machine_stationary'\} = \$time_
 	'and the flag travels with the payload');
 
 # --- the dock's strip, not the background, calls it back ---------------------
-like($board, qr/typeof pseudonymHomeTapper == 'function'/,
+like($header, qr/typeof pseudonymHomeTapper == 'function'/,
 	'a background tap asks whether it landed on the dock');
-like($board, qr/pseudonymHomeTapper\(e\.clientX, e\.clientY\)/,
+like($header, qr/pseudonymHomeTapper\(e\.clientX, e\.clientY\)/,
 	'and only the strip the tucked dock keeps on screen brings it back');
 
 # --- the scripts still parse ------------------------------------------------

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Controller/manager_configure.pm perl/gb/01_state_and_defaults.pl perl/gb/02_labels_and_collectives.pl perl/subroutines.pl perl/help/topics_features.pl perl/help/topics_configure.pl templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep public/css/chat.css public/css/keyboard.css public/css/manager.css public/css/music.css public/css/soft_keyboard.css public/css/store.css public/css/universal.css public/css/jquery-ui.css public/js/universal/05_theme_ink_icon_swap.js public/js/manager/taskbar/01_inputs.js public/js/manager/leaderboardprinter.js public/js/manager/folders/02_archive_and_keyboard.js public/js/manager/manager/06_appointment_distance.js public/js/music.js public/cursors/build.pl
+# tests-for: lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Controller/manager_configure.pm perl/gb/01_state_and_defaults.pl perl/gb/02_labels_and_collectives.pl perl/subroutines.pl perl/help/topics_features.pl perl/help/topics_configure.pl templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep public/css/chat.css public/css/keyboard.css public/css/manager.css public/css/music.css public/css/soft_keyboard.css public/css/store.css public/css/universal.css public/css/jquery-ui.css public/js/universal/05_theme_ink_icon_swap.js public/js/manager/taskbar/01_inputs.js public/js/manager/leaderboardprinter.js public/js/manager/printer_common.js public/js/manager/folders/02_archive_and_keyboard.js public/js/manager/manager/06_appointment_distance.js public/js/music.js public/cursors/build.pl
 # covers:    Cursor sets are part of a theme and can be picked from Misc. Every set draws every role, a theme names one, a push moves the body's marker, and the sheets ask for the set through custom properties instead of hard-coded keywords.
 
 use strict;
@@ -155,10 +155,13 @@ is_deeply(\@offenders, [], 'no template or manager script keeps a literal cursor
 # `auto` on every .background canvas between items, which is the system cursor
 # and outranks the body rule.
 my $leaderboard = read_file("$root/public/js/manager/leaderboardprinter.js");
-like($leaderboard, qr/var\(--jawnos-cursor-default, default\)/,
+my $printer_common = read_file("$root/public/js/manager/printer_common.js");
+like($printer_common, qr/var\(--jawnos-cursor-default, default\)/,
 	'a printer canvas falls back to the set\'s own arrow');
-unlike($leaderboard, qr/\$\(['"]\.background['"]\)\.css\(\{['"]cursor['"]: ['"]auto['"]\}\)/,
+unlike($printer_common, qr/\$\(['"]\.background['"]\)\.css\(\{['"]cursor['"]: ['"]auto['"]\}\)/,
 	'and never parks the system arrow on a canvas');
+unlike($leaderboard, qr/var\(--jawnos-cursor-default, default\)/,
+	'the hover cursor lives in the core file the desk loads, not the lazy printer');
 my $manager_sheet = read_file("$root/public/css/manager.css");
 like($manager_sheet, qr/canvas\.background\s*\{[^}]*cursor:\s*var\(--jawnos-cursor-default, auto\)/s,
 	'a background canvas asks the set in CSS as well');
