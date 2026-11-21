@@ -13,7 +13,7 @@
 			    and dressed in the player's own picture styles by music.js %>
 			<video id="<%= $miss %>_visual_media" class="media_visual_media" muted playsinline style="display:none;"></video>
 		<% } %>
-		<div class="media_controls<%= $source eq 'music' ? ' music_player_bar' : '' %>" id="<%= $miss %>_controls" style="background-color:black;opacity:1;position:absolute;bottom:0px;height:110px;width:100%;">
+		<div class="media_controls<%= $source eq 'music' ? ' music_player_bar' : '' %>" id="<%= $miss %>_controls" style="background-color:black;position:absolute;bottom:0px;height:110px;width:100%;">
 <% if ($source eq 'music') { %>
 			<%# the seek spans its own full-width row above the rest %>
 			<input id="<%= $miss %>_position" hint="Seek" class="<%= $miss %> hover music_seek" value="0" type="range" step=".1" min="0" max="100">

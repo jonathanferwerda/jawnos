@@ -146,13 +146,21 @@
 			vidOn('mousemove mouseenter', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_container, #<%= $miss %>_controls', function() {
 
 				var controls = $('#<%= $miss %>_controls');
-				if (!controls.is(':visible')) { controls.fadeIn(); }
+				<% if ($source eq 'music') { %>
+					// the theatre's bars slide; the class is the state (music.js)
+					if (controls.hasClass('music_chrome_hidden') || !controls.is(':visible')) {
+						musicChromeShow(controls);
+					}
+				<% } else { %>
+					if (!controls.is(':visible')) { controls.fadeIn(); }
+				<% } %>
 				<% if ($source eq 'music') { %>
 					var music_iface = $('#interface');
-					if (!music_iface.is(':visible')) {
+					if (music_iface.hasClass('music_chrome_hidden') || !music_iface.is(':visible')) {
 						// above the theatre picture and the player bar; the configuration
 						// sheets are far above both (see music.css)
-						music_iface.css({ 'z-index': 40 }).fadeIn();
+						music_iface.css({ 'z-index': 40 });
+						musicChromeShow(music_iface);
 					}
 				<% } %>
 
@@ -188,9 +196,14 @@
 							}
 						});
 						if (seen == 0) {
-							$('#<%= $miss %>_controls').fadeOut();
-							<% if ($id == 'video') { %>
-								$('#interface').fadeOut('slow'); 
+							<% if ($source eq 'music') { %>
+								musicChromeHide($('#<%= $miss %>_controls'));
+								musicChromeHide($('#interface'));
+							<% } else { %>
+								$('#<%= $miss %>_controls').fadeOut();
+								<% if ($id == 'video') { %>
+									$('#interface').fadeOut('slow'); 
+								<% } %>
 							<% } %>
 							clearInterval(<%= $miss %>Tools['toolbarTimeout']);
 						}

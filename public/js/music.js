@@ -2310,6 +2310,9 @@ function musicContentCache(html) {
 	doc.body.innerHTML = html;
 	var shell = $(doc.body);
 	shell.find('.playing').removeClass('playing holla');
+	// where the theatre's chrome is at this instant is runtime state; the next
+	// open decides it again from theatre_mode instead of replaying a hidden bar
+	shell.find('#interface, .media_controls.music_player_bar').removeClass('music_chrome_hidden');
 	shell.find('#music_player_data').empty();
 	// The queue is the manifest; the cards are only the slice that happened to
 	// be mounted. Store the shell with that slice gone if it was scrolled away,
@@ -3698,6 +3701,25 @@ $(document).on('fullscreenchange webkitfullscreenchange', function() {
 	}
 });
 
+// The theatre's two bars slide instead of fading. The class is the state,
+// because a bar moved off the edge is still :visible to jQuery; the mousemove
+// handler in the video include and the theatre's own enter/leave ask these
+// rather than a display test. music.css owns the distance and the timing.
+function musicChromeShow(el) {
+	el = $(el);
+	if (!el.length) { return; }
+	if (!el.is(':visible')) {
+		// a first reveal: start off the edge, then let removing the class animate
+		el.addClass('music_chrome_hidden').show();
+		void el[0].offsetHeight;
+	}
+	el.removeClass('music_chrome_hidden');
+}
+function musicChromeHide(el) {
+	el = $(el);
+	if (el.length && el.is(':visible')) { el.addClass('music_chrome_hidden'); }
+}
+
 function theatreModeOn() {
 	$('#music_library').hide();
 	$('#video').show();
@@ -3720,9 +3742,9 @@ function theatreModeOn() {
 	}
 	else if ($('#video').attr('src')) {
 		$('#video').show();
-		// the interface already fades in and out with the theatre controls (see
-		// the video include), so the gear only has to stop being hidden here
-		$('#interface').hide();
+		// the interface slides with the theatre controls (see the video include),
+		// so the gear only has to stop being hidden here
+		musicChromeHide($('#interface'));
 		$('#music_padlock_toggle').hide();
 		$('#music_album_cover').hide()
 	}
@@ -3744,7 +3766,10 @@ function theatreModeOff() {
 	else {
 		$('#video').hide();
 	}
-	$('#interface').show();
+	musicChromeShow($('#interface'));
+	// a leave from the theatre puts the player bar back too, even if the idle
+	// timer had left it off the edge
+	musicChromeShow($('#music .media_controls.music_player_bar'));
 	$('#music_padlock_toggle').show();
 	$('#music_configuration_toggle').show();
 	$('#music_album_cover').hide();
