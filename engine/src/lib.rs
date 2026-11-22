@@ -51,11 +51,13 @@ pub use playback::{
 };
 pub use params::Param;
 pub use peer::{
-    answer_ping, decode_ping, decode_pong, encode_ping, encode_pong, latest_estimate,
-    new_shared_estimate, publish_estimate, Clock, ClockEstimator, ClockReport, InstantClock,
-    ManualClock, Pong, ProbeError, ProbeSample, SharedEstimate, SkewedClock, CLOCK_SESSION,
-    DEFAULT_BIND, ESTIMATOR_CAPACITY, MIN_SAMPLES, PING_INTERVAL_MS, PING_PAYLOAD_LEN,
-    PONG_PAYLOAD_LEN, PONG_TIMEOUT_MS, RTT_SLACK_MS, STREAM_CLOCK_PING, STREAM_CLOCK_PONG,
+    decode_hello, decode_ping, decode_pong, decode_welcome, encode_hello, encode_ping, encode_pong,
+    encode_welcome, latest_estimate, new_shared_estimate, parse_session_key, publish_estimate,
+    Clock, ClockEstimator, ClockMaster, ClockPeer, ClockReport, ControlReply, Hello, InstantClock,
+    ManualClock, Pong, ProbeError, ProbeSample, SharedEstimate, SkewedClock, Welcome, CLOCK_SESSION,
+    DEFAULT_BIND, ESTIMATOR_CAPACITY, HELLO_PAYLOAD_LEN, MAC_LEN, MIN_SAMPLES, PING_INTERVAL_MS,
+    PING_PAYLOAD_LEN, PONG_PAYLOAD_LEN, PONG_TIMEOUT_MS, RTT_SLACK_MS, STREAM_CLOCK_HELLO,
+    STREAM_CLOCK_PING, STREAM_CLOCK_PONG, STREAM_CLOCK_WELCOME, WELCOME_PAYLOAD_LEN,
 };
 pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,

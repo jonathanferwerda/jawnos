@@ -1541,7 +1541,15 @@ fn a_clock_flag_outside_its_role_is_a_usage_error() {
 
 #[test]
 fn a_clock_master_answers_on_a_loopback_port_and_prints_it() {
-    let out = run(&["--clock-master", "--seconds", "0.1", "--json"]);
+    // A clock session has no unauthenticated form: the master needs a key.
+    let out = run(&[
+        "--clock-master",
+        "--session-key-hex",
+        "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        "--seconds",
+        "0.1",
+        "--json",
+    ]);
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -1550,6 +1558,7 @@ fn a_clock_master_answers_on_a_loopback_port_and_prints_it() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("\"role\":\"master\""), "{stdout}");
     assert!(stdout.contains("\"served\":0"), "{stdout}");
+    assert!(stdout.contains("\"rejected\":0"), "{stdout}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("clock master listening on 127.0.0.1:"),

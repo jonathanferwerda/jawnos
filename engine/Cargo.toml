@@ -26,6 +26,10 @@ jack = ["dep:jack"]
 [dependencies]
 alsa = { version = "0.9", optional = true }
 jack = { version = "0.13", optional = true }
+# The clock session's per-datagram tag. Pure Rust: no C dependency, and the
+# engine still builds on a machine with no sound card (docs/studio-audio-roadmap.md P3).
+hmac = "0.12"
+sha2 = "0.10"
 
 # Its own workspace root: engine/ must build without dragging the repository's
 # tree into a Cargo workspace, and without being one itself (docs/studio-audio-roadmap.md).

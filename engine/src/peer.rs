@@ -1,12 +1,19 @@
 //! The clock probe peers run before they share a transport.
 //!
-//! P3's first spike is deliberately only a clock: no audio device, no
-//! resampling, no session handshake. Two engines exchange a `CLOCK_PING` and a
-//! `CLOCK_PONG` over UDP; each pong carries the master's receive and send times,
-//! so the peer can subtract the master's own turnaround from the round trip and
-//! place the local and master *midpoints* on the same timeline. A bounded
-//! least-squares fit of `master = a + b * local` then yields the offset and the
-//! peer clock's drift (docs/studio-audio-roadmap.md §10 and §13 P3).
+//! Two engines exchange a `CLOCK_HELLO` / `CLOCK_WELCOME` handshake, then a
+//! `CLOCK_PING` and a `CLOCK_PONG` over UDP. Each pong carries the master's
+//! receive and send times, so the peer can subtract the master's own turnaround
+//! from the round trip and place the local and master *midpoints* on the same
+//! timeline. A bounded least-squares fit of `master = a + b * local` then yields
+//! the offset and the peer clock's drift (docs/studio-audio-roadmap.md §10 and
+//! §13 P3).
+//!
+//! The master is never an open port. The peer proves it knows the 32-byte
+//! session key in its HELLO; the master answers with a fresh, unguessable
+//! session id; and every later datagram carries a 16-byte truncated
+//! HMAC-SHA256 over the header fields that matter and the payload. Pings for a
+//! session the master did not issue, pings with a bad MAC, and replays of an
+//! already accepted `seq` are dropped and counted.
 //!
 //! Everything here is off the audio thread. The estimator owns a small
 //! `VecDeque`, the CLI owns the `UdpSocket`, and the latest `ClockOffset` is
@@ -14,14 +21,20 @@
 //! at the top of a callback (or, better, have the probe thread write an atomic
 //! pair) and never lock or allocate inside the callback itself.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 use crate::loopback::json_escape;
 use crate::proto::{self, Codec, Header, ProtoError};
 use crate::session::ClockOffset;
+
+type HmacSha256 = Hmac<Sha256>;
 
 /// The header `stream` id for a clock ping. The audio streams use small ids;
 /// the high half of the `u16` space is reserved for control traffic so a clock
@@ -30,16 +43,46 @@ pub const STREAM_CLOCK_PING: u16 = 0xFF00;
 /// The header `stream` id for a clock pong. One byte apart from the ping so a
 /// trace reads the exchange as a pair.
 pub const STREAM_CLOCK_PONG: u16 = 0xFF01;
+/// The peer's opening handshake: it proves knowledge of the session key and
+/// asks the master for a session id.
+pub const STREAM_CLOCK_HELLO: u16 = 0xFF02;
+/// The master's answer to a HELLO: the fresh session id the peer must use.
+pub const STREAM_CLOCK_WELCOME: u16 = 0xFF03;
 
-/// Which session the probe belongs to. The session, MAC and handshake arrive
-/// later in P3; this spike uses the reserved "no session yet" value.
+/// The reserved "no session yet" value. A HELLO carries it; the master never
+/// issues it, so a ping with this session is always rejected.
 pub const CLOCK_SESSION: u32 = 0;
 
-/// A ping's payload: the peer's send time, in device samples.
-pub const PING_PAYLOAD_LEN: usize = 8;
-/// A pong's payload: the ping's send time echoed back, then the master's
-/// receive and send times, each in device samples.
-pub const PONG_PAYLOAD_LEN: usize = 24;
+/// A HELLO's body: an unpredictable nonce, so two HELLOs are distinct on the
+/// wire even when sent from the same process.
+pub const HELLO_NONCE_LEN: usize = 8;
+/// A WELCOME's body: the session id, little-endian.
+pub const WELCOME_BODY_LEN: usize = 4;
+/// A ping's body: the peer's send time, in device samples.
+pub const PING_BODY_LEN: usize = 8;
+/// A pong's body: the ping's send time echoed back, then the master's receive
+/// and send times, each in device samples.
+pub const PONG_BODY_LEN: usize = 24;
+
+/// The authentication tag appended to every clock payload: HMAC-SHA256 over
+/// the header fields that matter and the body, truncated to 16 bytes.
+pub const MAC_LEN: usize = 16;
+
+/// The body lengths above, plus the tag, are the wire payload lengths.
+pub const HELLO_PAYLOAD_LEN: usize = HELLO_NONCE_LEN + MAC_LEN;
+pub const WELCOME_PAYLOAD_LEN: usize = WELCOME_BODY_LEN + MAC_LEN;
+pub const PING_PAYLOAD_LEN: usize = PING_BODY_LEN + MAC_LEN;
+pub const PONG_PAYLOAD_LEN: usize = PONG_BODY_LEN + MAC_LEN;
+
+// The wire layout after the 32-byte header (all fields little-endian):
+//
+//   HELLO   | nonce u64                        | tag (16) |
+//   WELCOME | session u32                      | tag (16) |
+//   PING    | local_send u64                   | tag (16) |
+//   PONG    | echo u64 | master_recv u64 | master_send u64 | tag (16) |
+//
+// The tag is HMAC-SHA256(stream u16 || seq u32 || session u32 ||
+// master_sample u64 || body)[..16]. It is the last 16 bytes of every payload.
 
 /// How often the peer pings, in milliseconds. Ten milliseconds is ten probes
 /// per 10 ms audio block at 48 kHz and enough samples for a short fit.
@@ -77,6 +120,12 @@ pub enum ProbeError {
     NotClock(u16),
     /// The header is a clock stream but the payload is shorter than the role.
     ShortPayload,
+    /// The payload is long enough but its HMAC tag does not verify.
+    BadMac,
+    /// A control message names a session that cannot be used: a HELLO with a
+    /// session, or a WELCOME whose payload and header disagree (or name the
+    /// reserved session).
+    BadSession,
 }
 
 impl From<ProtoError> for ProbeError {
@@ -252,122 +301,531 @@ impl ProbeSample {
     }
 }
 
+/// Parse the 64 hex characters the CLI accepts as a session key.
+pub fn parse_session_key(text: &str) -> Result<[u8; 32], String> {
+    let text = text.trim();
+    // Never echo the key itself: a typo is still most of a real key, and this
+    // message reaches a terminal and the log. The shape is enough to fix it.
+    let bad = || "a session key is exactly 64 hex characters (32 bytes)".to_string();
+    if text.len() != 64 {
+        return Err(bad());
+    }
+    let mut key = [0u8; 32];
+    let bytes = text.as_bytes();
+    for (index, slot) in key.iter_mut().enumerate() {
+        let high = hex_digit(bytes[index * 2]).ok_or_else(&bad)?;
+        let low = hex_digit(bytes[index * 2 + 1]).ok_or_else(&bad)?;
+        *slot = (high << 4) | low;
+    }
+    Ok(key)
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// The 16-byte tag: HMAC-SHA256 over the whole encoded header and the body
+/// before the tag. Covering every header byte (codec, flags, channels and the
+/// reserved bytes too) keeps the same tag honest when the audio bearer starts
+/// carrying `flags` and `channels` that a receiver acts on.
+fn mac_tag(key: &[u8; 32], header: &Header, body: &[u8]) -> [u8; MAC_LEN] {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts a 32-byte key");
+    mac.update(&header.encode());
+    mac.update(body);
+    let full = mac.finalize().into_bytes();
+    let mut tag = [0u8; MAC_LEN];
+    tag.copy_from_slice(&full[..MAC_LEN]);
+    tag
+}
+
+fn tags_match(expected: &[u8], found: &[u8]) -> bool {
+    if expected.len() != found.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (left, right) in expected.iter().zip(found) {
+        difference |= left ^ right;
+    }
+    difference == 0
+}
+
+/// Write a header and `body`, then its tag, into `out`.
+fn encode_authenticated(
+    out: &mut [u8],
+    key: &[u8; 32],
+    header: &Header,
+    body: &[u8],
+) -> Result<usize, ProtoError> {
+    let mut payload = [0u8; 64];
+    let end = body.len() + MAC_LEN;
+    if end > payload.len() {
+        return Err(ProtoError::Short);
+    }
+    payload[..body.len()].copy_from_slice(body);
+    payload[body.len()..end].copy_from_slice(&mac_tag(key, header, body));
+    proto::encode_datagram(out, header, &payload[..end])
+}
+
+/// Read a header and a fixed-length body, verifying the tag before returning
+/// the body. The tag's position is always `body_len` bytes past the header.
+fn decode_authenticated<'a>(
+    datagram: &'a [u8],
+    key: &[u8; 32],
+    stream: u16,
+    body_len: usize,
+) -> Result<(Header, &'a [u8]), ProbeError> {
+    let (header, offset) = proto::decode(datagram)?;
+    if header.stream != stream {
+        return Err(ProbeError::NotClock(header.stream));
+    }
+    let body_end = offset + body_len;
+    let end = body_end + MAC_LEN;
+    if datagram.len() < end {
+        return Err(ProbeError::ShortPayload);
+    }
+    let body = &datagram[offset..body_end];
+    if !tags_match(&mac_tag(key, &header, body), &datagram[body_end..end]) {
+        return Err(ProbeError::BadMac);
+    }
+    Ok((header, body))
+}
+
+/// A decoded HELLO.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hello {
+    pub header: Header,
+    pub nonce: u64,
+}
+
+/// A decoded WELCOME.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Welcome {
+    pub header: Header,
+    pub session: u32,
+}
+
+/// Encode a `CLOCK_HELLO`: a nonce and a tag, on the reserved no-session id.
+pub fn encode_hello(
+    out: &mut [u8],
+    key: &[u8; 32],
+    seq: u32,
+    nonce: u64,
+) -> Result<usize, ProtoError> {
+    let header = Header {
+        codec: Codec::Pcm16,
+        flags: 0,
+        session: CLOCK_SESSION,
+        stream: STREAM_CLOCK_HELLO,
+        channels: 0,
+        seq,
+        master_sample: 0,
+    };
+    encode_authenticated(out, key, &header, &nonce.to_le_bytes())
+}
+
+/// Decode a `CLOCK_HELLO`, verifying its tag with `key`.
+pub fn decode_hello(datagram: &[u8], key: &[u8; 32]) -> Result<Hello, ProbeError> {
+    let (header, body) = decode_authenticated(datagram, key, STREAM_CLOCK_HELLO, HELLO_NONCE_LEN)?;
+    if header.session != CLOCK_SESSION {
+        return Err(ProbeError::BadSession);
+    }
+    let nonce = u64::from_le_bytes(
+        body[..HELLO_NONCE_LEN]
+            .try_into()
+            .expect("a slice of HELLO_NONCE_LEN bytes"),
+    );
+    Ok(Hello { header, nonce })
+}
+
+/// Encode a `CLOCK_WELCOME`: the session id in the header and the body, then
+/// a tag the peer verifies with the same key.
+pub fn encode_welcome(
+    out: &mut [u8],
+    key: &[u8; 32],
+    seq: u32,
+    session: u32,
+) -> Result<usize, ProtoError> {
+    let header = Header {
+        codec: Codec::Pcm16,
+        flags: 0,
+        session,
+        stream: STREAM_CLOCK_WELCOME,
+        channels: 0,
+        seq,
+        master_sample: 0,
+    };
+    encode_authenticated(out, key, &header, &session.to_le_bytes())
+}
+
+/// Decode a `CLOCK_WELCOME`, verifying its tag. The header and the body must
+/// name the same non-zero session.
+pub fn decode_welcome(datagram: &[u8], key: &[u8; 32]) -> Result<Welcome, ProbeError> {
+    let (header, body) =
+        decode_authenticated(datagram, key, STREAM_CLOCK_WELCOME, WELCOME_BODY_LEN)?;
+    let session = u32::from_le_bytes(
+        body[..WELCOME_BODY_LEN]
+            .try_into()
+            .expect("a slice of WELCOME_BODY_LEN bytes"),
+    );
+    if session == CLOCK_SESSION || header.session != session {
+        return Err(ProbeError::BadSession);
+    }
+    Ok(Welcome { header, session })
+}
+
 /// Encode a `CLOCK_PING`. `master_sample` is the master's transport position
 /// (0 for now); the peer leaves it zero. The header's codec byte is `Pcm16`
 /// only because every header carries one: a clock payload has no samples.
 pub fn encode_ping(
     out: &mut [u8],
+    key: &[u8; 32],
     seq: u32,
+    session: u32,
     local_send: u64,
     master_sample: u64,
 ) -> Result<usize, ProtoError> {
     let header = Header {
         codec: Codec::Pcm16,
         flags: 0,
-        session: CLOCK_SESSION,
+        session,
         stream: STREAM_CLOCK_PING,
         channels: 0,
         seq,
         master_sample,
     };
-    proto::encode_datagram(out, &header, &local_send.to_le_bytes())
+    encode_authenticated(out, key, &header, &local_send.to_le_bytes())
 }
 
-/// Decode a `CLOCK_PING`, returning its header and the peer's send time.
-pub fn decode_ping(datagram: &[u8]) -> Result<(Header, u64), ProbeError> {
-    let (header, offset) = proto::decode(datagram)?;
-    if header.stream != STREAM_CLOCK_PING {
-        return Err(ProbeError::NotClock(header.stream));
-    }
-    let end = offset + PING_PAYLOAD_LEN;
-    if datagram.len() < end {
-        return Err(ProbeError::ShortPayload);
-    }
+/// Decode a `CLOCK_PING`, verifying its tag and returning its header and the
+/// peer's send time.
+pub fn decode_ping(datagram: &[u8], key: &[u8; 32]) -> Result<(Header, u64), ProbeError> {
+    let (header, body) = decode_authenticated(datagram, key, STREAM_CLOCK_PING, PING_BODY_LEN)?;
     let local_send = u64::from_le_bytes(
-        datagram[offset..end]
+        body[..PING_BODY_LEN]
             .try_into()
-            .expect("a slice of PING_PAYLOAD_LEN bytes"),
+            .expect("a slice of PING_BODY_LEN bytes"),
     );
     Ok((header, local_send))
 }
 
 /// Encode a `CLOCK_PONG`. `seq` comes from the ping so the peer can match the
 /// reply; `master_sample` is the master's current transport position (the
-/// ping's value, zero in this spike). The payload is the echo and the master's
+/// ping's value, zero in this spike). The body is the echo and the master's
 /// two timestamps.
 pub fn encode_pong(
     out: &mut [u8],
+    key: &[u8; 32],
     seq: u32,
+    session: u32,
     pong: Pong,
     master_sample: u64,
 ) -> Result<usize, ProtoError> {
     let header = Header {
         codec: Codec::Pcm16,
         flags: 0,
-        session: CLOCK_SESSION,
+        session,
         stream: STREAM_CLOCK_PONG,
         channels: 0,
         seq,
         master_sample,
     };
-    let mut payload = [0u8; PONG_PAYLOAD_LEN];
-    payload[0..8].copy_from_slice(&pong.echo_local_send.to_le_bytes());
-    payload[8..16].copy_from_slice(&pong.master_recv.to_le_bytes());
-    payload[16..24].copy_from_slice(&pong.master_send.to_le_bytes());
-    proto::encode_datagram(out, &header, &payload)
+    let mut body = [0u8; PONG_BODY_LEN];
+    body[0..8].copy_from_slice(&pong.echo_local_send.to_le_bytes());
+    body[8..16].copy_from_slice(&pong.master_recv.to_le_bytes());
+    body[16..24].copy_from_slice(&pong.master_send.to_le_bytes());
+    encode_authenticated(out, key, &header, &body)
 }
 
-/// Decode a `CLOCK_PONG`.
-pub fn decode_pong(datagram: &[u8]) -> Result<(Header, Pong), ProbeError> {
-    let (header, offset) = proto::decode(datagram)?;
-    if header.stream != STREAM_CLOCK_PONG {
-        return Err(ProbeError::NotClock(header.stream));
-    }
-    let end = offset + PONG_PAYLOAD_LEN;
-    if datagram.len() < end {
-        return Err(ProbeError::ShortPayload);
-    }
-    let payload = &datagram[offset..end];
+/// Decode a `CLOCK_PONG`, verifying its tag.
+pub fn decode_pong(datagram: &[u8], key: &[u8; 32]) -> Result<(Header, Pong), ProbeError> {
+    let (header, body) = decode_authenticated(datagram, key, STREAM_CLOCK_PONG, PONG_BODY_LEN)?;
     let pong = Pong {
         echo_local_send: u64::from_le_bytes(
-            payload[0..8].try_into().expect("a slice of eight bytes"),
+            body[0..8].try_into().expect("a slice of eight bytes"),
         ),
         master_recv: u64::from_le_bytes(
-            payload[8..16].try_into().expect("a slice of eight bytes"),
+            body[8..16].try_into().expect("a slice of eight bytes"),
         ),
         master_send: u64::from_le_bytes(
-            payload[16..24].try_into().expect("a slice of eight bytes"),
+            body[16..24].try_into().expect("a slice of eight bytes"),
         ),
     };
     Ok((header, pong))
 }
 
-/// The master's one-line answer: decode a ping, stamp it, encode a pong.
+/// One unpredictable nonce for a HELLO.
+fn random_nonce() -> u64 {
+    let mut bytes = [0u8; 8];
+    if random_bytes(&mut bytes) {
+        return u64::from_ne_bytes(bytes);
+    }
+    fallback_random_u64()
+}
+
+/// A fresh session id for a HELLO. It is never zero and never repeats inside
+/// the master's live session table.
+fn random_session_id() -> u32 {
+    let mut bytes = [0u8; 4];
+    if random_bytes(&mut bytes) {
+        let id = u32::from_ne_bytes(bytes);
+        if id != CLOCK_SESSION {
+            return id;
+        }
+    }
+    let id = fallback_random_u64() as u32;
+    if id != CLOCK_SESSION {
+        id
+    } else {
+        1
+    }
+}
+
+fn random_bytes(buffer: &mut [u8]) -> bool {
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(buffer))
+        .is_ok()
+}
+
+fn fallback_random_u64() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut z = nanos ^ ((std::process::id() as u64) << 32) ^ 0x9E37_79B9_7F4A_7C15;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// What the master sent back for one datagram.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControlReply {
+    Welcome(usize),
+    Pong(usize),
+}
+
+impl ControlReply {
+    /// How many bytes of `out` the reply occupies.
+    pub fn length(self) -> usize {
+        match self {
+            ControlReply::Welcome(length) | ControlReply::Pong(length) => length,
+        }
+    }
+
+    /// Whether this reply is a pong (a ping was served) rather than a welcome.
+    pub fn is_pong(self) -> bool {
+        matches!(self, ControlReply::Pong(_))
+    }
+}
+
+/// The clock master's session table and key.
 ///
-/// `Ok(None)` means the datagram was a clock-shaped message for another stream
-/// or a malformed payload, and is simply ignored. A header error is also
-/// ignored in the return type so the caller's receive loop stays one match;
-/// callers that need the reason can call `decode_ping` themselves.
-pub fn answer_ping(
-    datagram: &[u8],
-    clock: &dyn Clock,
-    out: &mut [u8],
-) -> Result<Option<usize>, ProbeError> {
-    let (header, local_send) = match decode_ping(datagram) {
-        Ok(ping) => ping,
-        Err(ProbeError::NotClock(_)) | Err(ProbeError::Proto(_)) => return Ok(None),
-        Err(ProbeError::ShortPayload) => return Ok(None),
-    };
-    let master_recv = clock.now();
-    let pong = Pong {
-        echo_local_send: local_send,
-        master_recv,
-        master_send: clock.now(),
-    };
-    // The pong's `master_sample` is where the master's transport stood. This
-    // spike has no transport, so the field keeps the ping's zero.
-    let length = encode_pong(out, header.seq, pong, header.master_sample)?;
-    Ok(Some(length))
+/// A HELLO for the key issues a session; only pings for an issued session are
+/// answered. A clock message that fails its MAC, names a session this master
+/// did not issue, or repeats an accepted `seq` is dropped and counted.
+pub struct ClockMaster {
+    key: [u8; 32],
+    sessions: HashMap<u32, HashSet<u32>>,
+    rejected: u64,
+}
+
+impl ClockMaster {
+    /// A master that will speak only to peers holding `key`.
+    pub fn new(key: [u8; 32]) -> Self {
+        ClockMaster {
+            key,
+            sessions: HashMap::new(),
+            rejected: 0,
+        }
+    }
+
+    /// Answer one datagram, or ignore it. The caller sends the returned bytes
+    /// to the datagram's origin.
+    pub fn answer(
+        &mut self,
+        datagram: &[u8],
+        clock: &dyn Clock,
+        out: &mut [u8],
+    ) -> Option<ControlReply> {
+        let (header, _) = proto::decode(datagram).ok()?;
+        match header.stream {
+            STREAM_CLOCK_HELLO => {
+                let hello = match decode_hello(datagram, &self.key) {
+                    Ok(hello) => hello,
+                    Err(error) => {
+                        self.note_rejection(&error);
+                        return None;
+                    }
+                };
+                let session = self.fresh_session();
+                let length = encode_welcome(out, &self.key, hello.header.seq, session).ok()?;
+                self.sessions.insert(session, HashSet::new());
+                Some(ControlReply::Welcome(length))
+            }
+            STREAM_CLOCK_PING => {
+                let (header, local_send) = match decode_ping(datagram, &self.key) {
+                    Ok(ping) => ping,
+                    Err(error) => {
+                        self.note_rejection(&error);
+                        return None;
+                    }
+                };
+                let seen = match self.sessions.get_mut(&header.session) {
+                    Some(seen) => seen,
+                    None => {
+                        self.rejected += 1;
+                        return None;
+                    }
+                };
+                if !seen.insert(header.seq) {
+                    self.rejected += 1;
+                    return None;
+                }
+                let master_recv = clock.now();
+                let pong = Pong {
+                    echo_local_send: local_send,
+                    master_recv,
+                    master_send: clock.now(),
+                };
+                let length = encode_pong(
+                    out,
+                    &self.key,
+                    header.seq,
+                    header.session,
+                    pong,
+                    header.master_sample,
+                )
+                .ok()?;
+                Some(ControlReply::Pong(length))
+            }
+            _ => None,
+        }
+    }
+
+    fn note_rejection(&mut self, error: &ProbeError) {
+        if matches!(error, ProbeError::BadMac | ProbeError::BadSession) {
+            self.rejected += 1;
+        }
+    }
+
+    fn fresh_session(&self) -> u32 {
+        loop {
+            let id = random_session_id();
+            if !self.sessions.contains_key(&id) {
+                return id;
+            }
+        }
+    }
+
+    /// Clock datagrams this master dropped for authentication or replay.
+    pub fn rejected(&self) -> u64 {
+        self.rejected
+    }
+
+    /// How many sessions this master has issued (a test and diagnostic hook).
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
+    }
+}
+
+/// The peer's key, session, and the pings it has already accepted.
+pub struct ClockPeer {
+    key: [u8; 32],
+    session: u32,
+    next_seq: u32,
+    seen: HashSet<u32>,
+    rejected: u64,
+}
+
+impl ClockPeer {
+    /// A peer that must handshake with a master holding `key`.
+    pub fn new(key: [u8; 32]) -> Self {
+        ClockPeer {
+            key,
+            session: CLOCK_SESSION,
+            next_seq: 0,
+            seen: HashSet::new(),
+            rejected: 0,
+        }
+    }
+
+    /// The session the master issued, or `CLOCK_SESSION` before the handshake.
+    pub fn session(&self) -> u32 {
+        self.session
+    }
+
+    /// Datagrams this peer dropped for authentication or replay.
+    pub fn rejected(&self) -> u64 {
+        self.rejected
+    }
+
+    /// Build the opening HELLO. The caller sends it and waits for a WELCOME.
+    pub fn hello(&mut self, out: &mut [u8]) -> Result<usize, ProtoError> {
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        encode_hello(out, &self.key, seq, random_nonce())
+    }
+
+    /// Verify a WELCOME and adopt its session. A bad tag is counted.
+    pub fn accept_welcome(&mut self, datagram: &[u8]) -> Result<u32, ProbeError> {
+        match decode_welcome(datagram, &self.key) {
+            Ok(welcome) => {
+                self.session = welcome.session;
+                self.seen.clear();
+                Ok(self.session)
+            }
+            Err(error) => {
+                if matches!(error, ProbeError::BadMac | ProbeError::BadSession) {
+                    self.rejected += 1;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Build one ping for the session the handshake established.
+    pub fn ping(
+        &mut self,
+        out: &mut [u8],
+        local_send: u64,
+        master_sample: u64,
+    ) -> Result<usize, ProtoError> {
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        encode_ping(out, &self.key, seq, self.session, local_send, master_sample)
+    }
+
+    /// Verify a pong against the key, the session and the pings already
+    /// accepted. `None` means this datagram contributes no sample. A bad MAC,
+    /// a foreign session or a replay is also counted as rejected.
+    pub fn accept_pong(&mut self, datagram: &[u8], local_send: u64) -> Option<Pong> {
+        let (header, pong) = match decode_pong(datagram, &self.key) {
+            Ok(pong) => pong,
+            Err(error) => {
+                if matches!(error, ProbeError::BadMac) {
+                    self.rejected += 1;
+                }
+                return None;
+            }
+        };
+        if self.session == CLOCK_SESSION || header.session != self.session {
+            self.rejected += 1;
+            return None;
+        }
+        if pong.echo_local_send != local_send {
+            return None;
+        }
+        if !self.seen.insert(header.seq) {
+            self.rejected += 1;
+            return None;
+        }
+        Some(pong)
+    }
 }
 
 /// The bounded offset/drift estimator.
@@ -584,12 +1042,24 @@ pub struct ClockReport {
     pub estimate: Option<ClockOffset>,
     /// The fit's residual and slope error, for a peer run long enough to fit.
     pub quality: Option<FitQuality>,
+    /// The session the master issued (peer), or 0 (master).
+    pub session: u32,
+    /// Clock datagrams dropped for authentication, an unknown session or a
+    /// replay, on either role.
+    pub rejected: u64,
     pub error: String,
 }
 
 impl ClockReport {
-    /// The master's final line: how many pings it answered.
-    pub fn master(address: impl Into<String>, rate: u32, seconds: f64, served: u64) -> Self {
+    /// The master's final line: how many pings it answered and how many clock
+    /// datagrams it refused.
+    pub fn master(
+        address: impl Into<String>,
+        rate: u32,
+        seconds: f64,
+        served: u64,
+        rejected: u64,
+    ) -> Self {
         ClockReport {
             ok: true,
             role: "master",
@@ -604,11 +1074,14 @@ impl ClockReport {
             last_rtt_samples: None,
             estimate: None,
             quality: None,
+            session: 0,
+            rejected,
             error: String::new(),
         }
     }
 
     /// The peer's final line.
+    #[allow(clippy::too_many_arguments)]
     pub fn peer(
         address: impl Into<String>,
         rate: u32,
@@ -617,6 +1090,8 @@ impl ClockReport {
         received: u64,
         estimator: &ClockEstimator,
         estimate: Option<ClockOffset>,
+        session: u32,
+        rejected: u64,
     ) -> Self {
         ClockReport {
             ok: true,
@@ -632,6 +1107,8 @@ impl ClockReport {
             last_rtt_samples: estimator.last_rtt(),
             estimate,
             quality: estimator.fit().map(|(_estimate, quality)| quality),
+            session,
+            rejected,
             error: String::new(),
         }
     }
@@ -652,6 +1129,8 @@ impl ClockReport {
             last_rtt_samples: None,
             estimate: None,
             quality: None,
+            session: 0,
+            rejected: 0,
             error: error.into(),
         }
     }
@@ -678,11 +1157,12 @@ impl ClockReport {
         }
         if self.role == "master" {
             return format!(
-                "{{\"ok\":true,\"role\":\"master\",\"bind\":\"{}\",\"rate\":{},\"seconds\":{},\"served\":{}}}",
+                "{{\"ok\":true,\"role\":\"master\",\"bind\":\"{}\",\"rate\":{},\"seconds\":{},\"served\":{},\"rejected\":{}}}",
                 json_escape(&self.address),
                 self.rate,
                 self.seconds,
-                self.sent
+                self.sent,
+                self.rejected
             );
         }
         let (offset, drift) = match self.estimate {
@@ -700,7 +1180,7 @@ impl ClockReport {
             None => ("null".to_string(), "null".to_string()),
         };
         format!(
-            "{{\"ok\":true,\"role\":\"peer\",\"master\":\"{}\",\"rate\":{},\"seconds\":{},\"sent\":{},\"received\":{},\"kept\":{},\"dropped\":{},\"min_rtt_samples\":{},\"last_rtt_samples\":{},\"offset_samples\":{},\"drift_ppm\":{},\"rms_residual_samples\":{},\"slope_error_ppm\":{}}}",
+            "{{\"ok\":true,\"role\":\"peer\",\"master\":\"{}\",\"rate\":{},\"seconds\":{},\"sent\":{},\"received\":{},\"kept\":{},\"dropped\":{},\"min_rtt_samples\":{},\"last_rtt_samples\":{},\"offset_samples\":{},\"drift_ppm\":{},\"rms_residual_samples\":{},\"slope_error_ppm\":{},\"session\":{},\"rejected\":{}}}",
             json_escape(&self.address),
             self.rate,
             self.seconds,
@@ -713,7 +1193,9 @@ impl ClockReport {
             offset,
             drift,
             rms,
-            slope_error
+            slope_error,
+            self.session,
+            self.rejected
         )
     }
 
@@ -723,8 +1205,8 @@ impl ClockReport {
         }
         if self.role == "master" {
             return format!(
-                "clock master on {}: served {} pings in {:.1} s",
-                self.address, self.sent, self.seconds
+                "clock master on {}: served {} pings in {:.1} s, {} rejected",
+                self.address, self.sent, self.seconds, self.rejected
             );
         }
         let estimate = match self.estimate {
@@ -742,7 +1224,7 @@ impl ClockReport {
             None => String::new(),
         };
         format!(
-            "clock peer of {}: {}{}, {} sent, {} received, {} kept, {} dropped, RTT {} samples (min {})",
+            "clock peer of {}: {}{}, {} sent, {} received, {} kept, {} dropped, {} rejected, session {}, RTT {} samples (min {})",
             self.address,
             estimate,
             fit,
@@ -750,6 +1232,8 @@ impl ClockReport {
             self.received,
             self.kept,
             self.dropped,
+            self.rejected,
+            self.session,
             self.last_rtt_samples
                 .map(|rtt| rtt.to_string())
                 .unwrap_or_else(|| "none".to_string()),
@@ -804,15 +1288,37 @@ mod tests {
         (z % 241) as i64 - 120
     }
 
+    const KEY: [u8; 32] = [0x42; 32];
+    const WRONG_KEY: [u8; 32] = [0x43; 32];
+    const SESSION: u32 = 0xDEAD_BEEF;
+
+    /// Handshake a fresh master and peer, returning the session they agreed on.
+    fn handshake(master: &mut ClockMaster, peer: &mut ClockPeer, clock: &dyn Clock) -> u32 {
+        let mut hello = [0u8; 128];
+        let hello_length = peer.hello(&mut hello).expect("encode hello");
+        let mut reply = [0u8; 128];
+        let welcome = master
+            .answer(&hello[..hello_length], clock, &mut reply)
+            .expect("a welcome");
+        assert!(matches!(welcome, ControlReply::Welcome(_)));
+        peer.accept_welcome(&reply[..welcome.length()])
+            .expect("accept welcome")
+    }
+
     #[test]
     fn a_clock_ping_round_trips_the_header_and_its_send_time() {
-        let mut datagram = [0u8; 64];
-        let length = encode_ping(&mut datagram, 7, 123_456, 0).expect("encode ping");
-        let (header, local_send) = decode_ping(&datagram[..length]).expect("decode ping");
+        let mut datagram = [0u8; 128];
+        let length = encode_ping(&mut datagram, &KEY, 7, SESSION, 123_456, 0).expect("encode ping");
+        let (header, local_send) = decode_ping(&datagram[..length], &KEY).expect("decode ping");
         assert_eq!(header.stream, STREAM_CLOCK_PING);
+        assert_eq!(header.session, SESSION);
         assert_eq!(header.seq, 7);
         assert_eq!(header.codec, Codec::Pcm16);
         assert_eq!(local_send, 123_456);
+        assert_eq!(
+            decode_ping(&datagram[..length], &WRONG_KEY),
+            Err(ProbeError::BadMac)
+        );
     }
 
     #[test]
@@ -822,38 +1328,144 @@ mod tests {
             master_recv: 222,
             master_send: 333,
         };
-        let mut datagram = [0u8; 64];
-        let length = encode_pong(&mut datagram, 9, pong, 0).expect("encode pong");
-        let (header, back) = decode_pong(&datagram[..length]).expect("decode pong");
+        let mut datagram = [0u8; 128];
+        let length = encode_pong(&mut datagram, &KEY, 9, SESSION, pong, 0).expect("encode pong");
+        let (header, back) = decode_pong(&datagram[..length], &KEY).expect("decode pong");
         assert_eq!(header.stream, STREAM_CLOCK_PONG);
+        assert_eq!(header.session, SESSION);
         assert_eq!(header.seq, 9);
         assert_eq!(back, pong);
+        assert_eq!(
+            decode_pong(&datagram[..length], &WRONG_KEY),
+            Err(ProbeError::BadMac)
+        );
+    }
+
+    #[test]
+    fn the_tag_is_the_last_sixteen_bytes_of_every_clock_payload() {
+        assert_eq!(HELLO_PAYLOAD_LEN, 24);
+        assert_eq!(WELCOME_PAYLOAD_LEN, 20);
+        assert_eq!(PING_PAYLOAD_LEN, 24);
+        assert_eq!(PONG_PAYLOAD_LEN, 40);
+
+        let mut out = [0u8; 128];
+        let hello_length = encode_hello(&mut out, &KEY, 1, 0x1122_3344_5566_7788).expect("hello");
+        assert_eq!(hello_length, proto::HEADER_LEN + HELLO_PAYLOAD_LEN);
+        let (header, _) = proto::decode(&out[..hello_length]).expect("header");
+        let body = &out[proto::HEADER_LEN..proto::HEADER_LEN + HELLO_NONCE_LEN];
+        assert_eq!(
+            &out[hello_length - MAC_LEN..hello_length],
+            &mac_tag(&KEY, &header, body)
+        );
+
+        let welcome_length = encode_welcome(&mut out, &KEY, 1, SESSION).expect("welcome");
+        assert_eq!(welcome_length, proto::HEADER_LEN + WELCOME_PAYLOAD_LEN);
+        let (header, _) = proto::decode(&out[..welcome_length]).expect("header");
+        let body = &out[proto::HEADER_LEN..proto::HEADER_LEN + WELCOME_BODY_LEN];
+        assert_eq!(
+            &out[welcome_length - MAC_LEN..welcome_length],
+            &mac_tag(&KEY, &header, body)
+        );
+
+        let ping_length = encode_ping(&mut out, &KEY, 2, SESSION, 123, 0).expect("ping");
+        assert_eq!(ping_length, proto::HEADER_LEN + PING_PAYLOAD_LEN);
+        let (header, _) = proto::decode(&out[..ping_length]).expect("header");
+        let body = &out[proto::HEADER_LEN..proto::HEADER_LEN + PING_BODY_LEN];
+        assert_eq!(
+            &out[ping_length - MAC_LEN..ping_length],
+            &mac_tag(&KEY, &header, body)
+        );
+
+        let pong = Pong {
+            echo_local_send: 1,
+            master_recv: 2,
+            master_send: 3,
+        };
+        let pong_length = encode_pong(&mut out, &KEY, 2, SESSION, pong, 0).expect("pong");
+        assert_eq!(pong_length, proto::HEADER_LEN + PONG_PAYLOAD_LEN);
+        let (header, _) = proto::decode(&out[..pong_length]).expect("header");
+        let body = &out[proto::HEADER_LEN..proto::HEADER_LEN + PONG_BODY_LEN];
+        assert_eq!(
+            &out[pong_length - MAC_LEN..pong_length],
+            &mac_tag(&KEY, &header, body)
+        );
     }
 
     #[test]
     fn a_clock_stream_with_a_short_payload_is_rejected() {
-        let mut datagram = [0u8; 64];
-        let length = encode_ping(&mut datagram, 1, 42, 0).expect("encode ping");
+        let mut datagram = [0u8; 128];
+        let length = encode_ping(&mut datagram, &KEY, 1, SESSION, 42, 0).expect("encode ping");
         assert_eq!(
-            decode_ping(&datagram[..length - 1]),
+            decode_ping(&datagram[..length - 1], &KEY),
             Err(ProbeError::ShortPayload)
         );
-        assert_eq!(decode_pong(&datagram[..length]), Err(ProbeError::NotClock(STREAM_CLOCK_PING)));
+        assert_eq!(
+            decode_pong(&datagram[..length], &KEY),
+            Err(ProbeError::NotClock(STREAM_CLOCK_PING))
+        );
     }
 
     #[test]
-    fn the_master_answers_a_ping_and_ignores_anything_else() {
+    fn a_hello_with_the_right_key_gets_a_fresh_session_and_a_wrong_key_does_not() {
+        let clock = ManualClock::new(0);
+        let mut master = ClockMaster::new(KEY);
+        let mut hello = [0u8; 128];
+        let length = encode_hello(&mut hello, &KEY, 1, 0xABCD).expect("encode hello");
+        let mut reply = [0u8; 128];
+
+        let welcome = master
+            .answer(&hello[..length], &clock, &mut reply)
+            .expect("a welcome");
+        let welcome_length = welcome.length();
+        let first = decode_welcome(&reply[..welcome_length], &KEY).expect("decode welcome");
+        assert!(matches!(welcome, ControlReply::Welcome(_)));
+        assert_ne!(first.session, CLOCK_SESSION);
+        assert_eq!(first.header.seq, 1);
+        assert_eq!(master.session_count(), 1);
+        assert_eq!(master.rejected(), 0);
+
+        // A new HELLO gets a new session.
+        let welcome = master
+            .answer(&hello[..length], &clock, &mut reply)
+            .expect("a second welcome");
+        let second = decode_welcome(&reply[..welcome.length()], &KEY).expect("decode welcome");
+        assert_ne!(second.session, first.session);
+        assert_eq!(master.session_count(), 2);
+
+        // The wrong key cannot authenticate a HELLO, and the peer cannot
+        // authenticate the master's WELCOME with it either.
+        let length = encode_hello(&mut hello, &WRONG_KEY, 2, 0xDCBA).expect("encode hello");
+        assert_eq!(master.answer(&hello[..length], &clock, &mut reply), None);
+        assert_eq!(master.rejected(), 1);
+        let mut peer = ClockPeer::new(WRONG_KEY);
+        assert_eq!(
+            peer.accept_welcome(&reply[..welcome_length]),
+            Err(ProbeError::BadMac)
+        );
+        assert_eq!(peer.rejected(), 1);
+    }
+
+    #[test]
+    fn the_master_issues_a_session_answers_its_pings_and_ignores_anything_else() {
         let clock = ManualClock::new(10_000);
-        let mut ping = [0u8; 64];
-        let length = encode_ping(&mut ping, 3, 5_000, 0).expect("encode ping");
-        let mut reply = [0u8; 64];
-        let answered = answer_ping(&ping[..length], &clock, &mut reply)
-            .expect("answer")
+        let mut master = ClockMaster::new(KEY);
+        let mut peer = ClockPeer::new(KEY);
+        let session = handshake(&mut master, &mut peer, &clock);
+        assert_ne!(session, CLOCK_SESSION);
+
+        let mut ping = [0u8; 128];
+        let length = encode_ping(&mut ping, &KEY, 3, session, 5_000, 0).expect("encode ping");
+        let mut reply = [0u8; 128];
+        let answered = master
+            .answer(&ping[..length], &clock, &mut reply)
             .expect("a pong");
-        let (header, pong) = decode_pong(&reply[..answered]).expect("decode pong");
+        assert!(answered.is_pong());
+        let (header, pong) = decode_pong(&reply[..answered.length()], &KEY).expect("decode pong");
         assert_eq!(header.seq, 3);
+        assert_eq!(header.session, session);
         assert_eq!(pong.echo_local_send, 5_000);
         assert_eq!(pong.master_recv, 10_000);
+        assert_eq!(master.rejected(), 0);
 
         let mut audio = [0u8; 64];
         let audio_length = proto::encode_datagram(
@@ -861,7 +1473,7 @@ mod tests {
             &Header {
                 codec: Codec::Pcm16,
                 flags: 0,
-                session: 0,
+                session,
                 stream: 7,
                 channels: 1,
                 seq: 0,
@@ -870,9 +1482,102 @@ mod tests {
             &[0u8; 4],
         )
         .expect("encode audio");
+        assert_eq!(master.answer(&audio[..audio_length], &clock, &mut reply), None);
+    }
+
+    #[test]
+    fn a_pong_with_a_corrupted_mac_is_not_accepted() {
+        let clock = ManualClock::new(1_000);
+        let mut master = ClockMaster::new(KEY);
+        let mut peer = ClockPeer::new(KEY);
+        let session = handshake(&mut master, &mut peer, &clock);
+        assert_ne!(session, CLOCK_SESSION);
+
+        let mut ping = [0u8; 128];
+        let length = peer.ping(&mut ping, 5_000, 0).expect("encode ping");
+        let mut reply = [0u8; 128];
+        let pong = master
+            .answer(&ping[..length], &clock, &mut reply)
+            .expect("a pong");
+        let pong_length = pong.length();
         assert_eq!(
-            answer_ping(&audio[..audio_length], &clock, &mut reply),
-            Ok(None)
+            decode_pong(&reply[..pong_length], &WRONG_KEY),
+            Err(ProbeError::BadMac)
+        );
+
+        // Corrupt the tag's last byte: the peer must refuse it and count it.
+        let last = pong_length - 1;
+        reply[last] ^= 0x01;
+        assert_eq!(peer.accept_pong(&reply[..pong_length], 5_000), None);
+        assert_eq!(peer.rejected(), 1);
+
+        // Restoring the byte makes the same pong acceptable.
+        reply[last] ^= 0x01;
+        assert_eq!(
+            peer.accept_pong(&reply[..pong_length], 5_000),
+            Some(Pong {
+                echo_local_send: 5_000,
+                master_recv: 1_000,
+                master_send: 1_000,
+            })
+        );
+    }
+
+    #[test]
+    fn a_ping_for_an_unknown_session_is_ignored_and_counted() {
+        let clock = ManualClock::new(0);
+        let mut master = ClockMaster::new(KEY);
+        let mut ping = [0u8; 128];
+        let length = encode_ping(&mut ping, &KEY, 1, 0x1234_5678, 5, 0).expect("encode ping");
+        let mut reply = [0u8; 128];
+        assert_eq!(master.answer(&ping[..length], &clock, &mut reply), None);
+        assert_eq!(master.rejected(), 1);
+        assert_eq!(master.session_count(), 0);
+    }
+
+    #[test]
+    fn a_replayed_ping_seq_is_ignored_and_counted() {
+        let clock = ManualClock::new(0);
+        let mut master = ClockMaster::new(KEY);
+        let mut peer = ClockPeer::new(KEY);
+        let session = handshake(&mut master, &mut peer, &clock);
+
+        let mut ping = [0u8; 128];
+        let length = encode_ping(&mut ping, &KEY, 7, session, 5, 0).expect("encode ping");
+        let mut reply = [0u8; 128];
+        assert!(master
+            .answer(&ping[..length], &clock, &mut reply)
+            .expect("a pong")
+            .is_pong());
+        // The exact datagram again: same session, same seq.
+        assert_eq!(master.answer(&ping[..length], &clock, &mut reply), None);
+        assert_eq!(master.rejected(), 1);
+
+        // A different seq in the same session is still served.
+        let length = encode_ping(&mut ping, &KEY, 8, session, 6, 0).expect("encode ping");
+        assert!(master
+            .answer(&ping[..length], &clock, &mut reply)
+            .expect("a pong")
+            .is_pong());
+    }
+
+    #[test]
+    fn a_session_key_is_exactly_sixty_four_hex_characters() {
+        let zeros = parse_session_key(&"00".repeat(32)).expect("all-zero bytes");
+        assert!(zeros.iter().all(|byte| *byte == 0));
+        let mixed = parse_session_key(&"aB".repeat(32)).expect("mixed case");
+        assert!(mixed.iter().all(|byte| *byte == 0xAB));
+        assert!(parse_session_key("00ff10A2").is_err());
+        assert!(parse_session_key(&"aB".repeat(32)).is_ok());
+        assert!(parse_session_key(&"g".repeat(64)).is_err());
+        assert!(parse_session_key(&"0".repeat(63)).is_err());
+        assert!(parse_session_key(&"0".repeat(65)).is_err());
+        // The refusal must not repeat what was typed: a typo is still most of
+        // a real key, and the message goes to a terminal and the log.
+        let message = parse_session_key(&"g".repeat(64)).expect_err("a bad key");
+        assert!(
+            !message.contains('g'),
+            "the error echoed the key: {message}"
         );
     }
 
@@ -1043,30 +1748,33 @@ mod tests {
 
         let master_clock = Arc::clone(&clock);
         let handler = thread::spawn(move || {
+            let mut clock_master = ClockMaster::new(KEY);
             let mut incoming = [0u8; 2048];
             let mut reply = [0u8; 2048];
             let mut served = 0u64;
-            let deadline = Instant::now() + Duration::from_millis(700);
+            let deadline = Instant::now() + Duration::from_millis(1_400);
             while Instant::now() < deadline {
                 let (length, origin) = match master.recv_from(&mut incoming) {
                     Ok(pair) => pair,
                     Err(_) => continue,
                 };
                 // Drop every third ping: the peer must still estimate.
-                if let Ok((header, _)) = decode_ping(&incoming[..length]) {
+                if let Ok((header, _)) = decode_ping(&incoming[..length], &KEY) {
                     if header.seq % 3 == 0 {
                         continue;
                     }
                 }
-                if let Ok(Some(length)) =
-                    answer_ping(&incoming[..length], master_clock.as_ref(), &mut reply)
+                if let Some(answer) =
+                    clock_master.answer(&incoming[..length], master_clock.as_ref(), &mut reply)
                 {
-                    if master.send_to(&reply[..length], origin).is_ok() {
+                    if master.send_to(&reply[..answer.length()], origin).is_ok()
+                        && answer.is_pong()
+                    {
                         served += 1;
                     }
                 }
             }
-            served
+            (served, clock_master.rejected())
         });
 
         let socket = UdpSocket::bind("127.0.0.1:0").expect("bind peer");
@@ -1074,25 +1782,39 @@ mod tests {
         socket
             .set_read_timeout(Some(Duration::from_millis(PONG_TIMEOUT_MS)))
             .expect("peer timeout");
-        let mut estimator = ClockEstimator::new(RATE);
+        // A 1.2 s baseline keeps the slope's noise well below the 500 ppm cap
+        // even while the rest of the suite is running on the same box. The
+        // wider window keeps every kept probe, so the fit spans the run.
+        let mut estimator = ClockEstimator::with_capacity(512, RATE);
+        let mut probe = ClockPeer::new(KEY);
         let mut incoming = [0u8; 2048];
-        let mut outgoing = [0u8; 64];
+        let mut outgoing = [0u8; 128];
         let mut sent = 0u64;
-        let mut seq = 0u32;
-        let deadline = Instant::now() + Duration::from_millis(600);
+        let deadline = Instant::now() + Duration::from_millis(1_200);
+
+        // HELLO first; retry until the master's WELCOME arrives or the run ends.
+        let mut session = CLOCK_SESSION;
+        while session == CLOCK_SESSION && Instant::now() < deadline {
+            let length = probe.hello(&mut outgoing).expect("encode hello");
+            socket.send(&outgoing[..length]).expect("send hello");
+            if let Ok(length) = socket.recv(&mut incoming) {
+                if let Ok(id) = probe.accept_welcome(&incoming[..length]) {
+                    session = id;
+                }
+            }
+        }
+        assert_ne!(session, CLOCK_SESSION, "the master never completed the handshake");
+
         while Instant::now() < deadline {
             let cycle = Instant::now();
             let local_send = clock.now();
-            seq = seq.wrapping_add(1);
-            let length = encode_ping(&mut outgoing, seq, local_send, 0).expect("encode ping");
+            let length = probe.ping(&mut outgoing, local_send, 0).expect("encode ping");
             socket.send(&outgoing[..length]).expect("send ping");
             sent += 1;
             if let Ok(length) = socket.recv(&mut incoming) {
                 let local_recv = clock.now();
-                if let Ok((_, pong)) = decode_pong(&incoming[..length]) {
-                    if pong.echo_local_send == local_send {
-                        estimator.push(ProbeSample::from_pong(pong, local_send, local_recv));
-                    }
+                if let Some(pong) = probe.accept_pong(&incoming[..length], local_send) {
+                    estimator.push(ProbeSample::from_pong(pong, local_send, local_recv));
                 }
             }
             let elapsed = cycle.elapsed();
@@ -1102,8 +1824,9 @@ mod tests {
             }
         }
 
-        let served = handler.join().expect("master thread");
+        let (served, rejected) = handler.join().expect("master thread");
         assert!(served > 0, "the master answered no pings");
+        assert_eq!(rejected, 0, "every loopback ping was authenticated");
         assert!(
             sent > estimator.kept(),
             "the dropped pings should be visible: {sent} sent, {} kept",
@@ -1122,8 +1845,12 @@ mod tests {
             "loopback offset {} samples",
             estimate.sample_offset
         );
+        // This is the transport smoke test, not the precision test: the
+        // deterministic skewed-clock case above pins the drift to a few ppm.
+        // Under a loaded suite a real loopback's midpoint jitter can move a
+        // short fit by hundreds of ppm, so only a gross rate error fails here.
         assert!(
-            estimate.drift_ppm.abs() < 500.0,
+            estimate.drift_ppm.abs() < 2_000.0,
             "loopback drift {} ppm",
             estimate.drift_ppm
         );

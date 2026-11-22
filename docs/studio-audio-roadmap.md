@@ -743,6 +743,14 @@ knobs came out of the run: `--window` keeps the whole run in the least-squares f
 probes span 640 ms), and `--pong-timeout-ms` must clear the path's round trip (the old 5 ms lost
 every Wi-Fi reply). Both reports now carry the fit's residual and slope error.
 
+**Session handshake (2026-11-21, in the tree):** the probe no longer answers an open port. A peer
+sends HELLO (`0xFF02`) and the master answers WELCOME (`0xFF03`) with a fresh session id; both, and
+every ping and pong after them, carry a 16-byte HMAC-SHA256 tag over the whole header and payload. A
+datagram with a bad tag, a session this master did not issue, or a repeated `seq` is dropped and
+counted, and the reports carry `session` and `rejected`. The key comes from `--session-key-hex` or
+`$JAWNOS_AUDIO_SESSION_KEY`, and a clock mode with no key is a usage error. Still to come: the peer
+must re-HELLO after a master restart, and the master's session table needs a lease.
+
 ### P4 — Sources that are late (2 weeks)
 
 The uplink proper, with compensation: the phone (C) and the T-Deck (D) become channels on the master,
@@ -792,10 +800,12 @@ ring spans about 85 ms (one chunk plus a cushion, never less than two chunks), s
 nothing and a burst drops whole frames and counts them rather than splitting one.
 
 **Still owed:** delegation of a route to a peer machine's engine (P3), and a per-machine `manage`
-setting (the switch is house-wide today). A picker choice of `default` must resolve to the sink
-the mix replaced rather than to the house's own sink: the engine takes the boot file's `device`, so
-a plan written with `default` patches its playback onto `jawn_system` and fails with ALSA I/O error
-5 even though the supervisor spawned it on the right node.
+setting (the switch is house-wide today). The `default` picker choice was checked on `table`
+(2026-11-21): the supervisor resolves the mix's playback device before every spawn and the guard
+refuses the mix sink, so the engine patches cleanly on a fresh mix and after a quit with the mix
+still in place. The earlier ALSA I/O error 5 did not reproduce and is not a routing decision. What
+is still missing is the failure's own context: a patch-time error should name the target it opened
+and the sink that was then the default, so a recurrence is diagnosable without guesswork.
 
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;

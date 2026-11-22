@@ -295,12 +295,19 @@ A loopback needs the interface's output patched into its input.
   --bind IP:PORT  address to listen on (default 127.0.0.1:0, loopback only and
                   an ephemeral port); the bound address is printed on stderr
                   as soon as it binds
+  --session-key-hex HEX64
+                  the 32-byte session key, 64 hex characters (default
+                  $JAWNOS_AUDIO_SESSION_KEY); a clock session has no
+                  unauthenticated mode
   --seconds S     how long to answer probes, in seconds (default 1)
   --rate HZ       the sample rate the timestamps count (default 48000)
   --json          one JSON line at the end instead of prose
 
 --clock-peer options:
   --master IP:PORT  the clock master to probe (required; there is no default)
+  --session-key-hex HEX64
+                  the same 32-byte key as the master (default
+                  $JAWNOS_AUDIO_SESSION_KEY); a clock session needs a key
   --seconds S       how long to probe, in seconds (default 1)
   --rate HZ         the sample rate the timestamps count (default 48000)
   --pong-timeout-ms MS
@@ -313,12 +320,17 @@ A loopback needs the interface's output patched into its input.
                   of the last second.
   --json            one JSON line instead of prose
 
-  A clock probe sends a CLOCK_PING every 10 ms; the master repeats the receive
-  and send times in a CLOCK_PONG, and the peer least-squares fits master =
-  a + b*local over a bounded window. offset_samples is a and drift_ppm is the
-  peer clock's rate error (positive means the peer runs fast). High-RTT probes
-  are dropped rather than fitted. This mode opens no audio device and writes
-  no socket under ~/.president; the default master bind is loopback, and an
+  The peer sends a CLOCK_HELLO carrying a tag before its first ping; the master
+  answers a CLOCK_WELCOME with a fresh session id, then a CLOCK_PING every
+  10 ms is signed with that session and a 16-byte truncated HMAC-SHA256. The
+  master drops a ping whose session it did not issue, whose tag fails, or whose
+  seq it already accepted, and reports it in \"rejected\". The master repeats the
+  receive and send times in a CLOCK_PONG, and the peer least-squares fits
+  master = a + b*local over a bounded window. offset_samples is a and drift_ppm
+  is the peer clock's rate error (positive means the peer runs fast). High-RTT
+  probes are dropped rather than fitted. The peer's JSON also carries
+  \"session\" and \"rejected\". This mode opens no audio device and writes no
+  socket under ~/.president; the default master bind is loopback, and an
   address another machine can reach is an explicit --bind.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -365,6 +377,12 @@ struct Options {
     bind: Option<String>,
     /// `--master`: the address a clock peer probes.
     master: Option<String>,
+    /// `--session-key-hex`: the 32-byte key a clock session signs with. When
+    /// the flag is absent, `$JAWNOS_AUDIO_SESSION_KEY` fills it.
+    session_key_hex: Option<String>,
+    /// Whether `--session-key-hex` was given on the command line (so the
+    /// environment fallback is not mistaken for a flag outside the clock modes).
+    session_key_given: bool,
     /// `--pong-timeout-ms`: how long one clock ping waits for its pong. Shorter
     /// than a LAN's round trip loses every reply; longer only delays the next
     /// ping after a loss.
@@ -460,6 +478,8 @@ fn default_options() -> Options {
         plan: None,
         bind: None,
         master: None,
+        session_key_hex: None,
+        session_key_given: false,
         pong_timeout_ms: peer::PONG_TIMEOUT_MS,
         window: peer::ESTIMATOR_CAPACITY,
         machine: String::new(),
@@ -565,6 +585,10 @@ fn parse_arguments(
             "--clock-peer" => options.mode = Mode::ClockPeer,
             "--bind" => options.bind = Some(value(&mut args, "--bind")?),
             "--master" => options.master = Some(value(&mut args, "--master")?),
+            "--session-key-hex" => {
+                options.session_key_hex = Some(value(&mut args, "--session-key-hex")?);
+                options.session_key_given = true;
+            }
             "--pong-timeout-ms" => {
                 let raw = value(&mut args, "--pong-timeout-ms")?;
                 options.pong_timeout_ms = raw.parse().map_err(|_| {
@@ -706,6 +730,10 @@ fn parse_arguments(
 /// each, a probe loop needs a duration and rate it can act on, and the two
 /// knobs that tune that loop belong to the peer alone.
 fn validate_clock_options(options: &Options) -> Result<(), String> {
+    let clock = matches!(options.mode, Mode::ClockMaster | Mode::ClockPeer);
+    if options.session_key_given && !clock {
+        return Err("--session-key-hex applies only to --clock-master and --clock-peer".to_string());
+    }
     if options.bind.is_some() && options.mode != Mode::ClockMaster {
         return Err("--bind applies only to --clock-master".to_string());
     }
@@ -723,7 +751,13 @@ fn validate_clock_options(options: &Options) -> Result<(), String> {
             "--clock-peer needs --master IP:PORT: the clock master to probe".to_string(),
         );
     }
-    if matches!(options.mode, Mode::ClockMaster | Mode::ClockPeer) {
+    if clock {
+        let key = options.session_key_hex.as_deref().ok_or_else(|| {
+            "a clock session needs a key: pass --session-key-hex HEX64 \
+             or set $JAWNOS_AUDIO_SESSION_KEY"
+                .to_string()
+        })?;
+        peer::parse_session_key(key).map_err(|error| format!("--session-key-hex: {error}"))?;
         if !(options.seconds.is_finite() && options.seconds > 0.0) {
             return Err("--seconds wants a positive, finite duration".to_string());
         }
@@ -742,9 +776,32 @@ fn validate_clock_options(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
+/// The 32-byte key both clock roles sign with. Validation has already proved it
+/// is present and well formed, but the run functions decode it themselves so a
+/// direct caller cannot skip the check.
+fn session_key(options: &Options) -> Result<[u8; 32], String> {
+    let text = options.session_key_hex.as_deref().ok_or_else(|| {
+        "a clock session needs a key: pass --session-key-hex HEX64 \
+         or set $JAWNOS_AUDIO_SESSION_KEY"
+            .to_string()
+    })?;
+    peer::parse_session_key(text).map_err(|error| format!("--session-key-hex: {error}"))
+}
+
 fn run() -> Result<ExitCode, String> {
     let mut options = default_options();
     parse_arguments(&mut options, std::env::args().skip(1))?;
+
+    // A clock session has no unauthenticated form. The flag wins; otherwise the
+    // supervisor's environment supplies the same 32-byte key.
+    if !options.session_key_given {
+        if let Ok(key) = std::env::var("JAWNOS_AUDIO_SESSION_KEY") {
+            let key = key.trim();
+            if !key.is_empty() {
+                options.session_key_hex = Some(key.to_string());
+            }
+        }
+    }
 
     // The machine is resolved once, from the flag, then the environment, then
     // the hostname, then "local". It is only used by `--patch` and `--serve`,
@@ -1163,6 +1220,7 @@ fn run_loopback(options: &Options) -> Result<ExitCode, String> {
 }
 
 fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
+    let key = session_key(options)?;
     let requested = options.bind.as_deref().unwrap_or(peer::DEFAULT_BIND);
     let socket = UdpSocket::bind(requested)
         .map_err(|error| format!("--clock-master cannot bind {requested}: {error}"))?;
@@ -1177,21 +1235,22 @@ fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
     eprintln!("jawn-audio: clock master listening on {bound}");
 
     let clock = InstantClock::new(options.rate);
+    let mut master = peer::ClockMaster::new(key);
     let duration = Duration::try_from_secs_f64(options.seconds)
         .map_err(|_| format!("--seconds is out of range: {}", options.seconds))?;
     let deadline = Instant::now()
         .checked_add(duration)
         .ok_or_else(|| format!("--seconds is out of range: {}", options.seconds))?;
     let mut incoming = [0u8; 2048];
-    let mut reply = [0u8; 2048];
+    let mut outgoing = [0u8; 2048];
     let mut served = 0u64;
     while Instant::now() < deadline {
         match socket.recv_from(&mut incoming) {
             Ok((length, origin)) => {
-                if let Ok(Some(length)) =
-                    peer::answer_ping(&incoming[..length], &clock, &mut reply)
-                {
-                    if socket.send_to(&reply[..length], origin).is_ok() {
+                if let Some(answer) = master.answer(&incoming[..length], &clock, &mut outgoing) {
+                    if socket.send_to(&outgoing[..answer.length()], origin).is_ok()
+                        && answer.is_pong()
+                    {
                         served += 1;
                     }
                 }
@@ -1201,7 +1260,13 @@ fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
         }
     }
 
-    let report = ClockReport::master(bound.to_string(), options.rate, options.seconds, served);
+    let report = ClockReport::master(
+        bound.to_string(),
+        options.rate,
+        options.seconds,
+        served,
+        master.rejected(),
+    );
     if options.json {
         println!("{}", report.to_json());
     } else {
@@ -1211,6 +1276,7 @@ fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
 }
 
 fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
+    let key = session_key(options)?;
     let text = options
         .master
         .as_deref()
@@ -1239,6 +1305,7 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
         .map_err(|error| format!("clock peer timeout: {error}"))?;
 
     let clock = InstantClock::new(options.rate);
+    let mut probe = peer::ClockPeer::new(key);
     let mut estimator = ClockEstimator::with_capacity(options.window, options.rate);
     let shared = peer::new_shared_estimate();
     let duration = Duration::try_from_secs_f64(options.seconds)
@@ -1247,17 +1314,51 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
         .checked_add(duration)
         .ok_or_else(|| format!("--seconds is out of range: {}", options.seconds))?;
     let interval = Duration::from_millis(peer::PING_INTERVAL_MS);
-    let mut outgoing = [0u8; 64];
+    let mut outgoing = [0u8; 128];
     let mut incoming = [0u8; 2048];
     let mut sent = 0u64;
     let mut received = 0u64;
-    let mut seq = 0u32;
+
+    // The handshake precedes the first ping. If the run ends before a WELCOME
+    // arrives there is no session to report, so say so rather than probing an
+    // open port hopefully.
+    let mut session = peer::CLOCK_SESSION;
+    while session == peer::CLOCK_SESSION && Instant::now() < deadline {
+        let length = probe
+            .hello(&mut outgoing)
+            .map_err(|error| format!("clock hello: {error:?}"))?;
+        socket
+            .send(&outgoing[..length])
+            .map_err(|error| format!("clock peer send: {error}"))?;
+        match socket.recv(&mut incoming) {
+            Ok(length) => {
+                if let Ok(id) = probe.accept_welcome(&incoming[..length]) {
+                    session = id;
+                }
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) => return Err(format!("clock peer receive: {error}")),
+        }
+    }
+    if session == peer::CLOCK_SESSION {
+        let report = ClockReport::failure(
+            "peer",
+            master.to_string(),
+            "no clock master answered the HELLO handshake",
+        );
+        if options.json {
+            println!("{}", report.to_json());
+        } else {
+            println!("{}", report.prose());
+        }
+        return Ok(ExitCode::from(1));
+    }
 
     while Instant::now() < deadline {
         let cycle = Instant::now();
         let local_send = clock.now();
-        seq = seq.wrapping_add(1);
-        let length = peer::encode_ping(&mut outgoing, seq, local_send, 0)
+        let length = probe
+            .ping(&mut outgoing, local_send, 0)
             .map_err(|error| format!("clock ping: {error:?}"))?;
         socket
             .send(&outgoing[..length])
@@ -1267,16 +1368,15 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
         match socket.recv(&mut incoming) {
             Ok(length) => {
                 let local_recv = clock.now();
-                if let Ok((_, pong)) = peer::decode_pong(&incoming[..length]) {
-                    // The echo matches this ping, not a late reply to the one before.
-                    if pong.echo_local_send == local_send {
-                        let sample = ProbeSample::from_pong(pong, local_send, local_recv);
-                        estimator.push(sample);
-                        if let Some(estimate) = estimator.estimate() {
-                            peer::publish_estimate(&shared, estimate);
-                        }
-                        received += 1;
+                // `accept_pong` verifies the tag, the session, the echo and the
+                // replay window before the sample reaches the estimator.
+                if let Some(pong) = probe.accept_pong(&incoming[..length], local_send) {
+                    let sample = ProbeSample::from_pong(pong, local_send, local_recv);
+                    estimator.push(sample);
+                    if let Some(estimate) = estimator.estimate() {
+                        peer::publish_estimate(&shared, estimate);
                     }
+                    received += 1;
                 }
             }
             Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
@@ -1298,6 +1398,8 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
         received,
         &estimator,
         estimate,
+        probe.session(),
+        probe.rejected(),
     );
     if options.json {
         println!("{}", report.to_json());
@@ -3734,6 +3836,8 @@ mod tests {
             "--clock-peer",
             "--master",
             "127.0.0.1:7050",
+            "--session-key-hex",
+            TEST_KEY,
             "--pong-timeout-ms",
             "40",
             "--window",
@@ -3744,7 +3848,13 @@ mod tests {
         validate_clock_options(&peer).expect("a peer may set both knobs");
 
         // The master answers pings; it has no probe loop to tune.
-        let master = parse(&["--clock-master", "--pong-timeout-ms", "40"]);
+        let master = parse(&[
+            "--clock-master",
+            "--session-key-hex",
+            TEST_KEY,
+            "--pong-timeout-ms",
+            "40",
+        ]);
         assert!(validate_clock_options(&master).is_err());
 
         // Zero would mean a probe loop that waits for nothing or fits nothing.
@@ -3752,10 +3862,66 @@ mod tests {
             "--clock-peer",
             "--master",
             "127.0.0.1:7050",
+            "--session-key-hex",
+            TEST_KEY,
             "--window",
             "0",
         ]);
         assert!(validate_clock_options(&zero).is_err());
+    }
+
+    const TEST_KEY: &str =
+        "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
+    #[test]
+    fn a_clock_session_needs_a_key_and_only_where_it_applies() {
+        let parse = |words: &[&str]| {
+            let mut options = default_options();
+            parse_arguments(&mut options, words.iter().map(|word| word.to_string()))
+                .expect("a parse");
+            options
+        };
+
+        // There is no unauthenticated clock master any more.
+        let no_key = parse(&["--clock-master"]);
+        let error = validate_clock_options(&no_key).expect_err("no key");
+        assert!(
+            error.contains("clock session needs a key"),
+            "unhelpful error: {error}"
+        );
+        let peer_no_key = parse(&["--clock-peer", "--master", "127.0.0.1:7050"]);
+        let error = validate_clock_options(&peer_no_key).expect_err("no peer key");
+        assert!(
+            error.contains("clock session needs a key"),
+            "unhelpful error: {error}"
+        );
+
+        // A key that is not 64 hex characters is a usage error.
+        let malformed = parse(&["--clock-master", "--session-key-hex", "abc"]);
+        assert!(validate_clock_options(&malformed).is_err());
+        let not_hex = "g".repeat(64);
+        let bad_hex = parse(&["--clock-master", "--session-key-hex", &not_hex]);
+        assert!(validate_clock_options(&bad_hex).is_err());
+
+        // The peer needs the same treatment as the master.
+        let peer = parse(&[
+            "--clock-peer",
+            "--master",
+            "127.0.0.1:7050",
+            "--session-key-hex",
+            TEST_KEY,
+        ]);
+        validate_clock_options(&peer).expect("a keyed peer");
+        assert_eq!(peer.session_key_hex.as_deref(), Some(TEST_KEY));
+        assert_eq!(session_key(&peer).expect("the decoded key").len(), 32);
+
+        // The flag belongs to the clock modes alone.
+        let elsewhere = parse(&["--run", "--session-key-hex", TEST_KEY]);
+        let error = validate_clock_options(&elsewhere).expect_err("outside clock");
+        assert!(
+            error.contains("--session-key-hex applies only"),
+            "unhelpful error: {error}"
+        );
     }
 
     #[test]
