@@ -560,7 +560,14 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
     let mut last_now = clock.now();
     let mut sender = TakeSender::new(config.take.clone());
     let mut bearer = AudioBearer::new(config.key, session);
-    let run_deadline = Instant::now() + Duration::from_secs_f64(config.seconds);
+    // An explicit `--seconds` bounds the run. Without one there is no wall-clock
+    // stop at all: the take's length is the pacing target, but the last block is
+    // stamped after the wake that carries it, and a delayed wake is capped at
+    // `PULL_MAX_FRAMES`, so the remainder may need more than one block. The loop
+    // ends when the take is exhausted instead.
+    let run_deadline = config
+        .seconds_given
+        .then(|| Instant::now() + Duration::from_secs_f64(config.seconds));
     let interval = Duration::from_millis(PING_INTERVAL_MS);
     let mut sent = 0u64;
     let mut frames = 0u64;
@@ -572,14 +579,18 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
         if !config.seconds_given && sender.exhausted() {
             break;
         }
-        if Instant::now() >= run_deadline {
-            break;
+        if let Some(deadline) = run_deadline {
+            if Instant::now() >= deadline {
+                break;
+            }
         }
         let cycle = Instant::now();
 
         if probe.needs_handshake(Instant::now()) {
             probe.reset_session();
-            let deadline = (Instant::now() + HANDSHAKE_TIMEOUT).min(run_deadline);
+            let deadline = run_deadline
+                .map(|run| (Instant::now() + HANDSHAKE_TIMEOUT).min(run))
+                .unwrap_or_else(|| Instant::now() + HANDSHAKE_TIMEOUT);
             if handshake(&socket, &mut probe, deadline, &mut outgoing, &mut incoming)? {
                 handshakes += 1;
                 session = probe.session();

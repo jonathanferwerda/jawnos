@@ -84,6 +84,7 @@ like( $sender, qr/bearer\.packetize\(/, 'the block becomes bearer datagrams' );
 like( $sender, qr/PING_INTERVAL_MS/, 'the loop is the clock peer 10 ms interval' );
 like( $sender, qr/PULL_MAX_FRAMES/, 'a late wake is capped at one burst as the uplink does' );
 like( $sender, qr/config\.seconds_given/, 'an absent --seconds ends with the take' );
+like( $sender, qr/\.seconds_given\s*\.then\(/, 'only an explicit --seconds sets a wall-clock stop' );
 like( $sender, qr/needs_handshake/, 'a quiet master triggers a re-handshake' );
 like( $sender, qr/ConnectionRefused|quiet_io/, 'a closed master port is not fatal' );
 like( $sender, qr/handshakes \+= 1/, 'every completed handshake is counted' );
@@ -116,6 +117,7 @@ like( $tests, qr/fn a_block_is_stamped_from_the_fit_and_a_late_wake_sends_what_e
 like( $tests, qr/fn before_the_first_estimate_the_take_passes_through_at_its_local_position/, 'the pre-estimate prefix is tested' );
 like( $tests, qr/fn a_fast_peer_clock_emits_fewer_master_frames_for_the_same_take_span/, 'drift is tested' );
 like( $tests, qr/fn a_real_master_receives_the_take_in_order_on_the_issued_session/, 'a real master and receiver are tested' );
+like( $tests, qr/fn a_no_seconds_take_sends_its_last_block_before_exiting/, 'a no-seconds take delivers its last block' );
 like( $tests, qr/fn a_long_lived_master_still_places_the_whole_take/, 'a large first offset stays inside the receiver window' );
 like( $tests, qr/fn a_wrong_key_gets_no_welcome_and_the_sender_sends_no_audio/, 'a wrong key is tested' );
 like( $tests, qr/fn a_missing_key_wrong_rate_and_empty_take_are_usage_errors/, 'the usage errors are tested' );

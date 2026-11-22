@@ -292,8 +292,8 @@ fn a_real_master_receives_the_take_in_order_on_the_issued_session() {
     assert!(report.ok, "report: {}", report.to_json());
     assert!(report.sent > 0, "datagrams were sent: {}", report.to_json());
     assert!(
-        report.frames >= take.len() as u64 * 9 / 10,
-        "most of the take was sent: {} of {}",
+        (report.frames as i64 - take.len() as i64).abs() <= 2,
+        "a no-seconds take sends all of its frames: {} of {}",
         report.frames,
         take.len()
     );
@@ -331,6 +331,44 @@ fn a_real_master_receives_the_take_in_order_on_the_issued_session() {
         snapshot.receiver.as_ref().expect("receiver").counters().rejected,
         0,
         "a right key and session were never refused"
+    );
+}
+
+#[test]
+fn a_no_seconds_take_sends_its_last_block_before_exiting() {
+    // Without `--seconds` the take's end is the run's end. The last block is
+    // stamped after the wake that carries it, so a wall-clock deadline set to
+    // the take's nominal duration can be reached before that block is sent and
+    // the remainder is lost. A delayed wake is capped at `PULL_MAX_FRAMES`, so
+    // the remainder may take more than one block to drain.
+    let session_key = key(0x72);
+    let stream = audio_stream(1).expect("an audio stream");
+    let stop = Arc::new(AtomicBool::new(false));
+    let (address, _state, handle) = start_master(session_key, stream, Arc::clone(&stop));
+
+    let take = sine(4_000, 220.0);
+    let config = ValidatedSend {
+        take: take.clone(),
+        master: address,
+        key: session_key,
+        stream,
+        rate: 48_000,
+        seconds: take.len() as f64 / 48_000.0,
+        seconds_given: false,
+        pong_timeout_ms: 20,
+        window: 64,
+    };
+
+    let report = run_send_take(&config);
+    stop.store(true, Ordering::SeqCst);
+    handle.join().expect("join the test master");
+
+    assert!(report.ok, "report: {}", report.to_json());
+    assert!(
+        (report.frames as i64 - take.len() as i64).abs() <= 2,
+        "every take frame is sent before exiting: {} of {}",
+        report.frames,
+        take.len()
     );
 }
 
