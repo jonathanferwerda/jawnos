@@ -760,7 +760,9 @@ master position rather than its arrival, folds out-of-order and duplicate packet
 past its window instead of growing memory, and turns a gap into silence with the timeline advanced
 over it. The converter maps a peer's local samples to the master through the fitted offset and
 drift; it is linear interpolation for now, behind a `push`/`process` contract a windowed-sinc
-converter can replace. No device opens in the bearer: wiring capture and the patchbay is P4.
+converter can replace. The tag now lives in one module (`auth.rs`), and `pull_at` conceals a tail
+whose whole span ended a datagram before the caller's master position, so a sender that stops no
+longer stalls a block. No device opens in the bearer: wiring capture and the patchbay is P4.
 
 ### P4 — Sources that are late (2 weeks)
 
@@ -770,6 +772,16 @@ writes its own take locally first (D14), so the master places it rather than own
 
 **Gate:** guitar through the UM2 and voice on the phone in one session, both in time with the click,
 both on the same take, ten minutes without a lost take. Then the same with a T-Deck clip.
+
+**Master uplink (2026-11-21, in the tree):** a plan's `peer` source — a kind the manager already
+accepts — binds on the machine that mixes it. `--serve --uplink ADDR` with the session key starts a
+UDP thread that answers HELLO/WELCOME, so a peer is still issued a session rather than reaching an
+open port, and accepts mono audio on `AUDIO_STREAM_BASE + source_index` into the same monbus ring a
+`parec` input uses; the patchbay pops it into the plan's channel, so a peer mixes like any other
+source with no lock on the audio path. The uplink pulls the frames the clock advanced and conceals a
+lost tail through `pull_at`; `status` reports `uplink` and the patch summary names the source
+`off`, `pending` or `capturing`. Still to come: the peer's sending half, the supervisor flags, a
+peer id in the stream so more than one peer can join, and each input's declared latency.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
