@@ -33,6 +33,16 @@ function calendarPrinter(appts,sort) {
 	// is predicted to land on (drawn faded, after the real dots)
 	var spots = {};
 	var ghost_spots = {};
+	// days the person was away, carried with the payload; the band sits behind
+	// the day's other marks and names itself at the start of a run
+	var away_days = {};
+	var away_list = (appts['__specs'] && appts['__specs']['away_days']) || [];
+	$.each(away_list, function(i,k) { away_days[String(k)] = 1; });
+	function calendarDayKey(n) {
+		var mm = (month + 1 < 10 ? '0' : '') + (month + 1);
+		var dd = (n < 10 ? '0' : '') + n;
+		return year + '-' + mm + '-' + dd;
+	}
 	$.each(appts, function(i,v) {
 		if ( i.match(/^__/) ) { return true; }
 		$.each(v['list'] || [], function(n,l) {
@@ -97,6 +107,20 @@ function calendarPrinter(appts,sort) {
 		var cx = left + (slot % 7) * cell;
 		var cy = gridTop + Math.floor(slot / 7) * rowHeight;
 		var dow = slot % 7;
+
+		// an away day is shaded, and the first day of a run says so
+		var away = away_days[calendarDayKey(day)] ? 1 : 0;
+		if (away) {
+			ctx.save();
+			ctx.globalAlpha = 0.16;
+			ctx.fillStyle = ink;
+			ctx.fillRect(cx, cy, cell, rowHeight);
+			ctx.restore();
+			if (day == 1 || !away_days[calendarDayKey(day - 1)]) {
+				jawnosPrinterText(ctx, typeof jawnosT === 'function' ? jawnosT('Away') : 'Away',
+					cx + cell - 8, cy + 14, { font: '600 12px Arial', align: 'right', colour: ink, halo: halo, alpha: 0.8 });
+			}
+		}
 
 		// weekends get a whisper of shade
 		if (dow == 0 || dow == 6) {

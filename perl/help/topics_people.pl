@@ -90,13 +90,14 @@ $topic{'tasks'} = {
 		title => 'Tasks', category => 'apps', app => 'tasks',
 		controls => [ 'Configure', 'Delete' ],
 		summary => 'Nested checklists with colour, priority, renewal, budget and expiry.',
-		verified => '2026-11-18',
+		verified => '2026-11-22',
 		body => [
 			'Tasks is a nested checklist. Each item carries a colour, a priority, a renewal interval and a budget, so a task can repeat on its own and keep its own tally.',
 			'Ticking an item off can record the matching appointment, so doing the thing and logging the thing are one action.',
 			'Ticking under the Open filter makes the row leave the way a window closes - a fade, a crumble or a burst, at the desk\'s Window Effects level - and the list closes up behind it.',
 			'A task\'s colour fills its row, and the desktop composes that colour with its own theme, so the row still reads as that task while its name, its fields and the numbers in it stay legible in a light or a dark theme. The row under the list - Sort, Filter and the totals - is the app\'s own surface, not a task\'s colour, so it looks the same after a change is saved as it did when the list was opened.',
-			'A task the routine has left behind is Expired rather than open: four or more runs in a row where every other task was ticked and this one was not is enough. An expired task dims in the list and leaves the Open filter until it is ticked again; after that it rejoins the open order when its own renewal comes due. Choose Expired under Filter to see those tasks.'
+			'A task the routine has left behind is Expired rather than open: four or more runs in a row where every other task was ticked and this one was not is enough. An expired task dims in the list and leaves the Open filter until it is ticked again; after that it rejoins the open order when its own renewal comes due. Choose Expired under Filter to see those tasks.',
+			'Away time does not age a renewal. A task that came due while you were away is not overdue on the first morning back, and the runs you missed while away do not expire it; its own renewal count resumes from the day you returned.'
 		],
 		steps => [
 			'Open Tasks and add a list.',

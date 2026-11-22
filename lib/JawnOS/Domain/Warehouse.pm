@@ -130,6 +130,16 @@ sub task_checker {
 	return 0;
 }
 
+# A task's renewal clock runs only while the person is here. Away time after
+# the last tick does not age the task, so the first morning back is not a pile
+# of renewals that came due while nobody was living here. The shift is derived
+# on every read; last_completed in the tasks setting is never written back.
+sub task_renewal_anchor($last_completed, $ts) {
+	return 0 + ($last_completed || 0) unless $last_completed && $last_completed > 0;
+	$ts = &subs::rightNow() unless defined $ts && $ts > 0;
+	return $last_completed + &subs::vacation_overlap($last_completed, $ts);
+}
+
 # A task the routine has left behind. Four or more of the app's recent runs,
 # each of which ticked every other task and none of which ticked this one, mean
 # the task is no longer part of the routine. It reads as 'expired' rather than
@@ -157,9 +167,10 @@ sub task_expiry_scan {
 		my $completed = $t->{'completed'} || '';
 		# Done with no renewal is permanent; everything else is open now, either
 		# because its renewal has elapsed or because it was never ticked.
-		my $is_open = $completed ne 'on' || ($renew_freq > 0 && $last_completed + $renew_freq < $now);
+		my $anchor = &task_renewal_anchor($last_completed, $now);
+		my $is_open = $completed ne 'on' || ($renew_freq > 0 && $anchor + $renew_freq < $now);
 		next unless $is_open;
-		my $due = $last_completed > 0 ? $last_completed + $renew_freq : 0;
+		my $due = $last_completed > 0 ? $anchor + $renew_freq : 0;
 		my $made = ($t->{'timestamp'} // 0) + 0;
 		my $missed = 0;
 		foreach my $run ( @{$runs} ) {
@@ -173,7 +184,7 @@ sub task_expiry_scan {
 				my $ochk = $olc >= $at;
 				unless ($ochk) {
 					$ochk = $orf > 0
-						? ($olc + $orf >= $at && ($o->{'completed'} || '') ne 'off')
+						? (&task_renewal_anchor($olc, $at) + $orf >= $at && ($o->{'completed'} || '') ne 'off')
 						: (($o->{'completed'} || '') eq 'on');
 				}
 				unless ($ochk) { $others = 0; last; }
@@ -214,7 +225,8 @@ sub task_grabber {
 		# every task_grabber call (the phone's log grew ~51 KB/min).
 		my $renew_freq = $t->{'renew_freq'} // 0;
 		my $last_completed = $t->{'last_completed'} // 0;
-		if ($renew_freq + $last_completed < &subs::rightNow() && $renew_freq > 0) {
+		my $task_now = &subs::rightNow();
+		if ($renew_freq > 0 && &task_renewal_anchor($last_completed, $task_now) + $renew_freq < $task_now) {
 			$t->{'completed'} = 'off';
 		#	$t->{'duration'} = abs $settings->{'duration'};
 		}

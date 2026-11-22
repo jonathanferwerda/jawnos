@@ -28,6 +28,13 @@ and routine actions.
 - Scheduled repeats do not run during an away period; one-off appointments and
   an app on the routine keep list still run. An open start/record is closed at
   the boundary.
+- Task renewals age only over active time. Away time after a tick is not
+  counted against the renewal, so the first morning back is not a pile of
+  renewals that came due while nobody was here. The shift is derived on read;
+  the stored `last_completed` is never rewritten.
+- The desktop calendar shades the away days across the shown month and labels
+  the first day of a run **Away**. It reads the same period list and writes
+  nothing.
 - `evaluation` scheduled runs skip while away; an `each_run` report from real
   activity still runs.
 - A small Away card in Configure -> Me starts, ends or cancels a period, and shows a short return digest (days away and notices that arrived).
@@ -50,8 +57,7 @@ and routine actions.
 
 ## Not yet built
 
-- A task renewal shift, a Calendar band, an away phone greeting and presence
-  simulation.
+- An away phone greeting and presence simulation.
 
 ## Tests
 

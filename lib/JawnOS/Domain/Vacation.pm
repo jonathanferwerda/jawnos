@@ -21,7 +21,7 @@ no warnings 'experimental::args_array_with_signatures';
 
 use Mojo::JSON qw(decode_json encode_json);
 use POSIX ();
-use Time::Local qw(timelocal);
+use Time::Local qw(timelocal timegm);
 
 our $vacation_setting = 'vacation';
 our $vacation_app = '__president';
@@ -202,15 +202,25 @@ sub vacation_day_key($ms) {
 	return POSIX::strftime('%Y-%m-%d', localtime(int(($ms || 0) / 1000)));
 }
 
-# A local day's bounds. timelocal normalizes the day arithmetic, so a day that
-# gains or loses an hour is still one day and the next midnight is exact.
+# A local day's bounds. The next date is found in UTC, where a day is always
+# 86400 seconds, then that civil date is put back on the local clock, so a day
+# that gains or loses an hour is still one day and the next midnight is exact.
+# The day is never passed to timelocal as a number past the month's length: it
+# rejects "November 31" instead of rolling it into December, which used to drop
+# the last day of every 30-day month from each mask.
 sub vacation_day_bounds($key) {
 	return undef unless defined $key && $key =~ /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
 	my ($y, $m, $d) = ($1 + 0, $2 + 0, $3 + 0);
 	return undef unless $m >= 1 && $m <= 12 && $d >= 1 && $d <= 31;
 	my $start = eval { timelocal(0, 0, 0, $d, $m - 1, $y - 1900) * 1000 };
-	my $next = eval { timelocal(0, 0, 0, $d + 1, $m - 1, $y - 1900) * 1000 };
-	return undef unless defined $start && defined $next && $next > $start;
+	return undef unless defined $start;
+	my $mid = eval { timegm(0, 0, 0, $d, $m - 1, $y - 1900) };
+	return undef unless defined $mid;
+	my $next = eval {
+		my @date = gmtime($mid + 86400);
+		timelocal(0, 0, 0, @date[3, 4], $date[5] + 1900) * 1000;
+	};
+	return undef unless defined $next && $next > $start;
 	return ($start, $next);
 }
 
@@ -231,6 +241,23 @@ sub vacation_day_mask($from, $to) {
 		$cursor = $de;
 	}
 	return \%mask;
+}
+
+# The away days inside the local month a moment belongs to. The calendar's grid
+# is one month, so this is the mask it shades: a day with any away time counts,
+# because the band is where the person was not living here rather than the
+# routine's half-day rule. Read-only, like every other view of a period.
+sub vacation_month_days($ms) {
+	$ms = &rightNow() unless defined $ms && $ms =~ /^\s*-?\d+(?:\.\d+)?\s*$/;
+	my $key = &vacation_day_key($ms);
+	return [] unless $key =~ /^(\d{4})-(\d{1,2})-/;
+	my ($y, $m) = ($1 + 0, $2 + 0);
+	my ($ny, $nm) = $m == 12 ? ($y + 1, 1) : ($y, $m + 1);
+	my ($from) = &vacation_day_bounds(sprintf('%04d-%02d-01', $y, $m));
+	my ($to)   = &vacation_day_bounds(sprintf('%04d-%02d-01', $ny, $nm));
+	return [] unless defined $from && defined $to && $to > $from;
+	my $mask = &vacation_day_mask($from, $to);
+	return [ sort keys %{$mask} ];
 }
 
 # A day is away when at least half of it was. A departure at five in the

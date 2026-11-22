@@ -148,6 +148,9 @@ sub log_reader {
 		$appts->{'__specs'}->{'start'} = $t;
 		$appts->{'__specs'}->{'end'} = $fetch_end;
 		$appts->{'__specs'}->{'fetch_start'} = $fetch_start;
+		# The calendar draws the month of the payload timestamp, not the fetched
+		# window, so the band follows the month's own away days.
+		$appts->{'__specs'}->{'away_days'} = &subs::vacation_month_days($timestamp);
 		if ($appt_toggle eq 'on') {
 			my $temp_appointments;
 

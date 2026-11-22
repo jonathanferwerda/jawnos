@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Warehouse.pm lib/JawnOS/Domain/Budget2.pm templates/apps/tasks.html.ep perl/language/en.pl
+# tests-for: lib/JawnOS/Domain/Warehouse.pm lib/JawnOS/Domain/Vacation.pm lib/JawnOS/Domain/Budget2.pm templates/apps/tasks.html.ep perl/language/en.pl
 # covers:    A task the routine leaves behind expires after four runs the other
 #            tasks were ticked in; ticking it revives it, and Filter offers Expired.
 
@@ -65,6 +65,29 @@ sub scan {
 	my (@tasks) = @_;
 	&subs::task_expiry_scan($app, \@tasks);
 	return \@tasks;
+}
+
+sub set_vacation {
+	my ($from, $to) = @_;
+	my $json = encode_json({
+		version => 1,
+		periods => [ {
+			uuid => 'away-task', from => $from,
+			(defined $to ? (to => $to) : ()),
+			state => 'active', kind => 'vacation',
+		} ],
+		policy => {},
+		auto => { detect => 0, after_hours => 24 },
+	});
+	&subs::db_query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'vacation', 'all');
+	&subs::db_query('insert into settings (setting, value, app, device, uuid, server_time) values (?,?,?,?,?,?)',
+		'vacation', $json, '__president', 'all', 'vacation-task', $now);
+	&subs::vacation_forget();
+}
+
+sub clear_vacation {
+	&subs::db_query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'vacation', 'all');
+	&subs::vacation_forget();
 }
 
 # --------------------------------------------------------------- four runs
@@ -165,6 +188,58 @@ if ($grab) {
 }
 else {
 	fail('task_grabber rendered the expired filter') or diag($@);
+}
+
+# ---------------------------------------------------------- away time
+# Away time does not age a renewal: a task that came due while the person was
+# gone is not overdue on the first morning back, and the runs since then do not
+# expire it.
+reset_runs();
+add_run($now - 1 * $day);
+add_run($now - 2 * $day);
+add_run($now - 3 * $day);
+add_run($now - 4 * $day);
+clear_vacation();
+my @away_tasks = (
+	task(uuid => 'target', task => 'brushing_beard', completed => 'off', last_completed => $now - 40 * $day, renew_freq => 30 * $day),
+	task(uuid => 'other', task => 'washing', completed => 'on', last_completed => $now - 3600000),
+);
+my $away_scan = scan(@away_tasks);
+is($away_scan->[0]{'expired'}, 1, 'without an away period the overdue task expires');
+
+set_vacation($now - 20 * $day, $now - 10 * $day);
+$away_scan = scan(
+	task(uuid => 'target', task => 'brushing_beard', completed => 'off', last_completed => $now - 40 * $day, renew_freq => 30 * $day),
+	task(uuid => 'other', task => 'washing', completed => 'on', last_completed => $now - 3600000),
+);
+is($away_scan->[0]{'expired'}, undef, 'away time pushes the due point past the runs');
+
+# task_grabber derives the same clock, so the row does not flip to off
+set_vacation($now - 30 * $day, undef);
+&subs::db_query('delete from settings where app = ? and setting = ?', $app, 'tasks_filter');
+&subs::db_query('delete from settings where app = ? and setting = ?', $app, 'tasks');
+my @renewal_row = ( task(uuid => 'renew', task => 'renewing', completed => 'on', last_completed => $now - 30 * $day, renew_freq => 2 * $day) );
+&subs::db_query(
+	'insert into settings (app, setting, value, device, timestamp, server_time) values (?,?,?,?,?,?)',
+	$app, 'tasks', encode_json(\@renewal_row), 'computer', $now, $now
+);
+my $renew_grab = eval { &subs::task_grabber($app) };
+if ($renew_grab) {
+	my ($row) = grep { ($_->{'uuid'} || '') eq 'renew' } @{$renew_grab->{'tasks'}};
+	is($row->{'completed'}, 'on', 'a renewal that came due while away is not marked off');
+}
+else {
+	fail('task_grabber rendered the away renewal') or diag($@);
+}
+
+clear_vacation();
+$renew_grab = eval { &subs::task_grabber($app) };
+if ($renew_grab) {
+	my ($row) = grep { ($_->{'uuid'} || '') eq 'renew' } @{$renew_grab->{'tasks'}};
+	is($row->{'completed'}, 'off', 'without away time the same renewal is off');
+}
+else {
+	fail('task_grabber rendered the live renewal') or diag($@);
 }
 
 # ------------------------------------------------------- the option and label
