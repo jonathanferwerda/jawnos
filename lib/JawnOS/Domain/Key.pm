@@ -869,10 +869,28 @@ sub db_fresh {
 	return $rows || [];
 }
 
+# A write or delete with no usable key is not a row write: SQL::Abstract
+# matches every row when the only condition is undef. A settings backfill once
+# updated by `id` (null on every row) and wrote one value over 43k rows; this
+# is the general gate that refused that shape before it could run.
+sub db_write_key_ok {
+	my ($params) = @_;
+	return 1 unless ref $params eq 'HASH';
+	my @keys = keys %{$params};
+	return 0 unless @keys;
+	return scalar grep { defined $params->{$_} } @keys;
+}
+
 sub db_update {
 	my $table = shift;
 	my $data = shift;
 	my $params = shift;
+	unless (&db_write_key_ok($params)) {
+		my $where = ref $params eq 'HASH' ? join(',', sort keys %{$params}) : '';
+		&log_writer('db_update refused ' . ($table // '?') . ': no defined key'
+			. ($where ne '' ? ' (' . $where . ')' : ''));
+		return 0;
+	}
 	%setting_memo = () if ($table // '') eq 'settings';
 	# A stop or a cancel passes the request's own source, which on a plain press
 	# is empty. An empty value is not an answer: keep the origin the row was
@@ -897,6 +915,12 @@ sub dbs_delete {
 sub db_delete {
 	my $table = shift;
 	my $params = shift;
+	unless (&db_write_key_ok($params)) {
+		my $where = ref $params eq 'HASH' ? join(',', sort keys %{$params}) : '';
+		&log_writer('db_delete refused ' . ($table // '?') . ': no defined key'
+			. ($where ne '' ? ' (' . $where . ')' : ''));
+		return 0;
+	}
 	%setting_memo = () if ($table // '') eq 'settings';
 
 	my ($db,$database,$sql) = &database_grabber();

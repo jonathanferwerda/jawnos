@@ -104,4 +104,41 @@ merge_row('notes', {
 is(scalar @{ count_rows('notes', { uuid => 'note-1' }) }, 1,
 	'a table with a timestamp still merges');
 
+# ---- a v3 row stream still reports progress -------------------------------
+# sync_rows_pull passes results_size 0: a row stream has no snapshot to size.
+# The per-row yellow frame was gated on `$results_size > 1`, so a long merge
+# sent one table frame and then nothing; the dot hid after 20 s while the start
+# menu's polling card kept showing the job. The expected count is the
+# denominator now, and every frame carries the ring's overall progress.
+{
+	my @frames;
+	no warnings 'redefine';
+	local *Websocket::send = sub { push @frames, $_[1] };
+	my $clock = 1000;
+	local *subs::rightNow = sub { return $clock += 1000 };
+	my $served = 0;
+	my $next = sub {
+		return undef if $served >= 3;
+		$served++;
+		return { uuid => 'note-progress-' . $served, app => 'notes', text => 'row ' . $served,
+			timestamp => '100', server_time => '10' . $served, ost => '100' };
+	};
+	my $ctx = {
+		configuration      => {},
+		misc_settings      => {},
+		device             => $device,
+		deletions          => [],
+		universal_settings => {},
+		updateables        => [],
+		sync_job           => undef,
+		auuid              => 'test-auuid',
+		colour             => '#000000',
+	};
+	my $short = Manager::merge_table_rows($ctx, 'notes', $next, 0, 1, 1, 3);
+	is($short, 0, 'a row-stream merge with no snapshot size completes');
+	my @row_frames = grep { ref $_ eq 'HASH' && defined $_->{'yellow'} && $_->{'yellow'} =~ m{ / 3 } } @frames;
+	ok(scalar @row_frames > 0, 'a row stream sends per-row progress frames');
+	ok((grep { defined $_->{'progress'} } @row_frames), 'and each frame carries the ring progress');
+}
+
 done_testing();

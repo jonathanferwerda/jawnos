@@ -217,13 +217,19 @@ sub merge_table_rows {
 								next ROW;
 							}
 							next ROW if $tombstone_single{$r->{'uuid'} // ''};
-							$percentage = $results_size ? sprintf("%.2f", $n / $results_size * 100) : 0;
+							# A v3 row stream has no snapshot size (`$results_size` is 0), so
+							# the map's expected count (or the first batch's total) is the
+							# only honest denominator. Leaving the percentage at zero also
+							# suppressed every progress frame: the yellow dot got one frame
+							# per table and then hid after its 20 s while the merge ran on
+							# for minutes (the start menu's polling card kept showing it).
+							my $shown_total = $results_size || $expected || 0;
+							$percentage = $shown_total ? sprintf("%.2f", $n / $shown_total * 100) : 0;
 							if ($sync_job && &subs::rightNow() >= ($job_alert + 250)) {
 								my %progress = (current => $n);
-								# A row stream has no snapshot size (`$results_size` is 0); keep
-								# the total the map or first batch already named instead of
+								# Keep the total the map or first batch named instead of
 								# overwriting it with zero.
-								$progress{'total'} = $results_size || $expected if ($results_size || $expected);
+								$progress{'total'} = $shown_total if $shown_total;
 								&subs::sync_job_step($sync_job, 'merge:' . $q, \%progress);
 								$job_alert = &subs::rightNow();
 							}
@@ -232,14 +238,23 @@ sub merge_table_rows {
 							# the table merged and silently dropped them (2026-11-05). The sync
 							# requires `server_time`, not `timestamp`, so merge unconditionally.
 							if (1) {
-								if ($percentage >= $last_percent && $results_size > 1 && &subs::rightNow() >= ($last_alert + 250)) {
+								if ($percentage >= $last_percent && $shown_total > 1 && &subs::rightNow() >= ($last_alert + 250)) {
 									my $speed = abs sprintf("%.2f", $n / ($start_time - &subs::rightNow()) * 1000);
-									my $remaining = &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000);
-									my $html = '<b style="font-size:20px">' . $n . ' / ' . $results_size . ' ' . &subs::format_name($q) . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining . '</b><br>' .
-										'<progress style="width:70%;height:60px;" value="' . $n . '" max="' . $results_size . '"></progress>';
+									my $remaining = ($percentage > 0)
+										? &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000)
+										: '';
+									my $html = '<b style="font-size:20px">' . $n . ' / ' . $shown_total . ' ' . &subs::format_name($q) . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining . '</b><br>' .
+										'<progress style="width:70%;height:60px;" value="' . $n . '" max="' . $shown_total . '"></progress>';
 									$last_percent = $percentage;
 									$last_alert = &subs::rightNow();
-									&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
+									# The ring is the whole pull, not this table: without
+									# this frame the dot would look stuck at the table's
+									# start while the rows moved.
+									my $overall = $table_total
+										? int((($count - 1) + ($shown_total ? $n / $shown_total : 0)) / $table_total * 100)
+										: -1;
+									$overall = 100 if $overall > 100;
+									&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour, progress => $overall, state => 'running' });
 								}
 								if ($q eq 'websites') {
 									&web_history_deleter($r->{'app'});
