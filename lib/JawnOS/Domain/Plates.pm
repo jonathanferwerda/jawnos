@@ -165,7 +165,11 @@ sub plate_area_contains {
 		my $slat = _plate_number( $se->{'lat'} // $se->{'latitude'}, undef );
 		my $slon = _plate_number( $se->{'lon'} // $se->{'longitude'}, undef );
 		return 0 unless defined $nlat && defined $nlon && defined $slat && defined $slon;
-		return ($lat <= $nlat && $lat >= $slat && $lon >= $nlon && $lon <= $slon) ? 1 : 0;
+		# A foreign or hand-edited row may store the corners in either order. The
+		# map's hit test has always treated them as a box; navigation must agree.
+		my ($minlat, $maxlat) = $nlat < $slat ? ($nlat, $slat) : ($slat, $nlat);
+		my ($minlon, $maxlon) = $nlon < $slon ? ($nlon, $slon) : ($slon, $nlon);
+		return ($lat <= $maxlat && $lat >= $minlat && $lon >= $minlon && $lon <= $maxlon) ? 1 : 0;
 	}
 	my $points = plate_area_points($area);
 	if ($shape eq 'path') {
@@ -306,6 +310,15 @@ sub plate_areas {
 sub plate_anchor {
 	my ($plate) = @_;
 	return undef unless ref $plate eq 'HASH';
+	# A pattern flag is positioned by its search region on the map editor; keep
+	# the marker in the same place on every other reader. The branches remain
+	# the ground plate_contains tests.
+	if (($plate->{'kind'} || '') eq 'pattern' && ref $plate->{'match'} eq 'HASH'
+		&& ref $plate->{'match'}{'region'} eq 'HASH') {
+		my $rlat = _plate_number($plate->{'match'}{'region'}{'lat'}, undef);
+		my $rlon = _plate_number($plate->{'match'}{'region'}{'lon'}, undef);
+		return { lat => $rlat, lon => $rlon } if defined $rlat && defined $rlon;
+	}
 	foreach my $a ( @{ plate_areas($plate) } ) {
 		my $anchor = plate_area_anchor($a);
 		return $anchor if $anchor;
@@ -331,6 +344,7 @@ sub plate_distance_km {
 	my $best;
 	foreach my $a ( @{ plate_areas($plate) } ) {
 		my $d = plate_area_distance_km($a, $lat, $lon);
+		return 0 if $d == 0;   # inside is final; no later area can be closer
 		$best = $d if !defined $best || $d < $best;
 	}
 	return defined $best ? $best : 1_000_000;
@@ -354,8 +368,11 @@ sub plate_has_ground {
 	# a place. An empty pattern still has its own (empty) ground, so it must not
 	# fall back to the app's default plate and start matching the house.
 	return 1 if (($plate->{'kind'} || '') eq 'pattern');
-	return 1 if ref $plate->{'areas'} eq 'ARRAY' && scalar @{ $plate->{'areas'} };
-	return 1 if ref $plate->{'branches'} eq 'ARRAY' && scalar @{ $plate->{'branches'} };
+	# An explicit areas/branches key owns the ground even when it is empty: a
+	# person who deleted the last shape cleared this plate, and it must match
+	# nothing rather than quietly inherit the app's default place.
+	return 1 if exists $plate->{'areas'};
+	return 1 if exists $plate->{'branches'};
 	return 1 if defined $plate->{'latitude'} && length $plate->{'latitude'}
 		&& defined $plate->{'longitude'} && length $plate->{'longitude'};
 	return 0;
@@ -389,7 +406,12 @@ sub _plate_area_normalize {
 		my $slat = _plate_number( $se->{'lat'} // $se->{'latitude'}, undef );
 		my $slon = _plate_number( $se->{'lon'} // $se->{'longitude'}, undef );
 		return undef unless defined $nlat && defined $nlon && defined $slat && defined $slon;
-		return { shape => 'box', nw => { lat => sprintf('%.7f', $nlat), lon => sprintf('%.7f', $nlon) }, se => { lat => sprintf('%.7f', $slat), lon => sprintf('%.7f', $slon) } };
+		# Canonical corners: nw is north-west of se. The map already writes this
+		# order; a hand-edited or foreign row may not, and the box test is by
+		# min/max either way.
+		my ($minlat, $maxlat) = $nlat < $slat ? ($nlat, $slat) : ($slat, $nlat);
+		my ($minlon, $maxlon) = $nlon < $slon ? ($nlon, $slon) : ($slon, $nlon);
+		return { shape => 'box', nw => { lat => sprintf('%.7f', $maxlat), lon => sprintf('%.7f', $minlon) }, se => { lat => sprintf('%.7f', $minlat), lon => sprintf('%.7f', $maxlon) } };
 	}
 	if ($shape eq 'path' || $shape eq 'polygon') {
 		my $points = plate_area_points($area);
@@ -473,6 +495,14 @@ sub plate_normalize {
 		}
 		my $reach = plate_reach_km($plate);
 		$plate->{'distance'} = sprintf('%.3f', $reach) if $reach > 0;
+	}
+	else {
+		# No ground at all: drop the legacy point/radius mirror too, or an old
+		# reader (and the client's synthetic-circle fallback) would still see the
+		# shape the person just deleted.
+		delete $plate->{'latitude'};
+		delete $plate->{'longitude'};
+		delete $plate->{'distance'};
 	}
 	return $plate;
 }

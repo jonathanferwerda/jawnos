@@ -440,11 +440,15 @@ sub action_32830 {
 		my $duties = eval { return decode_json $row->{'value'} } || [];
 		next unless ref $duties eq 'ARRAY';
 		my $base = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'home_plate' }) } || {};
+		$base = {} unless ref $base eq 'HASH';
 		foreach my $d ( @{$duties} ) {
+			next unless ref $d eq 'HASH';
 			# a flag with its own ground keeps it; one without uses the app's base
 			my $ground = &subs::plate_ground_for($d, $base);
 			my $anchor = &subs::plate_anchor($ground);
 			next unless $anchor;
+			# a cleared flag has no ground; do not draw a stale marker for it
+			next unless scalar @{ &subs::plate_areas($ground) };
 			$covered{$app} = 1;
 			push @out, {
 				app => $app, name => &subs::format_name($app),
@@ -461,8 +465,10 @@ sub action_32830 {
 		my $app = $row->{'app'} || next;
 		next if $covered{$app};
 		my $b = eval { return decode_json $row->{'value'} } || {};
+		next unless ref $b eq 'HASH';
 		my $anchor = &subs::plate_anchor($b);
 		next unless $anchor;
+		next unless scalar @{ &subs::plate_areas($b) };
 		push @out, {
 			app => $app, name => &subs::format_name($app),
 			latitude => 0 + $anchor->{'lat'}, longitude => 0 + $anchor->{'lon'},

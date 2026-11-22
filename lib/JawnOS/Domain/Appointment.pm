@@ -1201,8 +1201,13 @@ sub navigation_automation {
 	foreach my $hpder ( @{$hpds} ) {
 		my $home_plate = eval { return decode_json &subs::setting_grabber({ app => $hpder->{'app'}, setting => 'home_plate' }) || &subs::setting_grabber({ app => 'me', setting => 'home_plate' }) } || {};
 		my $hpd = eval { return decode_json $hpder->{'value'} } || [];
+		# A hand-edited or foreign settings row must not abort the whole pass for
+		# every other app. Treat a malformed shape as no flags.
+		$home_plate = {} unless ref $home_plate eq 'HASH';
+		$hpd = [] unless ref $hpd eq 'ARRAY';
 		if (&subs::plate_has_ground($home_plate) || grep { ref $_ eq 'HASH' && &subs::plate_has_ground($_) } @{$hpd}) {
 			foreach my $hp ( @{$hpd} ) {
+				next unless ref $hp eq 'HASH';
 				my $plate_device = $hp->{'device'} || '';
 				if (!$plate_device || $plate_device eq $signatorial || $plate_device eq $device) {
 				my $app = $hpder->{'app'};

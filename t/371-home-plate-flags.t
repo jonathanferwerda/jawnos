@@ -1,4 +1,4 @@
-# tests-for: templates/configure/home_plate_map.html.ep templates/configure/home_plate.html.ep templates/configure/me_setting_list.html.ep public/js/manager/configure/09_home_plate_map.js public/js/manager/configure/05_database_records.js public/js/manager/configure.js public/js/manager/mapmarkers.js public/js/manager/travel.js public/js/manager/travel/01_map_render_points.js lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Routes/manager_configure5.pm lib/JawnOS/Controller/manager_misc10.pm
+# tests-for: templates/configure/home_plate_map.html.ep templates/configure/home_plate.html.ep templates/configure/me_setting_list.html.ep public/js/manager/configure/09_home_plate_map.js public/js/manager/configure/04_currency_backup.js public/js/manager/configure/05_database_records.js public/js/manager/configure.js public/js/manager/mapmarkers.js public/js/manager/travel.js public/js/manager/travel/01_map_render_points.js lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Routes/manager_configure5.pm lib/JawnOS/Controller/manager_misc10.pm
 # covers:    the map editor is the only place a plate's ground is defined:
 #            drag or click a flag, draw a circle/box/path/polygon, trace a river,
 #            cache OSM branches for a pattern, and save the whole flag at once;
@@ -19,6 +19,7 @@ my $map_partial = read_file("$root/templates/configure/home_plate_map.html.ep");
 my $panel        = read_file("$root/templates/configure/home_plate.html.ep");
 my $me           = read_file("$root/templates/configure/me_setting_list.html.ep");
 my $editor       = read_file("$root/public/js/manager/configure/09_home_plate_map.js");
+my $ability      = read_file("$root/public/js/manager/configure/04_currency_backup.js");
 my $records      = read_file("$root/public/js/manager/configure/05_database_records.js");
 my $bundle       = read_file("$root/public/js/manager/configure.js");
 my $markers      = read_file("$root/public/js/manager/mapmarkers.js");
@@ -99,7 +100,34 @@ like( $misc, qr/areas => &subs::plate_areas\(\$ground\)/, 'the home_plates route
 like( $routes, qr#\[54102, 'post', '/manager/configure/home_plate/shape', 'action_54102'\]#, 'the shape route is in the route table' );
 like( $controller, qr/sub action_54102/, 'and its action exists' );
 like( $controller, qr/&subs::plate_normalize\(\$plate\)/, 'the saved flag is normalized' );
-like( $controller, qr/my \(\$existing\) = grep \{ \(\$_->\{'uuid'\} \|\| ''\) eq \(\$home_plate->\{'uuid'\} \|\| ''\) \}/, 'the card save merges into the stored flag' );
+like( $controller, qr/my \(\$existing\) = grep \{ ref \$_ eq 'HASH' && \(\$_->\{'uuid'\} \|\| ''\) eq \(\$home_plate->\{'uuid'\} \|\| ''\) \}/, 'the card save merges into the stored flag' );
 like( $controller, qr/home_plate_duties/, 'and a uuid joins the flags list' );
+
+# --------------------------------------------- the browser-probe regressions
+# A cleared flag is empty, not a legacy circle rebuilt from its old mirror.
+like( $editor, qr/!\('areas' in plate\)/, 'the editor does not resurrect a cleared area list from the old point' );
+like( $editor, qr/hit\.plate\.areas = \[\];/, 'deleting a legacy point clears its ground' );
+like( $editor, qr/hit\.flat = i;/, 'an area hit carries its flattened entry index' );
+like( $editor, qr/st\.area = \(hit\.flat !== undefined\) \? hit\.flat : hit\.index;/, 'selection uses the flattened index for branch areas' );
+like( $editor, qr/legacy\.areas = legacy\.areas \|\| \[\];/, 'a legacy point is materialised before its radius is edited' );
+like( $editor, qr/else \{ input\.val\(st\.width \|\| 200\); \}/, 'the radius box reflects the saved width after a reload' );
+like( $editor, qr/if \(value <= 0\) \{ return; \}/, 'a blank or negative radius is not written' );
+like( $editor, qr/homePlateSyncWidth\(st\);/, 'the map syncs the radius control after init, reload and select' );
+like( $editor, qr/k === 'custom' \|\| k === 'lambton' \|\| k === 'none'/, 'the provider picker does not offer a blank None ground' );
+like( $editor, qr/st\.ground\.provider = provider;/, 'choosing a provider updates the editor state' );
+like( $editor, qr/document\.addEventListener\('toggle'/, 'a details card initialises its map when it opens' );
+like( $editor, qr/st\.map\.canvas !== canvas/, 'a stale canvas is re-initialised on a click' );
+like( $editor, qr/getData\('text\/plain'\)/, 'a drop must carry this editor\'s flag key' );
+like( $editor, qr/home_plate_branch_results/, 'a second branch search replaces the first result box' );
+like( $editor, qr/homePlateStatus\(freshState/, 'the save message survives the server re-render' );
+like( $panel, qr/\$device_found/, 'a card keeps a device the current list no longer carries' );
+like( $ability, qr/homePlateInitAll\(input\)/, 'opening the hidden Home Plate ability initialises the map' );
+like( $records, qr/\.filter\(function\(\) \{/, 'the card save finds its app without a CSS attribute selector' );
+unlike( $records, qr/console\.log/, 'the card save is not left logging its payload' );
+like( $controller, qr/sub action_25688/, 'the legacy distance write still exists for old clients' );
+like( $controller, qr/&subs::plate_normalize\(\$data\)/, 'it writes a real shape instead of a bare point' );
+unlike( $controller, qr/my \$homeplate = eval/, 'and keeps no unused legacy plate read' );
+like( $misc, qr/next unless ref \$d eq 'HASH'/, 'the home-plates route skips a malformed duty' );
+like( $misc, qr/next unless scalar \@\{ &subs::plate_areas\(\$ground\) \}/, 'it does not draw a cleared flag' );
 
 done_testing();

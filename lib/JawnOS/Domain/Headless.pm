@@ -278,8 +278,12 @@ sub navigation_information {
 		foreach my $hpder ( @{$hpds} ) {
 			my $home_plate = eval { return decode_json &subs::setting_grabber({ app => $hpder->{'app'}, setting => 'home_plate' }) || &subs::setting_grabber({ app => 'me', setting => 'home_plate' }) } || {};
 			my $hpd = eval { return decode_json $hpder->{'value'} } || [];
+			# One malformed row must not hide every other app's plates.
+			$home_plate = {} unless ref $home_plate eq 'HASH';
+			$hpd = [] unless ref $hpd eq 'ARRAY';
 			if (&subs::plate_has_ground($home_plate) || grep { ref $_ eq 'HASH' && &subs::plate_has_ground($_) } @{$hpd}) {
 				foreach my $hp ( @{$hpd} ) {
+					next unless ref $hp eq 'HASH';
 					my $parent_app = $hpder->{'app'};
 					# a plate only triggers its own app; a duty may carry its own ground
 					my $app = $parent_app;

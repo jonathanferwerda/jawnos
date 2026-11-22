@@ -36,6 +36,14 @@ is( scalar @{ &subs::plate_areas($cleared) }, 0, 'an explicitly empty area list 
 &subs::plate_normalize($cleared);
 is( scalar @{ $cleared->{'areas'} || [] }, 0, 'and normalization keeps it explicitly empty' );
 is( scalar @{ &subs::plate_areas($cleared) }, 0, 'so no circle is read back out of the old point' );
+is( scalar @{ &subs::plate_areas($cleared) }, 0, 'and the stale point is not a shape' );
+ok( !exists $cleared->{'latitude'} && !exists $cleared->{'longitude'}, 'normalization drops the stale point mirror' );
+ok( !exists $cleared->{'distance'}, 'and the stale radius mirror' );
+ok( &subs::plate_has_ground($cleared), 'a cleared flag still owns its empty ground' );
+my $cleared_base = { kind => 'area', areas => [ { shape => 'circle', lat => 43, lon => -81, radius_m => 200 } ] };
+is( &subs::plate_ground_for($cleared, $cleared_base), $cleared, 'so it does not silently fall back to the base plate' );
+is( &subs::plate_reach_km($cleared), 0, 'and it reaches nowhere' );
+is( &subs::plate_contains($cleared, 43, -81), 0, 'and matches no fix' );
 
 # -------------------------------------------------------------------- circle
 my $circle = { kind => 'area', areas => [ { shape => 'circle', lat => 43, lon => -81, radius_m => 200 } ] };
@@ -49,6 +57,14 @@ my $a = &subs::plate_anchor($circle);
 is( $a->{'lat'}, 43, 'the anchor is the circle centre' );
 is( $a->{'lon'}, -81, 'on both axes' );
 
+# Distance is final once an area contains the fix; a later far area must not
+# make the scan keep working.
+my $inside_then_far = { kind => 'area', areas => [
+	$circle->{'areas'}[0],
+	{ shape => 'circle', lat => 43.5, lon => -81, radius_m => 200 },
+] };
+is( &subs::plate_distance_km($inside_then_far, 43.001, -81), 0, 'an inside area ends the distance scan at zero' );
+
 # ----------------------------------------------------------------------- box
 my $box = { kind => 'area', areas => [ { shape => 'box', nw => { lat => 43.002, lon => -81.002 }, se => { lat => 43.000, lon => -81.000 } } ] };
 is( &subs::plate_contains($box, 43.001, -81.001), 1, 'a point inside the box is within the plate' );
@@ -56,6 +72,15 @@ is( &subs::plate_contains($box, 43.001, -80.999), 0, 'a point east of the box is
 $b = &subs::plate_anchor($box);
 is( $b->{'lat'}, 43.001, 'the box anchor is its centre' );
 is( $b->{'lon'}, -81.001, 'on both axes' );
+
+# A foreign or hand-edited row may store the corners in the other order. The
+# map's hit test already treats the corners as min/max; navigation must agree.
+my $box_rev = { kind => 'area', areas => [ { shape => 'box', nw => { lat => 43.000, lon => -81.000 }, se => { lat => 43.002, lon => -81.002 } } ] };
+is( &subs::plate_contains($box_rev, 43.001, -81.001), 1, 'a box stored with swapped corners still contains its middle' );
+&subs::plate_normalize($box_rev);
+is( $box_rev->{'areas'}[0]{'nw'}{'lat'}, '43.0020000', 'normalization canonicalises the north-west corner' );
+is( $box_rev->{'areas'}[0]{'nw'}{'lon'}, '-81.0020000', 'on both axes' );
+is( $box_rev->{'areas'}[0]{'se'}{'lat'}, '43.0000000', 'and the south-east corner' );
 
 # ------------------------------------------------------- path with a width
 my $path = { kind => 'area', areas => [ { shape => 'path', width_m => 100, points => [ { lat => 43, lon => -81 }, { lat => 43, lon => -80.99 } ] } ] };
@@ -82,6 +107,28 @@ is( &subs::plate_contains($union, 43.0005, -81), 1, 'the first area counts' );
 is( &subs::plate_contains($union, 43.0105, -81), 1, 'and so does the second' );
 is( &subs::plate_contains($union, 43.005, -81), 0, 'the gap between them does not' );
 
+# A flag may carry a lot of shapes; the union and its normalization must keep
+# every one of them and still answer a fix near either end.
+my @many;
+for my $i (0 .. 1999) {
+	push @many, {
+		shape => 'circle',
+		lat => sprintf('%.7f', 43.0 + ($i % 50) * 0.0001),
+		lon => sprintf('%.7f', -81.0 + int($i / 50) * 0.0001),
+		radius_m => 5,
+	};
+}
+my $many = { kind => 'area', areas => \@many };
+is( scalar @{ &subs::plate_areas($many) }, 2000, 'a 2000-area plate keeps every area' );
+is( &subs::plate_contains($many, 43.0, -81.0), 1, 'and matches the first' );
+is( &subs::plate_contains($many, 43.0 + 49 * 0.0001, -81.0 + 39 * 0.0001), 1, 'and a far one' );
+is( &subs::plate_contains($many, 42.0, -81.0), 0, 'while a distant fix is outside' );
+&subs::plate_normalize($many);
+is( scalar @{ $many->{'areas'} || [] }, 2000, 'normalization keeps all 2000 areas' );
+my $many_once = $canonical->encode($many);
+&subs::plate_normalize($many);
+is( $canonical->encode($many), $many_once, 'and a large plate normalizes idempotently' );
+
 # ---------------------------------------------------------- pattern branches
 my $pattern = {
 	kind => 'pattern',
@@ -102,6 +149,18 @@ is( scalar @{ &subs::plate_areas($empty_pattern) }, 0, 'a pattern with no branch
 is( $empty_pattern->{'kind'}, 'pattern', 'and normalization keeps it a pattern' );
 is( &subs::plate_ground_for($empty_pattern, $circle), $empty_pattern, 'an empty pattern does not fall back to the base plate' );
 is( &subs::plate_contains($empty_pattern, 43.001, -81), 0, 'so it matches nothing until a branch is found' );
+
+# The editor positions a pattern marker at its search region. The server anchor
+# must agree (the cached branches remain the ground).
+my $pattern_anchor = {
+	kind => 'pattern',
+	match => { brand => 'TestMart', region => { lat => 44, lon => -82, radius_m => 50000 } },
+	branches => [ { latitude => 43.000, longitude => -81.000, areas => [ { shape => 'circle', lat => 43.000, lon => -81.000, radius_m => 200 } ] } ],
+};
+my $pa = &subs::plate_anchor($pattern_anchor);
+is( $pa->{'lat'}, 44, 'a pattern is anchored at its search region' );
+is( $pa->{'lon'}, -82, 'on both axes' );
+is( &subs::plate_contains($pattern_anchor, 43.0005, -81), 1, 'while its cached branches stay the ground' );
 
 # ---------------------------------------------------------- branch lookup helpers
 my $escaped = &subs::plate_branch_escape('Walmart (Supercentre) "North"');

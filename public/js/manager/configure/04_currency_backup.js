@@ -590,7 +590,11 @@ $(document).on('click', '.delete_whole_app', function() {
 $(document).on('click', '.app_configure_toggle', function() {
 	var app = $(this).attr('app');
 	var setting = $(this).attr('setting');
-	var input = $('.app_configure_input[app="' + app + '"][setting="' + setting + '"]');
+	// App names may contain any printable character (including quotes), so a
+	// CSS attribute selector cannot carry them safely.
+	var input = $('.app_configure_input[setting="' + setting + '"]').filter(function() {
+		return $(this).attr('app') === app;
+	});
 	var container = $(this).closest('.configuration_ability_container');
 	if (input.is(':visible')) {
 		input.hide();
@@ -599,6 +603,11 @@ $(document).on('click', '.app_configure_toggle', function() {
 	else {
 		input.show();
 		container.addClass('open');
+		// A hidden map cannot measure its canvas; opening the ability is the
+		// moment to initialise it.
+		if (setting === 'home_plate' && typeof homePlateInitAll === 'function') {
+			setTimeout(function() { homePlateInitAll(input); }, 0);
+		}
 	}
 });
 

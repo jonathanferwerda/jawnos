@@ -87,7 +87,7 @@ function homePlateAreaEntries(plate) {
 			if (area && typeof area === 'object') { out.push({ plate: plate, branch: branch, area: area, index: j }); }
 		});
 	});
-	if (!out.length && (plate.kind || '') !== 'pattern' && isFinite(+plate.latitude) && isFinite(+plate.longitude)) {
+	if (!out.length && !('areas' in plate) && (plate.kind || '') !== 'pattern' && isFinite(+plate.latitude) && isFinite(+plate.longitude)) {
 		var radius = +plate.radius_m || ((+plate.distance || 0.2) * 1000) || 200;
 		out.push({ plate: plate, area: { shape: 'circle', lat: +plate.latitude, lon: +plate.longitude, radius_m: radius }, index: 0, synthetic: true });
 	}
@@ -175,7 +175,11 @@ function homePlateAreaAt(st, lat, lon) {
 	if (!plate) { return null; }
 	var entries = homePlateAreaEntries(plate);
 	for (var i = 0; i < entries.length; i++) {
-		if (homePlateAreaContains(entries[i].area, lat, lon)) { return entries[i]; }
+		if (homePlateAreaContains(entries[i].area, lat, lon)) {
+			var hit = $.extend({}, entries[i]);
+			hit.flat = i;
+			return hit;
+		}
 	}
 	return null;
 }
@@ -313,6 +317,7 @@ function homePlateReload($editor) {
 	homePlateBuildFlag(st);
 	homePlateSummaries(st);
 	homePlatePatternPanel(st);
+	homePlateSyncWidth(st);
 	if (st.map) { st.map.draw(); }
 }
 
@@ -382,6 +387,7 @@ function homePlateInit($editor) {
 	homePlateBuildFlag(st);
 	homePlateSummaries(st);
 	homePlatePatternPanel(st);
+	homePlateSyncWidth(st);
 	st.map.draw();
 }
 
@@ -431,7 +437,9 @@ function homePlateBuildProvider(st) {
 	var groups = {};
 	sel.empty();
 	$.each(providers, function(k, p) {
-		if (k === 'custom' || k === 'lambton') { return; }
+		// None would leave the editor with no ground; LoadGround already maps it
+		// to the house map or OSM, so offering it here only blanks the canvas.
+		if (k === 'custom' || k === 'lambton' || k === 'none') { return; }
 		if (k === 'house' && typeof window.travelBasemapLoad !== 'function') { return; }
 		var group = p.group || 'free';
 		if (!groups[group]) { groups[group] = $('<optgroup>').attr('label', labels[group] || group).appendTo(sel); }
@@ -527,7 +535,10 @@ function homePlatePatternPanel(st) {
 	panel.css('display', shown ? 'block' : 'none');
 	if (!shown) { return; }
 	plate.match = plate.match || {};
-	plate.match.region = plate.match.region || { lat: 0, lon: 0, radius_m: 50000 };
+	if (!plate.match.region || !isFinite(+plate.match.region.lat) || !isFinite(+plate.match.region.lon)) {
+		var view = st.map ? st.map.view() : { lat: 43.0, lon: -81.94 };
+		plate.match.region = { lat: view.lat, lon: view.lon, radius_m: 50000 };
+	}
 	panel.find('.home_plate_brand').val(plate.match.brand || '');
 	panel.find('.home_plate_pattern_radius').val(Math.round((+plate.match.region.radius_m || 50000) / 1000));
 	homePlateRenderBranches(st, plate);
@@ -553,12 +564,15 @@ function homePlateRenderBranches(st, plate) {
 function homePlateRenderBranchResults(st) {
 	var list = st.editor.find('.home_plate_branch_list').first();
 	if (!list.length) { return; }
+	// A second search replaces the first result set instead of stacking another
+	// box whose checkboxes index into the newer answer.
+	list.find('.home_plate_branch_results').remove();
 	var results = st.branchResults || [];
 	if (!results.length) {
 		list.append($('<div>').css({ fontSize: '12px', opacity: '.7' }).text(homePlateT('No branches found.')));
 		return;
 	}
-	var box = $('<div>').css({ marginTop: '4px' });
+	var box = $('<div class="home_plate_branch_results">').css({ marginTop: '4px' });
 	$.each(results, function(i, b) {
 		var row = $('<label>').css({ display: 'block', fontSize: '12px' });
 		$('<input type="checkbox">').attr('value', i).prop('checked', true).appendTo(row);
@@ -620,7 +634,21 @@ function homePlateMapClick(st, lat, lon) {
 	if (st.flagArmed) { st.flagArmed = false; homePlateNewFlag(st, lat, lon); return; }
 	if (st.branchArmed) { st.branchArmed = false; homePlateAddBranch(st, lat, lon); return; }
 	var hit = homePlateAreaAt(st, lat, lon);
-	if (hit) { st.area = hit.index; homePlateSyncWidth(st); st.map.draw(); }
+	if (hit) {
+		if (hit.synthetic) {
+			// Materialise a legacy point the first time it is selected, so the
+			// radius box and the delete button edit a real area.
+			var plate = hit.plate;
+			plate.areas = plate.areas || [];
+			plate.areas.push(hit.area);
+			st.area = plate.areas.length - 1;
+		}
+		else {
+			// Branch areas carry a branch-local index; st.area is the flat entry.
+			st.area = (hit.flat !== undefined) ? hit.flat : hit.index;
+		}
+		homePlateSyncWidth(st); st.map.draw();
+	}
 }
 
 function homePlateMapDouble(st, lat, lon) {
@@ -678,13 +706,19 @@ function homePlateAddArea(st, area) {
 	st.dirty = true;
 	homePlateSyncWidth(st);
 	homePlateSummaries(st);
+	homePlateBuildSelector(st);
 	homePlateBuildFlag(st);
 	if (st.map) { st.map.draw(); }
 }
 
 function homePlateRemoveArea(st, hit) {
 	if (!hit || !hit.plate) { return; }
-	if (hit.branch) {
+	if (hit.synthetic) {
+		// A legacy point has no areas array; clearing the ground has to say so
+		// explicitly or homePlateMirror reads the old point back as a circle.
+		hit.plate.areas = [];
+	}
+	else if (hit.branch) {
 		hit.branch.areas = hit.branch.areas || [];
 		hit.branch.areas.splice(hit.index, 1);
 	}
@@ -696,6 +730,7 @@ function homePlateRemoveArea(st, hit) {
 	homePlateMirror(hit.plate);
 	st.dirty = true;
 	homePlateSummaries(st);
+	homePlateBuildSelector(st);
 	homePlateBuildFlag(st);
 	homePlatePatternPanel(st);
 	if (st.map) { st.map.draw(); }
@@ -710,7 +745,7 @@ function homePlateSyncWidth(st) {
 		var width = homePlateAreaWidth(entries[st.area].area);
 		if (width) { input.val(width); st.width = width; }
 	}
-	else if (!input.val()) { input.val(st.width || 200); }
+	else { input.val(st.width || 200); }
 }
 
 function homePlateFinish(st) {
@@ -761,11 +796,14 @@ function homePlateSelect(st, uuid) {
 	if (!st) { return; }
 	st.selected = uuid || '';
 	st.area = null;
+	st.flagArmed = false;
+	st.branchArmed = false;
 	st.branchResults = null;
 	homePlateBuildSelector(st);
 	homePlateBuildFlag(st);
 	homePlateSummaries(st);
 	homePlatePatternPanel(st);
+	homePlateSyncWidth(st);
 	homePlateToolbarState(st);
 	if (st.map) {
 		var anchor = homePlateAnchor(homePlateSelectedPlate(st));
@@ -817,6 +855,7 @@ function homePlateAddBranch(st, lat, lon) {
 	homePlateMirror(plate);
 	st.dirty = true;
 	homePlateSummaries(st);
+	homePlateBuildSelector(st);
 	homePlatePatternPanel(st);
 	if (st.map) { st.map.draw(); }
 }
@@ -922,7 +961,10 @@ function homePlateSave(st) {
 			var $wrap = st.editor.closest('.home_plate_configuration');
 			if (r.html && $wrap.length) {
 				$wrap.html(r.html);
-				homePlateReload($wrap.find('.home_plate_editor').first());
+				var $fresh = $wrap.find('.home_plate_editor').first();
+				homePlateReload($fresh);
+				var freshState = homePlateEditors[homePlateKey($fresh)];
+				if (freshState) { homePlateStatus(freshState, homePlateT('Saved.')); }
 			}
 		},
 		error: function() { homePlateStatus(st, homePlateT('The plate was not saved.')); }
@@ -946,6 +988,10 @@ $(document).on('click', '.home_plate_editor .home_plate_tool', function() {
 	st.tool = (st.tool === shape) ? '' : shape;
 	st.pending = null;
 	st.trace = (st.tool === 'trace') ? { points: [] } : null;
+	// A tool press is the current intent; a flag armed earlier must not win the
+	// next double-click.
+	st.flagArmed = false;
+	st.branchArmed = false;
 	homePlateToolbarState(st);
 	homePlateMapStatus(st, st.tool ? homePlateT('Draw on the map, then Finish.') : '');
 	if (st.map) { st.map.draw(); }
@@ -954,6 +1000,7 @@ $(document).on('click', '.home_plate_editor .home_plate_tool', function() {
 $(document).on('click', '.home_plate_editor .home_plate_flag_tool', function() {
 	var st = homePlateState(homePlateClickEditor(this));
 	st.flagArmed = true;
+	st.branchArmed = false;
 	homePlateMapStatus(st, homePlateT('Click the map to place the flag.'));
 });
 
@@ -968,6 +1015,11 @@ $(document).on('drop', '.home_plate_editor .home_plate_map_wrap', function(e) {
 	e.preventDefault();
 	var st = homePlateState(homePlateClickEditor(this));
 	if (!st.map) { return; }
+	var key = '';
+	try { key = e.originalEvent.dataTransfer.getData('text/plain') || ''; } catch (err) { key = ''; }
+	// Only this editor's toolbar flag carries a known key; dropping a file, a
+	// link or text onto the map must not create a plate.
+	if (!key || !homePlateEditors[key]) { return; }
 	var rect = st.map.canvas.getBoundingClientRect();
 	var g = st.map.unproject(e.originalEvent.clientX - rect.left, e.originalEvent.clientY - rect.top);
 	homePlateNewFlag(st, g.lat, g.lon);
@@ -991,7 +1043,14 @@ $(document).on('change', '.home_plate_editor .home_plate_provider', function() {
 	var st = homePlateState(homePlateClickEditor(this));
 	if (!st.map) { return; }
 	var g = st.ground || {};
-	st.map.setProvider($(this).val() || 'none', g.custom_url || '', g.keys || {});
+	var provider = $(this).val() || 'none';
+	if (provider === 'none' || provider === 'custom' || provider === 'lambton') {
+		provider = homePlateBasemapReady() ? 'house' : 'osm';
+	}
+	// Keep the state honest: a later summary or re-render reads st.ground.provider.
+	st.ground = st.ground || {};
+	st.ground.provider = provider;
+	st.map.setProvider(provider, g.custom_url || '', g.keys || {});
 	st.map.draw();
 });
 
@@ -1000,8 +1059,36 @@ $(document).on('change input', '.home_plate_editor .home_plate_width', function(
 	var plate = homePlateSelectedPlate(st);
 	var entries = homePlateAreaEntries(plate);
 	var value = parseInt($(this).val(), 10) || 0;
-	if (value > 0) { st.width = value; }
-	if (st.area === null || !entries[st.area]) { return; }
+	if (value <= 0) { return; }
+	st.width = value;
+	if (st.area === null || !entries[st.area]) {
+		// No shape is selected: edit the plate's only circle/path, or say what is
+		// missing. The old silent return made a radius change look saved when it
+		// had not touched any area.
+		var pick = -1;
+		for (var i = 0; i < entries.length; i++) {
+			var pickShape = entries[i].area.shape || '';
+			if (pickShape === 'circle' || pickShape === 'path') {
+				if (pick >= 0) { pick = -2; break; }
+				pick = i;
+			}
+		}
+		if (pick >= 0) { st.area = pick; }
+		else {
+			homePlateStatus(st, homePlateT(pick === -2 ? 'Select a shape on the map first.' : 'Add a circle or path first.'));
+			homePlateSyncWidth(st);
+			return;
+		}
+	}
+	if (entries[st.area].synthetic) {
+		// A legacy point is rebuilt on every read; materialise it before editing
+		// so the new radius is not written to a throwaway object.
+		var legacy = homePlateSelectedPlate(st);
+		legacy.areas = legacy.areas || [];
+		legacy.areas.push(entries[st.area].area);
+		st.area = legacy.areas.length - 1;
+		entries = homePlateAreaEntries(legacy);
+	}
 	var area = entries[st.area].area;
 	if ((area.shape || '') === 'circle') { area.radius_m = value; }
 	else if ((area.shape || '') === 'path') { area.width_m = value; }
@@ -1009,6 +1096,7 @@ $(document).on('change input', '.home_plate_editor .home_plate_width', function(
 	homePlateMirror(plate);
 	st.dirty = true;
 	homePlateSummaries(st);
+	homePlateBuildSelector(st);
 	if (st.map) { st.map.draw(); }
 });
 
@@ -1046,7 +1134,11 @@ $(document).on('click', '.home_plate_editor .home_plate_find_branches', function
 	if (!plate || (plate.kind || '') !== 'pattern') { return; }
 	var brand = $.trim(st.editor.find('.home_plate_brand').val() || '');
 	if (!brand) { homePlatePatternStatus(st, homePlateT('Type a brand to search for.')); return; }
-	var region = plate.match.region || { lat: 0, lon: 0, radius_m: 50000 };
+	var region = plate.match.region;
+	if (!region || !isFinite(+region.lat) || !isFinite(+region.lon)) {
+		var view = st.map ? st.map.view() : { lat: 43.0, lon: -81.94 };
+		region = { lat: view.lat, lon: view.lon, radius_m: 50000 };
+	}
 	var km = parseInt(st.editor.find('.home_plate_pattern_radius').val(), 10) || 50;
 	region.radius_m = km * 1000;
 	plate.match.brand = brand;
@@ -1075,6 +1167,7 @@ $(document).on('click', '.home_plate_editor .home_plate_add_branch', function() 
 	var plate = homePlateSelectedPlate(st);
 	if (!plate || (plate.kind || '') !== 'pattern') { return; }
 	st.branchArmed = true;
+	st.flagArmed = false;
 	homePlateMapStatus(st, homePlateT('Click the map where the branch is.'));
 });
 
@@ -1107,6 +1200,7 @@ $(document).on('click', '.home_plate_editor .home_plate_add_checked', function()
 	homePlateMirror(plate);
 	st.dirty = true;
 	homePlateSummaries(st);
+	homePlateBuildSelector(st);
 	homePlatePatternPanel(st);
 	if (st.map) { st.map.draw(); }
 	homePlatePatternStatus(st, added + ' ' + homePlateT('branches added.'));
@@ -1121,6 +1215,7 @@ $(document).on('click', '.home_plate_editor .home_plate_branch_delete', function
 	homePlateMirror(plate);
 	st.dirty = true;
 	homePlateSummaries(st);
+	homePlateBuildSelector(st);
 	homePlatePatternPanel(st);
 	if (st.map) { st.map.draw(); }
 });
@@ -1163,6 +1258,7 @@ $(document).on('pointerdown', '.home_plate_editor .home_plate_flag_marker', func
 		if (moved) {
 			homePlateMirror(plate);
 			homePlateSummaries(st);
+			homePlateBuildSelector(st);
 			homePlatePatternPanel(st);
 		}
 	};
@@ -1187,13 +1283,18 @@ $(document).on('mousedown touchstart', function(e) {
 
 $(function() {
 	homePlateInitAll(document);
-	$(document).on('toggle', 'details', function() {
-		var root = this;
-		setTimeout(function() { homePlateInitAll(root); }, 0);
-	});
+	// `toggle` does not bubble, so the old delegated handler never saw a device
+	// card under Configure -> Me. The capture phase sees it for every details.
+	document.addEventListener('toggle', function(e) {
+		var el = e.target;
+		if (!el || el.tagName !== 'DETAILS' || !el.open) { return; }
+		setTimeout(function() { homePlateInitAll(el); }, 0);
+	}, true);
 	$(document).on('click', '.home_plate_editor', function() {
-		var st = homePlateEditors[homePlateKey($(this))];
-		if (!st || !st.map) {
+		var $editor = $(this);
+		var st = homePlateEditors[homePlateKey($editor)];
+		var canvas = $editor.find('canvas.home_plate_map')[0];
+		if (!st || !st.map || st.map.canvas !== canvas) {
 			var editor = this;
 			setTimeout(function() { homePlateInitAll(editor); }, 0);
 		}

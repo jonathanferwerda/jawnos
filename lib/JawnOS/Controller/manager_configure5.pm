@@ -570,6 +570,10 @@ sub action_25173 {
 }
 
 # POST /manager/configure/home_plate/save
+# A continent fix chosen from the appointment details sets the app's home plate
+# to that point. The map is the editor now, so write a real shape (a circle at
+# the fix, carrying the radius the plate already had) instead of a legacy point
+# that the next map save would have to reinterpret.
 sub action_25688 {
 	my $c = shift;
 	my $app = $c->param('app');
@@ -577,20 +581,31 @@ sub action_25688 {
 	my $app_uuid = $c->param('uuid');
 
 	my $continent = &subs::db_select('continent', undef, { uuid => $uuid })->hashes->[0];
-	my $homeplate = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'home_plate' }) } || {};
+	my $existing = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'home_plate' }) } || {};
+	$existing = {} unless ref $existing eq 'HASH';
+	my $radius = &subs::plate_reach_km($existing) * 1000;
+	$radius = &subs::plate_default_radius_m() unless $radius > 0;
 
 	my $data = {
-		latitude => $continent->{'latitude'},
-		longitude => $continent->{'longitude'},
-		accurancy => $continent->{'accuracy'},
-		uuid => $uuid
+		kind => 'area',
+		areas => [ {
+			shape => 'circle',
+			lat => $continent->{'latitude'},
+			lon => $continent->{'longitude'},
+			radius_m => sprintf('%.0f', $radius),
+		} ],
+		self => 'on',
+		app => $app,
 	};
+	foreach my $keep ( qw/uuid timestamp name/ ) {
+		$data->{$keep} = $existing->{$keep} if defined $existing->{$keep} && length $existing->{$keep};
+	}
 	&subs::db_query('update continent set type=?, server_time=? where type=? and app=?', 'app', &subs::rightNow(), 'home_plate', $app);
 	&subs::db_update('continent', { type => 'home_plate', server_time => &subs::rightNow() }, { uuid => $uuid });
 
-	my $jplate = encode_json $data;
-	&subs::setting_setter({ app => $app, setting => 'home_plate', value => $jplate });
-	$c->render(json => $jplate);
+	&subs::plate_normalize($data);
+	&subs::setting_setter({ app => $app, setting => 'home_plate', value => encode_json($data) });
+	$c->render(json => $data);
 }
 
 # POST /manager/configure/home_plate/manual
@@ -615,20 +630,22 @@ sub action_25725 {
 	my $timestamp = $c->param('timestamp');
 	my $app = $c->param('app');
 	my $home_plate = eval { return decode_json $c->param('home_plate') } || {};
+	$home_plate = {} unless ref $home_plate eq 'HASH';
 	# a plate only ever triggers its own app; the owner is the app being configured
 	$home_plate->{'self'} = 'on';
 	$home_plate->{'app'} = $app;
 	my $settings = &subs::settings_grabber({ app => $app, settings => [ 'home_plate', 'home_plate_duties'] });
 	my $home_plate_duties = eval { return decode_json $settings->{'home_plate_duties'} } || [];
+	$home_plate_duties = [] unless ref $home_plate_duties eq 'ARRAY';
 
 	# The card posts only the behaviour (placement, action, device). Merge it
 	# into the stored flag so its areas, answer and coordinates stay: the map is
 	# the only place the ground is edited now.
-	my ($existing) = grep { ($_->{'uuid'} || '') eq ($home_plate->{'uuid'} || '') } @{$home_plate_duties};
+	my ($existing) = grep { ref $_ eq 'HASH' && ($_->{'uuid'} || '') eq ($home_plate->{'uuid'} || '') } @{$home_plate_duties};
 	if ($existing) {
 		foreach my $k ( keys %{$home_plate} ) { $existing->{$k} = $home_plate->{$k}; }
 		$home_plate = $existing;
-		@{$home_plate_duties} = grep { ($_->{'uuid'} || '') ne ($home_plate->{'uuid'} || '') } @{$home_plate_duties};
+		@{$home_plate_duties} = grep { ref $_ eq 'HASH' && ($_->{'uuid'} || '') ne ($home_plate->{'uuid'} || '') } @{$home_plate_duties};
 	}
 	&subs::plate_normalize($home_plate);
 	push @{$home_plate_duties}, $home_plate;
@@ -637,6 +654,7 @@ sub action_25725 {
 	&subs::setting_setter({ app => $app, setting => 'home_plate_duties', value => $settings->{'home_plate_duties'} });
 
 	$home_plate = eval { return decode_json $settings->{'home_plate'} } || {};
+	$home_plate = {} unless ref $home_plate eq 'HASH';
 	$settings->{'app_home_plate'} = $home_plate;
 	$settings->{'home_plate'} = $home_plate->{'latitude'} . ' ' . $home_plate->{'longitude'};
 
@@ -668,7 +686,8 @@ sub action_54102 {
 	$plate->{'app'} = $app;
 	if (length $uuid) {
 		my $duties = eval { return decode_json(&subs::setting_grabber({ app => $app, setting => 'home_plate_duties' }) || '') } || [];
-		my ($existing) = grep { ($_->{'uuid'} || '') eq $uuid } @{$duties};
+		$duties = [] unless ref $duties eq 'ARRAY';
+		my ($existing) = grep { ref $_ eq 'HASH' && ($_->{'uuid'} || '') eq $uuid } @{$duties};
 		my %merged = $existing ? %{$existing} : ();
 		foreach my $k ( keys %{$plate} ) { $merged{$k} = $plate->{$k}; }
 		$merged{'uuid'} = $uuid;
@@ -677,7 +696,7 @@ sub action_54102 {
 		$merged{'app'} = $app;
 		$plate = \%merged;
 		&subs::plate_normalize($plate);
-		@{$duties} = grep { ($_->{'uuid'} || '') ne $uuid } @{$duties};
+		@{$duties} = grep { ref $_ eq 'HASH' && ($_->{'uuid'} || '') ne $uuid } @{$duties};
 		push @{$duties}, $plate;
 		&subs::setting_setter({ app => $app, setting => 'home_plate_duties', value => encode_json($duties) });
 	}
@@ -705,6 +724,7 @@ sub action_54102 {
 	}
 	my $settings = &subs::settings_grabber({ app => $app, settings => [ 'home_plate', 'home_plate_duties' ] });
 	my $base = eval { return decode_json $settings->{'home_plate'} } || {};
+	$base = {} unless ref $base eq 'HASH';
 	$settings->{'app_home_plate'} = $base;
 	$settings->{'home_plate'} = ($base->{'latitude'} || '') . ' ' . ($base->{'longitude'} || '');
 	my $html = $c->render_to_string(
@@ -722,7 +742,8 @@ sub action_25757 {
 	my $uuid = $c->param('uuid');
 
 	my $hpd = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'home_plate_duties' }) } || [];
-	@{$hpd} = grep { $_->{'uuid'} ne $uuid } @{$hpd};
+	$hpd = [] unless ref $hpd eq 'ARRAY';
+	@{$hpd} = grep { ref $_ eq 'HASH' && ($_->{'uuid'} || '') ne $uuid } @{$hpd};
 	#if (scalar @{$hpd} > 0) {
 		my $jhpd = encode_json $hpd;
 		&subs::setting_setter({ app => $app, setting => 'home_plate_duties', value => $jhpd });

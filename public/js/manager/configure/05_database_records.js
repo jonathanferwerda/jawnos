@@ -105,7 +105,6 @@ $(document).on('click', '.home_plate_setting_save', function() {
 		}
 		hpSettings[setting] = value;
 	});
-	console.log(hpSettings);
 
 	$.ajax({ 
 		url: '/manager/configure/home_plate/settings',
@@ -116,7 +115,9 @@ $(document).on('click', '.home_plate_setting_save', function() {
 			app: app
 		},
 		success: function(response) {
-			var wrap = $('.home_plate_configuration[app="' + app + '"]');
+			var wrap = $('.home_plate_configuration').filter(function() {
+				return $(this).attr('app') === app;
+			});
 			wrap.html(response.html);
 			if (typeof homePlateReload === 'function') {
 				homePlateReload(wrap.find('.home_plate_editor').first());

@@ -33,16 +33,24 @@
 			<span class="hp_field">
 				<label><%= &subs::ui('Placement') %></label>
 				<select class="home_plate_setting" setting="placement" uuid="<%= $hpd->{'uuid'} %>">
+					<% my $stored_placement = $hpd->{'placement'} || ''; %>
 					<% foreach my $dir ( qw/within without/ ) { %>
-						<option value="<%= $dir %>" <% if (($hpd->{'placement'} || '') eq $dir) { %>selected<% } %>><%= &subs::format_name($dir) %></option>
+						<option value="<%= $dir %>" <% if ($stored_placement eq $dir) { %>selected<% } %>><%= &subs::format_name($dir) %></option>
+					<% } %>
+					<% if (length $stored_placement && $stored_placement ne 'within' && $stored_placement ne 'without') { %>
+						<option value="<%= $stored_placement %>" selected><%= &subs::format_name($stored_placement) %></option>
 					<% } %>
 				</select>
 			</span>
 			<span class="hp_field">
 				<label><%= &subs::ui('Action') %></label>
 				<select class="home_plate_setting" setting="action" uuid="<%= $hpd->{'uuid'} %>">
+					<% my $stored_action = $hpd->{'action'} || ''; %>
 					<% foreach my $o ( qw/none start record stop command kill/ ) { %>
-						<option value="<%= $o %>" <% if (($hpd->{'action'} || '') eq $o) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+						<option value="<%= $o %>" <% if ($stored_action eq $o) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+					<% } %>
+					<% if (length $stored_action && !grep { $_ eq $stored_action } qw/none start record stop command kill/) { %>
+						<option value="<%= $stored_action %>" selected><%= &subs::format_name($stored_action) %></option>
 					<% } %>
 				</select>
 			</span>
@@ -50,9 +58,18 @@
 				<label><%= &subs::ui('Device') %></label>
 				<select class="home_plate_setting" setting="device" uuid="<%= $hpd->{'uuid'} %>">
 					% my $devices = &subs::remote_machine_lister();
+					% my $stored_device = $hpd->{'device'} || '';
+					% my $device_found = 0;
 					<option value=""><%= &subs::ui('None') %></option>
 					<% foreach my $d ( @{$devices} ) { %>
-						<option value="<%= $d->{'signatorial'} %>" <% if (($hpd->{'device'} || '') eq $d->{'signatorial'}) { %>selected<% } %>><%= &subs::format_name($d->{'hostname'}) %></option>
+						% $device_found = 1 if $stored_device eq ($d->{'signatorial'} || '');
+						<option value="<%= $d->{'signatorial'} %>" <% if ($stored_device eq $d->{'signatorial'}) { %>selected<% } %>><%= &subs::format_name($d->{'hostname'}) %></option>
+					<% } %>
+					<%# A flag bound to a machine the current list no longer carries (this
+					    machine itself, or a peer that left) must keep its value: rendering
+					    None and posting it back would unbind the flag. %>
+					<% if (length $stored_device && !$device_found) { %>
+						<option value="<%= $stored_device %>" selected><%= &subs::format_name($stored_device) %></option>
 					<% } %>
 				</select>
 			</span>
