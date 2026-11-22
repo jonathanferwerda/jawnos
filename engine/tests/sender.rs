@@ -13,8 +13,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use jawn_audio::{
-    audio_stream, decode, decode_welcome, is_audio_stream, run_send_take, validate_send,
-    AudioReceiver, Clock, ClockMaster, ClockOffset, SendSpec, SenderReport, TakeSender,
+    audio_stream, decode, decode_welcome, is_audio_stream, read_wav, run_send_live_with_source,
+    run_send_take, synthetic_sample, validate_live, validate_send, AudioReceiver, BackendKind,
+    Clock, ClockMaster, ClockOffset, LiveSpec, SendSpec, SenderReport, SyntheticSource, TakeSender,
     ValidatedSend, WavWriter, STREAM_CLOCK_HELLO, STREAM_CLOCK_PING,
 };
 
@@ -571,5 +572,146 @@ fn a_missing_key_wrong_rate_and_empty_take_are_usage_errors() {
     assert!(
         validate_send(&bad_stream).is_err(),
         "a stream outside the audio range is refused"
+    );
+}
+
+fn live_spec(master: std::net::SocketAddr, out: &PathBuf) -> LiveSpec {
+    LiveSpec {
+        master: Some(master.to_string()),
+        key_hex: Some("73".repeat(32)),
+        stream: 1,
+        rate: 48_000,
+        seconds: None,
+        pong_timeout_ms: 20,
+        window: 64,
+        device: Some("synthetic".to_string()),
+        out: Some(out.to_string_lossy().into_owned()),
+        backend: BackendKind::Null,
+        period: 480,
+        buffer: 960,
+    }
+}
+
+#[test]
+fn a_live_capture_is_written_locally_first_and_reaches_the_master_in_order() {
+    let session_key = key(0x73);
+    let stream = audio_stream(1).expect("an audio stream");
+    let stop = Arc::new(AtomicBool::new(false));
+    let (address, state, handle) = start_master(session_key, stream, Arc::clone(&stop));
+
+    let take = TempWav::new("live");
+    let total = 12_000u64; // 0.25 s at 48 kHz
+    let validated = validate_live(&live_spec(address, &take.path)).expect("the live shape reads");
+    let source = Box::new(SyntheticSource::new(48_000, total, 480));
+
+    let report = run_send_live_with_source(&validated, source);
+    stop.store(true, Ordering::SeqCst);
+    handle.join().expect("join the test master");
+
+    assert!(report.ok, "report: {}", report.to_json());
+    assert!(report.live, "the report says it was live: {}", report.to_json());
+    let json = report.to_json();
+    for key in ["\"captured\":", "\"sent\":", "\"dropped\":", "\"padded\":"] {
+        assert!(json.contains(key), "{key} is missing from {json}");
+    }
+    assert_eq!(
+        report.captured, total,
+        "every frame the source produced was captured: {}",
+        report.to_json()
+    );
+    assert!(report.sent > 0, "datagrams were sent: {}", report.to_json());
+    assert!(
+        report.dropped <= total / 20,
+        "the live edge was kept: {} dropped of {}",
+        report.dropped,
+        total
+    );
+
+    // D14: the local take holds exactly the captured frames, in the source's
+    // known pattern, whatever the send path did.
+    let audio = read_wav(&take.path).expect("the local take is a valid WAV");
+    assert_eq!(audio.rate, 48_000);
+    assert_eq!(audio.channels, 1, "a live take is mono");
+    assert_eq!(audio.frames, report.captured);
+    let expected: Vec<i16> = (0..audio.frames)
+        .map(|index| synthetic_sample(48_000, index))
+        .collect();
+    assert_eq!(
+        audio.samples, expected,
+        "the local WAV holds the captured frames in order"
+    );
+
+    let mut snapshot = state.lock().expect("snapshot");
+    assert!(snapshot.welcomed >= 1, "the master issued a session");
+    assert_eq!(report.session, snapshot.session);
+    assert_eq!(report.handshakes, 1);
+    assert_eq!(
+        snapshot.audio_datagrams, report.sent,
+        "every datagram reached the master"
+    );
+
+    let receiver = snapshot
+        .receiver
+        .as_mut()
+        .expect("the welcome built a receiver");
+    let mut out = vec![0i16; total as usize + 8_192];
+    let capacity = out.len();
+    let pulled = receiver.pull(&mut out, capacity);
+    assert!(pulled.frames > 0, "the receiver holds audio");
+    let matched = matched_in_order(&out[..pulled.frames], &expected, 400);
+    assert!(
+        matched >= expected.len() * 9 / 10,
+        "the live capture arrived in order: {matched} of {} frames",
+        expected.len()
+    );
+    assert_eq!(
+        snapshot.receiver.as_ref().expect("receiver").counters().rejected,
+        0,
+        "the claimed stream and key were never refused"
+    );
+}
+
+#[test]
+fn a_live_send_needs_a_device_an_out_and_an_audio_stream() {
+    let out = TempWav::new("live-validation");
+    let base = live_spec(
+        "127.0.0.1:7050".parse().expect("an address"),
+        &out.path,
+    );
+    let validated = validate_live(&base).expect("the valid shape reads");
+    assert_eq!(validated.stream, audio_stream(1).expect("stream"));
+    assert_eq!(validated.device, "synthetic");
+    assert_eq!(validated.out, out.path);
+
+    let missing_device = LiveSpec {
+        device: None,
+        ..base.clone()
+    };
+    let error = validate_live(&missing_device).expect_err("a live send needs a device");
+    assert!(error.contains("--device"), "{error}");
+
+    let missing_out = LiveSpec {
+        out: None,
+        ..base.clone()
+    };
+    let error = validate_live(&missing_out).expect_err("a live send needs a local take");
+    assert!(error.contains("--out"), "{error}");
+
+    let bad_stream = LiveSpec {
+        stream: usize::MAX,
+        ..base.clone()
+    };
+    assert!(
+        validate_live(&bad_stream).is_err(),
+        "a stream outside the audio range is refused"
+    );
+
+    let bad_seconds = LiveSpec {
+        seconds: Some(0.0),
+        ..base.clone()
+    };
+    assert!(
+        validate_live(&bad_seconds).is_err(),
+        "an explicit --seconds must be positive"
     );
 }

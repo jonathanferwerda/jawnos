@@ -61,6 +61,8 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --clock-peer [options]       measure a master's clock over UDP (P3)
   jawn-audio --send-take FILE.wav [options]
                                           send a take to a master over UDP (P4)
+  jawn-audio --send-live [options]        capture an input, write it locally,
+                                          and send it to a master over UDP (P4)
   jawn-audio --version                    print the version
   jawn-audio --help                       this text
 
@@ -351,6 +353,26 @@ A loopback needs the interface's output patched into its input.
                   how long one ping waits for its pong (default 20)
   --window N      probes kept in the least-squares fit (default 64)
 
+--send-live options:
+  --out FILE.wav  the local take, written before its frames are sent (required)
+  --device NAME   the capture input to open (required; there is no default)
+  --backend N     alsa or pipewire; the null backend has no input
+  --master IP:PORT  the master to send to (required; there is no default)
+  --session-key-hex HEX64
+                  the same 32-byte key as the master (default
+                  $JAWNOS_AUDIO_SESSION_KEY)
+  --stream N      the master source index this input feeds (default 0); the
+                  wire stream is AUDIO_STREAM_BASE + N
+  --seconds S     how long to capture, in seconds (omit to run until stopped)
+  --rate HZ       the capture's sample rate (default 48000); a granted rate
+                  that differs is refused, because a live input is not
+                  silently resampled
+  --period N      capture block size in frames (default 64; --frames is an alias)
+  --buffer N      device buffer in frames (default 256)
+  --pong-timeout-ms MS
+                  how long one ping waits for its pong (default 20)
+  --window N      probes kept in the least-squares fit (default 64)
+
   The peer sends a CLOCK_HELLO carrying a tag before its first ping; the master
   answers a CLOCK_WELCOME with a fresh session id, then a CLOCK_PING every
   10 ms is signed with that session and a 16-byte truncated HMAC-SHA256. The
@@ -374,7 +396,16 @@ A loopback needs the interface's output patched into its input.
   estimate), and resamples with the fitted drift. A missing file, a take whose
   rate is not --rate, an empty take or no key is a usage error. The one-line
   report has role \"sender\" and the same session, sent, handshakes, offset and
-  drift keys as the clock peer.";
+  drift keys as the clock peer.
+
+  --send-live is the same send with a device for a source. A capture thread
+  writes every block to --out before offering the same frames to the clock
+  loop, so the peer owns its take before it is sent (D14). The clock loop never
+  waits on the device or the disk: it pops whole frames from a fixed ring, pads
+  a short capture with silence to keep the master timeline whole, drops frames
+  whose span has already passed, and counts both. An explicit --seconds bounds
+  the capture; the loop then drains the ring before it exits. Its one-line
+  report adds captured, dropped and padded to the sender's keys.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -390,6 +421,7 @@ enum Mode {
     ClockMaster,
     ClockPeer,
     SendTake,
+    SendLive,
     SelfTest,
     Version,
     Help,
@@ -646,6 +678,7 @@ fn parse_arguments(
                 options.mode = Mode::SendTake;
                 options.send_take = Some(value(&mut args, "--send-take")?);
             }
+            "--send-live" => options.mode = Mode::SendLive,
             "--stream" => {
                 let raw = value(&mut args, "--stream")?;
                 options.stream = raw
@@ -810,35 +843,44 @@ fn parse_arguments(
 /// that tune the probe loop belong to the probing roles alone.
 fn validate_clock_options(options: &Options) -> Result<(), String> {
     let clock = matches!(options.mode, Mode::ClockMaster | Mode::ClockPeer);
-    let send = options.mode == Mode::SendTake;
-    // The keyed roles: a clock session, a send take, and a serve's uplink.
+    let send_take = options.mode == Mode::SendTake;
+    let send_live = options.mode == Mode::SendLive;
+    let send = send_take || send_live;
+    // The keyed roles: a clock session, a send take or live input, and a
+    // serve's uplink.
     let keyed = clock || send;
     // A serve's uplink is the other keyed transport: it answers a peer's HELLO
     // and authenticates its audio with the same 32-byte key.
     let keyed_serve = options.mode == Mode::Serve && options.uplink.is_some();
     if options.session_key_given && !keyed && !keyed_serve {
         return Err(
-            "--session-key-hex applies only to --clock-master, --clock-peer, --send-take and --serve --uplink"
+            "--session-key-hex applies only to --clock-master, --clock-peer, --send-take, --send-live and --serve --uplink"
                 .to_string(),
         );
     }
     if options.bind.is_some() && options.mode != Mode::ClockMaster {
         return Err("--bind applies only to --clock-master".to_string());
     }
-    if options.master.is_some() && !matches!(options.mode, Mode::ClockPeer | Mode::SendTake) {
-        return Err("--master applies only to --clock-peer and --send-take".to_string());
-    }
-    if !matches!(options.mode, Mode::ClockPeer | Mode::SendTake)
-        && (options.pong_timeout_ms != peer::PONG_TIMEOUT_MS
-            || options.window != peer::ESTIMATOR_CAPACITY)
+    if options.master.is_some()
+        && !matches!(options.mode, Mode::ClockPeer | Mode::SendTake | Mode::SendLive)
     {
         return Err(
-            "--pong-timeout-ms and --window apply only to --clock-peer and --send-take"
+            "--master applies only to --clock-peer, --send-take and --send-live".to_string(),
+        );
+    }
+    if !matches!(
+        options.mode,
+        Mode::ClockPeer | Mode::SendTake | Mode::SendLive
+    ) && (options.pong_timeout_ms != peer::PONG_TIMEOUT_MS
+        || options.window != peer::ESTIMATOR_CAPACITY)
+    {
+        return Err(
+            "--pong-timeout-ms and --window apply only to --clock-peer, --send-take and --send-live"
                 .to_string(),
         );
     }
     if options.stream_given && !send {
-        return Err("--stream applies only to --send-take".to_string());
+        return Err("--stream applies only to --send-take and --send-live".to_string());
     }
     if options.mode != Mode::ClockMaster && options.lease_ms != peer::DEFAULT_LEASE_MS {
         return Err("--lease-ms applies only to --clock-master".to_string());
@@ -849,9 +891,10 @@ fn validate_clock_options(options: &Options) -> Result<(), String> {
         );
     }
     if send && options.master.is_none() {
-        return Err(
-            "--send-take needs --master IP:PORT: the master to send to".to_string(),
-        );
+        let flag = if send_live { "--send-live" } else { "--send-take" };
+        return Err(format!(
+            "{flag} needs --master IP:PORT: the master to send to"
+        ));
     }
     if keyed {
         let key = options.session_key_hex.as_deref().ok_or_else(|| {
@@ -872,7 +915,10 @@ fn validate_clock_options(options: &Options) -> Result<(), String> {
             return Err("--rate wants a positive sample rate".to_string());
         }
     }
-    if matches!(options.mode, Mode::ClockPeer | Mode::SendTake) {
+    if matches!(
+        options.mode,
+        Mode::ClockPeer | Mode::SendTake | Mode::SendLive
+    ) {
         if options.pong_timeout_ms == 0 {
             return Err("--pong-timeout-ms wants a positive number of milliseconds".to_string());
         }
@@ -1088,6 +1134,7 @@ fn run() -> Result<ExitCode, String> {
         Mode::ClockMaster => run_clock_master(&options),
         Mode::ClockPeer => run_clock_peer(&options),
         Mode::SendTake => run_send_take(&options),
+        Mode::SendLive => run_send_live(&options),
     }
 }
 
@@ -1364,6 +1411,45 @@ fn run_send_take(options: &Options) -> Result<ExitCode, String> {
     };
     let validated = sender::validate_send(&spec)?;
     let report = sender::run_send_take(&validated);
+    println!("{}", report.to_json());
+    Ok(if report.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
+}
+
+/// `--send-live`: a capture device goes to the sender, which writes the local
+/// take first and returns the one JSON line. A usage error is exit 2; a device
+/// or master that cannot be used is exit 1 with `ok:false`.
+fn run_send_live(options: &Options) -> Result<ExitCode, String> {
+    let spec = sender::LiveSpec {
+        master: options.master.clone(),
+        key_hex: options.session_key_hex.clone(),
+        stream: options.stream,
+        rate: options.rate,
+        seconds: options.seconds_given.then_some(options.seconds),
+        pong_timeout_ms: options.pong_timeout_ms,
+        window: options.window,
+        device: options.device.clone(),
+        out: options.out.clone(),
+        backend: options.backend,
+        period: options.frames,
+        buffer: options.buffer,
+    };
+    // Validate the request first, so a missing device or local take is named
+    // even when the default backend cannot capture at all.
+    let validated = sender::validate_live(&spec)?;
+    // The null backend is the engine's test device, not an input: say so before
+    // a socket opens, rather than opening a session that can never send.
+    if options.backend == BackendKind::Null {
+        return Err(
+            "--send-live needs a capture backend: pass --backend alsa (or pipewire); \
+             the null backend has no input"
+                .to_string(),
+        );
+    }
+    let report = sender::run_send_live(&validated);
     println!("{}", report.to_json());
     Ok(if report.ok {
         ExitCode::SUCCESS

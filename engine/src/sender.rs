@@ -32,11 +32,14 @@
 
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::backends::BackendKind;
 use crate::bearing::{
     audio_stream, AudioBearer, BearerError, LinearResampler, AUDIO_STREAM_BASE, AUDIO_STREAM_LAST,
 };
+use crate::capture::{self, LiveSource};
 use crate::loopback::json_escape;
 use crate::peer::{
     self, Clock, ClockEstimator, ClockPeer, InstantClock, ProbeSample, CLOCK_SESSION, HANDSHAKE_TIMEOUT,
@@ -102,6 +105,147 @@ impl std::fmt::Debug for ValidatedSend {
             .field("window", &self.window)
             .finish()
     }
+}
+
+/// What the CLI collects for `--send-live`, before a device or a socket opens.
+///
+/// `seconds` is `None` when `--seconds` was not given: the run then lasts until
+/// the capture source ends (a test source) or the process is stopped (a live
+/// device). `device` and `out` are required: a live send has an input and it
+/// owns its local take (D14).
+#[derive(Clone, Debug)]
+pub struct LiveSpec {
+    pub master: Option<String>,
+    pub key_hex: Option<String>,
+    /// The master source index; the wire stream is `AUDIO_STREAM_BASE + index`.
+    pub stream: usize,
+    pub rate: u32,
+    pub seconds: Option<f64>,
+    pub pong_timeout_ms: u64,
+    pub window: usize,
+    /// `--device`: the capture input to open.
+    pub device: Option<String>,
+    /// `--out`: the local take, written before the frames are sent.
+    pub out: Option<String>,
+    pub backend: BackendKind,
+    pub period: usize,
+    pub buffer: usize,
+}
+
+/// A [`LiveSpec`] that has been checked. The key has no `Debug`, so it cannot
+/// reach a log line through a derived formatter.
+#[derive(Clone)]
+pub struct ValidatedLive {
+    pub master: SocketAddr,
+    pub key: [u8; 32],
+    pub stream: u16,
+    pub rate: u32,
+    pub seconds: Option<f64>,
+    pub pong_timeout_ms: u64,
+    pub window: usize,
+    pub device: String,
+    pub out: PathBuf,
+    pub backend: BackendKind,
+    pub period: usize,
+    pub buffer: usize,
+}
+
+impl std::fmt::Debug for ValidatedLive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ValidatedLive")
+            .field("master", &self.master)
+            .field("stream", &self.stream)
+            .field("rate", &self.rate)
+            .field("seconds", &self.seconds)
+            .field("device", &self.device)
+            .field("out", &self.out)
+            .field("backend", &self.backend)
+            .field("period", &self.period)
+            .field("buffer", &self.buffer)
+            .finish()
+    }
+}
+
+/// Read and check a live send request.
+///
+/// Everything that makes a run impossible before a device opens lives here, so
+/// the CLI can turn it into exit 2 and a direct caller cannot skip it: the
+/// master address, the key, the stream range, the rate, the device and the
+/// local take path.
+pub fn validate_live(spec: &LiveSpec) -> Result<ValidatedLive, String> {
+    let master_text = spec.master.as_deref().ok_or_else(|| {
+        "--send-live needs --master IP:PORT: the master to send to".to_string()
+    })?;
+    let master: SocketAddr = master_text
+        .parse()
+        .map_err(|_| format!("--master wants ip:port, not `{master_text}`"))?;
+
+    let key_text = spec.key_hex.as_deref().ok_or_else(|| {
+        "a send session needs a key: pass --session-key-hex HEX64 \
+         or set $JAWNOS_AUDIO_SESSION_KEY"
+            .to_string()
+    })?;
+    let key = peer::parse_session_key(key_text).map_err(|error| format!("--session-key-hex: {error}"))?;
+
+    let stream = audio_stream(spec.stream).ok_or_else(|| {
+        format!(
+            "--stream {} is outside the audio range (0..={})",
+            spec.stream,
+            AUDIO_STREAM_LAST - AUDIO_STREAM_BASE
+        )
+    })?;
+
+    let device = spec
+        .device
+        .as_deref()
+        .map(str::trim)
+        .filter(|device| !device.is_empty())
+        .ok_or_else(|| "--send-live needs --device NAME: the capture input to open".to_string())?;
+    let out = spec
+        .out
+        .as_deref()
+        .map(str::trim)
+        .filter(|out| !out.is_empty())
+        .ok_or_else(|| {
+            "--send-live needs --out FILE.wav: the local take, written before it is sent"
+                .to_string()
+        })?;
+
+    if spec.rate == 0 {
+        return Err("--rate wants a positive sample rate".to_string());
+    }
+    if spec.period == 0 {
+        return Err("--period wants a positive block size".to_string());
+    }
+    if spec.buffer == 0 {
+        return Err("--buffer wants a positive buffer size".to_string());
+    }
+    if spec.pong_timeout_ms == 0 {
+        return Err("--pong-timeout-ms wants a positive number of milliseconds".to_string());
+    }
+    if spec.window == 0 {
+        return Err("--window wants at least one probe".to_string());
+    }
+    if let Some(seconds) = spec.seconds {
+        if !(seconds.is_finite() && seconds > 0.0) {
+            return Err("--seconds wants a positive, finite duration".to_string());
+        }
+    }
+
+    Ok(ValidatedLive {
+        master,
+        key,
+        stream,
+        rate: spec.rate,
+        seconds: spec.seconds,
+        pong_timeout_ms: spec.pong_timeout_ms,
+        window: spec.window,
+        device: device.to_string(),
+        out: PathBuf::from(out),
+        backend: spec.backend,
+        period: spec.period,
+        buffer: spec.buffer,
+    })
 }
 
 /// Probes the fit needs before its drift is trusted: one second at the 10 ms
@@ -330,6 +474,113 @@ impl TakeSender {
     }
 }
 
+/// A live source's position on the master clock.
+///
+/// It is [`TakeSender`]'s stamping rule for a source that has no file: the
+/// block it is given is already the frames for this wake (captured frames plus
+/// the stated silence where the capture was short), and the block's end is
+/// `offset.to_master(local + frames.len())`, so consecutive blocks meet on the
+/// master timeline even as the fitted offset moves between wakes.
+///
+/// The converter is created once and reused; `fill` allocates nothing after its
+/// first call. A live source has no lookahead, so the last master frame of a
+/// block is held when the resampler runs out of input; the next block starts at
+/// the next local sample and replaces it.
+pub struct LiveSender {
+    local: u64,
+    estimate: Option<ClockOffset>,
+    resampler: Option<LinearResampler>,
+    out: Vec<i16>,
+}
+
+impl LiveSender {
+    pub fn new() -> Self {
+        LiveSender {
+            local: 0,
+            estimate: None,
+            resampler: None,
+            out: Vec::with_capacity(PULL_MAX_FRAMES + 16),
+        }
+    }
+
+    pub fn local(&self) -> u64 {
+        self.local
+    }
+
+    pub fn estimate(&self) -> Option<ClockOffset> {
+        self.estimate
+    }
+
+    pub fn set_estimate(&mut self, estimate: Option<ClockOffset>) {
+        self.estimate = estimate;
+    }
+
+    /// Place one wake's frames on the master timeline, returning the stamp and
+    /// the master-time samples. The returned slice is valid until the next call.
+    pub fn fill(&mut self, input: &[i16]) -> Option<(u64, &[i16])> {
+        if input.is_empty() {
+            return None;
+        }
+        let start = self.local;
+        let end = start + input.len() as u64;
+
+        let offset = match self.estimate {
+            None => {
+                // Before the first estimate the local position is the stamp,
+                // exactly as `TakeSender` passes the prefix through.
+                self.out.clear();
+                self.out.extend_from_slice(input);
+                self.local = end;
+                return Some((start, &self.out));
+            }
+            Some(offset) => offset,
+        };
+
+        let master_start = offset.to_master(start).max(0) as u64;
+        let master_end = offset.to_master(end).max(0) as u64;
+        let wanted = master_end.saturating_sub(master_start) as usize;
+        if wanted == 0 {
+            self.out.clear();
+            self.local = end;
+            return Some((master_start, &self.out));
+        }
+
+        if self.out.len() < wanted {
+            self.out.resize(wanted, 0);
+        }
+        let resampler = self
+            .resampler
+            .get_or_insert_with(|| LinearResampler::with_capacity(offset, PULL_MAX_FRAMES + 16));
+        resampler.reset_to(start);
+        if resampler.push(input).is_err() {
+            // The capacity covers one capped wake; this is a guard, not a path
+            // the loop can reach. Passing the block through keeps the timeline
+            // whole instead of panicking the clock thread.
+            self.out.clear();
+            self.out.extend_from_slice(input);
+            self.local = end;
+            return Some((master_start, &self.out));
+        }
+        let written = resampler.process(&mut self.out[..wanted]);
+        if written < wanted {
+            // No lookahead past the live edge: hold the last captured sample for
+            // the few master frames the block's end could not interpolate.
+            let last = if written > 0 { self.out[written - 1] } else { 0 };
+            for slot in &mut self.out[written..wanted] {
+                *slot = last;
+            }
+        }
+        self.local = end;
+        Some((master_start, &self.out[..wanted]))
+    }
+}
+
+impl Default for LiveSender {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// One pong's one-point offset, with the round trip that produced it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ProbePoint {
@@ -412,6 +663,16 @@ pub struct SenderReport {
     pub handshakes: u64,
     pub estimate: Option<ClockOffset>,
     pub error: String,
+    /// Whether this was a live capture rather than a file take. `--send-take`'s
+    /// one-line shape is unchanged; a live report adds the capture counts.
+    pub live: bool,
+    /// Live only: frames the capture source produced (all of them reach the
+    /// local WAV first, D14).
+    pub captured: u64,
+    /// Live only: captured frames that never reached the bearer.
+    pub dropped: u64,
+    /// Live only: silence the sender inserted where the capture had no frame.
+    pub padded: u64,
 }
 
 impl SenderReport {
@@ -434,7 +695,32 @@ impl SenderReport {
             handshakes,
             estimate,
             error: String::new(),
+            live: false,
+            captured: 0,
+            dropped: 0,
+            padded: 0,
         }
+    }
+
+    /// A live run's result: the take send's keys plus what the capture did.
+    #[allow(clippy::too_many_arguments)]
+    pub fn success_live(
+        master: impl Into<String>,
+        session: u32,
+        sent: u64,
+        frames: u64,
+        handshakes: u64,
+        estimate: Option<ClockOffset>,
+        captured: u64,
+        dropped: u64,
+        padded: u64,
+    ) -> Self {
+        let mut report = Self::success(master, session, sent, frames, handshakes, estimate);
+        report.live = true;
+        report.captured = captured;
+        report.dropped = dropped;
+        report.padded = padded;
+        report
     }
 
     /// A run that could not start, or could not get a session.
@@ -448,6 +734,10 @@ impl SenderReport {
             handshakes: 0,
             estimate: None,
             error: error.into(),
+            live: false,
+            captured: 0,
+            dropped: 0,
+            padded: 0,
         }
     }
 
@@ -466,6 +756,21 @@ impl SenderReport {
             ),
             None => ("null".to_string(), "null".to_string()),
         };
+        if self.live {
+            return format!(
+                "{{\"ok\":true,\"role\":\"sender\",\"live\":true,\"master\":\"{}\",\"session\":{},\"captured\":{},\"sent\":{},\"frames\":{},\"dropped\":{},\"padded\":{},\"handshakes\":{},\"offset_samples\":{},\"drift_ppm\":{}}}",
+                json_escape(&self.master),
+                self.session,
+                self.captured,
+                self.sent,
+                self.frames,
+                self.dropped,
+                self.padded,
+                self.handshakes,
+                offset,
+                drift
+            );
+        }
         format!(
             "{{\"ok\":true,\"role\":\"sender\",\"master\":\"{}\",\"session\":{},\"sent\":{},\"frames\":{},\"handshakes\":{},\"offset_samples\":{},\"drift_ppm\":{}}}",
             json_escape(&self.master),
@@ -479,11 +784,24 @@ impl SenderReport {
     }
 
     pub fn prose(&self) -> String {
+        let role = if self.live { "send-live" } else { "send-take" };
         if !self.ok {
-            return format!("send-take {}: failed: {}", self.master, self.error);
+            return format!("{role} {}: failed: {}", self.master, self.error);
+        }
+        if self.live {
+            return format!(
+                "{role} to {}: {} captured, {} frames in {} datagrams, {} dropped, {} padded, {} handshakes",
+                self.master,
+                self.captured,
+                self.frames,
+                self.sent,
+                self.dropped,
+                self.padded,
+                self.handshakes
+            );
         }
         format!(
-            "send-take to {}: {} datagrams, {} frames, {} handshakes",
+            "{role} to {}: {} datagrams, {} frames, {} handshakes",
             self.master, self.sent, self.frames, self.handshakes
         )
     }
@@ -691,6 +1009,250 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
         // The model the take actually used, not the raw fit: a short take keeps
         // drift 0, and its report must say so.
         sender.estimate(),
+    ))
+}
+
+/// Send a live capture to its master. A device that cannot open, or a master
+/// that never answers, leaves a failure report; a source that ends (a test
+/// source) or an explicit `--seconds` ends the run after the ring drains.
+pub fn run_send_live(config: &ValidatedLive) -> SenderReport {
+    match send_live(config, None) {
+        Ok(report) => report,
+        Err(error) => {
+            let mut report = SenderReport::failure(config.master.to_string(), error);
+            report.live = true;
+            report
+        }
+    }
+}
+
+/// The same run with a software source instead of a capture device. Used by the
+/// suite so the whole transport is exercised without hardware.
+pub fn run_send_live_with_source(
+    config: &ValidatedLive,
+    source: Box<dyn LiveSource>,
+) -> SenderReport {
+    match send_live(config, Some(source)) {
+        Ok(report) => report,
+        Err(error) => {
+            let mut report = SenderReport::failure(config.master.to_string(), error);
+            report.live = true;
+            report
+        }
+    }
+}
+
+fn send_live(
+    config: &ValidatedLive,
+    source: Option<Box<dyn LiveSource>>,
+) -> Result<SenderReport, String> {
+    let master = config.master;
+    let local = local_bind(master);
+    let socket = UdpSocket::bind(local)
+        .map_err(|error| format!("--send-live cannot bind {local}: {error}"))?;
+    socket
+        .connect(master)
+        .map_err(|error| format!("--send-live cannot reach {master}: {error}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(config.pong_timeout_ms)))
+        .map_err(|error| format!("send-live timeout: {error}"))?;
+
+    // The HELLO claims the wire stream this capture will packetize on, exactly
+    // as a file take does. The master's uplink hands the source back by claim,
+    // not by this process's ephemeral port.
+    let mut probe = ClockPeer::new(config.key).with_claim(Some(config.stream));
+    let mut estimator = ClockEstimator::with_capacity(
+        config.window.max(SENDER_FIT_WINDOW),
+        config.rate,
+    );
+    let mut provisional = ProvisionalOffset::new(config.rate);
+    let mut outgoing = [0u8; 128];
+    let mut incoming = [0u8; 2048];
+
+    // No session, no capture: a take recorded before the master answered would
+    // be a backlog with nowhere to go. An explicit `--seconds` still bounds the
+    // startup handshake so a wrong key fails promptly.
+    let handshake_budget = config
+        .seconds
+        .map(|seconds| Duration::from_secs_f64(seconds).min(HANDSHAKE_TIMEOUT))
+        .unwrap_or(HANDSHAKE_TIMEOUT);
+    let handshake_deadline = Instant::now() + handshake_budget;
+    let mut handshakes = 0u64;
+    if handshake(
+        &socket,
+        &mut probe,
+        handshake_deadline,
+        &mut outgoing,
+        &mut incoming,
+    )? {
+        handshakes += 1;
+    } else {
+        return Ok(SenderReport::failure(
+            master.to_string(),
+            "no clock master answered the HELLO handshake",
+        ));
+    }
+    let mut session = probe.session();
+
+    // The capture starts with the session, so local sample 0 is the first frame
+    // the master should place, not audio captured while nobody was listening.
+    let (producer, consumer) = capture::live_ring(capture::LIVE_RING_FRAMES);
+    let mut capture = match source {
+        Some(source) => capture::start_source(
+            source,
+            config.rate,
+            config.period,
+            &config.out,
+            producer.clone(),
+        )?,
+        None => capture::start_hardware(
+            config.backend,
+            &config.device,
+            config.rate,
+            config.period,
+            config.buffer,
+            &config.out,
+            producer.clone(),
+        )?,
+    };
+
+    // Anchor the send clock on the first captured block. A source that opens a
+    // moment after the session would otherwise leave the capture sequence
+    // permanently behind the wall clock, and every window would drop its tail
+    // as stale. One block of lead time is the price of a clean origin.
+    capture.wait_started(Duration::from_millis(1_000));
+    let clock = InstantClock::new(config.rate);
+    let pong_max_age = u64::from(config.rate).saturating_mul(PONG_MAX_AGE_MS) / 1_000;
+    let mut last_now = clock.now();
+    let mut sender = LiveSender::new();
+    let mut bearer = AudioBearer::new(config.key, session);
+    let run_deadline = config
+        .seconds
+        .map(|seconds| Instant::now() + Duration::from_secs_f64(seconds));
+    let interval = Duration::from_millis(PING_INTERVAL_MS);
+    let mut sent = 0u64;
+    let mut frames = 0u64;
+    let mut captured_used = 0u64;
+    let mut padded = 0u64;
+    let mut stop_requested = false;
+    // Allocated once: a wake never grows it, and no capture callback allocates.
+    let mut chunk = vec![0i16; PULL_MAX_FRAMES];
+
+    loop {
+        // `--seconds` bounds the *capture*. The clock loop keeps running until
+        // the thread has closed the take and the ring is empty, so the last
+        // captured frames are sent rather than cut off at the deadline.
+        if let Some(deadline) = run_deadline {
+            if !stop_requested && Instant::now() >= deadline {
+                capture.stop();
+                stop_requested = true;
+            }
+        }
+        if capture.finished() && consumer.pending() == 0 {
+            break;
+        }
+        let cycle = Instant::now();
+
+        if probe.needs_handshake(Instant::now()) {
+            probe.reset_session();
+            let deadline = run_deadline
+                .map(|run| (Instant::now() + HANDSHAKE_TIMEOUT).min(run))
+                .unwrap_or_else(|| Instant::now() + HANDSHAKE_TIMEOUT);
+            if handshake(&socket, &mut probe, deadline, &mut outgoing, &mut incoming)? {
+                handshakes += 1;
+                session = probe.session();
+                bearer = AudioBearer::new(config.key, session);
+            } else {
+                // The master stayed quiet through a whole re-handshake. Stop
+                // with what was sent; the local take still closes below.
+                break;
+            }
+        }
+
+        let local_send = clock.now();
+        let length = probe
+            .ping(&mut outgoing, local_send, 0)
+            .map_err(|error| format!("send-live ping: {error:?}"))?;
+        if let Err(error) = socket.send(&outgoing[..length]) {
+            if !quiet_io(error.kind()) {
+                return Err(format!("send-live send: {error}"));
+            }
+        }
+
+        let now = clock.now();
+        let elapsed = now.saturating_sub(last_now).min(PULL_MAX_FRAMES as u64) as usize;
+        if sender.estimate().is_some() && elapsed > 0 {
+            last_now = now;
+            let window = consumer.window(sender.local(), &mut chunk[..elapsed]);
+            captured_used += window.used as u64;
+            padded += window.padded as u64;
+            if let Some((master_sample, block)) = sender.fill(&chunk[..elapsed]) {
+                match bearer.packetize(config.stream, 1, block, master_sample, |datagram| {
+                    socket.send(datagram).map(|_| ())
+                }) {
+                    Ok(emitted) => {
+                        sent += emitted;
+                        frames += block.len() as u64;
+                    }
+                    Err(BearerError::Io(kind)) if quiet_io(kind) => {}
+                    Err(error) => return Err(format!("send-live audio: {error:?}")),
+                }
+            }
+        }
+        // No position yet (the first pong below supplies one): sending the
+        // capture stamped at local zero would land it where the master is not.
+
+        match socket.recv(&mut incoming) {
+            Ok(length) => {
+                let local_recv = clock.now();
+                if let Some(pong) =
+                    probe.accept_pong_since(&incoming[..length], local_send, pong_max_age)
+                {
+                    let sample = ProbeSample::from_pong(pong, pong.echo_local_send, local_recv);
+                    estimator.push(sample);
+                    provisional.offer(&sample);
+                }
+            }
+            Err(error) if quiet_io(error.kind()) => {}
+            Err(error) => return Err(format!("send-live receive: {error}")),
+        }
+
+        let fitted = if estimator.kept() >= FIT_MIN_PROBES
+            && estimator.span_samples()
+                >= u64::from(config.rate).saturating_mul(SENDER_FIT_MIN_SPAN_SECONDS)
+        {
+            estimator.estimate()
+        } else {
+            None
+        };
+        sender.set_estimate(fitted.or(provisional.current(clock.now())));
+
+        let spent = cycle.elapsed();
+        if spent < interval {
+            std::thread::sleep(interval - spent);
+        }
+    }
+
+    // Stop the capture and close the local take before reporting, so the file
+    // holds exactly the frames this run counted.
+    capture.stop();
+    capture.join();
+    if let Some(error) = capture.error() {
+        return Err(error);
+    }
+
+    let captured = producer.produced();
+    let dropped = captured.saturating_sub(captured_used);
+    Ok(SenderReport::success_live(
+        master.to_string(),
+        session,
+        sent,
+        frames,
+        handshakes,
+        sender.estimate(),
+        captured,
+        dropped,
+        padded,
     ))
 }
 

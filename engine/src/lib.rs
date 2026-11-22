@@ -13,6 +13,7 @@
 pub mod auth;
 pub mod backends;
 pub mod bearing;
+pub mod capture;
 pub mod device;
 pub mod disk;
 pub mod effect;
@@ -74,8 +75,13 @@ pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,
     HEADER_LEN, VERSION,
 };
+pub use capture::{
+    live_ring, start_hardware, start_source, CaptureHandle, LiveConsumer, LiveProducer, LiveSource,
+    synthetic_sample, SyntheticSource, WindowReport, LIVE_RING_FRAMES,
+};
 pub use sender::{
-    run_send_take, validate_send, SendSpec, SenderReport, TakeBlock, TakeSender, ValidatedSend,
+    run_send_live, run_send_live_with_source, run_send_take, validate_live, validate_send, LiveSender,
+    LiveSpec, SendSpec, SenderReport, TakeBlock, TakeSender, ValidatedLive, ValidatedSend,
 };
 pub use session::{align, elect, Candidate, ClockOffset, NodeId};
 pub use uplink::{

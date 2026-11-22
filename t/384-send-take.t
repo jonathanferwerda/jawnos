@@ -1,4 +1,4 @@
-# tests-for: engine/src/sender.rs engine/src/lib.rs engine/src/main.rs engine/tests/sender.rs
+# tests-for: engine/src/sender.rs engine/src/capture.rs engine/src/lib.rs engine/src/main.rs engine/tests/sender.rs
 # covers:    P4's peer sending half (docs/studio-audio-roadmap.md P4, D14): a
 #            take recorded on this machine is read as mono, clocked against a
 #            master over the same authenticated HELLO/WELCOME session the P3
@@ -7,7 +7,12 @@
 #            offset.to_master(local). The peer owns its take; the master places
 #            it. A wrong key gets no WELCOME, so the run fails without audio; a
 #            missing file, a rate the file does not have, an empty take and a
-#            missing key are usage errors.
+#            missing key are usage errors. `--send-live` is the same send with
+#            a capture device: a dedicated thread writes every block to the
+#            local WAV first, then offers the same frames to a fixed ring the
+#            clock loop pops. The loop pads a short capture with silence, drops
+#            frames whose span already passed, and reports captured, sent and
+#            dropped.
 
 use strict;
 use warnings;
@@ -17,25 +22,61 @@ use FindBin;
 use File::Slurp qw(read_file);
 use Test::More;
 
-my $root   = abs_path("$FindBin::Bin/..");
-my $sender = read_file("$root/engine/src/sender.rs");
-my $lib    = read_file("$root/engine/src/lib.rs");
-my $main   = read_file("$root/engine/src/main.rs");
-my $tests  = read_file("$root/engine/tests/sender.rs");
+my $root    = abs_path("$FindBin::Bin/..");
+my $sender  = read_file("$root/engine/src/sender.rs");
+my $capture = read_file("$root/engine/src/capture.rs");
+my $lib     = read_file("$root/engine/src/lib.rs");
+my $main    = read_file("$root/engine/src/main.rs");
+my $tests   = read_file("$root/engine/tests/sender.rs");
 
-ok( length $sender, 'the sender module is found' );
-ok( length $lib,    'the engine lib is found' );
-ok( length $main,   'the engine CLI is found' );
-ok( length $tests,  'the sender integration test is found' );
+ok( length $sender,  'the sender module is found' );
+ok( length $capture, 'the live capture module is found' );
+ok( length $lib,     'the engine lib is found' );
+ok( length $main,    'the engine CLI is found' );
+ok( length $tests,   'the sender integration test is found' );
 
 # --- the module is part of the crate ----------------------------------------
 like( $lib, qr/^pub mod sender;/m, 'the sender is declared beside session' );
+like( $lib, qr/^pub mod capture;/m, 'the live capture is declared beside the sender' );
 like( $lib, qr/^pub use sender::\{/m, 'the sender API is re-exported from the crate root' );
+like( $lib, qr/^pub use capture::\{/m, 'the capture API is re-exported from the crate root' );
+
+# --- the live capture, written locally first (D14) ---------------------------
+like( $capture, qr/pub trait LiveSource/, 'a live source is one seam the CLI can swap' );
+like( $capture, qr/pub struct SyntheticSource/, 'the null backend has a test source, not fake hardware' );
+like( $capture, qr/pub fn live_ring/, 'capture and sender share one fixed ring' );
+like( $capture, qr/write_i16_unsynced/, 'each captured block reaches the local WAV' );
+like( $capture, qr/producer\.push\(block\)|producer\.push\(mono\)/,
+	'the same frames are offered to the sender after the WAV write' );
+like( $capture, qr/pub fn start_source/, 'a software source runs the same thread' );
+like( $capture, qr/pub fn start_hardware/, 'the existing ALSA capture seam starts the device' );
+like( $capture, qr/run_capture\(/, 'hardware capture reuses run_capture' );
+like( $capture, qr/a live capture is not resampled to another rate/,
+	'a granted rate that differs is refused, not converted' );
+like( $capture, qr/window\(&self, local: u64/, 'the sender asks for a local-time window' );
+like( $capture, qr/out\.fill\(0\)/, 'a short capture is padded by the stated rule' );
+like( $capture, qr/seq < local/, 'frames from a span already padded are stale' );
+like( $capture, qr/overflow\s*\.\s*fetch_add/, 'ring overflow is counted, never blocking' );
 
 # --- the request is validated before a socket opens -------------------------
 like( $sender, qr/pub struct SendSpec/, 'the CLI request has one struct' );
 like( $sender, qr/pub fn validate_send/, 'validation is callable without a CLI' );
 like( $sender, qr/pub struct ValidatedSend/, 'a validated request is a named type' );
+like( $sender, qr/pub struct LiveSpec/, 'the live request is its own struct' );
+like( $sender, qr/pub fn validate_live/, 'live validation is callable without a CLI' );
+like( $sender, qr/pub struct ValidatedLive/, 'a validated live request is a named type' );
+like( $sender, qr/pub struct LiveSender/, 'a live block has one position holder' );
+like( $sender, qr/pub fn fill\(&mut self, input: &\[i16\]\)/, 'one live wake is stamped and resampled' );
+like( $sender, qr/pub fn run_send_live\b/, 'a live send has an entry point' );
+like( $sender, qr/pub fn run_send_live_with_source/, 'the suite can run a software source' );
+like( $sender, qr/pub fn success_live/, 'a live report carries the capture counts' );
+like( $sender, qr/--send-live needs --device NAME/, 'a live send requires a device' );
+like( $sender, qr/--send-live needs --out FILE\.wav/, 'a live send requires its local take' );
+like( $sender, qr/consumer\.window\(sender\.local\(\)/, 'the clock loop pops only its local window' );
+like( $sender, qr/capture\.finished\(\) && consumer\.pending\(\) == 0/,
+	'--seconds bounds the capture and the loop drains the ring' );
+like( $sender, qr/capture\.stop\(\)/, 'the capture is stopped before the report' );
+like( $sender, qr/capture\.join\(\)/, 'the capture thread is joined so the take closes' );
 like( $sender, qr/a take is not resampled to another rate/, 'a rate mismatch names the refusal' );
 like( $sender, qr/is empty: there are no samples to send/, 'an empty take is refused' );
 like( $sender, qr/a send session needs a key/, 'a missing key is refused' );
@@ -106,13 +147,19 @@ like( $sender, qr/No key is ever printed/, 'the key is explicitly kept out of ou
 
 # --- the CLI ----------------------------------------------------------------
 like( $main, qr/"--send-take"\s*=>/, 'the send-take flag is parsed' );
+like( $main, qr/"--send-live"\s*=>/, 'the send-live flag is parsed' );
+like( $main, qr/--send-live options:/, 'the usage text names the live mode' );
+like( $main, qr/sender::LiveSpec\s*\{/s, 'the CLI builds the live request once' );
+like( $main, qr/sender::validate_live\(/, 'a live usage error is the validate call' );
+like( $main, qr/sender::run_send_live\(/, 'the validated live request starts the run' );
+like( $main, qr/--send-live needs a capture backend/, 'the null backend is refused for live capture' );
 like( $main, qr/"--stream"\s*=>/, 'the source index flag is parsed' );
 like( $main, qr/--send-take options:/, 'the usage text names the mode' );
 like( $main, qr/sender::SendSpec\s*\{/s, 'the CLI builds the sender request once' );
 like( $main, qr/sender::validate_send\(/, 'a usage error is the validate call' );
 like( $main, qr/sender::run_send_take\(/, 'the validated request starts the run' );
 like( $main, qr/--stream applies only to --send-take/, 'the source index is refused outside the mode' );
-like( $main, qr/--send-take needs --master/, 'the mode requires a master' );
+like( $main, qr/needs --master IP:PORT: the master to send to/, 'the mode requires a master' );
 
 # --- the tests the module ships ---------------------------------------------
 like( $tests, qr/fn a_block_is_stamped_from_the_fit_and_a_late_wake_sends_what_elapsed/, 'pacing and stamping are tested' );
@@ -123,6 +170,12 @@ like( $tests, qr/fn a_no_seconds_take_sends_its_last_block_before_exiting/, 'a n
 like( $tests, qr/fn a_long_lived_master_still_places_the_whole_take/, 'a large first offset stays inside the receiver window' );
 like( $tests, qr/fn a_wrong_key_gets_no_welcome_and_the_sender_sends_no_audio/, 'a wrong key is tested' );
 like( $tests, qr/fn a_missing_key_wrong_rate_and_empty_take_are_usage_errors/, 'the usage errors are tested' );
+like( $tests, qr/fn a_live_capture_is_written_locally_first_and_reaches_the_master_in_order/,
+	'a synthetic live source reaches a real master and its WAV' );
+like( $tests, qr/fn a_live_send_needs_a_device_an_out_and_an_audio_stream/,
+	'the live usage errors are tested' );
+like( $tests, qr/read_wav\(&take\.path\)/, 'the local take is read back and checked' );
+like( $tests, qr/SyntheticSource::new\(48_000, total, 480\)/, 'the test source has a known pattern' );
 like( $tests, qr/UdpSocket::bind\("127\.0\.0\.1:0"\)/, 'the loopback test uses an ephemeral port' );
 like( $tests, qr/AudioReceiver::new/, 'the master side places by master position' );
 like( $tests, qr/ClockMaster::new/, 'the master side issues a real session' );
