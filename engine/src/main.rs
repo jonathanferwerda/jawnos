@@ -1241,6 +1241,21 @@ fn run_loopback(options: &Options) -> Result<ExitCode, String> {
     Ok(ExitCode::from(if report.ok { 0 } else { 1 }))
 }
 
+/// A receive that has nothing for us yet. `ConnectionRefused` arrives on a
+/// connected UDP socket when the far end's port is closed — the master
+/// restarted or stopped — and `ConnectionReset` the same way after an ICMP
+/// error. Neither ends the run: the peer's quiet timer turns them into a
+/// re-handshake once the master is back.
+fn quiet_receive(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::WouldBlock
+            | ErrorKind::TimedOut
+            | ErrorKind::ConnectionRefused
+            | ErrorKind::ConnectionReset
+    )
+}
+
 fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
     let key = session_key(options)?;
     let requested = options.bind.as_deref().unwrap_or(peer::DEFAULT_BIND);
@@ -1278,7 +1293,7 @@ fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
                     }
                 }
             }
-            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) if quiet_receive(&error) => {}
             Err(error) => return Err(format!("clock master receive: {error}")),
         }
     }
@@ -1397,7 +1412,7 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
                     received += 1;
                 }
             }
-            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) if quiet_receive(&error) => {}
             Err(error) => return Err(format!("clock peer receive: {error}")),
         }
 
@@ -1451,7 +1466,7 @@ fn clock_handshake(
             Ok(length) => {
                 let _ = probe.accept_welcome(&incoming[..length]);
             }
-            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) if quiet_receive(&error) => {}
             Err(error) => return Err(format!("clock peer receive: {error}")),
         }
     }
@@ -3865,6 +3880,26 @@ mod signals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_quiet_receive_includes_a_restarted_masters_refusal() {
+        use std::io::{Error, ErrorKind};
+        for kind in [
+            ErrorKind::WouldBlock,
+            ErrorKind::TimedOut,
+            ErrorKind::ConnectionRefused,
+            ErrorKind::ConnectionReset,
+        ] {
+            assert!(quiet_receive(&Error::from(kind)), "{kind:?}");
+        }
+        for kind in [
+            ErrorKind::Other,
+            ErrorKind::PermissionDenied,
+            ErrorKind::AddrNotAvailable,
+        ] {
+            assert!(!quiet_receive(&Error::from(kind)), "{kind:?}");
+        }
+    }
 
     #[test]
     fn clock_knobs_parse_and_apply_only_to_the_peer() {
