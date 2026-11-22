@@ -88,7 +88,7 @@ unlike( $peer, qr/\.president/, 'the clock module writes no socket under ~/.pres
 
 # --- the tests the module ships ---------------------------------------------
 like( $peer, qr/fn the_tag_is_the_last_sixteen_bytes_of_every_clock_payload/, 'the tag placement is pinned' );
-like( $peer, qr/fn a_hello_with_the_right_key_gets_a_fresh_session_and_a_wrong_key_does_not/, 'a wrong key gets no session' );
+like( $peer, qr/fn a_hello_gets_a_session_a_retry_keeps_it_and_a_wrong_key_gets_none/, 'a wrong key gets no session' );
 like( $peer, qr/fn a_pong_with_a_corrupted_mac_is_not_accepted/, 'a corrupted tag is refused' );
 like( $peer, qr/fn a_ping_for_an_unknown_session_is_ignored_and_counted/, 'an unknown session is dropped' );
 like( $peer, qr/fn a_replayed_ping_seq_is_ignored_and_counted/, 'a replay is dropped' );

@@ -617,6 +617,10 @@ impl ControlReply {
 struct Session {
     seen: HashSet<u32>,
     last_used: Instant,
+    /// The HELLO nonce that asked for this session. A retried handshake
+    /// reuses its nonce, so the master can answer the same session instead of
+    /// minting another one the peer will never learn about.
+    nonce: u64,
 }
 
 /// The clock master's session table and key.
@@ -686,9 +690,24 @@ impl ClockMaster {
                         return None;
                     }
                 };
-                let session = self.fresh_session();
+                // A handshake whose WELCOME was lost is retried with the same nonce.
+                // Answering the session it already has keeps one peer one session,
+                // instead of a burst of ids that only the last of which any
+                // receiver would know.
+                let existing = self
+                    .sessions
+                    .iter()
+                    .find(|(_id, record)| record.nonce == hello.nonce)
+                    .map(|(id, _)| *id);
+                let session = match existing {
+                    Some(session) => session,
+                    None => {
+                        let session = self.fresh_session();
+                        self.remember(session, now, hello.nonce);
+                        session
+                    }
+                };
                 let length = encode_welcome(out, &self.key, hello.header.seq, session).ok()?;
-                self.remember(session, now);
                 Some(ControlReply::Welcome(length))
             }
             STREAM_CLOCK_PING => {
@@ -741,7 +760,7 @@ impl ClockMaster {
 
     /// Record a newly issued session, evicting the least recently used one when
     /// the table is full. `last_used` is set to `now` by the caller.
-    fn remember(&mut self, session: u32, now: Instant) {
+    fn remember(&mut self, session: u32, now: Instant, nonce: u64) {
         if self.sessions.len() >= MAX_SESSIONS {
             let oldest = self
                 .sessions
@@ -757,6 +776,7 @@ impl ClockMaster {
             Session {
                 seen: HashSet::new(),
                 last_used: now,
+                nonce,
             },
         );
     }
@@ -800,6 +820,9 @@ pub struct ClockPeer {
     seen: HashSet<u32>,
     rejected: u64,
     last_heard: Option<Instant>,
+    /// The nonce of the handshake in flight, reused by every retry until a
+    /// WELCOME lands, so the master can answer the same session.
+    hello_nonce: Option<u64>,
 }
 
 impl ClockPeer {
@@ -812,6 +835,7 @@ impl ClockPeer {
             seen: HashSet::new(),
             rejected: 0,
             last_heard: None,
+            hello_nonce: None,
         }
     }
 
@@ -842,6 +866,7 @@ impl ClockPeer {
     /// HELLO starts clean. `next_seq` keeps counting: a `seq` is never reused
     /// across sessions.
     pub fn reset_session(&mut self) {
+        self.hello_nonce = None;
         self.session = CLOCK_SESSION;
         self.seen.clear();
         self.last_heard = None;
@@ -851,7 +876,8 @@ impl ClockPeer {
     pub fn hello(&mut self, out: &mut [u8]) -> Result<usize, ProtoError> {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
-        encode_hello(out, &self.key, seq, random_nonce())
+        let nonce = *self.hello_nonce.get_or_insert_with(random_nonce);
+        encode_hello(out, &self.key, seq, nonce)
     }
 
     /// Verify a WELCOME and adopt its session. A bad tag is counted. The
@@ -862,6 +888,7 @@ impl ClockPeer {
         match decode_welcome(datagram, &self.key) {
             Ok(welcome) => {
                 self.session = welcome.session;
+                self.hello_nonce = None;
                 self.seen.clear();
                 self.last_heard = Some(Instant::now());
                 Ok(self.session)
@@ -1504,7 +1531,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hello_with_the_right_key_gets_a_fresh_session_and_a_wrong_key_does_not() {
+    fn a_hello_gets_a_session_a_retry_keeps_it_and_a_wrong_key_gets_none() {
         let clock = ManualClock::new(0);
         let mut master = ClockMaster::new(KEY);
         let mut hello = [0u8; 128];
@@ -1522,17 +1549,26 @@ mod tests {
         assert_eq!(master.session_count(), 1);
         assert_eq!(master.rejected(), 0);
 
-        // A new HELLO gets a new session.
+        // The same HELLO again is a retry (lost WELCOME): the same session.
+        let welcome = master
+            .answer(&hello[..length], &clock, &mut reply)
+            .expect("a retry welcome");
+        let second = decode_welcome(&reply[..welcome.length()], &KEY).expect("decode welcome");
+        assert_eq!(second.session, first.session);
+        assert_eq!(master.session_count(), 1);
+
+        // A new handshake (new nonce) gets a new session.
+        let length = encode_hello(&mut hello, &KEY, 2, 0x1234).expect("encode hello");
         let welcome = master
             .answer(&hello[..length], &clock, &mut reply)
             .expect("a second welcome");
-        let second = decode_welcome(&reply[..welcome.length()], &KEY).expect("decode welcome");
-        assert_ne!(second.session, first.session);
+        let third = decode_welcome(&reply[..welcome.length()], &KEY).expect("decode welcome");
+        assert_ne!(third.session, first.session);
         assert_eq!(master.session_count(), 2);
 
         // The wrong key cannot authenticate a HELLO, and the peer cannot
         // authenticate the master's WELCOME with it either.
-        let length = encode_hello(&mut hello, &WRONG_KEY, 2, 0xDCBA).expect("encode hello");
+        let length = encode_hello(&mut hello, &WRONG_KEY, 3, 0xDCBA).expect("encode hello");
         assert_eq!(master.answer(&hello[..length], &clock, &mut reply), None);
         assert_eq!(master.rejected(), 1);
         let mut peer = ClockPeer::new(WRONG_KEY);
@@ -1657,6 +1693,39 @@ mod tests {
             .answer(&ping[..length], &clock, &mut reply)
             .expect("a pong")
             .is_pong());
+    }
+
+    #[test]
+    fn a_retried_hello_with_the_same_nonce_gets_the_same_session() {
+        let clock = ManualClock::new(0);
+        let mut master = ClockMaster::new(KEY);
+        let mut peer = ClockPeer::new(KEY);
+        let now = Instant::now();
+
+        let mut hello = [0u8; 128];
+        let mut reply = [0u8; 128];
+        let first = peer.hello(&mut hello).expect("hello");
+        let welcome = master
+            .answer_at(&hello[..first], &clock, now, &mut reply)
+            .expect("a welcome");
+        let session = decode_welcome(&reply[..welcome.length()], &KEY)
+            .expect("decode welcome")
+            .session;
+
+        // The peer never heard that WELCOME, so it retries the same handshake.
+        // The master must answer the session it already issued, not mint one
+        // the peer will never learn about (the uplink would then pin its
+        // receiver to a session no audio datagram carries).
+        let again = peer.hello(&mut hello).expect("hello");
+        let welcome = master
+            .answer_at(&hello[..again], &clock, now, &mut reply)
+            .expect("a welcome");
+        let second = decode_welcome(&reply[..welcome.length()], &KEY)
+            .expect("decode welcome")
+            .session;
+
+        assert_eq!(session, second, "a retry must not mint a second session");
+        assert_eq!(master.session_count(), 1);
     }
 
     #[test]
