@@ -295,6 +295,9 @@ A loopback needs the interface's output patched into its input.
   --bind IP:PORT  address to listen on (default 127.0.0.1:0, loopback only and
                   an ephemeral port); the bound address is printed on stderr
                   as soon as it binds
+  --lease-ms MS   forget a session idle for more than MS milliseconds
+                  (default 30000); a peer that keeps pinging refreshes it, so
+                  only a vanished peer expires
   --session-key-hex HEX64
                   the 32-byte session key, 64 hex characters (default
                   $JAWNOS_AUDIO_SESSION_KEY); a clock session has no
@@ -324,14 +327,18 @@ A loopback needs the interface's output patched into its input.
   answers a CLOCK_WELCOME with a fresh session id, then a CLOCK_PING every
   10 ms is signed with that session and a 16-byte truncated HMAC-SHA256. The
   master drops a ping whose session it did not issue, whose tag fails, or whose
-  seq it already accepted, and reports it in \"rejected\". The master repeats the
-  receive and send times in a CLOCK_PONG, and the peer least-squares fits
-  master = a + b*local over a bounded window. offset_samples is a and drift_ppm
-  is the peer clock's rate error (positive means the peer runs fast). High-RTT
-  probes are dropped rather than fitted. The peer's JSON also carries
-  \"session\" and \"rejected\". This mode opens no audio device and writes no
-  socket under ~/.president; the default master bind is loopback, and an
-  address another machine can reach is an explicit --bind.";
+  seq it already accepted, and reports it in \"rejected\". It also forgets a
+  session idle past --lease-ms. The master repeats the receive and send times
+  in a CLOCK_PONG, and the peer least-squares fits master = a + b*local over a
+  bounded window. offset_samples is a and drift_ppm is the peer clock's rate
+  error (positive means the peer runs fast). High-RTT probes are dropped rather
+  than fitted. If no pong is accepted for two seconds (or 100 ping intervals,
+  whichever is longer), the peer resets its session and repeats the HELLO /
+  WELCOME exchange, so a master restart does not strand it. The peer's JSON
+  also carries \"session\", \"handshakes\" and \"rejected\". This mode opens no
+  audio device and writes no socket under ~/.president; the default master
+  bind is loopback, and an address another machine can reach is an explicit
+  --bind.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -391,6 +398,8 @@ struct Options {
     /// keeps. A window at least as long as the run fits the whole run, which
     /// is what turns a rate estimate into a drift measurement.
     window: usize,
+    /// `--lease-ms`: how long the clock master keeps an idle session.
+    lease_ms: u64,
     /// Which machine this engine serves, resolved from `--machine`, then
     /// `$JAWNOS_AUDIO_MACHINE`, then `$HOSTNAME`, then `"local"`.
     machine: String,
@@ -482,6 +491,7 @@ fn default_options() -> Options {
         session_key_given: false,
         pong_timeout_ms: peer::PONG_TIMEOUT_MS,
         window: peer::ESTIMATOR_CAPACITY,
+        lease_ms: peer::DEFAULT_LEASE_MS,
         machine: String::new(),
         machine_given: false,
         system_device: None,
@@ -600,6 +610,12 @@ fn parse_arguments(
                 options.window = raw
                     .parse()
                     .map_err(|_| format!("--window wants a probe count, not `{raw}`"))?;
+            }
+            "--lease-ms" => {
+                let raw = value(&mut args, "--lease-ms")?;
+                options.lease_ms = raw
+                    .parse()
+                    .map_err(|_| format!("--lease-ms wants milliseconds, not `{raw}`"))?;
             }
             "--selftest" => options.mode = Mode::SelfTest,
             "--version" | "-V" => options.mode = Mode::Version,
@@ -746,6 +762,9 @@ fn validate_clock_options(options: &Options) -> Result<(), String> {
     {
         return Err("--pong-timeout-ms and --window apply only to --clock-peer".to_string());
     }
+    if options.mode != Mode::ClockMaster && options.lease_ms != peer::DEFAULT_LEASE_MS {
+        return Err("--lease-ms applies only to --clock-master".to_string());
+    }
     if options.mode == Mode::ClockPeer && options.master.is_none() {
         return Err(
             "--clock-peer needs --master IP:PORT: the clock master to probe".to_string(),
@@ -772,6 +791,9 @@ fn validate_clock_options(options: &Options) -> Result<(), String> {
         if options.window == 0 {
             return Err("--window wants at least one probe".to_string());
         }
+    }
+    if options.mode == Mode::ClockMaster && options.lease_ms == 0 {
+        return Err("--lease-ms wants a positive number of milliseconds".to_string());
     }
     Ok(())
 }
@@ -1235,7 +1257,8 @@ fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
     eprintln!("jawn-audio: clock master listening on {bound}");
 
     let clock = InstantClock::new(options.rate);
-    let mut master = peer::ClockMaster::new(key);
+    let mut master =
+        peer::ClockMaster::new(key).with_lease(Duration::from_millis(options.lease_ms));
     let duration = Duration::try_from_secs_f64(options.seconds)
         .map_err(|_| format!("--seconds is out of range: {}", options.seconds))?;
     let deadline = Instant::now()
@@ -1318,29 +1341,16 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
     let mut incoming = [0u8; 2048];
     let mut sent = 0u64;
     let mut received = 0u64;
+    let mut handshakes = 0u64;
 
-    // The handshake precedes the first ping. If the run ends before a WELCOME
-    // arrives there is no session to report, so say so rather than probing an
-    // open port hopefully.
-    let mut session = peer::CLOCK_SESSION;
-    while session == peer::CLOCK_SESSION && Instant::now() < deadline {
-        let length = probe
-            .hello(&mut outgoing)
-            .map_err(|error| format!("clock hello: {error:?}"))?;
-        socket
-            .send(&outgoing[..length])
-            .map_err(|error| format!("clock peer send: {error}"))?;
-        match socket.recv(&mut incoming) {
-            Ok(length) => {
-                if let Ok(id) = probe.accept_welcome(&incoming[..length]) {
-                    session = id;
-                }
-            }
-            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-            Err(error) => return Err(format!("clock peer receive: {error}")),
-        }
-    }
-    if session == peer::CLOCK_SESSION {
+    // The handshake precedes the first ping, and runs again whenever the master
+    // has been quiet for `HANDSHAKE_TIMEOUT` (a restart issues a new session, so
+    // the old one stops answering). If the run ends before a WELCOME arrives
+    // there is no session to report, so say so rather than probing an open port
+    // hopefully.
+    if clock_handshake(&socket, &mut probe, deadline, &mut outgoing, &mut incoming)? {
+        handshakes += 1;
+    } else {
         let report = ClockReport::failure(
             "peer",
             master.to_string(),
@@ -1356,6 +1366,14 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
 
     while Instant::now() < deadline {
         let cycle = Instant::now();
+        if probe.needs_handshake(Instant::now()) {
+            probe.reset_session();
+            if clock_handshake(&socket, &mut probe, deadline, &mut outgoing, &mut incoming)? {
+                handshakes += 1;
+            } else {
+                break;
+            }
+        }
         let local_send = clock.now();
         let length = probe
             .ping(&mut outgoing, local_send, 0)
@@ -1399,6 +1417,7 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
         &estimator,
         estimate,
         probe.session(),
+        handshakes,
         probe.rejected(),
     );
     if options.json {
@@ -1407,6 +1426,36 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
         println!("{}", report.prose());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Run the HELLO/WELCOME exchange until the master issues a session or the
+/// deadline passes. The startup handshake and every re-handshake after the
+/// master goes quiet share this, so they cannot drift apart. Returns whether a
+/// session is held when it returns; a `false` means the deadline was reached
+/// without a WELCOME.
+fn clock_handshake(
+    socket: &UdpSocket,
+    probe: &mut peer::ClockPeer,
+    deadline: Instant,
+    outgoing: &mut [u8],
+    incoming: &mut [u8],
+) -> Result<bool, String> {
+    while probe.session() == peer::CLOCK_SESSION && Instant::now() < deadline {
+        let length = probe
+            .hello(outgoing)
+            .map_err(|error| format!("clock hello: {error:?}"))?;
+        socket
+            .send(&outgoing[..length])
+            .map_err(|error| format!("clock peer send: {error}"))?;
+        match socket.recv(incoming) {
+            Ok(length) => {
+                let _ = probe.accept_welcome(&incoming[..length]);
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) => return Err(format!("clock peer receive: {error}")),
+        }
+    }
+    Ok(probe.session() != peer::CLOCK_SESSION)
 }
 
 fn run_serve(options: &Options) -> Result<ExitCode, String> {
@@ -3872,6 +3921,58 @@ mod tests {
 
     const TEST_KEY: &str =
         "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
+    #[test]
+    fn a_lease_is_positive_and_only_the_master_may_set_it() {
+        let parse = |words: &[&str]| {
+            let mut options = default_options();
+            parse_arguments(&mut options, words.iter().map(|word| word.to_string()))
+                .expect("a parse");
+            options
+        };
+
+        // `new(key)`'s own default, so a master that names nothing behaves as
+        // the constant says.
+        let bare = parse(&[]);
+        assert_eq!(bare.lease_ms, peer::DEFAULT_LEASE_MS);
+
+        let master = parse(&[
+            "--clock-master",
+            "--session-key-hex",
+            TEST_KEY,
+            "--lease-ms",
+            "5000",
+        ]);
+        assert_eq!(master.lease_ms, 5_000);
+        validate_clock_options(&master).expect("the master owns the lease");
+
+        // The peer tunes its own loop; the lease is the master's alone.
+        let peer = parse(&[
+            "--clock-peer",
+            "--master",
+            "127.0.0.1:7050",
+            "--session-key-hex",
+            TEST_KEY,
+            "--lease-ms",
+            "5000",
+        ]);
+        let error = validate_clock_options(&peer).expect_err("the peer cannot set a lease");
+        assert!(error.contains("--lease-ms applies only"), "unhelpful error: {error}");
+
+        // A lease of zero would expire every session at once.
+        let zero = parse(&[
+            "--clock-master",
+            "--session-key-hex",
+            TEST_KEY,
+            "--lease-ms",
+            "0",
+        ]);
+        assert!(validate_clock_options(&zero).is_err());
+
+        // And it does not belong to a mode with no sessions at all.
+        let elsewhere = parse(&["--run", "--lease-ms", "5000"]);
+        assert!(validate_clock_options(&elsewhere).is_err());
+    }
 
     #[test]
     fn a_clock_session_needs_a_key_and_only_where_it_applies() {

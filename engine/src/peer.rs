@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -93,6 +93,25 @@ pub const PING_INTERVAL_MS: u64 = 10;
 /// milliseconds, and a reply that arrives sooner still returns the call at
 /// once, so the loopback case pays nothing.
 pub const PONG_TIMEOUT_MS: u64 = 20;
+/// How long the master keeps a session that has gone quiet. A peer that keeps
+/// pinging refreshes its session on every accepted ping; one that stops for
+/// longer than the lease is forgotten, so a vanished peer leaves nothing
+/// behind. Measured from the last datagram that used the session.
+pub const DEFAULT_LEASE_MS: u64 = 30_000;
+/// The most sessions the master keeps live at once. A HELLO names no session,
+/// so a flood of HELLOs cannot be told apart from real handshakes; the table
+/// evicts the least recently used session rather than growing without bound.
+pub const MAX_SESSIONS: usize = 64;
+/// How long the peer tolerates silence from the master before it treats the
+/// session as lost and handshakes again. Two seconds clears a dropped pong or
+/// two, and `100 * PING_INTERVAL_MS` scales the same rule to a slower probe.
+/// This is the rule that lets a peer survive a master restart: it stops pinging
+/// an unknown session and asks for a new one.
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(if 2_000 > 100 * PING_INTERVAL_MS {
+    2_000
+} else {
+    100 * PING_INTERVAL_MS
+});
 /// The master's default bind: loopback only, an ephemeral port. Opening a port
 /// another machine can reach is an explicit `--bind`.
 pub const DEFAULT_BIND: &str = "127.0.0.1:0";
@@ -623,14 +642,24 @@ impl ControlReply {
     }
 }
 
+/// One issued session: the `seq` values already served and when the session
+/// last carried an accepted datagram.
+struct Session {
+    seen: HashSet<u32>,
+    last_used: Instant,
+}
+
 /// The clock master's session table and key.
 ///
 /// A HELLO for the key issues a session; only pings for an issued session are
 /// answered. A clock message that fails its MAC, names a session this master
-/// did not issue, or repeats an accepted `seq` is dropped and counted.
+/// did not issue, or repeats an accepted `seq` is dropped and counted. Sessions
+/// expire on a lease and the table has a hard cap, so neither a vanished peer
+/// nor a HELLO flood can grow it without bound.
 pub struct ClockMaster {
     key: [u8; 32],
-    sessions: HashMap<u32, HashSet<u32>>,
+    sessions: HashMap<u32, Session>,
+    lease: Duration,
     rejected: u64,
 }
 
@@ -640,18 +669,43 @@ impl ClockMaster {
         ClockMaster {
             key,
             sessions: HashMap::new(),
+            lease: Duration::from_millis(DEFAULT_LEASE_MS),
             rejected: 0,
         }
     }
 
+    /// The same master, forgetting a session that has been idle for `lease`.
+    pub fn with_lease(mut self, lease: Duration) -> Self {
+        self.lease = lease;
+        self
+    }
+
     /// Answer one datagram, or ignore it. The caller sends the returned bytes
     /// to the datagram's origin.
+    ///
+    /// Every datagram first prunes sessions idle past the lease: a ping naming
+    /// a session that has expired is indistinguishable from one this master
+    /// never issued, so it is dropped and counted.
     pub fn answer(
         &mut self,
         datagram: &[u8],
         clock: &dyn Clock,
         out: &mut [u8],
     ) -> Option<ControlReply> {
+        self.answer_at(datagram, clock, Instant::now(), out)
+    }
+
+    /// The same answer, with the moment supplied. A test drives the lease with
+    /// `base + Duration` rather than sleeping, so a loaded machine cannot turn
+    /// a busy session into an expired one.
+    fn answer_at(
+        &mut self,
+        datagram: &[u8],
+        clock: &dyn Clock,
+        now: Instant,
+        out: &mut [u8],
+    ) -> Option<ControlReply> {
+        self.prune(now);
         let (header, _) = proto::decode(datagram).ok()?;
         match header.stream {
             STREAM_CLOCK_HELLO => {
@@ -664,7 +718,7 @@ impl ClockMaster {
                 };
                 let session = self.fresh_session();
                 let length = encode_welcome(out, &self.key, hello.header.seq, session).ok()?;
-                self.sessions.insert(session, HashSet::new());
+                self.remember(session, now);
                 Some(ControlReply::Welcome(length))
             }
             STREAM_CLOCK_PING => {
@@ -675,17 +729,18 @@ impl ClockMaster {
                         return None;
                     }
                 };
-                let seen = match self.sessions.get_mut(&header.session) {
-                    Some(seen) => seen,
+                let session = match self.sessions.get_mut(&header.session) {
+                    Some(session) => session,
                     None => {
                         self.rejected += 1;
                         return None;
                     }
                 };
-                if !seen.insert(header.seq) {
+                if !session.seen.insert(header.seq) {
                     self.rejected += 1;
                     return None;
                 }
+                session.last_used = now;
                 let master_recv = clock.now();
                 let pong = Pong {
                     echo_local_send: local_send,
@@ -705,6 +760,35 @@ impl ClockMaster {
             }
             _ => None,
         }
+    }
+
+    /// Drop every session whose last accepted datagram is older than the lease.
+    fn prune(&mut self, now: Instant) {
+        let lease = self.lease;
+        self.sessions
+            .retain(|_, session| now.duration_since(session.last_used) < lease);
+    }
+
+    /// Record a newly issued session, evicting the least recently used one when
+    /// the table is full. `last_used` is set to `now` by the caller.
+    fn remember(&mut self, session: u32, now: Instant) {
+        if self.sessions.len() >= MAX_SESSIONS {
+            let oldest = self
+                .sessions
+                .iter()
+                .min_by_key(|(_id, record)| record.last_used)
+                .map(|(id, _)| *id);
+            if let Some(oldest) = oldest {
+                self.sessions.remove(&oldest);
+            }
+        }
+        self.sessions.insert(
+            session,
+            Session {
+                seen: HashSet::new(),
+                last_used: now,
+            },
+        );
     }
 
     fn note_rejection(&mut self, error: &ProbeError) {
@@ -734,12 +818,18 @@ impl ClockMaster {
 }
 
 /// The peer's key, session, and the pings it has already accepted.
+///
+/// `last_heard` is the peer's quiet timer: it starts when a WELCOME issues the
+/// session and is refreshed by every accepted pong. When it runs past
+/// `HANDSHAKE_TIMEOUT` the session is presumed lost (a master restart strands
+/// it) and the peer hands over to `reset_session` before a fresh HELLO.
 pub struct ClockPeer {
     key: [u8; 32],
     session: u32,
     next_seq: u32,
     seen: HashSet<u32>,
     rejected: u64,
+    last_heard: Option<Instant>,
 }
 
 impl ClockPeer {
@@ -751,6 +841,7 @@ impl ClockPeer {
             next_seq: 0,
             seen: HashSet::new(),
             rejected: 0,
+            last_heard: None,
         }
     }
 
@@ -764,6 +855,28 @@ impl ClockPeer {
         self.rejected
     }
 
+    /// Whether the peer must run the HELLO/WELCOME exchange again before its
+    /// next ping: there is no session, or the master has been quiet for
+    /// `HANDSHAKE_TIMEOUT` since the welcome or the last accepted pong.
+    pub fn needs_handshake(&self, now: Instant) -> bool {
+        if self.session == CLOCK_SESSION {
+            return true;
+        }
+        match self.last_heard {
+            Some(heard) => now.duration_since(heard) >= HANDSHAKE_TIMEOUT,
+            None => true,
+        }
+    }
+
+    /// Forget the session, the replay window and the quiet timer, so the next
+    /// HELLO starts clean. `next_seq` keeps counting: a `seq` is never reused
+    /// across sessions.
+    pub fn reset_session(&mut self) {
+        self.session = CLOCK_SESSION;
+        self.seen.clear();
+        self.last_heard = None;
+    }
+
     /// Build the opening HELLO. The caller sends it and waits for a WELCOME.
     pub fn hello(&mut self, out: &mut [u8]) -> Result<usize, ProtoError> {
         let seq = self.next_seq;
@@ -771,12 +884,16 @@ impl ClockPeer {
         encode_hello(out, &self.key, seq, random_nonce())
     }
 
-    /// Verify a WELCOME and adopt its session. A bad tag is counted.
+    /// Verify a WELCOME and adopt its session. A bad tag is counted. The
+    /// welcome also starts the quiet timer: the master has just spoken, so the
+    /// peer should not immediately ask to handshake again before its first
+    /// pong arrives.
     pub fn accept_welcome(&mut self, datagram: &[u8]) -> Result<u32, ProbeError> {
         match decode_welcome(datagram, &self.key) {
             Ok(welcome) => {
                 self.session = welcome.session;
                 self.seen.clear();
+                self.last_heard = Some(Instant::now());
                 Ok(self.session)
             }
             Err(error) => {
@@ -802,7 +919,8 @@ impl ClockPeer {
 
     /// Verify a pong against the key, the session and the pings already
     /// accepted. `None` means this datagram contributes no sample. A bad MAC,
-    /// a foreign session or a replay is also counted as rejected.
+    /// a foreign session or a replay is also counted as rejected. An accepted
+    /// pong refreshes the quiet timer.
     pub fn accept_pong(&mut self, datagram: &[u8], local_send: u64) -> Option<Pong> {
         let (header, pong) = match decode_pong(datagram, &self.key) {
             Ok(pong) => pong,
@@ -824,6 +942,7 @@ impl ClockPeer {
             self.rejected += 1;
             return None;
         }
+        self.last_heard = Some(Instant::now());
         Some(pong)
     }
 }
@@ -1044,6 +1163,9 @@ pub struct ClockReport {
     pub quality: Option<FitQuality>,
     /// The session the master issued (peer), or 0 (master).
     pub session: u32,
+    /// How many HELLO/WELCOME exchanges the peer completed, one at startup and
+    /// another each time the master went quiet long enough to re-handshake.
+    pub handshakes: u64,
     /// Clock datagrams dropped for authentication, an unknown session or a
     /// replay, on either role.
     pub rejected: u64,
@@ -1075,6 +1197,7 @@ impl ClockReport {
             estimate: None,
             quality: None,
             session: 0,
+            handshakes: 0,
             rejected,
             error: String::new(),
         }
@@ -1091,6 +1214,7 @@ impl ClockReport {
         estimator: &ClockEstimator,
         estimate: Option<ClockOffset>,
         session: u32,
+        handshakes: u64,
         rejected: u64,
     ) -> Self {
         ClockReport {
@@ -1108,6 +1232,7 @@ impl ClockReport {
             estimate,
             quality: estimator.fit().map(|(_estimate, quality)| quality),
             session,
+            handshakes,
             rejected,
             error: String::new(),
         }
@@ -1130,6 +1255,7 @@ impl ClockReport {
             estimate: None,
             quality: None,
             session: 0,
+            handshakes: 0,
             rejected: 0,
             error: error.into(),
         }
@@ -1180,7 +1306,7 @@ impl ClockReport {
             None => ("null".to_string(), "null".to_string()),
         };
         format!(
-            "{{\"ok\":true,\"role\":\"peer\",\"master\":\"{}\",\"rate\":{},\"seconds\":{},\"sent\":{},\"received\":{},\"kept\":{},\"dropped\":{},\"min_rtt_samples\":{},\"last_rtt_samples\":{},\"offset_samples\":{},\"drift_ppm\":{},\"rms_residual_samples\":{},\"slope_error_ppm\":{},\"session\":{},\"rejected\":{}}}",
+            "{{\"ok\":true,\"role\":\"peer\",\"master\":\"{}\",\"rate\":{},\"seconds\":{},\"sent\":{},\"received\":{},\"kept\":{},\"dropped\":{},\"min_rtt_samples\":{},\"last_rtt_samples\":{},\"offset_samples\":{},\"drift_ppm\":{},\"rms_residual_samples\":{},\"slope_error_ppm\":{},\"session\":{},\"handshakes\":{},\"rejected\":{}}}",
             json_escape(&self.address),
             self.rate,
             self.seconds,
@@ -1195,6 +1321,7 @@ impl ClockReport {
             rms,
             slope_error,
             self.session,
+            self.handshakes,
             self.rejected
         )
     }
@@ -1224,7 +1351,7 @@ impl ClockReport {
             None => String::new(),
         };
         format!(
-            "clock peer of {}: {}{}, {} sent, {} received, {} kept, {} dropped, {} rejected, session {}, RTT {} samples (min {})",
+            "clock peer of {}: {}{}, {} sent, {} received, {} kept, {} dropped, {} rejected, {} handshakes, session {}, RTT {} samples (min {})",
             self.address,
             estimate,
             fit,
@@ -1233,6 +1360,7 @@ impl ClockReport {
             self.kept,
             self.dropped,
             self.rejected,
+            self.handshakes,
             self.session,
             self.last_rtt_samples
                 .map(|rtt| rtt.to_string())
@@ -1559,6 +1687,134 @@ mod tests {
             .answer(&ping[..length], &clock, &mut reply)
             .expect("a pong")
             .is_pong());
+    }
+
+    #[test]
+    fn a_busy_session_outlives_its_lease_and_an_idle_one_does_not() {
+        let clock = ManualClock::new(0);
+        let lease = Duration::from_millis(200);
+        let mut master = ClockMaster::new(KEY).with_lease(lease);
+        let mut peer = ClockPeer::new(KEY);
+        let session = handshake(&mut master, &mut peer, &clock);
+        let base = Instant::now();
+
+        let mut ping = [0u8; 128];
+        let mut reply = [0u8; 128];
+        // Pings spread across more than a lease: each accepted ping refreshes
+        // the session, so it never expires. The moments are supplied rather
+        // than slept for, so a loaded machine cannot expire a busy session.
+        for step in 0..12u32 {
+            let now = base + Duration::from_millis(step as u64 * 50);
+            let length = encode_ping(&mut ping, &KEY, step, session, 5, 0).expect("encode ping");
+            assert!(
+                master
+                    .answer_at(&ping[..length], &clock, now, &mut reply)
+                    .expect("a pong")
+                    .is_pong(),
+                "the session expired while it was still pinging"
+            );
+        }
+        assert_eq!(master.session_count(), 1);
+        assert_eq!(master.rejected(), 0);
+
+        // Go quiet past the lease, measured from the last ping: the session is
+        // pruned, and a ping naming it is unknown and counted.
+        let now = base + Duration::from_millis(11 * 50) + lease + Duration::from_millis(1);
+        let length = encode_ping(&mut ping, &KEY, 10_000, session, 5, 0).expect("encode ping");
+        assert_eq!(master.answer_at(&ping[..length], &clock, now, &mut reply), None);
+        assert_eq!(master.rejected(), 1);
+        assert_eq!(master.session_count(), 0);
+    }
+
+    #[test]
+    fn a_hello_flood_stays_at_the_session_cap_and_evicts_the_oldest() {
+        let clock = ManualClock::new(0);
+        let mut master = ClockMaster::new(KEY);
+        let mut hello = [0u8; 128];
+        let mut reply = [0u8; 128];
+        let base = Instant::now();
+
+        // The first session is the one a flood must eventually evict.
+        let length = encode_hello(&mut hello, &KEY, 0, 0xAAAA).expect("encode hello");
+        let welcome = master
+            .answer_at(&hello[..length], &clock, base, &mut reply)
+            .expect("a welcome");
+        let oldest = decode_welcome(&reply[..welcome.length()], &KEY)
+            .expect("decode welcome")
+            .session;
+
+        for seq in 1..=(MAX_SESSIONS as u32 + 8) {
+            // A distinct moment per HELLO keeps "oldest" unambiguous.
+            let now = base + Duration::from_millis(seq as u64);
+            let length = encode_hello(&mut hello, &KEY, seq, seq as u64).expect("encode hello");
+            assert!(matches!(
+                master.answer_at(&hello[..length], &clock, now, &mut reply),
+                Some(ControlReply::Welcome(_))
+            ));
+        }
+        assert_eq!(master.session_count(), MAX_SESSIONS);
+
+        // The first session was evicted: a ping naming it is unknown and counted.
+        let mut ping = [0u8; 128];
+        let now = base + Duration::from_millis(1_000);
+        let length = encode_ping(&mut ping, &KEY, 1, oldest, 5, 0).expect("encode ping");
+        assert_eq!(master.answer_at(&ping[..length], &clock, now, &mut reply), None);
+        assert_eq!(master.rejected(), 1);
+    }
+
+    #[test]
+    fn the_peer_handshakes_again_only_after_the_quiet_timeout() {
+        let clock = ManualClock::new(0);
+        let mut master = ClockMaster::new(KEY);
+        let mut peer = ClockPeer::new(KEY);
+
+        // No session yet.
+        assert!(peer.needs_handshake(Instant::now()));
+
+        let session = handshake(&mut master, &mut peer, &clock);
+        // The WELCOME starts the quiet timer, and an accepted pong refreshes it.
+        assert!(!peer.needs_handshake(Instant::now()));
+        let mut ping = [0u8; 128];
+        let mut reply = [0u8; 128];
+        let length = peer.ping(&mut ping, 5_000, 0).expect("encode ping");
+        let pong = master
+            .answer(&ping[..length], &clock, &mut reply)
+            .expect("a pong");
+        assert!(peer.accept_pong(&reply[..pong.length()], 5_000).is_some());
+        assert!(!peer.seen.is_empty(), "the replay window has the accepted seq");
+
+        let heard = Instant::now();
+        assert!(!peer.needs_handshake(heard + HANDSHAKE_TIMEOUT - Duration::from_millis(1)));
+        assert!(peer.needs_handshake(heard + HANDSHAKE_TIMEOUT + Duration::from_millis(1)));
+
+        // A reset clears the session and the replay window, then a fresh HELLO
+        // gets a new session from the same master.
+        peer.reset_session();
+        assert_eq!(peer.session(), CLOCK_SESSION);
+        assert!(peer.seen.is_empty(), "the replay window was not cleared");
+        assert!(peer.needs_handshake(Instant::now()));
+        let fresh = handshake(&mut master, &mut peer, &clock);
+        assert_ne!(fresh, session);
+        assert!(!peer.needs_handshake(Instant::now()));
+    }
+
+    #[test]
+    fn the_peer_report_carries_the_handshake_count() {
+        let estimator = ClockEstimator::new(RATE);
+        let report = ClockReport::peer(
+            "127.0.0.1:7050",
+            RATE,
+            1.0,
+            0,
+            0,
+            &estimator,
+            None,
+            SESSION,
+            3,
+            0,
+        );
+        assert!(report.to_json().contains("\"handshakes\":3"), "{}", report.to_json());
+        assert!(report.prose().contains("3 handshakes"), "{}", report.prose());
     }
 
     #[test]

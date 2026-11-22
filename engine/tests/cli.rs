@@ -1537,6 +1537,20 @@ fn a_clock_flag_outside_its_role_is_a_usage_error() {
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("--bind applies only"), "stderr: {stderr}");
+
+    // The lease belongs to the master's session table.
+    let out = run(&[
+        "--clock-peer",
+        "--master",
+        "127.0.0.1:1",
+        "--lease-ms",
+        "5000",
+        "--seconds",
+        "0.1",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--lease-ms applies only"), "stderr: {stderr}");
 }
 
 #[test]
