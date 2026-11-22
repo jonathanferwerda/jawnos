@@ -1436,6 +1436,8 @@ fn run_send_live(options: &Options) -> Result<ExitCode, String> {
         backend: options.backend,
         period: options.frames,
         buffer: options.buffer,
+        // Production size; `validate_live` maps 0 to LIVE_RING_FRAMES.
+        ring_frames: 0,
     };
     // Validate the request first, so a missing device or local take is named
     // even when the default backend cannot capture at all.

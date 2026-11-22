@@ -15,9 +15,10 @@ use std::time::{Duration, Instant};
 use jawn_audio::{
     audio_stream, decode, decode_welcome, is_audio_stream, read_wav, run_send_live_with_source,
     run_send_take, synthetic_sample, validate_live, validate_send, AudioReceiver, BackendKind,
-    Clock, ClockMaster, ClockOffset, LiveSpec, SendSpec, SenderReport, SyntheticSource, TakeSender,
-    ValidatedSend, WavWriter, STREAM_CLOCK_HELLO, STREAM_CLOCK_PING,
+    Clock, ClockMaster, ClockOffset, LiveSource, LiveSpec, SendSpec, SenderReport, SyntheticSource,
+    TakeSender, ValidatedSend, WavWriter, STREAM_CLOCK_HELLO, STREAM_CLOCK_PING,
 };
+use jawn_audio::uplink::{PULL_BUFFER_FRAMES, PULL_MAX_FRAMES};
 
 fn key(seed: u8) -> [u8; 32] {
     [seed; 32]
@@ -86,6 +87,32 @@ fn start_master_from(
     stop: Arc<AtomicBool>,
     base: u64,
 ) -> (std::net::SocketAddr, Arc<Mutex<Snapshot>>, thread::JoinHandle<()>) {
+    start_master_full(key, stream, stop, base, None, false)
+}
+
+/// A master that stops answering clock datagrams for `mute_for` starting at
+/// `mute_after`, and reads its receiver like the uplink does (`pull_to` behind
+/// the clock by the jitter buffer). Muting a pong delays the sender's blocking
+/// `recv`; pulling makes `late` mean what it means live.
+#[allow(clippy::too_many_arguments)]
+fn start_master_muted(
+    key: [u8; 32],
+    stream: u16,
+    stop: Arc<AtomicBool>,
+    mute_after: Duration,
+    mute_for: Duration,
+) -> (std::net::SocketAddr, Arc<Mutex<Snapshot>>, thread::JoinHandle<()>) {
+    start_master_full(key, stream, stop, 0, Some((mute_after, mute_for)), true)
+}
+
+fn start_master_full(
+    key: [u8; 32],
+    stream: u16,
+    stop: Arc<AtomicBool>,
+    base: u64,
+    mute: Option<(Duration, Duration)>,
+    pull: bool,
+) -> (std::net::SocketAddr, Arc<Mutex<Snapshot>>, thread::JoinHandle<()>) {
     let socket = UdpSocket::bind("127.0.0.1:0").expect("bind the test master");
     let address = socket.local_addr().expect("master address");
     socket
@@ -99,11 +126,13 @@ fn start_master_from(
             start: Instant::now(),
             base,
         };
+        let began = Instant::now();
         let mut master = ClockMaster::new(key);
         let mut snapshot = Snapshot::default();
         let mut receiver: Option<AudioReceiver> = None;
         let mut incoming = [0u8; 2048];
         let mut reply = [0u8; 2048];
+        let mut pull_buf = vec![0i16; PULL_MAX_FRAMES];
 
         while !stop.load(Ordering::SeqCst) {
             match socket.recv_from(&mut incoming) {
@@ -113,6 +142,13 @@ fn start_master_from(
                         Err(_) => continue,
                     };
                     if matches!(header.stream, STREAM_CLOCK_HELLO | STREAM_CLOCK_PING) {
+                        let muted = mute.is_some_and(|(after, for_)| {
+                            let elapsed = began.elapsed();
+                            elapsed >= after && elapsed < after + for_
+                        });
+                        if muted {
+                            continue;
+                        }
                         if let Some(answer) = master.answer(&incoming[..length], &clock, &mut reply) {
                             let length = answer.length();
                             let _ = socket.send_to(&reply[..length], origin);
@@ -137,6 +173,16 @@ fn start_master_from(
                         ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
                     ) => {}
                 Err(_) => {}
+            }
+
+            if pull {
+                if let Some(sink) = receiver.as_mut() {
+                    let head = clock.now().saturating_sub(PULL_BUFFER_FRAMES as u64);
+                    if sink.started() && head > sink.next_master() {
+                        let want = (head - sink.next_master()).min(PULL_MAX_FRAMES as u64) as usize;
+                        let _ = sink.pull_to(&mut pull_buf[..want], want, head);
+                    }
+                }
             }
         }
 
@@ -589,6 +635,65 @@ fn live_spec(master: std::net::SocketAddr, out: &PathBuf) -> LiveSpec {
         backend: BackendKind::Null,
         period: 480,
         buffer: 960,
+        ring_frames: 0,
+    }
+}
+
+/// A known source that stops feeding for a moment and then catches up at once,
+/// the way a device does after a disk or scheduler stall. The catch-up burst is
+/// what used to fill the ring, stall the window, and turn every later datagram
+/// late.
+struct StallingSource {
+    rate: u32,
+    total: u64,
+    produced: u64,
+    started: Option<Instant>,
+    stall_at: u64,
+    stalled: bool,
+}
+
+impl StallingSource {
+    fn new(rate: u32, total: u64, stall_at: u64) -> Self {
+        StallingSource {
+            rate,
+            total,
+            produced: 0,
+            started: None,
+            stall_at,
+            stalled: false,
+        }
+    }
+}
+
+impl LiveSource for StallingSource {
+    fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    fn read(&mut self, out: &mut [i16]) -> usize {
+        if out.is_empty() || self.produced >= self.total {
+            return 0;
+        }
+        let started = *self.started.get_or_insert_with(Instant::now);
+        if !self.stalled && self.produced >= self.stall_at {
+            self.stalled = true;
+            thread::sleep(Duration::from_millis(150));
+        }
+        // Pace to the source's own schedule. After the stall that schedule is in
+        // the past, so the source hands over its backlog as fast as the capture
+        // thread will take it.
+        let nanos = (u128::from(self.produced) * 1_000_000_000 / u128::from(self.rate)) as u64;
+        let due = started + Duration::from_nanos(nanos);
+        let now = Instant::now();
+        if due > now {
+            thread::sleep(due - now);
+        }
+        let count = (self.total - self.produced).min(out.len() as u64) as usize;
+        for (offset, slot) in out.iter_mut().take(count).enumerate() {
+            *slot = synthetic_sample(self.rate, self.produced + offset as u64);
+        }
+        self.produced += count as u64;
+        count
     }
 }
 
@@ -611,7 +716,7 @@ fn a_live_capture_is_written_locally_first_and_reaches_the_master_in_order() {
     assert!(report.ok, "report: {}", report.to_json());
     assert!(report.live, "the report says it was live: {}", report.to_json());
     let json = report.to_json();
-    for key in ["\"captured\":", "\"sent\":", "\"dropped\":", "\"padded\":"] {
+    for key in ["\"captured\":", "\"sent\":", "\"dropped\":", "\"padded\":", "\"resynced\":"] {
         assert!(json.contains(key), "{key} is missing from {json}");
     }
     assert_eq!(
@@ -668,6 +773,143 @@ fn a_live_capture_is_written_locally_first_and_reaches_the_master_in_order() {
         snapshot.receiver.as_ref().expect("receiver").counters().rejected,
         0,
         "the claimed stream and key were never refused"
+    );
+}
+
+#[test]
+fn a_live_capture_survives_a_source_stall_and_a_ring_wrap() {
+    // A device that stalls and then catches up at once used to fill the ring
+    // with frames whose span the sender had already padded, and the window could
+    // stop advancing. A 150 ms stall with a one-window ring crosses the wrap in
+    // about a second.
+    let session_key = key(0x74);
+    let stream = audio_stream(1).expect("an audio stream");
+    let stop = Arc::new(AtomicBool::new(false));
+    let (address, state, handle) = start_master(session_key, stream, Arc::clone(&stop));
+
+    let take = TempWav::new("live-stall");
+    let total = 48_000u64; // 1 s at 48 kHz
+    let mut spec = live_spec(address, &take.path);
+    spec.key_hex = Some("74".repeat(32));
+    // One 10 ms ring: the 150 ms catch-up burst overwrites it many times over.
+    spec.ring_frames = 1_024;
+    let validated = validate_live(&spec).expect("the live shape reads");
+    let source = Box::new(StallingSource::new(48_000, total, 9_600));
+
+    let report = run_send_live_with_source(&validated, source);
+    stop.store(true, Ordering::SeqCst);
+    handle.join().expect("join the test master");
+
+    assert!(report.ok, "report: {}", report.to_json());
+    assert_eq!(
+        report.captured, total,
+        "the local take still holds every captured frame: {}",
+        report.to_json()
+    );
+    assert!(
+        report.dropped > 0,
+        "the stale burst is dropped, not replayed late: {}",
+        report.to_json()
+    );
+    assert!(
+        report.padded > 0,
+        "the stall is concealed, not hidden: {}",
+        report.to_json()
+    );
+    assert!(
+        report.dropped >= report.resynced,
+        "the skipped frames are part of the capture that never reached the bearer: {}",
+        report.to_json()
+    );
+
+    // D14: the local WAV is untouched by any of the send-side recovery.
+    let audio = read_wav(&take.path).expect("the local take is a valid WAV");
+    assert_eq!(audio.frames, total);
+    let expected: Vec<i16> = (0..total)
+        .map(|index| synthetic_sample(48_000, index))
+        .collect();
+    assert_eq!(audio.samples, expected);
+
+    let snapshot = state.lock().expect("snapshot");
+    assert_eq!(
+        snapshot.audio_datagrams, report.sent,
+        "every datagram reached the master"
+    );
+    assert_eq!(
+        snapshot.receiver.as_ref().expect("receiver").counters().rejected,
+        0,
+        "the burst was never refused"
+    );
+}
+
+#[test]
+fn a_live_capture_survives_a_sender_stall_without_late_audio() {
+    // The 600 s failure: a wake blocked for its pong timeout, `last_now` jumped to
+    // `now` and discarded the capped excess, and the sender stayed behind the
+    // master's jitter buffer for the rest of the run. Muting pongs for 300 ms with
+    // a 200 ms pong timeout reproduces the delayed wake; the pulling master makes
+    // `late` mean what it means in the uplink.
+    let session_key = key(0x75);
+    let stream = audio_stream(1).expect("an audio stream");
+    let stop = Arc::new(AtomicBool::new(false));
+    let (address, state, handle) = start_master_muted(
+        session_key,
+        stream,
+        Arc::clone(&stop),
+        Duration::from_millis(300),
+        Duration::from_millis(300),
+    );
+
+    let take = TempWav::new("live-sender-stall");
+    let total = 48_000u64; // 1 s at 48 kHz
+    let mut spec = live_spec(address, &take.path);
+    spec.key_hex = Some("75".repeat(32));
+    spec.pong_timeout_ms = 200;
+    spec.ring_frames = 1_024;
+    let validated = validate_live(&spec).expect("the live shape reads");
+    let source = Box::new(SyntheticSource::new(48_000, total, 480));
+
+    let report = run_send_live_with_source(&validated, source);
+    stop.store(true, Ordering::SeqCst);
+    handle.join().expect("join the test master");
+
+    assert!(report.ok, "report: {}", report.to_json());
+    assert_eq!(
+        report.captured, total,
+        "the local take still holds every captured frame: {}",
+        report.to_json()
+    );
+    assert!(
+        report.resynced > 0,
+        "the delayed span is skipped to the live edge: {}",
+        report.to_json()
+    );
+    assert!(
+        report.dropped >= report.resynced,
+        "the skipped frames are part of the capture that never reached the bearer: {}",
+        report.to_json()
+    );
+
+    // D14: the local WAV is untouched by the send-side recovery.
+    let audio = read_wav(&take.path).expect("the local take is a valid WAV");
+    assert_eq!(audio.frames, total);
+    let expected: Vec<i16> = (0..total)
+        .map(|index| synthetic_sample(48_000, index))
+        .collect();
+    assert_eq!(audio.samples, expected);
+
+    let snapshot = state.lock().expect("snapshot");
+    let counters = snapshot
+        .receiver
+        .as_ref()
+        .expect("the welcome built a receiver")
+        .counters();
+    assert!(counters.received > 0, "the master received the live audio");
+    assert!(
+        counters.late < counters.received / 2,
+        "the sender did not stay behind the master's buffer: {} late of {}",
+        counters.late,
+        counters.received
     );
 }
 

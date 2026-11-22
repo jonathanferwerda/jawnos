@@ -6,11 +6,13 @@
 //! late device is a counted gap in an otherwise steady send loop, never a stall
 //! in it (docs/studio-audio-roadmap.md P4).
 //!
-//! The ring is fixed-size and lock-free, like [`crate::monbus`]. Each slot
-//! carries the capture sequence number of its frame, which is what lets the
-//! sender stay on its own clock: a window that has already been padded with
-//! silence discards the late frames that belong to it instead of sending them a
-//! block behind. A full ring drops the **newest** frames and counts them.
+//! The ring is fixed-size and lock-free, like [`crate::monbus`]. Each slot is a
+//! single atomic that holds the capture sequence number and the sample together,
+//! so a producer overwriting the oldest frame can never tear a sample away from
+//! its sequence. The window discards frames whose span the sender has already
+//! passed and, when the sender has fallen behind the whole ring, resynchronises
+//! to the live edge instead of stalling. A full ring **overwrites the oldest**
+//! frames and counts them: the live edge is the part worth sending.
 //!
 //! The null backend has no input, so this module does not pretend it does. A
 //! [`SyntheticSource`] is the test source; real hardware is the existing ALSA
@@ -18,19 +20,28 @@
 //! contract `--record` uses.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::backends::BackendKind;
+use crate::bearing::DEFAULT_JITTER_FRAMES;
 use crate::wav::WavWriter;
 
 /// Frames the capture thread may run ahead of the sender: 341 ms at 48 kHz.
 /// That rides out a scheduler hiccup or one disk stall without delaying the
-/// send loop; beyond it the oldest frames are still kept and the newest are
-/// dropped, because the live edge is the part worth sending.
+/// send loop. A full ring overwrites its oldest frames, so the ring always holds
+/// the newest audio and the sender can resynchronise to it.
 pub const LIVE_RING_FRAMES: usize = 16_384;
+
+/// The most capture the sender lets pile up before it skips to the live edge.
+///
+/// It is the master's jitter window ([`DEFAULT_JITTER_FRAMES`], 85 ms): a
+/// datagram stamped further behind the master clock than this is refused as
+/// late, so a live send drops the backlog rather than carrying it forever. The
+/// sender's own clock catch-up is bounded by the same number.
+pub const LIVE_MAX_LAG_FRAMES: usize = DEFAULT_JITTER_FRAMES;
 
 /// How often the local take's header is synced while it records. The samples
 /// are written every block; only the sizes wait, so a killed take is a valid,
@@ -114,19 +125,32 @@ impl LiveSource for SyntheticSource {
     }
 }
 
-/// One slot's sample and its capture sequence number, both atomic so the
-/// capture thread and the clock loop share the ring without a lock.
+/// One ring slot: the capture sequence in the high 48 bits and the sample in
+/// the low 16, stored as one atomic. A single store is what makes overwriting
+/// the oldest frame safe: a consumer cannot read a sample torn away from the
+/// sequence it belongs to. At 48 kHz the sequence takes about 186 years to
+/// outgrow 48 bits.
+fn pack(seq: u64, sample: i16) -> u64 {
+    (seq << 16) | u64::from(sample as u16)
+}
+
+fn unpack(value: u64) -> (u64, i16) {
+    (value >> 16, value as u16 as i16)
+}
+
+/// The capture thread and the clock loop share one fixed ring without a lock.
 #[derive(Debug)]
 struct RingInner {
-    samples: Box<[AtomicI32]>,
-    seqs: Box<[AtomicU64]>,
-    mask: usize,
-    /// Accepted frame counter, not an index into `samples`.
-    write: AtomicUsize,
-    read: AtomicUsize,
-    /// Every frame the source produced, including ones the ring refused.
+    /// `pack(seq, sample)` per frame.
+    slots: Box<[AtomicU64]>,
+    mask: u64,
+    /// Frames written (and therefore the next sequence), not an index.
+    write: AtomicU64,
+    /// Oldest frame the consumer may still read, not an index.
+    read: AtomicU64,
+    /// Every frame the source produced, including ones the ring overwrote.
     produced: AtomicU64,
-    /// Frames the ring refused because it was full.
+    /// Frames overwritten before the consumer read them.
     overflow: AtomicU64,
 }
 
@@ -136,11 +160,10 @@ struct RingInner {
 pub fn live_ring(frames: usize) -> (LiveProducer, LiveConsumer) {
     let frames = frames.max(2).next_power_of_two();
     let inner = Arc::new(RingInner {
-        samples: (0..frames).map(|_| AtomicI32::new(0)).collect(),
-        seqs: (0..frames).map(|_| AtomicU64::new(0)).collect(),
-        mask: frames - 1,
-        write: AtomicUsize::new(0),
-        read: AtomicUsize::new(0),
+        slots: (0..frames).map(|_| AtomicU64::new(0)).collect(),
+        mask: (frames - 1) as u64,
+        write: AtomicU64::new(0),
+        read: AtomicU64::new(0),
         produced: AtomicU64::new(0),
         overflow: AtomicU64::new(0),
     });
@@ -152,55 +175,68 @@ pub fn live_ring(frames: usize) -> (LiveProducer, LiveConsumer) {
     )
 }
 
-/// The capture thread's handle to the ring. Never blocks; a full ring returns
-/// the number of frames dropped from the block.
+/// The capture thread's handle to the ring. Never blocks; a full ring
+/// overwrites the oldest frames and returns how many it discarded.
 #[derive(Clone, Debug)]
 pub struct LiveProducer {
     inner: Arc<RingInner>,
 }
 
 impl LiveProducer {
-    /// Offer one mono block. Returns the frames refused because the ring was
-    /// full; the newest frames are the ones dropped.
+    /// Offer one mono block. Returns the frames this push discarded (the oldest
+    /// frames in the ring), so a caller that wants its own count can read it;
+    /// the running total is also in [`LiveProducer::overflow`].
+    ///
+    /// The ring keeps the **newest** frames. A producer that outruns the sender
+    /// overwrites the oldest, which is the audio a live send wants to skip
+    /// rather than send a second late.
     pub fn push(&self, block: &[i16]) -> usize {
         if block.is_empty() {
             return 0;
         }
+        let capacity = self.inner.mask + 1;
+        // Claim the sequence range before publishing any slot: two pushes from
+        // one thread are ordered, and the consumer never relies on `produced`
+        // to read a slot (it uses `write`).
         let base = self
             .inner
             .produced
             .fetch_add(block.len() as u64, Ordering::Relaxed);
         let write = self.inner.write.load(Ordering::Relaxed);
-        let read = self.inner.read.load(Ordering::Acquire);
-        let capacity = self.inner.mask + 1;
-        let free = capacity.saturating_sub(write.wrapping_sub(read));
-        let accepted = block.len().min(free);
+        for (offset, sample) in block.iter().enumerate() {
+            let slot = ((write + offset as u64) & self.inner.mask) as usize;
+            self.inner.slots[slot].store(pack(base + offset as u64, *sample), Ordering::Relaxed);
+        }
+        let new_write = write + block.len() as u64;
+        self.inner.write.store(new_write, Ordering::Release);
 
-        for (offset, sample) in block.iter().take(accepted).enumerate() {
-            let slot = write.wrapping_add(offset) & self.inner.mask;
-            self.inner.samples[slot].store(i32::from(*sample), Ordering::Relaxed);
-            self.inner.seqs[slot].store(base + offset as u64, Ordering::Relaxed);
-        }
-        if accepted > 0 {
-            self.inner
-                .write
-                .store(write.wrapping_add(accepted), Ordering::Release);
-        }
-        let dropped = block.len() - accepted;
-        if dropped > 0 {
+        // The ring now holds the newest `capacity` frames. Any unread frame
+        // older than that was overwritten by this push; move the consumer's
+        // cursor over it and count it.
+        let oldest_valid = new_write.saturating_sub(capacity);
+        let before = self.inner.read.fetch_max(oldest_valid, Ordering::AcqRel);
+        let overwritten = oldest_valid.saturating_sub(before);
+        if overwritten > 0 {
             self.inner
                 .overflow
-                .fetch_add(dropped as u64, Ordering::Relaxed);
+                .fetch_add(overwritten, Ordering::Relaxed);
         }
-        dropped
+        overwritten as usize
     }
 
-    /// Every frame the source produced and handed over, including ring drops.
+    /// Every frame the source produced and handed over, including overwritten
+    /// ones. This is the report's `captured`.
     pub fn produced(&self) -> u64 {
         self.inner.produced.load(Ordering::Relaxed)
     }
 
-    /// Frames the ring refused because it was full.
+    /// The next frame sequence, i.e. the live edge. `written - 1` is the newest
+    /// frame the ring holds.
+    pub fn written(&self) -> u64 {
+        self.inner.write.load(Ordering::Acquire)
+    }
+
+    /// Frames overwritten before the consumer read them.
     pub fn overflow(&self) -> u64 {
         self.inner.overflow.load(Ordering::Relaxed)
     }
@@ -215,6 +251,11 @@ pub struct WindowReport {
     pub padded: usize,
     /// Captured frames discarded because their window had already passed.
     pub stale: usize,
+    /// Set when the sender's `local` was behind the whole ring: the window was
+    /// filled from this capture sequence instead, and the caller must adopt it
+    /// as its next local position. A resynchronised window never leaves the
+    /// consumer stalled and the producer overflowing forever.
+    pub resync: Option<u64>,
 }
 
 /// The sender's handle to the ring.
@@ -224,22 +265,31 @@ pub struct LiveConsumer {
 }
 
 impl LiveConsumer {
+    /// The read cursor, clamped to the oldest frame a full ring can still hold.
+    /// A producer overlay can advance `read` between the two atomics; the clamp
+    /// keeps a window from reading a slot that is already a newer frame.
+    fn read_cursor(&self, write: u64) -> u64 {
+        let capacity = self.inner.mask + 1;
+        let read = self.inner.read.load(Ordering::Relaxed);
+        read.max(write.saturating_sub(capacity))
+    }
+
     /// Frames still in the ring, including ones the next window will discard as
     /// stale.
     pub fn pending(&self) -> usize {
         let write = self.inner.write.load(Ordering::Acquire);
-        let read = self.inner.read.load(Ordering::Relaxed);
-        write.wrapping_sub(read)
+        let read = self.read_cursor(write);
+        write.saturating_sub(read) as usize
     }
 
     /// The capture sequence of the oldest frame still in the ring.
     pub fn next_seq(&self) -> Option<u64> {
         let write = self.inner.write.load(Ordering::Acquire);
-        let read = self.inner.read.load(Ordering::Relaxed);
-        if write == read {
+        let read = self.read_cursor(write);
+        if read == write {
             None
         } else {
-            Some(self.inner.seqs[read & self.inner.mask].load(Ordering::Relaxed))
+            Some(unpack(self.inner.slots[(read & self.inner.mask) as usize].load(Ordering::Relaxed)).0)
         }
     }
 
@@ -251,23 +301,53 @@ impl LiveConsumer {
     /// frame newer than the window stays in the ring. The gaps are zeroed, which
     /// is the concealment rule — the sender keeps the master timeline whole and
     /// the report counts what it had to invent.
+    ///
+    /// If even the oldest frame in the ring is newer than this window, the
+    /// sender has fallen behind the whole ring. Rather than break without
+    /// advancing `read` — which leaves the producer overwriting forever — the
+    /// window is filled from the newest full window in the ring and
+    /// [`WindowReport::resync`] names its start. The caller adopts that as its
+    /// local position, so the stalled span is skipped, not replayed late.
     pub fn window(&self, local: u64, out: &mut [i16]) -> WindowReport {
         out.fill(0);
         if out.is_empty() {
             return WindowReport::default();
         }
-        let end = local.saturating_add(out.len() as u64);
         let write = self.inner.write.load(Ordering::Acquire);
-        let mut read = self.inner.read.load(Ordering::Relaxed);
+        let mut read = self.read_cursor(write);
+        let mut start = local;
+        let mut resync = None;
+
+        let requested_end = local.saturating_add(out.len() as u64);
+        if read != write {
+            let (oldest_seq, _) = unpack(
+                self.inner.slots[(read & self.inner.mask) as usize].load(Ordering::Relaxed),
+            );
+            if oldest_seq >= requested_end {
+                // Nothing in the ring belongs to this window. The newest full
+                // window ends at the live edge (`write`), and is wholly in the
+                // ring unless the ring itself is shorter than one window.
+                let target = write
+                    .saturating_sub(out.len() as u64)
+                    .max(oldest_seq);
+                if target > local {
+                    start = target;
+                    resync = Some(target);
+                }
+            }
+        }
+        let end = start.saturating_add(out.len() as u64);
         let mut stale = 0usize;
 
         // Frames from a span the sender has already passed are not late audio
         // any more; they are a gap that was concealed.
         while read != write {
-            let seq = self.inner.seqs[read & self.inner.mask].load(Ordering::Relaxed);
-            if seq < local {
+            let (seq, _) = unpack(
+                self.inner.slots[(read & self.inner.mask) as usize].load(Ordering::Relaxed),
+            );
+            if seq < start {
                 stale += 1;
-                read = read.wrapping_add(1);
+                read += 1;
             } else {
                 break;
             }
@@ -275,26 +355,29 @@ impl LiveConsumer {
 
         let mut used = 0usize;
         while read != write {
-            let slot = read & self.inner.mask;
-            let seq = self.inner.seqs[slot].load(Ordering::Relaxed);
+            let (seq, sample) = unpack(
+                self.inner.slots[(read & self.inner.mask) as usize].load(Ordering::Relaxed),
+            );
             if seq >= end {
                 break;
             }
-            if seq >= local {
-                let at = (seq - local) as usize;
-                out[at] = self.inner.samples[slot].load(Ordering::Relaxed) as i16;
+            if seq >= start {
+                out[(seq - start) as usize] = sample;
                 used += 1;
             } else {
                 stale += 1;
             }
-            read = read.wrapping_add(1);
+            read += 1;
         }
 
-        self.inner.read.store(read, Ordering::Release);
+        // Never move the cursor backwards: a producer overlay may have advanced
+        // it past the local copy while this window was reading.
+        self.inner.read.fetch_max(read, Ordering::AcqRel);
         WindowReport {
             used,
             padded: out.len() - used,
             stale,
+            resync,
         }
     }
 }
@@ -634,26 +717,95 @@ mod tests {
         let (producer, consumer) = live_ring(64);
         let mut out = [0i16; 4];
         // Nothing captured yet: the window is silence.
-        assert_eq!(consumer.window(0, &mut out), WindowReport { used: 0, padded: 4, stale: 0 });
+        assert_eq!(
+            consumer.window(0, &mut out),
+            WindowReport {
+                used: 0,
+                padded: 4,
+                stale: 0,
+                resync: None,
+            }
+        );
         // The late frames for that span arrive afterwards and must not be sent
         // as if they were the next block.
         producer.push(&[10, 11, 12, 13]);
         let report = consumer.window(4, &mut out);
-        assert_eq!(report, WindowReport { used: 0, padded: 4, stale: 4 });
+        assert_eq!(
+            report,
+            WindowReport {
+                used: 0,
+                padded: 4,
+                stale: 4,
+                resync: None,
+            }
+        );
         assert_eq!(consumer.pending(), 0);
     }
 
     #[test]
-    fn an_overflow_keeps_the_oldest_and_counts_the_newest() {
+    fn an_overflow_keeps_the_newest_and_counts_the_overwritten() {
         let (producer, consumer) = live_ring(8);
         let block: Vec<i16> = (0..12).collect();
-        assert_eq!(producer.push(&block), 4, "four newest frames are refused");
+        assert_eq!(producer.push(&block), 4, "four oldest frames are overwritten");
         assert_eq!(producer.produced(), 12);
+        assert_eq!(producer.written(), 12);
         assert_eq!(producer.overflow(), 4);
         let mut out = [0i16; 8];
         let report = consumer.window(0, &mut out);
+        assert_eq!(report.used, 4, "only the newest half of the window survives");
+        assert_eq!(report.padded, 4);
+        assert_eq!(&out, &[0, 0, 0, 0, 4, 5, 6, 7]);
+        assert_eq!(consumer.next_seq(), Some(8), "the ring holds the live edge");
+    }
+
+    #[test]
+    fn a_full_ring_resynchronises_to_the_live_edge_instead_of_stalling() {
+        // The old failure: a producer far ahead of the window left `read` stuck
+        // at the first frame past the window, so `used` was 0 forever and the
+        // ring overflowed. Now the window jumps to the newest full window.
+        let (producer, consumer) = live_ring(8);
+        let block: Vec<i16> = (0..32).collect();
+        producer.push(&block);
+        let mut out = [0i16; 8];
+        let report = consumer.window(0, &mut out);
+        assert_eq!(
+            report,
+            WindowReport {
+                used: 8,
+                padded: 0,
+                stale: 0,
+                resync: Some(24),
+            }
+        );
+        assert_eq!(&out, &[24, 25, 26, 27, 28, 29, 30, 31]);
+        assert_eq!(consumer.pending(), 0, "the stale span is behind us");
+
+        // The next live block is consumed normally from the adopted position.
+        producer.push(&[32, 33, 34, 35, 36, 37, 38, 39]);
+        let report = consumer.window(32, &mut out);
+        assert_eq!(report.resync, None);
         assert_eq!(report.used, 8);
-        assert_eq!(&out, &[0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(&out, &[32, 33, 34, 35, 36, 37, 38, 39]);
+    }
+
+    #[test]
+    fn a_window_never_stalls_while_the_ring_wraps() {
+        let (producer, consumer) = live_ring(8);
+        let mut out = [0i16; 8];
+        let mut local = 0u64;
+        for batch in 0..6u64 {
+            let block: Vec<i16> = (0..16).map(|offset| (batch * 16 + offset) as i16).collect();
+            producer.push(&block);
+            let report = consumer.window(local, &mut out);
+            assert_eq!(report.used + report.padded, out.len());
+            assert!(
+                report.used > 0 || report.resync.is_some(),
+                "window stalled at {local}: {report:?}"
+            );
+            let next = report.resync.unwrap_or(local + out.len() as u64);
+            assert!(next > local, "the cursor must move forward: {next} <= {local}");
+            local = next;
+        }
     }
 
     #[test]

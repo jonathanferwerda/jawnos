@@ -10,9 +10,12 @@
 #            missing key are usage errors. `--send-live` is the same send with
 #            a capture device: a dedicated thread writes every block to the
 #            local WAV first, then offers the same frames to a fixed ring the
-#            clock loop pops. The loop pads a short capture with silence, drops
-#            frames whose span already passed, and reports captured, sent and
-#            dropped.
+#            clock loop pops. A full ring overwrites its oldest frames so the live
+#            edge survives; a window whose whole span is older than the ring
+#            resynchronises to the live edge instead of stalling. The loop pads a
+#            short capture with silence, bounds the capture backlog to the
+#            master's jitter window, and reports captured, sent, dropped,
+#            padded and resynced.
 
 use strict;
 use warnings;
@@ -55,8 +58,15 @@ like( $capture, qr/a live capture is not resampled to another rate/,
 	'a granted rate that differs is refused, not converted' );
 like( $capture, qr/window\(&self, local: u64/, 'the sender asks for a local-time window' );
 like( $capture, qr/out\.fill\(0\)/, 'a short capture is padded by the stated rule' );
-like( $capture, qr/seq < local/, 'frames from a span already padded are stale' );
-like( $capture, qr/overflow\s*\.\s*fetch_add/, 'ring overflow is counted, never blocking' );
+like( $capture, qr/seq < start/, 'frames from a span already padded are stale' );
+like( $capture, qr/fn pack\(/, 'one atomic carries a frame sequence and its sample' );
+like( $capture, qr/oldest_seq >= requested_end/, 'a window behind the whole ring is detected' );
+like( $capture, qr/pub resync: Option<u64>/, 'the consumer names the live edge it resynchronised to' );
+like( $capture, qr/write\s*\.\s*saturating_sub\(out\.len\(\) as u64\)/,
+	'the window resynchronises to the newest full window, not the stale oldest' );
+like( $capture, qr/read\.fetch_max/, 'the consumer cursor never moves backwards' );
+like( $capture, qr/overflow\s*\.\s*fetch_add/, 'ring overwrites are counted, never blocking' );
+like( $capture, qr/pub const LIVE_MAX_LAG_FRAMES/, 'the live backlog is bounded by the master jitter window' );
 
 # --- the request is validated before a socket opens -------------------------
 like( $sender, qr/pub struct SendSpec/, 'the CLI request has one struct' );
@@ -70,6 +80,13 @@ like( $sender, qr/pub fn fill\(&mut self, input: &\[i16\]\)/, 'one live wake is 
 like( $sender, qr/pub fn run_send_live\b/, 'a live send has an entry point' );
 like( $sender, qr/pub fn run_send_live_with_source/, 'the suite can run a software source' );
 like( $sender, qr/pub fn success_live/, 'a live report carries the capture counts' );
+like( $sender, qr/\\"resynced\\":/, 'the live report carries the live-edge skip count' );
+like( $sender, qr/pub fn resync_to/, 'a live sender can adopt a resynchronised position' );
+like( $sender, qr/last_now\.saturating_add\(elapsed as u64\)/,
+	'a delayed wake carries its capped excess instead of losing it' );
+like( $sender, qr/LIVE_MAX_LAG_FRAMES/, 'the sender never carries more capture than the jitter window' );
+like( $sender, qr/producer\.written\(\)/, 'the live edge is the ring write cursor' );
+like( $sender, qr/window\.resync/, 'the sender adopts the consumer resynchronisation' );
 like( $sender, qr/--send-live needs --device NAME/, 'a live send requires a device' );
 like( $sender, qr/--send-live needs --out FILE\.wav/, 'a live send requires its local take' );
 like( $sender, qr/consumer\.window\(sender\.local\(\)/, 'the clock loop pops only its local window' );
@@ -172,6 +189,14 @@ like( $tests, qr/fn a_wrong_key_gets_no_welcome_and_the_sender_sends_no_audio/, 
 like( $tests, qr/fn a_missing_key_wrong_rate_and_empty_take_are_usage_errors/, 'the usage errors are tested' );
 like( $tests, qr/fn a_live_capture_is_written_locally_first_and_reaches_the_master_in_order/,
 	'a synthetic live source reaches a real master and its WAV' );
+like( $tests, qr/fn a_live_capture_survives_a_sender_stall_without_late_audio/,
+	'a delayed sender wake is resynchronised and the master is not late' );
+like( $tests, qr/fn a_live_capture_survives_a_source_stall_and_a_ring_wrap/,
+	'a source stall and small ring still deliver live audio' );
+like( $capture, qr/fn a_full_ring_resynchronises_to_the_live_edge_instead_of_stalling/,
+	'the full-ring resync is unit tested' );
+like( $capture, qr/fn a_window_never_stalls_while_the_ring_wraps/,
+	'the window is proved never to stall while the ring wraps' );
 like( $tests, qr/fn a_live_send_needs_a_device_an_out_and_an_audio_stream/,
 	'the live usage errors are tested' );
 like( $tests, qr/read_wav\(&take\.path\)/, 'the local take is read back and checked' );

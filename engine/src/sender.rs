@@ -130,6 +130,9 @@ pub struct LiveSpec {
     pub backend: BackendKind,
     pub period: usize,
     pub buffer: usize,
+    /// The capture-to-sender ring. Zero means [`capture::LIVE_RING_FRAMES`]; a
+    /// test passes a small ring so a short run crosses the wrap point.
+    pub ring_frames: usize,
 }
 
 /// A [`LiveSpec`] that has been checked. The key has no `Debug`, so it cannot
@@ -148,6 +151,7 @@ pub struct ValidatedLive {
     pub backend: BackendKind,
     pub period: usize,
     pub buffer: usize,
+    pub ring_frames: usize,
 }
 
 impl std::fmt::Debug for ValidatedLive {
@@ -162,6 +166,7 @@ impl std::fmt::Debug for ValidatedLive {
             .field("backend", &self.backend)
             .field("period", &self.period)
             .field("buffer", &self.buffer)
+            .field("ring_frames", &self.ring_frames)
             .finish()
     }
 }
@@ -245,6 +250,11 @@ pub fn validate_live(spec: &LiveSpec) -> Result<ValidatedLive, String> {
         backend: spec.backend,
         period: spec.period,
         buffer: spec.buffer,
+        ring_frames: if spec.ring_frames == 0 {
+            capture::LIVE_RING_FRAMES
+        } else {
+            spec.ring_frames
+        },
     })
 }
 
@@ -515,6 +525,16 @@ impl LiveSender {
         self.estimate = estimate;
     }
 
+    /// Move the block timeline forward to `local`, dropping the span the sender
+    /// could not place. The next [`LiveSender::fill`] stamps from here; the
+    /// master conceals the jump by position. `fill` re-anchors the converter at
+    /// the new start, so no state from the skipped span leaks across the gap.
+    pub fn resync_to(&mut self, local: u64) {
+        if local > self.local {
+            self.local = local;
+        }
+    }
+
     /// Place one wake's frames on the master timeline, returning the stamp and
     /// the master-time samples. The returned slice is valid until the next call.
     pub fn fill(&mut self, input: &[i16]) -> Option<(u64, &[i16])> {
@@ -673,6 +693,10 @@ pub struct SenderReport {
     pub dropped: u64,
     /// Live only: silence the sender inserted where the capture had no frame.
     pub padded: u64,
+    /// Live only: captured frames skipped by a live-edge resynchronisation. They
+    /// were on the local WAV but their span was already behind the master's
+    /// jitter window, so sending them would only be late.
+    pub resynced: u64,
 }
 
 impl SenderReport {
@@ -699,6 +723,7 @@ impl SenderReport {
             captured: 0,
             dropped: 0,
             padded: 0,
+            resynced: 0,
         }
     }
 
@@ -714,12 +739,14 @@ impl SenderReport {
         captured: u64,
         dropped: u64,
         padded: u64,
+        resynced: u64,
     ) -> Self {
         let mut report = Self::success(master, session, sent, frames, handshakes, estimate);
         report.live = true;
         report.captured = captured;
         report.dropped = dropped;
         report.padded = padded;
+        report.resynced = resynced;
         report
     }
 
@@ -738,6 +765,7 @@ impl SenderReport {
             captured: 0,
             dropped: 0,
             padded: 0,
+            resynced: 0,
         }
     }
 
@@ -758,7 +786,7 @@ impl SenderReport {
         };
         if self.live {
             return format!(
-                "{{\"ok\":true,\"role\":\"sender\",\"live\":true,\"master\":\"{}\",\"session\":{},\"captured\":{},\"sent\":{},\"frames\":{},\"dropped\":{},\"padded\":{},\"handshakes\":{},\"offset_samples\":{},\"drift_ppm\":{}}}",
+                "{{\"ok\":true,\"role\":\"sender\",\"live\":true,\"master\":\"{}\",\"session\":{},\"captured\":{},\"sent\":{},\"frames\":{},\"dropped\":{},\"padded\":{},\"resynced\":{},\"handshakes\":{},\"offset_samples\":{},\"drift_ppm\":{}}}",
                 json_escape(&self.master),
                 self.session,
                 self.captured,
@@ -766,6 +794,7 @@ impl SenderReport {
                 self.frames,
                 self.dropped,
                 self.padded,
+                self.resynced,
                 self.handshakes,
                 offset,
                 drift
@@ -790,13 +819,14 @@ impl SenderReport {
         }
         if self.live {
             return format!(
-                "{role} to {}: {} captured, {} frames in {} datagrams, {} dropped, {} padded, {} handshakes",
+                "{role} to {}: {} captured, {} frames in {} datagrams, {} dropped, {} padded, {} resynced, {} handshakes",
                 self.master,
                 self.captured,
                 self.frames,
                 self.sent,
                 self.dropped,
                 self.padded,
+                self.resynced,
                 self.handshakes
             );
         }
@@ -1096,7 +1126,7 @@ fn send_live(
 
     // The capture starts with the session, so local sample 0 is the first frame
     // the master should place, not audio captured while nobody was listening.
-    let (producer, consumer) = capture::live_ring(capture::LIVE_RING_FRAMES);
+    let (producer, consumer) = capture::live_ring(config.ring_frames);
     let mut capture = match source {
         Some(source) => capture::start_source(
             source,
@@ -1134,6 +1164,7 @@ fn send_live(
     let mut frames = 0u64;
     let mut captured_used = 0u64;
     let mut padded = 0u64;
+    let mut resynced = 0u64;
     let mut stop_requested = false;
     // Allocated once: a wake never grows it, and no capture callback allocates.
     let mut chunk = vec![0i16; PULL_MAX_FRAMES];
@@ -1182,8 +1213,36 @@ fn send_live(
         let now = clock.now();
         let elapsed = now.saturating_sub(last_now).min(PULL_MAX_FRAMES as u64) as usize;
         if sender.estimate().is_some() && elapsed > 0 {
-            last_now = now;
+            // Advance the pacing cursor by the block actually sent, not all the
+            // way to the wall clock: a delayed wake's excess is carried into
+            // the next wake instead of being lost forever. That permanent loss
+            // was what made a long take drift behind the master's buffer and
+            // turn every datagram late.
+            last_now = last_now.saturating_add(elapsed as u64);
+
+            // Never carry more capture than the master's jitter window. Beyond
+            // it the audio is late by definition, so skip to the live edge and
+            // count what was skipped rather than replaying it late.
+            let written = producer.written();
+            let local = sender.local();
+            if written.saturating_sub(local) > capture::LIVE_MAX_LAG_FRAMES as u64 {
+                let target = written.saturating_sub(elapsed as u64);
+                if target > local {
+                    sender.resync_to(target);
+                    resynced += target - local;
+                }
+            }
+
             let window = consumer.window(sender.local(), &mut chunk[..elapsed]);
+            // The ring can also resynchronise when its oldest frame is past the
+            // whole window (a burst filled it faster than the lag check saw).
+            if let Some(target) = window.resync {
+                let local = sender.local();
+                if target > local {
+                    sender.resync_to(target);
+                    resynced += target - local;
+                }
+            }
             captured_used += window.used as u64;
             padded += window.padded as u64;
             if let Some((master_sample, block)) = sender.fill(&chunk[..elapsed]) {
@@ -1253,6 +1312,7 @@ fn send_live(
         captured,
         dropped,
         padded,
+        resynced,
     ))
 }
 
