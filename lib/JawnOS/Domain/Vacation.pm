@@ -519,22 +519,23 @@ sub vacation_detect_tick($opts) {
 	my $now = $opts->{'now'} || &rightNow();
 	my $settings = &vacation_settings();
 	my $auto = $settings->{'auto'} || {};
-	return 0 unless ($auto->{'detect'} || 0);
-	return 0 unless $opts->{'force'} || eval { &evaluation_auto_here() };
+	return 0 unless ($auto->{'detect'} || 0) || $opts->{'force'};
 	my $hours = _vacation_number($auto->{'after_hours'});
 	$hours = 24 unless defined $hours && $hours >= 1 && $hours <= 720;
 	my $after_ms = $hours * 3600000;
-	my $live = $opts->{'live'} || eval { &clothesline_device_liveness($now) };
-	return 0 unless ref $live eq 'HASH';
-	my $devices = $live->{'devices'} || {};
-	return 0 unless ref $devices eq 'HASH' && %{$devices};
+	# The activity is house-wide and synced: a day on the phone and the laptop
+	# is not a quiet day just because the desk or the tablet was closed. Every
+	# machine runs the pass; the proposal is de-duplicated in the setting.
+	my $gaps = $opts->{'gaps'};
+	$gaps = &vacation_house_gaps($now, $after_ms, limit => $opts->{'limit'})
+		unless ref $gaps eq 'ARRAY';
 	my $made = 0;
-	foreach my $span ( @{ $live->{'down'} || [] } ) {
-		next unless ref $span eq 'ARRAY' && scalar @{$span} >= 2;
-		my ($from, $to) = (0 + $span->[0], 0 + $span->[1]);
-		next unless $from > 0 && $to > $from;
-		next if ($to - $from) < $after_ms;
-		my $ongoing = $to >= $now - 5 * 60 * 1000;
+	foreach my $gap ( @{$gaps} ) {
+		next unless ref $gap eq 'HASH';
+		my $from = $gap->{'from'};
+		my $to = $gap->{'to'};
+		next unless defined $from && $from =~ /^\s*\d+(?:\.\d+)?\s*$/ && $from > 0;
+		my $ongoing = $gap->{'ongoing'} || (defined $to && $to >= $now - 5 * 60 * 1000);
 		my $proposal = &vacation_propose({
 			from => $from,
 			($ongoing ? () : (to => $to)),

@@ -121,7 +121,7 @@ is($auto_default->{'after_hours'}, 24, 'a bad length falls back to twenty-four h
 my $made = &subs::vacation_detect_tick({
 	force => 1,
 	now => $now,
-	live => { devices => { 'a' => {} }, down => [ [ $now - 30 * 3600000, $now - 2 * 3600000 ] ] },
+	gaps => [ { from => $now - 30 * 3600000, to => $now - 2 * 3600000, ongoing => 0 } ],
 });
 ok($made, 'a quiet gap longer than the setting becomes a proposal');
 my $proposed = &subs::vacation_status($now);
@@ -138,10 +138,10 @@ ok(!$after->{'active'}, 'a finished gap does not make the house away now');
 clear_vacation();
 &subs::vacation_auto_save({ detect => 'on', after_hours => '12' });
 my $gap = [ $now - 30 * 3600000, $now - 2 * 3600000 ];
-&subs::vacation_detect_tick({ force => 1, now => $now, live => { devices => { 'a' => {} }, down => [ $gap ] } });
+&subs::vacation_detect_tick({ force => 1, now => $now, gaps => [ { from => $gap->[0], to => $gap->[1], ongoing => 0 } ] });
 my $again = (&subs::vacation_status($now))->{'proposals'}->[0];
 &subs::vacation_proposal_answer($again->{'uuid'}, 0);
-&subs::vacation_detect_tick({ force => 1, now => $now, live => { devices => { 'a' => {} }, down => [ $gap ] } });
+&subs::vacation_detect_tick({ force => 1, now => $now, gaps => [ { from => $gap->[0], to => $gap->[1], ongoing => 0 } ] });
 is(scalar @{ (&subs::vacation_status($now))->{'proposals'} }, 0,
 	'a dismissed quiet gap is not asked again');
 
@@ -151,7 +151,7 @@ clear_vacation();
 &subs::vacation_detect_tick({
 	force => 1,
 	now => $now,
-	live => { devices => { 'a' => {} }, down => [ [ $now - 30 * 3600000, $now ] ] },
+	gaps => [ { from => $now - 30 * 3600000, to => $now, ongoing => 1 } ],
 });
 my $ongoing = (&subs::vacation_status($now))->{'proposals'}->[0];
 ok(!defined $ongoing->{'to'}, 'an ongoing gap has no end yet');
@@ -164,7 +164,7 @@ ok(&subs::vacation_active($now), 'the accepted ongoing gap is active now');
 clear_vacation();
 &subs::vacation_auto_save({ detect => 'off', after_hours => '24' });
 my $off = &subs::vacation_detect_tick({
-	live => { devices => { 'a' => {} }, down => [ [ $now - 30 * 3600000, $now - 2 * 3600000 ] ] },
+	gaps => [ { from => $now - 30 * 3600000, to => $now - 2 * 3600000, ongoing => 0 } ],
 });
 is($off, 0, 'a detector that is off proposes nothing');
 

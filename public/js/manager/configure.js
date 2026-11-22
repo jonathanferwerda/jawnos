@@ -11,6 +11,7 @@
      09_home_plate_map.js   - the home-plate flag map: flags, shapes and the trace
      10_home_plate_trace.js - trace water from a drawn line
      11_vacation.js         - the Away card: start and end a house-wide away period
+     12_vacation_keep.js    - the Away card keep list: budgets, routines and notices
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var global_constraints = { 'video': false, 'audio': false };

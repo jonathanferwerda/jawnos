@@ -6,7 +6,7 @@
 <% my $vacation = $c->stash('vacation') || &subs::vacation_status(); %>
 <% my $last_away = $vacation->{'last'}; %>
 <% my $digest = $vacation->{'digest'}; %>
-<% if (defined $last_away && $digest) { %>
+<% if (!($vacation->{'current'}) && defined $last_away && $digest) { %>
 	<% my $held = &subs::vacation_held_notices($last_away->{'from'}, $last_away->{'to'}); %>
 	<details class="away_notices">
 		<summary><%= &subs::ui('What arrived while you were away') %> (<%= $held->{'count'} %>)</summary>

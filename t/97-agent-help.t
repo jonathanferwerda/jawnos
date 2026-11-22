@@ -37,8 +37,9 @@ require "$root/scripts/agent_help.pl";
 	my $text = agent_help::brief('configure');
 	ok(defined $text, 'a large app has a brief');
 	# The budget is a guard against a dump, not a target: every test that claims
-	# the app adds its own name to the end of the list.
-	cmp_ok(length $text, '<', 8_600, 'the default brief stays small');
+	# the app adds its own name to the end of the list. The keep-list and
+	# held-notice tests are two more names under Configure.
+	cmp_ok(length $text, '<', 9_000, 'the default brief stays small');
 	like($text, qr/^routes \(136\)$/m, 'it counts every route');
 	like($text, qr/brace form: .*means/, 'and explains the shorthand');
 	like($text, qr{^  get\s+/manager/configure$}m, 'a parent route is printed whole');

@@ -82,6 +82,7 @@
 			<button type="button" class="away_detect_save"><%= &subs::ui('Save') %></button>
 			<span class="cfg-note"><%= &subs::ui('A quiet gap becomes a question on this card; nothing pauses until you confirm it.') %></span>
 		</div>
+		<%= include 'configure/away_keep' %>
 		<% if (scalar @{$proposals}) { %>
 			<div class="away_proposals">
 				<% foreach my $pp ( @{$proposals} ) { %>
@@ -132,6 +133,7 @@
 				<%= $dg->{'notices'} %> <%= $dg->{'notices'} == 1 ? &subs::ui('notice arrived') : &subs::ui('notices arrived') %>.
 			</p>
 		<% } %>
+		<%= include 'configure/away_notices' %>
 		<span class="away_status" aria-live="polite"></span>
 	</div>
 	<% foreach my $d ( @gb::device_types ) { %>
