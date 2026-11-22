@@ -55,6 +55,8 @@ like( $sender, qr/self\.local = end as u64/, 'the take advances by its own clock
 
 # --- the authenticated session and the bearer -------------------------------
 like( $sender, qr/ClockPeer::new/, 'the sender handshakes with a clock peer' );
+like( $sender, qr/with_claim\(Some\(config\.stream\)\)/,
+	'the HELLO claims the stream this take will packetize on' );
 like( $sender, qr/\.hello\(/, 'a HELLO opens the session' );
 like( $sender, qr/accept_welcome\(/, 'only a WELCOME issues a session' );
 like( $sender, qr/CLOCK_SESSION/, 'no session means no audio' );

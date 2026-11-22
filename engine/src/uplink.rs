@@ -4,8 +4,9 @@
 //! (`bearing.rs`) carries its PCM16 over that session. This module is the
 //! thread that joins the two to a patchbay source: it owns the UDP socket, a
 //! [`ClockMaster`] with the session key, and one [`AudioReceiver`] per routed
-//! `peer` source. The patchbay pops the ring the receiver fills exactly as it
-//! pops a `parec` input's ring, so the audio callback never locks or waits.
+//! `peer` source once that source's stream has been claimed. The patchbay pops
+//! the ring the receiver fills exactly as it pops a `parec` input's ring, so the
+//! audio callback never locks or waits.
 //!
 //! # Datagrams
 //!
@@ -22,16 +23,34 @@
 //! session is foreign, or that carries stereo samples is counted and dropped.
 //! None of those is an error that stops the uplink.
 //!
-//! # One session at a time
+//! # The session is the peer id
 //!
-//! P3/P4's first slice is one peer. When a WELCOME issues a session, every
-//! source's receiver is rebuilt with that session id, so a re-handshake (or a
-//! master restart on the other side) starts a clean timeline. The received,
-//! late and concealed totals are not reset: each rebuild folds the outgoing
-//! receiver's counters into the source's running total, so `status` stays
-//! truthful across a peer's periodic quiet-spell re-handshake. Multiple peers
-//! need a peer id in the stream id or in a session map before two sessions may
-//! live at once; this module deliberately does not pretend otherwise.
+//! The 32-byte header already carries the session id the master issued in its
+//! WELCOME, and that is the peer's identity on the wire: more than one peer
+//! needs no new header field, so `proto::VERSION` stays where it is. The audio
+//! stream selects the plan source ([`audio_stream`], the base plus the index),
+//! and the authenticated HELLO names the stream its peer will feed. The master
+//! records that claim with the session, because a `--send-take` is a new
+//! process on a new ephemeral UDP port for every take: the endpoint changes
+//! between takes, while the claimed stream does not.
+//!
+//! A source's receiver is built by the first authenticated audio datagram on
+//! its stream, never by a WELCOME, so one peer's handshake cannot rebuild
+//! another peer's receiver. A stream belongs to one session at a time. A
+//! different session takes it over when it claimed that stream (the same peer
+//! reconnecting, even from a new port), or — for a claimless clock-only session
+//! — when the session that owns it is no longer live in the master's table (a
+//! master restart or a lease expiry) or the datagram comes from the same UDP
+//! endpoint. A session that claimed another stream is refused, and so is a
+//! claimless session from another endpoint while a live peer owns the stream;
+//! both are counted in `status.rejected`.
+//!
+//! A retried HELLO is answered with the session the master already issued, so
+//! it never reaches this decision: the source keeps its receiver, buffered
+//! audio, pull cursor and counters. A receiver is replaced only when a different
+//! session legitimately takes the stream, and its counters are not reset: the
+//! outgoing receiver's totals are folded into a running baseline, so `status`
+//! stays truthful across a peer's periodic quiet-spell re-handshake.
 //!
 //! # Pacing
 //!
@@ -58,9 +77,7 @@ use crate::bearing::{
     audio_stream, is_audio_stream, Accepted, AudioReceiver, BearerError, PullReport, RecvCounters,
     DEFAULT_JITTER_FRAMES, MAX_DATAGRAM_LEN,
 };
-use crate::peer::{
-    self, Clock, ClockMaster, InstantClock, STREAM_CLOCK_HELLO, STREAM_CLOCK_PING,
-};
+use crate::peer::{Clock, ClockMaster, InstantClock, STREAM_CLOCK_HELLO, STREAM_CLOCK_PING};
 use crate::proto;
 use crate::monbus::Producer;
 
@@ -171,11 +188,14 @@ pub struct UplinkStatus {
     pub bind: String,
     /// Why the bind failed, when `state` is `error`. Empty otherwise.
     pub error: String,
-    /// Sessions issued (a retried HELLO for the session already attached does
-    /// not count). A new session rebuilds every source's receiver.
+    /// Sessions the clock master has issued (a retried HELLO for the session it
+    /// already issued does not count). This is a lifetime count, not the number
+    /// of sources currently attached: a session is issued before its peer's
+    /// first audio datagram claims a stream.
     pub sessions: u64,
-    /// Datagrams dropped before they reached a source: an unknown stream, a
-    /// failed tag/session check, a malformed header or a stereo payload.
+    /// Datagrams dropped before they were placed: an unknown stream, a failed
+    /// tag/session check, a malformed header, a stereo payload, or a session
+    /// that tried to take a stream another live session owns.
     pub rejected: u64,
     /// One entry per peer source on this machine.
     pub sources: Vec<UplinkSourceStatus>,
@@ -227,26 +247,52 @@ impl UplinkStatus {
     }
 }
 
+/// What one audio datagram did to a source: the ownership decision for its
+/// stream and, when it was placed, what the receiver did with it.
+///
+/// [`UplinkSource::offer`] takes the two liveness answers the thread reads from
+/// its [`ClockMaster`], so the multi-peer rule is tested without a socket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Offer {
+    /// The session already owned the stream; the receiver placed the datagram,
+    /// or counted it as late.
+    Placed(Accepted),
+    /// A new session took the stream and its first datagram was placed.
+    Taken(Accepted),
+    /// Another session owns the stream and is still live: the datagram was
+    /// dropped and the owner is untouched.
+    Occupied,
+    /// The datagram did not authenticate, or named a session this master did
+    /// not issue (or has forgotten); nothing was attached.
+    Refused(BearerError),
+}
+
 /// One routed peer source and the ring that carries its samples to the patch.
 ///
-/// It is public so a test can drive the exact code the thread drives (attach a
-/// session, accept a datagram, pull with a deadline) without a socket.
+/// It is public so a test can drive the exact code the thread drives (offer a
+/// datagram, pull with a deadline) without a socket.
 pub struct UplinkSource {
     index: usize,
     id: String,
     stream: u16,
     producer: Producer,
-    /// `None` until a WELCOME issues a session.
+    /// `None` until the first authenticated audio datagram claims the stream
+    /// with a session the master issued. A WELCOME does not attach a receiver.
     receiver: Option<AudioReceiver>,
     /// The session the current receiver belongs to. A retried HELLO gets the
-    /// same session back, and its WELCOME must not replace the receiver that is
-    /// already filling with audio.
+    /// same session back, and its audio must not replace the receiver that is
+    /// already filling.
     session: Option<u32>,
+    /// The UDP endpoint that claimed the current session. A claimed stream is
+    /// the peer's identity; the endpoint is only the fallback for a claimless
+    /// clock-only session, where a new session from the same endpoint is that
+    /// peer re-handshaking and one from another endpoint is a second peer.
+    origin: Option<SocketAddr>,
     /// Reused conversion buffers; a wake allocates nothing.
     pull_i16: Vec<i16>,
     pull_f32: Vec<f32>,
-    /// Every replaced receiver's counters, folded in by [`Self::attach_session`],
-    /// so a re-handshake does not restart the house's totals.
+    /// Every replaced receiver's counters, folded in by [`Self::offer`], so a
+    /// re-handshake does not restart the house's totals.
     past: RecvCounters,
     dropped: u64,
     /// The last pull report. Kept across a re-handshake: it names a position on
@@ -269,6 +315,7 @@ impl UplinkSource {
             producer,
             receiver: None,
             session: None,
+            origin: None,
             pull_i16: vec![0; PULL_MAX_FRAMES],
             pull_f32: vec![0.0; PULL_MAX_FRAMES * 2],
             past: RecvCounters::default(),
@@ -287,43 +334,95 @@ impl UplinkSource {
         &self.id
     }
 
-    /// A WELCOME issued `session`: rebuild the receiver with it. Any audio
-    /// buffered for the old session belongs to a dead timeline and is dropped.
+    /// The session that owns this stream, if any.
+    pub fn session(&self) -> Option<u32> {
+        self.session
+    }
+
+    /// Whether a session has claimed the stream and a receiver exists.
+    pub fn has_session(&self) -> bool {
+        self.receiver.is_some()
+    }
+
+    /// Offer one audio datagram to this stream.
     ///
-    /// A WELCOME for the session already attached is a retried handshake, not a
-    /// new one: it returns `false` and keeps the receiver, its buffered audio
-    /// and its pull cursor. Rebuilding on every retry would throw away the
-    /// jitter window and make the next pull conceal the whole outage, which is
-    /// what a Wi-Fi handshake (several HELLOs before one WELCOME is read) looked
-    /// like from the master.
+    /// `owner_live` says whether the session that already owns the stream is
+    /// still in the master's table; `session_live` whether the datagram's
+    /// session is; `claim` is the audio stream that session declared in its
+    /// HELLO. The thread reads all three from its [`ClockMaster`], so the
+    /// source does not keep a second copy of the lease or the claims.
     ///
-    /// The receiver is replaced, its counters are not: the outgoing one's
-    /// counters are folded into `past` first, so [`counters`](Self::counters)
-    /// keeps the sum across a re-handshake. The last pull report is kept too
-    /// (see the `last` field): the master clock is the same one either side of
-    /// the rebuild. Returns true when a new session took the receiver.
-    pub fn attach_session(&mut self, key: [u8; 32], session: u32) -> bool {
+    /// A datagram for the owning session is the ordinary path and never
+    /// rebuilds anything: that is what makes a retried HELLO (which the master
+    /// answers with the session it already issued) harmless.
+    ///
+    /// A different live session takes the stream only if it claimed this
+    /// source's stream. The claim is the peer's stable identity: every
+    /// `--send-take` is a new process on a new ephemeral port, so the endpoint
+    /// changes between takes while the stream does not. A session claiming a
+    /// different stream is refused. A claimless (clock-only) session keeps the
+    /// older endpoint fallback: it may feed a dead or same-endpoint stream but
+    /// may not evict a live peer from another endpoint. Either way a candidate
+    /// receiver authenticates the datagram before it replaces anything, so a
+    /// forged or stale datagram cannot evict a live peer.
+    pub fn offer(
+        &mut self,
+        key: [u8; 32],
+        session: u32,
+        origin: SocketAddr,
+        owner_live: bool,
+        session_live: bool,
+        claim: Option<u16>,
+        datagram: &[u8],
+    ) -> Offer {
         if self.session == Some(session) && self.receiver.is_some() {
-            return false;
+            return match self.accept(datagram) {
+                Ok(accepted) => Offer::Placed(accepted),
+                Err(error) => Offer::Refused(error),
+            };
         }
-        if let Some(receiver) = self.receiver.take() {
-            self.past = add_counters(self.past, receiver.counters());
+        // The session is the peer id, so the id must be one this master
+        // minted: an unknown or lease-expired session cannot claim a stream.
+        if !session_live {
+            return Offer::Refused(BearerError::Session(session));
         }
-        self.receiver = AudioReceiver::new(
+        match claim {
+            // A declared stream identifies the peer without the endpoint. It
+            // may take its own source over at once, even while the previous
+            // session is live and from another port.
+            Some(claimed) if claimed == self.stream => {}
+            // A session that declared another stream is not this source's
+            // peer, live owner or not.
+            Some(claimed) => return Offer::Refused(BearerError::Stream(claimed)),
+            // Clock-only sessions fall back to the endpoint rule: a live owner
+            // still keeps its stream from a different endpoint.
+            None => {
+                if owner_live && self.origin != Some(origin) {
+                    return Offer::Occupied;
+                }
+            }
+        }
+        let mut candidate = match AudioReceiver::new(
             key,
             session,
             self.stream,
             1,
             PULL_WINDOW_FRAMES,
-        )
-        .ok();
-        self.session = self.receiver.is_some().then_some(session);
-        true
-    }
-
-    /// Whether a session has been issued and a receiver exists.
-    pub fn has_session(&self) -> bool {
-        self.receiver.is_some()
+        ) {
+            Ok(receiver) => receiver,
+            Err(error) => return Offer::Refused(error),
+        };
+        let accepted = match candidate.accept(datagram) {
+            Ok(accepted) => accepted,
+            Err(error) => return Offer::Refused(error),
+        };
+        if let Some(receiver) = self.receiver.take() {
+            self.past = add_counters(self.past, receiver.counters());
+        }
+        self.receiver = Some(candidate);
+        self.session = Some(session);
+        self.origin = Some(origin);
+        Offer::Taken(accepted)
     }
 
     /// Authenticate and place one audio datagram. `Err` covers a wrong tag, a
@@ -332,7 +431,8 @@ impl UplinkSource {
     pub fn accept(&mut self, datagram: &[u8]) -> Result<Accepted, BearerError> {
         match self.receiver.as_mut() {
             Some(receiver) => receiver.accept(datagram),
-            // No session was issued, so there is nothing to authenticate it for.
+            // No session has claimed this stream, so there is nothing to
+            // authenticate the datagram for.
             None => Err(BearerError::Session(0)),
         }
     }
@@ -568,7 +668,6 @@ fn run_uplink(
     // and this read are the same timeline.
     let clock = InstantClock::new(rate);
     let mut master = ClockMaster::new(key);
-    let mut sessions = 0u64;
     let mut rejected = 0u64;
     let mut buffer = [0u8; MAX_DATAGRAM_LEN];
     let mut reply = [0u8; MAX_DATAGRAM_LEN];
@@ -592,7 +691,6 @@ fn run_uplink(
                     &mut master,
                     &clock,
                     &mut sources,
-                    &mut sessions,
                     &mut rejected,
                     &mut reply,
                 ),
@@ -616,11 +714,11 @@ fn run_uplink(
             source.pump_to(head);
         }
 
-        publish(&status, &bound, sessions, rejected, &sources, "running");
+        publish(&status, &bound, master.issued(), rejected, &sources, "running");
         thread::sleep(Duration::from_millis(PULL_INTERVAL_MS));
     }
 
-    publish(&status, "", sessions, rejected, &sources, "off");
+    publish(&status, "", master.issued(), rejected, &sources, "off");
 }
 
 /// Publish one snapshot. The audio path never calls this; only the uplink
@@ -661,7 +759,6 @@ fn dispatch(
     master: &mut ClockMaster,
     clock: &dyn Clock,
     sources: &mut [UplinkSource],
-    sessions: &mut u64,
     rejected: &mut u64,
     reply: &mut [u8],
 ) {
@@ -682,36 +779,41 @@ fn dispatch(
             };
             let length = answer.length();
             let _ = socket.send_to(&reply[..length], origin);
-            if answer.is_pong() {
+            // A WELCOME issues a session, and that is all the thread does with
+            // it: the session is the peer id, and each stream is claimed by
+            // that peer's first authenticated audio datagram. Attaching here
+            // would let one peer's handshake rebuild another peer's receiver.
+        }
+        stream if is_audio_stream(stream) => {
+            let Some(source) = sources
+                .iter_mut()
+                .find(|source| source.stream() == stream)
+            else {
+                *rejected += 1;
                 return;
-            }
-            // A WELCOME issued a session. One audio session at a time: every
-            // source's receiver is rebuilt when the id changes. A retried HELLO
-            // gets the same id back, so it is neither counted as a new session
-            // nor allowed to discard the audio already buffered for it. Two
-            // peers need a peer id in the stream or a session map before this
-            // can grow.
-            if let Ok(welcome) = peer::decode_welcome(&reply[..length], key) {
-                let mut changed = false;
-                for source in sources.iter_mut() {
-                    changed |= source.attach_session(*key, welcome.session);
-                }
-                if changed {
-                    *sessions += 1;
-                }
+            };
+            // The answers the source's claim rule needs, read from the one
+            // session table: whether the stream's owner is still live, whether
+            // the datagram's session is one this master issued, and the stream
+            // that session claimed in its HELLO.
+            let owner_live = source.session().is_some_and(|owner| master.is_live(owner));
+            let session_live = master.is_live(header.session);
+            let claim = master.session_claim(header.session);
+            match source.offer(
+                *key,
+                header.session,
+                origin,
+                owner_live,
+                session_live,
+                claim,
+                datagram,
+            ) {
+                Offer::Placed(_) | Offer::Taken(_) => {}
+                // A second peer on a live stream, an unissued session, or a
+                // datagram that did not authenticate: dropped and counted.
+                Offer::Occupied | Offer::Refused(_) => *rejected += 1,
             }
         }
-        stream if is_audio_stream(stream) => match sources
-            .iter_mut()
-            .find(|source| source.stream() == stream)
-        {
-            Some(source) => {
-                if source.accept(datagram).is_err() {
-                    *rejected += 1;
-                }
-            }
-            None => *rejected += 1,
-        },
         _ => *rejected += 1,
     }
 }

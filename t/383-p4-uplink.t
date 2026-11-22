@@ -5,14 +5,23 @@
 #            the uplink attaches its ring, and then mixes like a `parec` input
 #            from a stereo block of its own. `--serve --uplink ADDR` starts one
 #            UDP thread that answers a peer's HELLO with WELCOME on the clock
-#            key, rebuilds every source's receiver with the issued session, and
-#            feeds AUDIO_STREAM_BASE + plan index through `pull_at` into the
-#            ring. A rebuild replaces the receiver, not the totals: the replaced
+#            key and feeds AUDIO_STREAM_BASE + plan index through `pull_at` into
+#            the ring. The session in the 32-byte header is the peer id, so more
+#            than one peer can feed one master: each stream is claimed by its
+#            peer's first authenticated audio datagram, never by a WELCOME, so a
+#            second peer's handshake leaves the first receiver alone. A stream
+#            belongs to one session at a time; a different session takes it when
+#            its authenticated HELLO claimed that stream (the stable peer
+#            identity: every --send-take is a new process on a new port), or -
+#            for a claimless clock-only session - when the owner is no longer
+#            live in the master's table or from the same UDP endpoint. A session
+#            claiming another stream is refused. A live stream claimed by a
+#            second peer, an unissued session, a foreign session, a wrong tag, a
+#            stereo datagram or an unmapped stream is counted and dropped, never
+#            fatal. A rebuild replaces the receiver, not the totals: the replaced
 #            receiver's counters are folded in, so `status` never reads received
-#            0 after a re-handshake. A foreign session, a wrong tag, a stereo
-#            datagram or an unmapped stream is counted and dropped, never fatal.
-#            Status keeps its keys and adds `uplink`. A failed patch names the
-#            PCM it opened, the node target, and the server's then-default sink.
+#            0 after a re-handshake. `status.sessions` counts sessions the master
+#            issued, not WELCOMEs. Status keeps its keys and adds `uplink`.
 
 use strict;
 use warnings;
@@ -58,15 +67,21 @@ like( $patch, qr/fn a_peer_mixes_with_every_interface_channel_taken/,
 like( $uplink, qr/audio_stream\(index\)/, 'the stream is AUDIO_STREAM_BASE + the plan index' );
 like( $uplink, qr/is_audio_stream\(stream\)/, 'an audio stream must be in the reserved range' );
 like( $uplink, qr/ClockMaster::new/, 'the thread owns a clock master with the key' );
-like( $uplink, qr/decode_welcome/, 'a WELCOME names the session' );
-like( $uplink, qr/source\.attach_session\(/, 'a session rebuilds every source receiver' );
-like( $uplink, qr/self\.session == Some\(session\)/, 'a WELCOME for the attached session is a retry, not a rebuild' );
+like( $uplink, qr/pub fn offer\(/, 'an audio datagram claims its stream, a WELCOME does not' );
+like( $uplink, qr/A stream belongs to one session at a time/,
+	'the one-owner rule is documented where the code makes it' );
+like( $uplink, qr/master\.is_live\(/, 'session liveness comes from the master session table' );
+like( $uplink, qr/master\.session_claim\(/, 'the master records the stream a HELLO claimed' );
+like( $uplink, qr/Some\(claimed\) if claimed == self\.stream/, 'a session that claimed this stream takes it over' );
+like( $uplink, qr/Offer::Occupied/, 'a claimless session cannot evict a live peer' );
+like( $uplink, qr/self\.origin != Some\(origin\)/, 'the endpoint is only the claimless fallback' );
+like( $uplink, qr/session_live/, 'a session the master did not issue claims nothing' );
+like( $uplink, qr/self\.session == Some\(session\)/, 'the owning session is the ordinary path, never a rebuild' );
 like( $uplink, qr/past: RecvCounters/, 'a rebuilt receiver leaves its totals in a baseline' );
 like( $uplink, qr/fn add_counters/, 'the totals are summed field by field' );
 like( $uplink, qr/self\.past = add_counters/, 'a new session folds the outgoing receiver in' );
 like( $uplink, qr/AudioReceiver::new\(/, 'a source owns a receiver' );
-like( $uplink, qr/One session at a time|One audio session at a time/,
-	'the one-session limit is documented where the code makes it' );
+like( $uplink, qr/master\.issued\(\)/, 'status.sessions counts the sessions the master issued' );
 
 # --- pacing and the ring ----------------------------------------------------
 like( $uplink, qr/PULL_FRAMES:\s*usize\s*=\s*480/, 'a wake pulls one 10 ms block' );
@@ -137,8 +152,14 @@ like( $tests, qr/fn a_lost_tail_is_concealed_and_visible_in_the_counters/, 'the 
 like( $tests, qr/fn two_real_sockets_carry_a_peer_block/, 'two real sockets are tested' );
 like( $tests, qr/fn an_audio_stream_with_no_peer_source_is_counted_not_mixed/, 'an unmapped stream is tested' );
 like( $tests, qr/fn a_rehandshake_keeps_the_counters/, 'the totals survive a re-handshake' );
-like( $tests, qr/fn a_retried_welcome_keeps_the_buffered_audio/,
-	'a retried WELCOME keeps the buffered audio' );
+like( $tests, qr/fn a_same_session_is_placed_while_a_new_one_rebuilds/,
+	'a retried handshake keeps the buffered audio and a new session rebuilds' );
+like( $tests, qr/fn a_claimed_stream_is_the_peer_identity_not_the_port/,
+	'a claim identifies the peer, the endpoint does not' );
+like( $tests, qr/fn a_repeat_take_from_a_new_port_takes_its_claimed_stream_back/,
+	'a repeat take from a new port takes its stream back and a mismatched claim is refused' );
+like( $tests, qr/fn two_peers_share_the_uplink_and_a_third_cannot_take_a_busy_stream/,
+	'two peers feed two streams and a third cannot take a busy one' );
 like( $tests, qr/fn a_datagram_delayed_inside_the_buffer_is_placed_not_late/,
 	'a delayed datagram inside the buffer is placed, not refused' );
 like( $tests, qr/UdpSocket::bind\("127\.0\.0\.1:0"\)/, 'the loopback test uses an ephemeral port' );

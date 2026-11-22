@@ -511,7 +511,10 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
         .set_read_timeout(Some(Duration::from_millis(config.pong_timeout_ms)))
         .map_err(|error| format!("send-take timeout: {error}"))?;
 
-    let mut probe = ClockPeer::new(config.key);
+    // The HELLO claims the stream this take will packetize on. A take is a new
+    // process on a new ephemeral port, so the claim, not the endpoint, is what
+    // lets the master's uplink hand this source back to us.
+    let mut probe = ClockPeer::new(config.key).with_claim(Some(config.stream));
     // A take is minutes long, so its converter needs a drift that is measured
     // over a baseline worth tens of seconds, not the clock probe's 640 ms. The
     // caller's `--window` still wins when it is larger.

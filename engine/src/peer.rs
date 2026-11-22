@@ -53,6 +53,13 @@ pub const CLOCK_SESSION: u32 = 0;
 /// A HELLO's body: an unpredictable nonce, so two HELLOs are distinct on the
 /// wire even when sent from the same process.
 pub const HELLO_NONCE_LEN: usize = 8;
+/// The wire audio stream a handshake claims (`AUDIO_STREAM_BASE + index`), or
+/// zero for a clock-only peer. A sender is a new process on a new ephemeral
+/// port for every take, so the endpoint cannot identify it; the stream it will
+/// packetize on is the stable identity the plan already uses.
+pub const HELLO_CLAIM_LEN: usize = 2;
+/// A HELLO's body: the nonce and the claim.
+pub const HELLO_BODY_LEN: usize = HELLO_NONCE_LEN + HELLO_CLAIM_LEN;
 /// A WELCOME's body: the session id, little-endian.
 pub const WELCOME_BODY_LEN: usize = 4;
 /// A ping's body: the peer's send time, in device samples.
@@ -63,14 +70,14 @@ pub const PONG_BODY_LEN: usize = 24;
 
 
 /// The body lengths above, plus the tag, are the wire payload lengths.
-pub const HELLO_PAYLOAD_LEN: usize = HELLO_NONCE_LEN + MAC_LEN;
+pub const HELLO_PAYLOAD_LEN: usize = HELLO_BODY_LEN + MAC_LEN;
 pub const WELCOME_PAYLOAD_LEN: usize = WELCOME_BODY_LEN + MAC_LEN;
 pub const PING_PAYLOAD_LEN: usize = PING_BODY_LEN + MAC_LEN;
 pub const PONG_PAYLOAD_LEN: usize = PONG_BODY_LEN + MAC_LEN;
 
 // The wire layout after the 32-byte header (all fields little-endian):
 //
-//   HELLO   | nonce u64                        | tag (16) |
+//   HELLO   | nonce u64 | claim u16           | tag (16) |
 //   WELCOME | session u32                      | tag (16) |
 //   PING    | local_send u64                   | tag (16) |
 //   PONG    | echo u64 | master_recv u64 | master_send u64 | tag (16) |
@@ -389,6 +396,8 @@ fn decode_authenticated<'a>(
 pub struct Hello {
     pub header: Header,
     pub nonce: u64,
+    /// The audio stream this peer will feed, or `None` for a clock-only probe.
+    pub claim: Option<u16>,
 }
 
 /// A decoded WELCOME.
@@ -398,12 +407,14 @@ pub struct Welcome {
     pub session: u32,
 }
 
-/// Encode a `CLOCK_HELLO`: a nonce and a tag, on the reserved no-session id.
+/// Encode a `CLOCK_HELLO`: a nonce, an optional stream claim and a tag, on the
+/// reserved no-session id.
 pub fn encode_hello(
     out: &mut [u8],
     key: &[u8; 32],
     seq: u32,
     nonce: u64,
+    claim: Option<u16>,
 ) -> Result<usize, ProtoError> {
     let header = Header {
         codec: Codec::Pcm16,
@@ -414,12 +425,16 @@ pub fn encode_hello(
         seq,
         master_sample: 0,
     };
-    encode_authenticated(out, key, &header, &nonce.to_le_bytes())
+    let mut body = [0u8; HELLO_BODY_LEN];
+    body[..HELLO_NONCE_LEN].copy_from_slice(&nonce.to_le_bytes());
+    // No audio stream is zero, so one encoding covers "no claim".
+    body[HELLO_NONCE_LEN..].copy_from_slice(&claim.unwrap_or(0).to_le_bytes());
+    encode_authenticated(out, key, &header, &body)
 }
 
 /// Decode a `CLOCK_HELLO`, verifying its tag with `key`.
 pub fn decode_hello(datagram: &[u8], key: &[u8; 32]) -> Result<Hello, ProbeError> {
-    let (header, body) = decode_authenticated(datagram, key, STREAM_CLOCK_HELLO, HELLO_NONCE_LEN)?;
+    let (header, body) = decode_authenticated(datagram, key, STREAM_CLOCK_HELLO, HELLO_BODY_LEN)?;
     if header.session != CLOCK_SESSION {
         return Err(ProbeError::BadSession);
     }
@@ -428,7 +443,16 @@ pub fn decode_hello(datagram: &[u8], key: &[u8; 32]) -> Result<Hello, ProbeError
             .try_into()
             .expect("a slice of HELLO_NONCE_LEN bytes"),
     );
-    Ok(Hello { header, nonce })
+    let claim = u16::from_le_bytes(
+        body[HELLO_NONCE_LEN..HELLO_BODY_LEN]
+            .try_into()
+            .expect("a slice of HELLO_CLAIM_LEN bytes"),
+    );
+    Ok(Hello {
+        header,
+        nonce,
+        claim: (claim != 0).then_some(claim),
+    })
 }
 
 /// Encode a `CLOCK_WELCOME`: the session id in the header and the body, then
@@ -621,6 +645,11 @@ struct Session {
     /// reuses its nonce, so the master can answer the same session instead of
     /// minting another one the peer will never learn about.
     nonce: u64,
+    /// The audio stream the peer declared in its HELLO, or `None` for a
+    /// clock-only probe. The uplink lets a session claim the source whose
+    /// stream it names, which is how a sender on a new port and a new session
+    /// takes its own stream back without waiting for the lease to expire.
+    claim: Option<u16>,
 }
 
 /// The clock master's session table and key.
@@ -635,6 +664,9 @@ pub struct ClockMaster {
     sessions: HashMap<u32, Session>,
     lease: Duration,
     rejected: u64,
+    /// Sessions minted over the master's life. A retried HELLO reuses its
+    /// session and does not add to this, so it counts sessions, not WELCOMEs.
+    issued: u64,
 }
 
 impl ClockMaster {
@@ -645,6 +677,7 @@ impl ClockMaster {
             sessions: HashMap::new(),
             lease: Duration::from_millis(DEFAULT_LEASE_MS),
             rejected: 0,
+            issued: 0,
         }
     }
 
@@ -703,7 +736,7 @@ impl ClockMaster {
                     Some(session) => session,
                     None => {
                         let session = self.fresh_session();
-                        self.remember(session, now, hello.nonce);
+                        self.remember(session, now, hello.nonce, hello.claim);
                         session
                     }
                 };
@@ -760,7 +793,8 @@ impl ClockMaster {
 
     /// Record a newly issued session, evicting the least recently used one when
     /// the table is full. `last_used` is set to `now` by the caller.
-    fn remember(&mut self, session: u32, now: Instant, nonce: u64) {
+    fn remember(&mut self, session: u32, now: Instant, nonce: u64, claim: Option<u16>) {
+        self.issued = self.issued.saturating_add(1);
         if self.sessions.len() >= MAX_SESSIONS {
             let oldest = self
                 .sessions
@@ -777,6 +811,7 @@ impl ClockMaster {
                 seen: HashSet::new(),
                 last_used: now,
                 nonce,
+                claim,
             },
         );
     }
@@ -805,6 +840,38 @@ impl ClockMaster {
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
+
+    /// Sessions this master has minted over its life: one per fresh HELLO, not
+    /// one per WELCOME. Answering a retried HELLO with the session it already
+    /// issued does not count.
+    pub fn issued(&self) -> u64 {
+        self.issued
+    }
+
+    /// Whether `session` is one this master issued and has not forgotten.
+    ///
+    /// The lease and the table's cap both remove sessions, so this is false
+    /// after a restart and for a peer that went quiet. The uplink uses it to
+    /// let a new session take over a stream whose owner is no longer live, and
+    /// to refuse a session this master never minted.
+    pub fn is_live(&mut self, session: u32) -> bool {
+        self.is_live_at(session, Instant::now())
+    }
+
+    /// [`Self::is_live`] with the moment supplied, like `answer_at`, so the
+    /// lease can be tested without sleeping.
+    fn is_live_at(&mut self, session: u32, now: Instant) -> bool {
+        self.prune(now);
+        self.sessions.contains_key(&session)
+    }
+
+    /// The audio stream `session` claimed in its HELLO, if it named one.
+    ///
+    /// `None` covers both a clock-only session and a session this master never
+    /// issued; [`Self::is_live`] tells the two apart.
+    pub fn session_claim(&self, session: u32) -> Option<u16> {
+        self.sessions.get(&session).and_then(|record| record.claim)
+    }
 }
 
 /// The peer's key, session, and the pings it has already accepted.
@@ -823,6 +890,9 @@ pub struct ClockPeer {
     /// The nonce of the handshake in flight, reused by every retry until a
     /// WELCOME lands, so the master can answer the same session.
     hello_nonce: Option<u64>,
+    /// The audio stream this peer will feed, declared in every HELLO. `None` is
+    /// a clock-only probe.
+    claim: Option<u16>,
 }
 
 impl ClockPeer {
@@ -836,7 +906,16 @@ impl ClockPeer {
             rejected: 0,
             last_heard: None,
             hello_nonce: None,
+            claim: None,
         }
+    }
+
+    /// The same peer, declaring the audio stream it will packetize on. A
+    /// sender's process and UDP port are new for every take, so this claim is
+    /// the stable identity the master's uplink uses to hand the stream back.
+    pub fn with_claim(mut self, claim: Option<u16>) -> Self {
+        self.claim = claim;
+        self
     }
 
     /// The session the master issued, or `CLOCK_SESSION` before the handshake.
@@ -877,7 +956,7 @@ impl ClockPeer {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
         let nonce = *self.hello_nonce.get_or_insert_with(random_nonce);
-        encode_hello(out, &self.key, seq, nonce)
+        encode_hello(out, &self.key, seq, nonce, self.claim)
     }
 
     /// Verify a WELCOME and adopt its session. A bad tag is counted. The
@@ -1499,16 +1578,16 @@ mod tests {
 
     #[test]
     fn the_tag_is_the_last_sixteen_bytes_of_every_clock_payload() {
-        assert_eq!(HELLO_PAYLOAD_LEN, 24);
+        assert_eq!(HELLO_PAYLOAD_LEN, 26);
         assert_eq!(WELCOME_PAYLOAD_LEN, 20);
         assert_eq!(PING_PAYLOAD_LEN, 24);
         assert_eq!(PONG_PAYLOAD_LEN, 40);
 
         let mut out = [0u8; 128];
-        let hello_length = encode_hello(&mut out, &KEY, 1, 0x1122_3344_5566_7788).expect("hello");
+        let hello_length = encode_hello(&mut out, &KEY, 1, 0x1122_3344_5566_7788, None).expect("hello");
         assert_eq!(hello_length, proto::HEADER_LEN + HELLO_PAYLOAD_LEN);
         let (header, _) = proto::decode(&out[..hello_length]).expect("header");
-        let body = &out[proto::HEADER_LEN..proto::HEADER_LEN + HELLO_NONCE_LEN];
+        let body = &out[proto::HEADER_LEN..proto::HEADER_LEN + HELLO_BODY_LEN];
         assert_eq!(
             &out[hello_length - MAC_LEN..hello_length],
             &mac_tag(&KEY, &header, body)
@@ -1566,7 +1645,7 @@ mod tests {
         let clock = ManualClock::new(0);
         let mut master = ClockMaster::new(KEY);
         let mut hello = [0u8; 128];
-        let length = encode_hello(&mut hello, &KEY, 1, 0xABCD).expect("encode hello");
+        let length = encode_hello(&mut hello, &KEY, 1, 0xABCD, None).expect("encode hello");
         let mut reply = [0u8; 128];
 
         let welcome = master
@@ -1589,7 +1668,7 @@ mod tests {
         assert_eq!(master.session_count(), 1);
 
         // A new handshake (new nonce) gets a new session.
-        let length = encode_hello(&mut hello, &KEY, 2, 0x1234).expect("encode hello");
+        let length = encode_hello(&mut hello, &KEY, 2, 0x1234, None).expect("encode hello");
         let welcome = master
             .answer(&hello[..length], &clock, &mut reply)
             .expect("a second welcome");
@@ -1599,7 +1678,7 @@ mod tests {
 
         // The wrong key cannot authenticate a HELLO, and the peer cannot
         // authenticate the master's WELCOME with it either.
-        let length = encode_hello(&mut hello, &WRONG_KEY, 3, 0xDCBA).expect("encode hello");
+        let length = encode_hello(&mut hello, &WRONG_KEY, 3, 0xDCBA, None).expect("encode hello");
         assert_eq!(master.answer(&hello[..length], &clock, &mut reply), None);
         assert_eq!(master.rejected(), 1);
         let mut peer = ClockPeer::new(WRONG_KEY);
@@ -1808,6 +1887,103 @@ mod tests {
     }
 
     #[test]
+    fn a_hello_carries_its_stream_claim_and_a_clock_only_hello_has_none() {
+        let mut out = [0u8; 128];
+        let length = encode_hello(&mut out, &KEY, 4, 0x7788, Some(0x1001)).expect("hello");
+        let hello = decode_hello(&out[..length], &KEY).expect("decode hello");
+        assert_eq!(hello.nonce, 0x7788);
+        assert_eq!(hello.claim, Some(0x1001));
+
+        let length = encode_hello(&mut out, &KEY, 5, 0x7788, None).expect("hello");
+        assert_eq!(
+            decode_hello(&out[..length], &KEY).expect("decode").claim,
+            None
+        );
+
+        // A clock-only peer sends no claim; a sender declares the stream it
+        // will packetize on.
+        let mut peer = ClockPeer::new(KEY);
+        let length = peer.hello(&mut out).expect("hello");
+        assert_eq!(
+            decode_hello(&out[..length], &KEY).expect("decode").claim,
+            None
+        );
+        let mut peer = ClockPeer::new(KEY).with_claim(Some(0x1003));
+        let length = peer.hello(&mut out).expect("hello");
+        assert_eq!(
+            decode_hello(&out[..length], &KEY).expect("decode").claim,
+            Some(0x1003)
+        );
+    }
+
+    #[test]
+    fn a_fresh_hello_counts_one_session_and_a_retry_counts_none() {
+        let clock = ManualClock::new(0);
+        let mut master = ClockMaster::new(KEY);
+        let mut hello = [0u8; 128];
+        let mut reply = [0u8; 128];
+        assert_eq!(master.issued(), 0);
+
+        let length = encode_hello(&mut hello, &KEY, 1, 0x5151, Some(0x1000)).expect("encode hello");
+        let welcome = master
+            .answer(&hello[..length], &clock, &mut reply)
+            .expect("a welcome");
+        let first = decode_welcome(&reply[..welcome.length()], &KEY)
+            .expect("decode welcome")
+            .session;
+        assert_eq!(master.issued(), 1);
+        assert_eq!(master.session_claim(first), Some(0x1000));
+
+        // A retried HELLO repeats its nonce: the same session, not a new one.
+        let length = encode_hello(&mut hello, &KEY, 2, 0x5151, Some(0x1000)).expect("encode hello");
+        master
+            .answer(&hello[..length], &clock, &mut reply)
+            .expect("a retry welcome");
+        assert_eq!(master.issued(), 1, "a retry is not a second session");
+        assert_eq!(master.session_claim(first), Some(0x1000));
+
+        let length = encode_hello(&mut hello, &KEY, 3, 0x5252, Some(0x1001)).expect("encode hello");
+        let welcome = master
+            .answer(&hello[..length], &clock, &mut reply)
+            .expect("a second welcome");
+        let second = decode_welcome(&reply[..welcome.length()], &KEY)
+            .expect("decode welcome")
+            .session;
+        assert_eq!(master.issued(), 2);
+        assert_eq!(master.session_claim(second), Some(0x1001));
+        assert_eq!(
+            master.session_claim(0xDEAD_BEEF),
+            None,
+            "an unissued session claims nothing"
+        );
+    }
+
+    #[test]
+    fn a_session_is_live_until_the_lease_forgets_it() {
+        let clock = ManualClock::new(0);
+        let lease = Duration::from_millis(200);
+        let mut master = ClockMaster::new(KEY).with_lease(lease);
+        let mut hello = [0u8; 128];
+        let mut reply = [0u8; 128];
+        let base = Instant::now();
+
+        let length = encode_hello(&mut hello, &KEY, 1, 0x6161, None).expect("encode hello");
+        let welcome = master
+            .answer_at(&hello[..length], &clock, base, &mut reply)
+            .expect("a welcome");
+        let session = decode_welcome(&reply[..welcome.length()], &KEY)
+            .expect("decode welcome")
+            .session;
+
+        assert!(master.is_live_at(session, base + Duration::from_millis(10)));
+        // Past the lease with nothing to refresh it, the session is forgotten,
+        // but the lifetime count does not go backwards.
+        assert!(!master.is_live_at(session, base + lease + Duration::from_millis(1)));
+        assert_eq!(master.issued(), 1);
+        assert_eq!(master.session_count(), 0);
+    }
+
+    #[test]
     fn a_busy_session_outlives_its_lease_and_an_idle_one_does_not() {
         let clock = ManualClock::new(0);
         let lease = Duration::from_millis(200);
@@ -1853,7 +2029,7 @@ mod tests {
         let base = Instant::now();
 
         // The first session is the one a flood must eventually evict.
-        let length = encode_hello(&mut hello, &KEY, 0, 0xAAAA).expect("encode hello");
+        let length = encode_hello(&mut hello, &KEY, 0, 0xAAAA, None).expect("encode hello");
         let welcome = master
             .answer_at(&hello[..length], &clock, base, &mut reply)
             .expect("a welcome");
@@ -1864,7 +2040,7 @@ mod tests {
         for seq in 1..=(MAX_SESSIONS as u32 + 8) {
             // A distinct moment per HELLO keeps "oldest" unambiguous.
             let now = base + Duration::from_millis(seq as u64);
-            let length = encode_hello(&mut hello, &KEY, seq, seq as u64).expect("encode hello");
+            let length = encode_hello(&mut hello, &KEY, seq, seq as u64, None).expect("encode hello");
             assert!(matches!(
                 master.answer_at(&hello[..length], &clock, now, &mut reply),
                 Some(ControlReply::Welcome(_))
