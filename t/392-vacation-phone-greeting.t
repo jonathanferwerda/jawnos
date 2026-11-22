@@ -1,8 +1,9 @@
 # tests-for: lib/JawnOS/Domain/Phone.pm perl/Reception.pl lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part12.pm templates/apps/phone.html.ep public/js/manager/phone.js
 # covers:    the away greeting the IVR pane configures: while an away period is
-#            active every flow the reception answers speaks the away words and
-#            offers a message, the stored flows are untouched, and Ring/Reject
-#            still pass; a proposal never speaks it.
+#            active every flow the reception answers speaks the away words (or
+#            plays the house's recorded clip) and offers a message, the stored
+#            flows are untouched, and Ring/Reject still pass; a proposal never
+#            speaks it.
 
 use strict;
 use warnings;
@@ -109,6 +110,52 @@ set_vacation($now - 86400000, undef);
 my $open = &subs::phone_ivr_broadcast_settings();
 is(flow_greeting($open, 'receptionist'), $away_words, 'an open period greets the same way');
 
+# --- a recorded away greeting wins ------------------------------------------
+clear_phone();
+set_phone('ivr_enabled', 'yes');
+set_phone('ivr_away', 'yes');
+set_phone('ivr_away_greeting', $away_words);
+set_phone('ivr_away_greeting_file', '/tmp/away-greeting.wav');
+clear_vacation();
+set_vacation($now - 86400000, $now + 86400000);
+
+my $recorded = &subs::phone_ivr_settings();
+is($recorded->{'away_greeting_file'}, '/tmp/away-greeting.wav',
+	'the pane reads the recorded away greeting from the house row');
+is(flow_greeting(&subs::phone_ivr_settings(), 'receptionist'), &subs::phone_ivr_defaults()->{'greeting'},
+	'and the stored flow is still untouched');
+
+my $recorded_broadcast = &subs::phone_ivr_broadcast_settings();
+is($recorded_broadcast->{'flow_defs'}->{'receptionist'}->{'voicemail_greeting'},
+	'/tmp/away-greeting.wav', 'the away flow plays the recorded clip');
+is_deeply($recorded_broadcast->{'flow_defs'}->{'receptionist'}->{'steps'},
+	[ { type => 'voicemail' } ], 'the away plan is one voicemail step');
+is($recorded_broadcast->{'flow_defs'}->{'receptionist'}->{'after'}, 'voicemail',
+	'and records a message after it');
+is(flow_greeting($recorded_broadcast, 'receptionist'), &subs::phone_ivr_defaults()->{'greeting'},
+	'the typed away words are not spoken when a recording is set');
+
+# the recording alone is enough, even with the words cleared
+set_phone('ivr_away_greeting', '');
+my $file_only = &subs::phone_ivr_broadcast_settings();
+ok($file_only->{'away_active'}, 'a recorded greeting answers without typed words');
+is($file_only->{'flow_defs'}->{'receptionist'}->{'voicemail_greeting'}, '/tmp/away-greeting.wav',
+	'and still plays the recording');
+
+# without the file the typed plan is back
+clear_phone();
+set_phone('ivr_enabled', 'yes');
+set_phone('ivr_away', 'yes');
+set_phone('ivr_away_greeting', $away_words);
+set_vacation($now - 86400000, $now + 86400000);
+my $typed = &subs::phone_ivr_broadcast_settings();
+is_deeply($typed->{'flow_defs'}->{'receptionist'}->{'steps'},
+	[ { type => 'say', text_key => 'greeting' }, { type => 'voicemail' } ],
+	'with no recording the away plan still speaks the typed words first');
+ok(!defined $typed->{'flow_defs'}->{'receptionist'}->{'voicemail_greeting'}
+	|| !length $typed->{'flow_defs'}->{'receptionist'}->{'voicemail_greeting'},
+	'and names no recorded greeting');
+
 # --- the wiring -------------------------------------------------------------
 my $root = repo_root();
 like(read_file("$root/perl/Reception.pl"), qr/phone_ivr_broadcast_settings/,
@@ -123,5 +170,21 @@ like(read_file("$root/templates/apps/phone.html.ep"), qr/id="phone_ivr_away_gree
 	'the pane offers the away words');
 like(read_file("$root/public/js/manager/phone.js"), qr/away_greeting:/,
 	'the pane saves the away words');
+like(read_file("$root/lib/JawnOS/Controller/manager_phone.pm"), qr/ivr_away_greeting_file/,
+	'the greeting route stores the recorded away greeting house-wide');
+like(read_file("$root/lib/JawnOS/Controller/manager_phone.pm"), qr/away eq 'clear'/,
+	'and clears it on request');
+like(read_file("$root/lib/JawnOS/Domain/Phone.pm"), qr/away_greeting_file/,
+	'the domain knows the recorded away greeting');
+like(read_file("$root/templates/apps/phone.html.ep"), qr/id="phone_ivr_away_record"/,
+	'the away block offers Record');
+like(read_file("$root/templates/apps/phone.html.ep"), qr/id="phone_ivr_away_play"/,
+	'and Play');
+like(read_file("$root/templates/apps/phone.html.ep"), qr/id="phone_ivr_away_remove"/,
+	'and Remove');
+like(read_file("$root/public/js/manager/phone.js"), qr/phone_ivr_away_record/,
+	'the pane wires the away recorder');
+like(read_file("$root/public/js/manager/phone.js"), qr/away=1/,
+	'the away recording uploads as the away greeting');
 
 done_testing();

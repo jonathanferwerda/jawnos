@@ -634,6 +634,7 @@ sub phone_ivr_save($params) {
 	$next->{'enabled'} = ($next->{'enabled'} eq 'yes' || $next->{'enabled'} eq '1' || $next->{'enabled'} eq 'on') ? 'yes' : 'no';
 	$next->{'away'} = ($next->{'away'} eq 'yes' || $next->{'away'} eq '1' || $next->{'away'} eq 'on') ? 'yes' : 'no';
 	$next->{'away_greeting'} = defined $next->{'away_greeting'} ? substr($next->{'away_greeting'}, 0, 1000) : '';
+	$next->{'away_greeting_file'} = defined $next->{'away_greeting_file'} ? substr($next->{'away_greeting_file'}, 0, 1000) : '';
 	$next->{'route'} = 'unknown' unless $next->{'route'} =~ /^(?:unknown|all|off)$/;
 	# The ordered gateway list. A save from the new pane posts `machines`; an
 	# older client posts one machine/bluetooth pair, which updates the first
@@ -709,6 +710,9 @@ sub phone_ivr_save($params) {
 	$next->{'hold'} = lc($next->{'hold'}) if lc($next->{'hold'}) eq 'shuffle';
 	# the reception is the house's, not the device's: the phone turns it on and
 	# the gateway machine plays it, so both read the same row
+	# The recorded away greeting is not edited here: the greeting route names
+	# ivr_away_greeting_file on its own, and an ordinary IVR save must leave the
+	# file the person recorded alone.
 	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks hold away away_greeting)) {
 		&subs::setting_setter({ app => 'phone', setting => 'ivr_' . $key, value => $next->{$key}, device => 'all' });
 	}

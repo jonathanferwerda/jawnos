@@ -339,13 +339,24 @@ sub action_24760 {
 
 # POST /manager/phone/greeting
 #
-# A flow's voicemail greeting, recorded in the pane and uploaded as the bytes
-# the browser's recorder produced. It is converted once to a mono WAV and kept
-# in the house's media folder, sealed with the rest of that tree; the flow then
-# names the path. The body is the audio itself, so the size cap is checked
-# before and after reading it, and the type is one the house can play.
+# A recorded greeting, uploaded as the bytes the browser's recorder produced.
+# With no `away`, it is a flow's voicemail greeting: converted once to a mono
+# WAV, kept in the house's media folder and sealed with the rest of that tree,
+# and the flow then names the path. With `away=1` the same WAV is the house's
+# away greeting instead, saved house-wide as ivr_away_greeting_file, and
+# `away=clear` (or `remove=1`) drops that row so the typed words answer again.
+# The body is the audio itself, so the size cap is checked before and after
+# reading it, and the type is one the house can play.
 sub action_24763 {
 	my $c = shift;
+	my $away = $c->param('away') || '';
+	my $remove = (($c->param('remove') || '') eq '1');
+	if ($away eq 'clear' || $remove) {
+		&subs::setting_setter({ app => 'phone', setting => 'ivr_away_greeting_file', value => '', device => 'all' });
+		$c->render(json => { ok => 1, away => 'clear', cleared => 'ivr_away_greeting_file' });
+		return;
+	}
+	my $away_record = ($away eq '1' || $away eq 'yes' || $away eq 'true') ? 1 : 0;
 	my $limit = 2 * 1024 * 1024;
 	my $length = $c->req->headers->content_length || 0;
 	if ($length > $limit) {
@@ -384,6 +395,11 @@ sub action_24763 {
 	my $path = &subs::phone_ivr_greeting_store($wav, timestamp => $timestamp);
 	unless (length $path) {
 		$c->render(json => { ok => 0, error => 'could not save' });
+		return;
+	}
+	if ($away_record) {
+		&subs::setting_setter({ app => 'phone', setting => 'ivr_away_greeting_file', value => $path, device => 'all' });
+		$c->render(json => { ok => 1, path => $path, seconds => $seconds, away => 1 });
 		return;
 	}
 	$c->render(json => { ok => 1, path => $path, seconds => $seconds, flow => $flow });

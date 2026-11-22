@@ -1231,8 +1231,8 @@ function jawnPhoneGreetingIdle() {
 		jawnPhoneGreetingStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
 		jawnPhoneGreetingStream = null;
 	}
-	$('#phone_app .phone_app_ivr_greeting_record').prop('hidden', false);
-	$('#phone_app .phone_app_ivr_greeting_stop').prop('hidden', true);
+	$('#phone_app .phone_app_ivr_greeting_record, #phone_app #phone_ivr_away_record').prop('hidden', false);
+	$('#phone_app .phone_app_ivr_greeting_stop, #phone_app #phone_ivr_away_stop').prop('hidden', true);
 }
 
 function jawnPhoneGreetingStop() {
@@ -1341,6 +1341,120 @@ $(document).on('click', '#phone_app .phone_app_ivr_greeting_remove', function (e
 	jawnPhoneFlowGreeting(edit, '');
 	if (jawnPhoneFlowDefs && jawnPhoneFlowDefs[key]) { jawnPhoneFlowDefs[key].voicemail_greeting = ''; }
 	jawnPhoneGreetingStatus(edit, jawnosT('The spoken text is used. Press Save to keep it.'));
+});
+
+// ---- the away greeting's recording ---------------------------------------
+// The away greeting is the phone's answer to an away period. It may be typed
+// in the While away box or recorded here; a recording wins. Record captures
+// with the same MediaRecorder pattern as a flow's greeting, then uploads the
+// bytes with away=1 and the route keeps the WAV and saves its path house-wide,
+// so there is no separate Save. Play asks the same audio route, and Remove
+// clears the stored file (away=clear) and falls back to the typed words.
+function jawnPhoneAwayStatus(text) {
+	$('#phone_app #phone_ivr_away_greeting_note').text(text || '');
+}
+
+function jawnPhoneAwayGreeting(path) {
+	path = path || '';
+	$('#phone_app #phone_ivr_away_greeting_file').val(path);
+	$('#phone_app #phone_ivr_away_play, #phone_app #phone_ivr_away_remove').prop('disabled', !path);
+	jawnPhoneAwayStatus(path ? jawnosT('A recorded greeting is in use.') : jawnosT('The typed words are used.'));
+}
+
+function jawnPhoneAwayUpload(type) {
+	var blob = new Blob(jawnPhoneGreetingChunks, { type: type || 'audio/webm' });
+	jawnPhoneGreetingChunks = [];
+	if (!blob.size) { jawnPhoneAwayStatus(jawnosT('Nothing was recorded.')); return; }
+	if (blob.size > 2 * 1024 * 1024) { jawnPhoneAwayStatus(jawnosT('That recording is too long.')); return; }
+	jawnPhoneAwayStatus(jawnosT('Saving the recording…'));
+	$.ajax({
+		url: '/manager/phone/greeting?away=1&timestamp=' + Date.now(),
+		type: 'POST',
+		processData: false,
+		contentType: blob.type || 'audio/webm',
+		data: blob,
+		dataType: 'json',
+		success: function (res) {
+			if (res && res.ok && res.path) {
+				jawnPhoneAwayGreeting(res.path);
+				jawnPhoneAwayStatus(jawnosT('Recorded. A recorded greeting is in use.'));
+			}
+			else if (res && res.error === 'too long') { jawnPhoneAwayStatus(jawnosT('The greeting must be a minute or less.')); }
+			else { jawnPhoneAwayStatus(jawnosT('Could not save the recording.')); }
+		},
+		error: function () { jawnPhoneAwayStatus(jawnosT('Could not save the recording.')); }
+	});
+}
+
+$(document).on('click', '#phone_app #phone_ivr_away_record', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	if (jawnPhoneGreetingRecorder) { return; }
+	if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+		jawnPhoneAwayStatus(jawnosT('This device cannot record audio.'));
+		return;
+	}
+	jawnPhoneAwayStatus(jawnosT('Recording… press Stop when you are done.'));
+	navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+		var rec = null;
+		try { rec = new MediaRecorder(stream); } catch (err) { rec = null; }
+		if (!rec) {
+			stream.getTracks().forEach(function (t) { try { t.stop(); } catch (err2) {} });
+			jawnPhoneAwayStatus(jawnosT('This device cannot record audio.'));
+			return;
+		}
+		jawnPhoneGreetingStream = stream;
+		jawnPhoneGreetingChunks = [];
+		jawnPhoneGreetingRecorder = rec;
+		rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) { jawnPhoneGreetingChunks.push(ev.data); } };
+		rec.onstop = function () {
+			var kind = rec.mimeType || 'audio/webm';
+			jawnPhoneGreetingIdle();
+			jawnPhoneAwayUpload(kind);
+		};
+		rec.start();
+		$('#phone_app #phone_ivr_away_record').prop('hidden', true);
+		$('#phone_app #phone_ivr_away_stop').prop('hidden', false);
+		// a greeting is a minute at most; the route refuses anything longer
+		jawnPhoneGreetingTimer = setTimeout(function () { jawnPhoneGreetingStop(); }, 60000);
+	}).catch(function () {
+		jawnPhoneGreetingIdle();
+		jawnPhoneAwayStatus(jawnosT('I could not reach the microphone.'));
+	});
+});
+
+$(document).on('click', '#phone_app #phone_ivr_away_stop', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	jawnPhoneGreetingStop();
+});
+
+$(document).on('click', '#phone_app #phone_ivr_away_play', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var path = $('#phone_app #phone_ivr_away_greeting_file').val() || '';
+	if (!path) { jawnPhoneAwayStatus(jawnosT('There is no recorded greeting.')); return; }
+	try {
+		if (!jawnPhoneGreetingAudio) { jawnPhoneGreetingAudio = new Audio(); }
+		jawnPhoneGreetingAudio.src = '/manager/phone/greeting?path=' + encodeURIComponent(path) + '&timestamp=' + Date.now();
+		jawnPhoneGreetingAudio.play();
+	} catch (err) { jawnPhoneAwayStatus(jawnosT('The greeting could not be played.')); }
+});
+
+$(document).on('click', '#phone_app #phone_ivr_away_remove', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	jawnPhoneAwayStatus(jawnosT('Removing the recording…'));
+	$.ajax({
+		url: '/manager/phone/greeting?away=clear&timestamp=' + Date.now(),
+		type: 'POST',
+		dataType: 'json',
+		success: function (res) {
+			if (res && res.ok) { jawnPhoneAwayGreeting(''); jawnPhoneAwayStatus(jawnosT('The typed words are used.')); }
+			else { jawnPhoneAwayStatus(jawnosT('Could not remove the recording.')); }
+		},
+		error: function () { jawnPhoneAwayStatus(jawnosT('Could not remove the recording.')); }
+	});
 });
 
 // dial pad

@@ -323,6 +323,18 @@
 			<div class="phone_app_ivr_away">
 				<label class="phone_app_ivr_toggle"><input type="checkbox" id="phone_ivr_away" <%= (($ivr->{'away'} || '') eq 'yes') ? 'checked' : '' %>> <%= &subs::ui('Away greeting') %></label>
 				<label><%= &subs::ui('While away') %><textarea id="phone_ivr_away_greeting" rows="2"><%= $ivr->{'away_greeting'} || '' %></textarea></label>
+				<%# The away greeting may be typed above or recorded here; one
+				    recording is house-wide and wins over the typed words. %>
+				<div class="phone_app_ivr_greeting">
+					<div class="phone_app_ivr_greeting_row">
+						<button type="button" id="phone_ivr_away_record" class="phone_app_ivr_away_record" hint="<%= &subs::ui('Record away greeting') %>"><%= &subs::ui('Record') %></button>
+						<button type="button" id="phone_ivr_away_stop" class="phone_app_ivr_away_stop" hint="<%= &subs::ui('Stop') %>" hidden><%= &subs::ui('Stop') %></button>
+						<button type="button" id="phone_ivr_away_play" class="phone_app_ivr_away_play" hint="<%= &subs::ui('Play away greeting') %>"<%= ($ivr->{'away_greeting_file'} || '') ? '' : ' disabled' %>><%= &subs::ui('Play') %></button>
+						<button type="button" id="phone_ivr_away_remove" class="phone_app_ivr_away_remove" hint="<%= &subs::ui('Remove away greeting') %>"<%= ($ivr->{'away_greeting_file'} || '') ? '' : ' disabled' %>><%= &subs::ui('Remove') %></button>
+					</div>
+					<input type="hidden" id="phone_ivr_away_greeting_file" value="<%= $ivr->{'away_greeting_file'} || '' %>">
+					<div class="phone_app_ivr_greeting_note" id="phone_ivr_away_greeting_note"><% if ($ivr->{'away_greeting_file'} || '') { %><%= &subs::ui('A recorded greeting is in use.') %><% } else { %><%= &subs::ui('The typed words are used.') %><% } %></div>
+				</div>
 				<div class="phone_app_ivr_away_note">
 					<% if ($ivr->{'away_active'}) { %><span class="phone_app_ivr_away_on"><%= &subs::ui('An away period is active now.') %></span> <% } %>
 					<%= &subs::ui('When IVR is on and an away period is active, every flow the reception answers speaks this greeting and then offers the caller a message. Ring and Reject stay as set.') %>

@@ -38,6 +38,9 @@ sub phone_ivr_defaults {
 		# own answer to it.
 		away      => 'no',
 		away_greeting => &subs::ui('I am away right now. Please leave a message after the tone.'),
+		# the house's own recording of that greeting; when set it wins over the
+		# typed words, so the caller hears the person instead of the voice engine
+		away_greeting_file => '',
 		flows     => &subs::phone_ivr_flow_defaults('unknown'),
 	};
 }
@@ -749,6 +752,7 @@ sub phone_ivr_legacy_settings {
 	$settings->{'enabled'} = ($settings->{'enabled'} eq 'yes') ? 'yes' : 'no';
 	$settings->{'away'} = ($settings->{'away'} eq 'yes') ? 'yes' : 'no';
 	$settings->{'away_greeting'} = substr($settings->{'away_greeting'}, 0, 1000);
+	$settings->{'away_greeting_file'} = substr($settings->{'away_greeting_file'}, 0, 1000);
 	$settings->{'route'} = 'unknown' unless $settings->{'route'} =~ /^(?:unknown|all|off)$/;
 	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
 	$settings->{'voice'} = &subs::say_default_voice() unless $voices{ $settings->{'voice'} };
@@ -790,7 +794,11 @@ sub phone_ivr_away_ready {
 	my ($settings) = @_;
 	return 0 unless ref $settings eq 'HASH';
 	return 0 unless ($settings->{'away'} || '') eq 'yes';
-	return 0 unless defined $settings->{'away_greeting'} && length $settings->{'away_greeting'};
+	# either the typed words or a recording is the away greeting; the recording
+	# is enough on its own, so a person who only recorded one is still answered
+	my $words = defined $settings->{'away_greeting'} ? $settings->{'away_greeting'} : '';
+	my $file = defined $settings->{'away_greeting_file'} ? $settings->{'away_greeting_file'} : '';
+	return 0 unless length $words || length $file;
 	return eval { &subs::vacation_active(&subs::rightNow()) } ? 1 : 0;
 }
 
@@ -799,6 +807,17 @@ sub phone_ivr_away_ready {
 sub phone_ivr_away_flow {
 	my ($flow, $settings) = @_;
 	my %copy = %{ ref $flow eq 'HASH' ? $flow : {} };
+	# A recorded away greeting is the caller's first voice: the voicemail step
+	# plays it as the greeting and then records, through the same path a flow's
+	# own recorded greeting uses. The typed words speak first only when no
+	# recording is set.
+	my $recorded = defined $settings->{'away_greeting_file'} ? $settings->{'away_greeting_file'} : '';
+	if (length $recorded) {
+		$copy{'voicemail_greeting'} = $recorded;
+		$copy{'steps'} = [ { type => 'voicemail' } ];
+		$copy{'after'} = 'voicemail';
+		return \%copy;
+	}
 	$copy{'greeting'} = $settings->{'away_greeting'};
 	$copy{'steps'} = [
 		{ type => 'say', text_key => 'greeting' },
