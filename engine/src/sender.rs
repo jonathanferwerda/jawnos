@@ -502,6 +502,33 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
                 return Err(format!("send-take send: {error}"));
             }
         }
+        // Audio first, then the pong: a lost round trip must not delay the
+        // take. The block is stamped from the estimate the previous cycle
+        // fitted, so the wait cannot move the timeline.
+        let now = clock.now();
+        let elapsed = now.saturating_sub(last_now).min(PULL_MAX_FRAMES as u64) as usize;
+        if sender.estimate().is_some() {
+            last_now = now;
+            if let Some(block) = sender.block(elapsed) {
+                match bearer.packetize(
+                    config.stream,
+                    1,
+                    &block.frames,
+                    block.master_sample,
+                    |datagram| socket.send(datagram).map(|_| ()),
+                ) {
+                    Ok(emitted) => {
+                        sent += emitted;
+                        frames += block.frames.len() as u64;
+                    }
+                    Err(BearerError::Io(kind)) if quiet_io(kind) => {}
+                    Err(error) => return Err(format!("send-take audio: {error:?}")),
+                }
+            }
+        }
+        // No position yet (the first pong below supplies one): sending the take
+        // stamped at local zero would land it where the master is not.
+
         match socket.recv(&mut incoming) {
             Ok(length) => {
                 let local_recv = clock.now();
@@ -519,47 +546,16 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
             Err(error) if quiet_io(error.kind()) => {}
             Err(error) => return Err(format!("send-take receive: {error}")),
         }
-        // A slope fitted to a handful of noisy round trips can be thousands of ppm
-    // out, which stretches the take by percents. Until the fit has a second of
-    // probes, the one-point offset with drift 0 is the better model.
-    let fitted = if estimator.kept() >= FIT_MIN_PROBES {
-        estimator.estimate()
-    } else {
-        None
-    };
-    sender.set_estimate(fitted.or(provisional));
-
-        // No pong yet means no position on the master's timeline. Sending the
-        // take stamped at local zero would land it where the master is not, and
-        // the receiver would conceal it. A closed port still ends the run
-        // through the quiet timer above.
-        if sender.estimate().is_none() {
-            let spent = cycle.elapsed();
-            if spent < interval {
-                std::thread::sleep(interval - spent);
-            }
-            continue;
-        }
-
-        let now = clock.now();
-        let elapsed = now.saturating_sub(last_now).min(PULL_MAX_FRAMES as u64) as usize;
-        last_now = now;
-        if let Some(block) = sender.block(elapsed) {
-            match bearer.packetize(
-                config.stream,
-                1,
-                &block.frames,
-                block.master_sample,
-                |datagram| socket.send(datagram).map(|_| ()),
-            ) {
-                Ok(emitted) => {
-                    sent += emitted;
-                    frames += block.frames.len() as u64;
-                }
-                Err(BearerError::Io(kind)) if quiet_io(kind) => {}
-                Err(error) => return Err(format!("send-take audio: {error:?}")),
-            }
-        }
+        // A slope fitted to a handful of noisy round trips can be thousands of
+        // ppm out, which stretches the take by percents. Until the fit has a
+        // second of probes, the one-point offset with drift 0 is the better
+        // model.
+        let fitted = if estimator.kept() >= FIT_MIN_PROBES {
+            estimator.estimate()
+        } else {
+            None
+        };
+        sender.set_estimate(fitted.or(provisional));
 
         let spent = cycle.elapsed();
         if spent < interval {
