@@ -1,12 +1,14 @@
 #!/usr/bin/env perl
 # sync_kick.pl - clear what has stalled this machine's sync and nudge a pass.
 #
-#   perl scripts/sync_kick.pl
+#   perl scripts/sync_kick.pl [--force]
 #
-# It clears the three brakes and drops an inactive hub, then nudges the ordinary
-# remote_machine_sync pass; the running manager runs that pass on its next
-# utility tick. The utility controller runs the same subs::sync_kick as the
-# "Sync kick" job, so a stuck box can be recovered from a shell too.
+# It clears the short brakes the reconnector sets and drops an inactive hub, then
+# nudges the ordinary remote_machine_sync pass; the running manager runs that pass
+# on its next utility tick. The utility controller runs the same subs::sync_kick
+# as the "Sync kick" job, so a stuck box can be recovered from a shell too. A
+# brake that reaches past ten minutes is a deliberate hold and is left alone
+# unless --force is given.
 use strict;
 use warnings;
 use FindBin;
@@ -59,6 +61,9 @@ BEGIN {
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
 require './perl/subroutines.pl';
 
-my $note = &subs::sync_kick();
+# --force also lifts a deliberate, long brake; without it the kick only drops
+# the short brakes the reconnector set.
+my $force = grep { $_ eq '--force' } @ARGV;
+my $note = &subs::sync_kick($force ? { force => 1 } : {});
 print $note, "\n";
 print "sync pass nudged\n";

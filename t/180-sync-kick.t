@@ -90,6 +90,7 @@ my $now = JawnOSTest::ts(2026, 11, 5, 14, 0, 0);
 		{ signatorial => 'live', connection => 'active' },
 		{ signatorial => 'dead', connection => 'inactive' },
 	]) };
+	local *subs::sync_backoff_remaining = sub { 0 };
 	local *subs::sync_backoff_clear = sub { push @backoff, $_[0] };
 	local *subs::setting_grabber = sub { 'dead' };
 	local *subs::setting_setter = sub { push @sets, [ $_[0]->{'setting'}, $_[0]->{'value'} ] };
@@ -106,6 +107,37 @@ my $now = JawnOSTest::ts(2026, 11, 5, 14, 0, 0);
 	is($sets[1][1], '', 'the hub setting is cleared');
 	is($sets[2][1], 0, 'the reconnector timer is reset');
 	is(scalar @cache, 1, 'the ordinary pass is nudged once');
+}
+
+# --- the kick drops short brakes, not a deliberate hold ----------------------
+# The reconnector brakes a peer for 120 s or 300 s, and the kick exists to drop
+# those. A peer braked for a day is a deliberate hold - it was serving rows that
+# must not spread - so the kick must name it and leave the brake in place; only
+# --force clears it.
+{
+	local *subs::rightNow = sub { $now };
+	my (@backoff, @cache);
+	local *subs::remote_upgrade_lock_state = sub { { busy => 1, value => 'running:123', age => 0 } };
+	local *subs::remote_upgrade_marker_reapable = sub { 0 };
+	local *subs::sync_jobs_reap = sub { 0 };
+	local *subs::db_select = sub { StopRows->new([
+		{ signatorial => 'short', connection => 'active' },
+		{ signatorial => 'held',  connection => 'active' },
+	]) };
+	local *subs::sync_backoff_remaining = sub { $_[0] eq 'held' ? 86_400_000 : 120_000 };
+	local *subs::sync_backoff_clear = sub { push @backoff, $_[0] };
+	local *subs::setting_grabber = sub { '' };
+	local *subs::setting_setter = sub { };
+	local *subs::cache_set = sub { push @cache, $_[1] };
+
+	my $note = subs::sync_kick();
+	is_deeply(\@backoff, ['short'], 'a short brake is cleared and the deliberate hold is not');
+	like($note, qr/1 deliberate backoff left in place/, 'the kick says which brake it left alone');
+
+	@backoff = ();
+	my $forced = subs::sync_kick({ force => 1 });
+	is_deeply(\@backoff, ['short', 'held'], 'force clears the deliberate hold too');
+	unlike($forced, qr/deliberate backoff/, 'and reports nothing held');
 }
 
 # --- a kick that looks past a busy marker leaves the live pull alone ----------
@@ -265,9 +297,12 @@ like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_stalled\b/s,
 	'the domain loader maps sync_stalled to Sync.pm');
 like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_kick\b/s,
 	'the domain loader maps sync_kick to Sync.pm');
+like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_backoff_remaining\b/s,
+	'the domain loader maps sync_backoff_remaining to Sync.pm');
 
 my $script = read_file("$root/scripts/sync_kick.pl");
-like($script, qr/subs::sync_kick\(\)/, 'the CLI runs the same sub');
+like($script, qr/subs::sync_kick\(/, 'the CLI runs the same sub');
+like($script, qr/--force/, 'and can lift a deliberate hold');
 like($script, qr/sync pass nudged/, 'and says the pass was nudged for the running manager');
 like($script, qr/perl5\/lib\/perl5/, 'the CLI finds the local::lib tree a plain shell lacks');
 unlike($script, qr/remote_machine_negotiator/, 'it does not try to build a controller in a bare shell');
@@ -275,5 +310,7 @@ unlike($script, qr/remote_machine_negotiator/, 'it does not try to build a contr
 my $help = read_file("$root/perl/help/topics_features.pl");
 like($help, qr/Sync kick is the sync rail/, 'the utility controller help names the job');
 like($help, qr/looks first and only acts when the rail looks blocked/, 'the help says the scheduled job checks before it kicks');
+like($help, qr/deliberate hold/, 'the help says a deliberate brake survives a kick');
+like($help, qr/sync_kick\.pl --force/, 'and how to lift it');
 
 done_testing();

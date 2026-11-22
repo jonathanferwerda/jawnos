@@ -517,12 +517,25 @@ sub sync_table_complete {
 
 # A peer that told us it was busy gets a short rest instead of being asked again
 # on every tick. The cache is machine-local (and forbidden from the export).
-sub sync_backoff_active {
+# How long a peer's rest still holds, in ms: 0 when it is not braked.
+sub sync_backoff_remaining {
 	my ($peer) = @_;
 	return 0 unless $peer;
 	my $row = &db_query('select server_time from cache where context = ? and uuid = ? order by cast(server_time as integer) desc limit 1', 'sync_backoff', $peer)->hashes->[0];
-	return ($row && $row->{'server_time'} > &rightNow()) ? 1 : 0;
+	return 0 unless $row;
+	my $left = (0 + ($row->{'server_time'} || 0)) - &rightNow();
+	return $left > 0 ? $left : 0;
 }
+
+sub sync_backoff_active {
+	return &sync_backoff_remaining($_[0]) ? 1 : 0;
+}
+
+# The reconnector brakes a peer for 120 s (busy) or 300 s (failed), and the kick
+# exists to drop exactly those. A brake reaching further than this is a
+# deliberate hold - a peer kept away while its rows are put right - not a
+# symptom, so the kick names it and leaves it for --force.
+my $SYNC_BRAKE_KICK_HORIZON = 600_000;
 
 sub sync_backoff_set {
 	my ($peer, $seconds) = @_;
@@ -765,15 +778,23 @@ sub sync_kick {
 
 	my $peers = &db_select('remote_machines')->hashes || [];
 	my $cleared = 0;
+	my @held;
 	foreach my $rm ( @{$peers} ) {
 		next unless $rm->{'signatorial'};
 		# A failing peer's backoff is a brake, not a bug: leave an inactive peer
 		# to the reconnector, and only drop the brake on one that is up.
 		next unless (($rm->{'connection'} || '') eq 'active');
+		# A brake past the horizon is a deliberate hold. Re-opening it here is
+		# how one bad peer recirculated its rows to the whole house (2026-11-21).
+		if (!$opts->{'force'} && &sync_backoff_remaining($rm->{'signatorial'}) > $SYNC_BRAKE_KICK_HORIZON) {
+			push @held, $rm->{'signatorial'};
+			next;
+		}
 		&sync_backoff_clear($rm->{'signatorial'});
 		$cleared++;
 	}
 	push @did, 'backoff cleared for ' . $cleared . ' active peer(s)' if $cleared;
+	push @did, scalar(@held) . ' deliberate backoff' . (scalar(@held) == 1 ? '' : 's') . ' left in place' if @held;
 
 	my $saved = &setting_grabber({ app => '__president', setting => 'sync_hub' }) || '';
 	if ($saved) {
