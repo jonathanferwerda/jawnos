@@ -741,13 +741,14 @@ sub sync_table_digest {
 
 # The band a table's map is measured at. Settings carry a per-device copy of
 # every value, so their durable count can never match a peer's and the planner
-# keeps offering them; at the weekly band one write moved the whole week's ~29k
-# rows. Settings localise by the hour instead (a peer refuses any band under
-# one hour), so a change reads its own hour rather than the whole week.
+# keeps offering them; appointments are re-stamped in bulk and then move with
+# every use. At the weekly band one write moved the whole week's ~29k settings
+# or ~37k appointments. Both localise by the hour instead (a peer refuses any
+# band under one hour), so a change reads its own hour rather than the week.
 sub sync_bucket_band_for {
 	my ($table) = @_;
-	return ($subs::sync_bucket_band_settings || 3600000)
-		if defined $table && $table =~ /^(?:settings|settings_durable)$/;
+	return ($subs::sync_bucket_band_narrow || 3600000)
+		if defined $table && $table =~ /^(?:settings|settings_durable|appointments)$/;
 	return $subs::sync_bucket_band || (7 * 24 * 60 * 60 * 1000);
 }
 

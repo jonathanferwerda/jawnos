@@ -254,12 +254,13 @@ our $sync_table_cache;
 our $sync_bucket_band = 7 * 24 * 60 * 60 * 1000;   # one week
 # Settings are the one table that carries a row per device class for the same
 # logical value, so the durable count differs between machines by design and the
-# planner asks for it every tick. At a weekly band any single settings write
-# moved the one bucket that held the whole week, and every pull read all ~29k
-# rows back. One hour is the smallest band a peer will build (the floor in
-# `/manager/sync_buckets`); the week's rows then localise to an hour, and only
-# genuinely old settings can still fill one. A real change reads its own hour.
-our $sync_bucket_band_settings = 60 * 60 * 1000;     # one hour
+# planner asks for it every tick. Appointments are collapsed the same way by a
+# bad re-stamp, and in an actively used house every new appointment moves the
+# band. At a weekly band one write moved the bucket that held the whole week and
+# every pull read all ~29k settings or ~37k appointments back. One hour is the
+# smallest band a peer will build (the floor in `/manager/sync_buckets`); the
+# week's rows then localise to an hour. A real change reads its own hour.
+our $sync_bucket_band_narrow = 60 * 60 * 1000;     # one hour
 our $sync_bucket_low = -9223372036854775807;
 
 

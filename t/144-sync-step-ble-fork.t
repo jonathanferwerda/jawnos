@@ -22,17 +22,19 @@ ok( subs::provides('sync_bucket_band_for'), 'the domain loader maps sync_bucket_
 require JawnOS::Domain::Sync;
 ok( defined &subs::sync_plan_step, 'Domain::Sync defines it' );
 
-# Settings are the one table whose durable count carries a row per device class,
-# so the planner keeps offering them and the map is what keeps a quiet house
-# quiet. At the weekly band one settings write moved the single bucket that held
-# the whole week and every pull read all ~29k rows back. The peer refuses any
-# band under one hour, so settings localise by that floor and every other table
-# keeps the week.
+# Settings are the one table whose durable count carries a row per device class
+# and appointments are re-stamped in bulk, so the planner keeps offering them and
+# the map is what keeps a quiet house quiet. At the weekly band one write moved
+# the single bucket that held the whole week and every pull read all ~29k
+# settings or ~37k appointments back. The peer refuses any band under one hour,
+# so both localise by that floor and every other table keeps the week.
 is( subs::sync_bucket_band_for('settings'), 3600000,
 	'settings localise by the hour' );
 is( subs::sync_bucket_band_for('settings_durable'), 3600000,
 	'the durable map is measured at the same hour' );
-is( subs::sync_bucket_band_for('appointments'), 7 * 24 * 60 * 60 * 1000,
+is( subs::sync_bucket_band_for('appointments'), 3600000,
+	'appointments localise by the book too' );
+is( subs::sync_bucket_band_for('notes'), 7 * 24 * 60 * 60 * 1000,
 	'every other table keeps the weekly band' );
 cmp_ok( subs::sync_bucket_band_for('settings'), '>=', 3600000,
 	'the hourly band meets the peer floor' );
