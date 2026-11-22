@@ -1,7 +1,7 @@
 # tests-for: scripts/settings_time_repair.pl
 # covers:    settings_time_plan - uuid wins, unique-key fallback, ambiguity, the
-#           window, equality, value-changed and no-uuid guards, and the summary
-#           counts
+#           window, equality, value-changed and no-uuid guards, the summary
+#           counts, and the default window's densest-hour burst
 
 use strict;
 use warnings;
@@ -133,6 +133,19 @@ sub plan_for {
 	);
 	is(scalar @{ $plan->{'plan'} }, 0, 'a live row with no uuid is not planned');
 	is($plan->{'summary'}{'no_uuid'}, 1, 'and is counted');
+}
+
+# --- the default window is the densest recent hour, not the oldest row -------
+{
+	my @burst = map { row(uuid => 'b' . $_, server_time => (10000000 + $_ * 10)) } 1 .. 90;
+	my @old = map { row(uuid => 'o' . $_, server_time => (100 + $_)) } 1 .. 10;
+	is(main::_burst_window_start([ @burst, @old ]), 10000010,
+		'the default window starts at the first row of the densest hour');
+}
+{
+	my @spread = map { row(uuid => 's' . $_, server_time => (1000 + $_ * 100000)) } 1 .. 10;
+	is(main::_burst_window_start(\@spread), undef,
+		'a table with no dense burst asks for --window-start');
 }
 
 # --- the summary counts every live row exactly once --------------------------

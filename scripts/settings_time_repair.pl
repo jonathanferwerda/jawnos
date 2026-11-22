@@ -16,7 +16,7 @@
 # Dry run by default. --apply needs an explicit older --backup, takes a fresh
 # safety snapshot, re-reads the live rows, and writes in one transaction. The
 # snapshot's own time (its filename, else its mtime) must predate the window.
-# The window starts at the smallest live settings.server_time unless the person
+# The window starts at the first row of the densest recent hour unless the person
 # names --window-start.
 use strict;
 use warnings;
@@ -67,9 +67,9 @@ sub main {
 		return 1;
 	}
 
-	my $window = defined $opt_window ? $opt_window : _min_server_time($live);
+	my $window = defined $opt_window ? $opt_window : _burst_window_start($live);
 	unless (defined $window) {
-		print "settings time repair: the live settings have no numeric server_time; pass --window-start <ms>\n";
+		print "settings time repair: could not find a dense recent burst (or the live settings have no numeric server_time); pass --window-start <ms>\n";
 		return 1;
 	}
 
@@ -358,6 +358,28 @@ sub _min_server_time {
 		$min = $n if !defined $min || $n < $min;
 	}
 	return $min;
+}
+
+# The incident is a burst, not the table's oldest row: the backfill stamped tens
+# of thousands of settings in a few minutes, while ordinary settings carry old,
+# legitimate write times. The start of the densest one-hour window is the
+# incident's own start, and it is newer than the snapshot taken just before it.
+# Refuse to guess when that hour holds less than fifty rows or less than a tenth
+# of the table - a real incident is not a handful of writes.
+sub _burst_window_start {
+	my ($rows) = @_;
+	my @times = sort { $a <=> $b } grep { defined } map { _number($_->{'server_time'}) } @{$rows};
+	return undef unless @times;
+	my $span = 3600000;
+	my ($best_start, $best_n) = ($times[0], 1);
+	my $lo = 0;
+	for (my $hi = 0; $hi < @times; $hi++) {
+		$lo++ while $times[$hi] - $times[$lo] > $span;
+		my $n = $hi - $lo + 1;
+		($best_n, $best_start) = ($n, $times[$lo]) if $n > $best_n;
+	}
+	return undef unless $best_n >= 50 && $best_n >= @times * 0.10;
+	return $best_start;
 }
 
 # The logical settings key, with the NULL-safe empty string the sync uses.
