@@ -816,6 +816,11 @@ sub phone_ivr_away_flow {
 		$copy{'voicemail_greeting'} = $recorded;
 		$copy{'steps'} = [ { type => 'voicemail' } ];
 		$copy{'after'} = 'voicemail';
+		# If the file has moved, the gateway's voicemail step falls back to this
+		# flow's message prompt; the typed away words are the right fallback, not
+		# the flow's ordinary voicemail line.
+		my $words = defined $settings->{'away_greeting'} ? $settings->{'away_greeting'} : '';
+		$copy{'voicemail'} = $words if length $words;
 		return \%copy;
 	}
 	$copy{'greeting'} = $settings->{'away_greeting'};

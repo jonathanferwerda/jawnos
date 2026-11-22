@@ -25,6 +25,8 @@ my $REMOTE = 'Lamp';
 # The actuator is replaced for the whole test. Loading Remotes first is what
 # keeps the module's own definition from overwriting the stub later.
 subs::preload('remote_send');
+subs::preload('signatorial_designer');
+subs::preload('device_setter');
 my (@SEND_CALLS, @SEND_REPLIES);
 {
 	no warnings 'redefine';
@@ -33,6 +35,10 @@ my (@SEND_CALLS, @SEND_REPLIES);
 		push @SEND_CALLS, $data;
 		return @SEND_REPLIES ? shift(@SEND_REPLIES) : { ok => 1, sent => 1 };
 	};
+	# The tick is gated to the machine that saved the card; every case below is
+	# this machine unless it says otherwise.
+	*subs::signatorial_designer = sub { 'test-machine' };
+	*subs::device_setter = sub { 'server' };
 }
 
 sub reset_sends {
@@ -43,7 +49,7 @@ sub reset_sends {
 
 sub set_presence {
 	my (%fields) = @_;
-	my $json = encode_json({ %{ &subs::presence_defaults() }, %fields });
+	my $json = encode_json({ %{ &subs::presence_defaults() }, machine => 'test-machine', %fields });
 	# setting_setter is also the memo flush, so a read straight after this
 	# cannot answer with the row the previous case wrote.
 	&subs::setting_setter({
@@ -108,6 +114,7 @@ is($settings->{'off'}, '23:00', 'the default off time is 23:00');
 is($settings->{'jitter'}, 20, 'the default jitter is 20 minutes');
 is($settings->{'chip_id'}, '', 'no board is chosen by default');
 is($settings->{'remote'}, '', 'no remote is chosen by default');
+is($settings->{'machine'}, '', 'no machine owns the tick by default');
 is_deeply($settings->{'last'}, {}, 'the ledger starts empty');
 
 # Malformed JSON must not die or take the row down with it.
@@ -128,6 +135,7 @@ my $normal = &subs::presence_normalize({
 	on      => '7:05',
 	off     => '25:00',
 	jitter  => 999,
+	machine => '  machine-9  ',
 	last    => \%last_nine,
 });
 is($normal->{'enabled'}, 'yes', 'on normalizes to yes');
@@ -136,6 +144,7 @@ is($normal->{'remote'}, 'Living Room TV', 'the remote name is trimmed');
 is($normal->{'on'}, '07:05', 'a one-digit hour normalizes to HH:MM');
 is($normal->{'off'}, '23:00', 'an impossible off time falls back to the default');
 is($normal->{'jitter'}, 120, 'jitter is clamped to 120');
+is($normal->{'machine'}, 'machine-9', 'the owning machine is trimmed');
 is(scalar(keys %{ $normal->{'last'} }), 7, 'the ledger keeps only the newest seven dates');
 ok($normal->{'last'}->{'2026-01-09'}, 'the newest date survives the prune');
 ok(!$normal->{'last'}->{'2026-01-02'}, 'the eighth-oldest date is pruned');
@@ -214,6 +223,22 @@ $result = &subs::presence_tick($day1 + 5 * 60 * 1000);
 is(scalar @SEND_CALLS, 2, 'the next tick retries the failed action');
 is_deeply($result->{'fired'}, [ 'on' ], 'and marks it once the send succeeds');
 ok(&subs::presence_settings()->{'last'}->{$day_key}->{'on'}, 'the ledger is marked on success');
+
+# --- one machine fires -------------------------------------------------------
+# A card saved on another machine must not replay the remote here: two sends of
+# a toggle would turn the light on and straight back off.
+my $other_day = ts(2026, 12, 1, 19, 30, 0);
+set_vacation($other_day - 86400000, $other_day + 86400000);
+set_presence(enabled => 'yes', chip_id => $CHIP, remote => $REMOTE,
+	on => '19:00', off => '23:00', jitter => 0, machine => 'other-machine', last => {});
+reset_sends();
+$result = &subs::presence_tick($other_day);
+is(scalar @SEND_CALLS, 0, 'a tick owned by another machine sends nothing');
+is_deeply($result->{'fired'}, [], 'and reports nothing fired');
+
+my $saved = &subs::presence_save({ enabled => 'yes', chip_id => $CHIP, remote => $REMOTE,
+	on => '19:00', off => '23:00', jitter => 0, last => {} });
+is($saved->{'machine'}, 'test-machine', 'a save names the machine that owns the tick');
 
 # --- an overnight window -----------------------------------------------------
 my $night_on = ts(2026, 11, 20, 23, 30, 0);

@@ -35,11 +35,19 @@ and routine actions.
 - The desktop calendar shades the away days across the shown month and labels
   the first day of a run **Away**. It reads the same period list and writes
   nothing.
-- Phone -> IVR carries an opt-in **Away greeting**. While an away period is
-  active, every flow the reception can answer speaks those words and then
+- Phone -> IVR carries an opt-in **Away greeting**, typed or recorded. While an
+  away period is active, every flow the reception can answer speaks it and then
   offers the caller a message; Ring and Reject stay as set, so calls still
-  pass. The stored flows are never edited, so their own words return when the
-  period ends.
+  pass. A recording wins over the typed words, and if its file has moved the
+  typed words are the fallback. The stored flows are never edited, so their own
+  words return when the period ends.
+- The Away card carries an opt-in **Presence simulation**. While a period is
+  active, a chosen learned IR remote is replayed at a jittered on time and a
+  jittered off time each local day, so lights or a TV look lived in. It runs on
+  the machine that saved the card (the server when a controller saved it), once
+  per action per day, and only within three hours of a due time, so a machine
+  that was off all evening does not fire the next morning. Nothing is sent
+  until a board and a remote are chosen.
 - `evaluation` scheduled runs skip while away; an `each_run` report from real
   activity still runs.
 - A small Away card in Configure -> Me starts, ends or cancels a period, and shows a short return digest (days away and notices that arrived).
@@ -60,15 +68,14 @@ and routine actions.
 | Analytics | active days; away days named in the report |
 | Bills, sync, backups, security | unchanged |
 
-## Not yet built
-
-- Presence simulation.
-
 ## Tests
 
 `t/387-vacation-budget.t` covers the model, the budget modes, the notification
 allowlist, the stock runway, the open-session boundary and the opt-in detector.
 `t/388-vacation-activity.t` covers the house-wide activity union and gaps;
 `t/389-vacation-keep.t` the keep lists; `t/390-vacation-notices.t` the held
-notices. The existing budget, runway, clothesline, notification, route, help and
+notices; `t/391-vacation-calendar.t` the calendar band; `t/392-vacation-phone-
+greeting.t` the typed and recorded away greeting; and `t/393-presence-
+simulation.t` the presence setting, jitter, once-a-day ledger and machine gate.
+The existing budget, runway, clothesline, notification, route, help and
 untested-file tests are run with them.

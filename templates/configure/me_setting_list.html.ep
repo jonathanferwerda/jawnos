@@ -175,7 +175,8 @@
 				<button type="button" class="presence_save"><%= &subs::ui('Save') %></button>
 				<span class="presence_status" aria-live="polite"></span>
 			</div>
-			<p class="cfg-note"><%= &subs::ui('A learned IR remote is sent at a slightly different time each evening while an away period is active.') %></p>
+			<p class="cfg-note"><%= &subs::ui('A learned IR remote is sent at a slightly different time each evening while an away period is active.') %>
+				<%= &subs::ui('It runs on the machine where you save this card; a controller leaves it to the server.') %></p>
 		</div>
 		<span class="away_status" aria-live="polite"></span>
 	</div>

@@ -38,6 +38,12 @@ sub presence_defaults {
 		on      => '19:00',
 		off     => '23:00',
 		jitter  => 20,
+		# The machine that owns the tick. Slow loops run on every non-controller,
+		# and an IR remote is often a toggle, so two machines firing the same
+		# evening would turn the light on and straight back off. The card records
+		# the machine that saved it; an empty value (an older row, or a save from
+		# a controller) falls back to the server.
+		machine => '',
 		last    => {},
 	};
 }
@@ -65,6 +71,7 @@ sub presence_normalize($raw = undef) {
 	$out->{'on'} = &_presence_time($data->{'on'}, $defaults->{'on'});
 	$out->{'off'} = &_presence_time($data->{'off'}, $defaults->{'off'});
 	$out->{'jitter'} = &_presence_jitter_value($data->{'jitter'});
+	$out->{'machine'} = &_presence_text($data->{'machine'});
 	$out->{'last'} = &_presence_last_clean($data->{'last'});
 	return $out;
 }
@@ -76,9 +83,14 @@ sub presence_save($params = undef) {
 	my $current = &presence_settings();
 	my %merged = %{$current};
 	if (ref $params eq 'HASH') {
-		foreach my $key (qw(enabled chip_id remote on off jitter last)) {
+		foreach my $key (qw(enabled chip_id remote on off jitter machine last)) {
 			$merged{$key} = $params->{$key} if exists $params->{$key};
 		}
+	}
+	# The card is house-wide, but the replay is one machine's. A controller runs
+	# no slow loops, so it leaves the gate empty for the server to own.
+	if (ref $params ne 'HASH' || !exists $params->{'machine'}) {
+		$merged{'machine'} = &_presence_own_machine();
 	}
 	my $data = &presence_normalize(\%merged);
 	&_presence_write($data);
@@ -131,6 +143,17 @@ sub presence_tick($now = undef) {
 	my $settings = &presence_settings();
 	my $result = { ok => 1, fired => [] };
 	return $result unless ($settings->{'enabled'} // 'no') eq 'yes';
+	# One machine fires: the one that saved the card, or the server when the
+	# row predates the gate or a controller saved it. A duplicate send would
+	# toggle a light twice.
+	my $owner = $settings->{'machine'} // '';
+	if (length $owner) {
+		my $me = eval { &signatorial_designer() } || '';
+		return $result unless length $me && $me eq $owner;
+	}
+	else {
+		return $result unless (&device_setter() // '') eq 'server';
+	}
 	return $result unless &vacation_active($now);
 
 	my $chip_id = $settings->{'chip_id'} // '';
@@ -200,6 +223,7 @@ sub _presence_write($data) {
 			on      => ($data->{'on'} // '19:00'),
 			off     => ($data->{'off'} // '23:00'),
 			jitter  => &_presence_jitter_value($data->{'jitter'}),
+			machine => ($data->{'machine'} // ''),
 			last    => (ref $data->{'last'} eq 'HASH' ? $data->{'last'} : {}),
 		}),
 	});
@@ -310,6 +334,14 @@ sub _presence_window($now = undef, $due = undef) {
 	return 0 unless defined $due;
 	return 0 if $now < $due;
 	return ($now - $due) <= $PRESENCE_WINDOW_MS ? 1 : 0;
+}
+
+# This machine's signatorial, unless it is a controller: a controller runs no
+# slow loops, so it leaves the tick to the server.
+sub _presence_own_machine {
+	my $device = eval { &device_setter() } || '';
+	return '' if $device eq 'controller';
+	return eval { &signatorial_designer() } || '';
 }
 
 sub _presence_fire($chip_id = undef, $remote = undef) {

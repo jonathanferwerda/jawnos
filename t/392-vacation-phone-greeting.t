@@ -132,6 +132,8 @@ is_deeply($recorded_broadcast->{'flow_defs'}->{'receptionist'}->{'steps'},
 	[ { type => 'voicemail' } ], 'the away plan is one voicemail step');
 is($recorded_broadcast->{'flow_defs'}->{'receptionist'}->{'after'}, 'voicemail',
 	'and records a message after it');
+is($recorded_broadcast->{'flow_defs'}->{'receptionist'}->{'voicemail'}, $away_words,
+	'and the typed away words are the fallback if the clip has moved');
 is(flow_greeting($recorded_broadcast, 'receptionist'), &subs::phone_ivr_defaults()->{'greeting'},
 	'the typed away words are not spoken when a recording is set');
 
