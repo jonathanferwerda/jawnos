@@ -34,6 +34,15 @@ my $board    = read_file("$root/public/js/manager/leaderboardprinter.js");
 my $timeline = read_file("$root/public/js/manager/clothesline/01_timeline.js");
 my $viewer   = read_file("$root/lib/JawnOS/Controller/manager_misc6.pm");
 
+# A tasks write from a tab left open since the backfill posted the clock it was
+# served: the row landed in the bulk hour (lunch) or the incident hour (vape)
+# with a timestamp and ost from today, and every pull re-read that whole hour.
+# A live write cannot precede the task's own timestamp.
+like($viewer, qr/\$server_time \+ 0 < \$task_ts \+ 0 - 60000/,
+	'a stale tasks server_time is taken as now');
+like($viewer, qr/setting_setter\(\{ app => \$app, setting => 'tasks', value => \$tasks_json, server_time => \$server_time \}\)/,
+	'and the tasks row wears the clamped stamp');
+
 # --- the fresh-browser defaults ---------------------------------------------
 like($maker, qr/\blayout = 'desk';\s*\n\s*localStorage\.setItem\('layout', layout\);/,
 	'the first view is the desk');

@@ -810,6 +810,15 @@ sub action_25356 {
 sub action_25364 {
 	my $c = shift;
 	my $server_time = $c->param('server_time') || &subs::rightNow();
+	# A tab left open since a bad backfill posts the clock it was served, so the
+	# app's `tasks` row was written at the incident/bulk stamp and every pull
+	# then re-read that whole hour. A live write cannot precede the task's own
+	# timestamp; take a stale millisecond stamp as now, and relay that.
+	my $task_ts = $c->param('timestamp');
+	if (($server_time // '') =~ /^\s*\d{12,}\s*$/ && ($task_ts // '') =~ /^\s*\d{12,}\s*$/
+		&& $server_time + 0 < $task_ts + 0 - 60000) {
+		$server_time = &subs::rightNow();
+	}
 	$c->param('server_time' => $server_time);
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
