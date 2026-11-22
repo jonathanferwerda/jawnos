@@ -1,14 +1,18 @@
-# tests-for: engine/src/uplink.rs engine/src/socket.rs engine/src/patchbay.rs engine/src/main.rs engine/src/lib.rs engine/tests/uplink.rs
+# tests-for: engine/src/uplink.rs engine/src/socket.rs engine/src/patchbay.rs engine/src/main.rs engine/src/lib.rs engine/src/system_capture.rs engine/tests/uplink.rs
 # covers:    P4's master side (docs/studio-audio-roadmap.md P4): a `peer` source is
-#            another machine's input. It binds like a routed local input, is
-#            `pending` until the uplink attaches its ring, and then mixes like a
-#            `parec` input. `--serve --uplink ADDR` starts one UDP thread that
-#            answers a peer's HELLO with WELCOME on the clock key, rebuilds every
-#            source's receiver with the issued session, and feeds
-#            AUDIO_STREAM_BASE + plan index through `pull_at` into the ring.
-#            A foreign session, a wrong tag, a stereo datagram or an unmapped
-#            stream is counted and dropped, never fatal. Status keeps its keys
-#            and adds `uplink`.
+#            another machine's input. It has no interface channel of its own, so
+#            it binds even when every channel is taken; it is `pending` until
+#            the uplink attaches its ring, and then mixes like a `parec` input
+#            from a stereo block of its own. `--serve --uplink ADDR` starts one
+#            UDP thread that answers a peer's HELLO with WELCOME on the clock
+#            key, rebuilds every source's receiver with the issued session, and
+#            feeds AUDIO_STREAM_BASE + plan index through `pull_at` into the
+#            ring. A rebuild replaces the receiver, not the totals: the replaced
+#            receiver's counters are folded in, so `status` never reads received
+#            0 after a re-handshake. A foreign session, a wrong tag, a stereo
+#            datagram or an unmapped stream is counted and dropped, never fatal.
+#            Status keeps its keys and adds `uplink`. A failed patch names the
+#            PCM it opened, the node target, and the server's then-default sink.
 
 use strict;
 use warnings;
@@ -24,6 +28,7 @@ my $lib     = read_file("$root/engine/src/lib.rs");
 my $socket  = read_file("$root/engine/src/socket.rs");
 my $patch   = read_file("$root/engine/src/patchbay.rs");
 my $main    = read_file("$root/engine/src/main.rs");
+my $system  = read_file("$root/engine/src/system_capture.rs");
 my $tests   = read_file("$root/engine/tests/uplink.rs");
 
 ok( length $uplink, 'the uplink module is found' );
@@ -31,6 +36,7 @@ ok( length $lib,    'the engine lib is found' );
 ok( length $socket, 'the control socket is found' );
 ok( length $patch,  'the patchbay is found' );
 ok( length $main,   'the engine CLI is found' );
+ok( length $system, 'the system capture is found' );
 ok( length $tests,  'the uplink integration test is found' );
 
 # --- the module is part of the crate ----------------------------------------
@@ -44,6 +50,9 @@ like( $patch, qr/source\.peer/, 'a peer is routed exactly like an input' );
 like( $patch, qr/pub peer:\s*&'static str/, 'the plan reports the peer state' );
 like( $patch, qr/summary\.peer\s*=\s*"capturing"/, 'attaching the ring moves it out of pending' );
 like( $patch, qr/!source\.peer/, 'a peer asks for no card capture or parec input' );
+like( $patch, qr/peer_blocks/, 'a peer is popped into a block of its own, not an interface channel' );
+like( $patch, qr/fn a_peer_mixes_with_every_interface_channel_taken/,
+	'a peer mixes when every interface channel is taken' );
 
 # --- the stream mapping and the session rule --------------------------------
 like( $uplink, qr/audio_stream\(index\)/, 'the stream is AUDIO_STREAM_BASE + the plan index' );
@@ -51,6 +60,9 @@ like( $uplink, qr/is_audio_stream\(stream\)/, 'an audio stream must be in the re
 like( $uplink, qr/ClockMaster::new/, 'the thread owns a clock master with the key' );
 like( $uplink, qr/decode_welcome/, 'a WELCOME names the session' );
 like( $uplink, qr/source\.attach_session\(/, 'a session rebuilds every source receiver' );
+like( $uplink, qr/past: RecvCounters/, 'a rebuilt receiver leaves its totals in a baseline' );
+like( $uplink, qr/fn add_counters/, 'the totals are summed field by field' );
+like( $uplink, qr/self\.past = add_counters/, 'a new session folds the outgoing receiver in' );
 like( $uplink, qr/AudioReceiver::new\(/, 'a source owns a receiver' );
 like( $uplink, qr/One session at a time|One audio session at a time/,
 	'the one-session limit is documented where the code makes it' );
@@ -92,6 +104,10 @@ like( $socket, qr/Uplink::start\(/, 'the worker starts the one uplink thread' );
 like( $socket, qr/attach_input\(index, consumer\)/, 'the ring reaches the patch source' );
 like( $socket, qr/UplinkStatus::failed/, 'a bind failure is reported without stopping the patch' );
 like( $socket, qr/self\.uplink\.take\(\)/, 'the uplink is stopped and joined with the patch' );
+like( $socket, qr/fn patch_error\(/, 'a failed patch has one sentence builder' );
+like( $socket, qr/default sink/, 'a failed patch names the server default sink' );
+like( $socket, qr/default_sink\(\)/, 'the default sink is read only when the patch fails' );
+like( $system, qr/pub fn default_sink\(\)/, 'the sink question is asked through pactl' );
 like( $socket, qr/\\"uplink\\":\{\}/, 'the status line gains an uplink object' );
 like( $socket, qr/machine.*plan.*uplink/s, 'the status still carries the machine and plan keys' );
 
@@ -110,6 +126,7 @@ like( $tests, qr/fn a_wrong_key_gets_no_welcome_and_no_audio/, 'a wrong key is t
 like( $tests, qr/fn a_lost_tail_is_concealed_and_visible_in_the_counters/, 'the deadline counters are tested' );
 like( $tests, qr/fn two_real_sockets_carry_a_peer_block/, 'two real sockets are tested' );
 like( $tests, qr/fn an_audio_stream_with_no_peer_source_is_counted_not_mixed/, 'an unmapped stream is tested' );
+like( $tests, qr/fn a_rehandshake_keeps_the_counters/, 'the totals survive a re-handshake' );
 like( $tests, qr/UdpSocket::bind\("127\.0\.0\.1:0"\)/, 'the loopback test uses an ephemeral port' );
 like( $patch, qr/fn a_peer_source_is_pending_not_silent/, 'the patchbay peer state is tested' );
 like( $patch, qr/fn a_peer_ring_mixes_like_a_parec_input/, 'the peer mix is tested' );

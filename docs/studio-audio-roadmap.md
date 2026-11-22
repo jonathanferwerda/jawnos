@@ -1,8 +1,7 @@
 # Studio audio engine — a native engine and the house patchbay
 
-> **Entry point:** `docs/roadmap.md`. This plan is **under way**: P0's device half is measured and
-> P1's skeleton is built, while the network phases are not started. It is not on this season's
-> critical path.
+> **Entry point:** `docs/roadmap.md`. This plan is **under way**: P0–P3 are answered and P4 is in
+> the tree with its live gate outstanding. It is not on this season's critical path.
 
 **Status:** measured and scaffolded, 2026-11-17. P0's device half is answered on `table` (§2): raw
 ALSA holds 64 frames for three minutes; PipeWire does not hold quantum 64. The P1 skeleton is in the
@@ -10,7 +9,9 @@ tree (`engine/`, `scripts/build_engine.pl`, `t/332`) with the datagram header, t
 path, the block graph, a null device, master election and clock alignment. The
 routing plan's shape and validation are `lib/JawnOS/Audio/Plan.pm` (`t/334`), and Studio reports the
 browser's own numbers through `window.studioAudioReport()` (`t/333`).
-**Still missing:** the laptop's browser numbers, and every network phase.
+**Still missing:** the laptop's browser numbers. The network phases are under way: P3's clock
+measurement and session handshake are in, and P4's uplink, bearer and sender are in the tree with the
+live gate outstanding (§13).
 
 **The patchbay, 2026-11-18.** The saved plan now runs. `engine/src/patchbay.rs`
 compiles `sources`, `buses`, `sinks` and `routes` into a stereo graph and runs it
@@ -796,11 +797,16 @@ empty off) and a generated session key that is never displayed; the boot file ca
 child's environment, never in argv. The Sound page shows the engine's `uplink.state` and the patch's
 `peer` state.
 
-**A gap the live plan shows:** a peer source takes a slot in the component's input block, bounded by
-the interface's channel count. `table` routes both UM2 channels (mic and instrument), so a peer
-source has no slot to bind to. The fix is the handset's shape: give a peer its own popped ring and
-mix it in `render` instead of borrowing an interface channel. Until then a peer source is a third
-channel this interface does not have.
+**The channel gap, closed (2026-11-21, v0.1.3557):** a peer source used to take a slot in the
+component's input block, bounded by the interface's channel count; `table` routes both UM2 channels,
+so a peer had no slot. A peer now has no interface channel at all: the uplink's ring is popped into a
+stereo block of its own, like the handset's, and mixed in `render` through the same mono path a
+`parec` input takes, so a plan can carry a peer beside every local input.
+
+**Counting across a re-handshake (2026-11-21, v0.1.3558):** a WELCOME still rebuilds every receiver,
+but the replaced receiver's counters are folded into a running baseline before it goes, so `status`
+no longer reads `received: 0` after a peer's periodic quiet-spell re-handshake. The last pull report
+is kept too: `last_master` names a position on the one master clock.
 
 **Still to come:** the peer's live capture, a peer id in the stream so more than one peer can join,
 and each input's declared latency.
@@ -848,9 +854,12 @@ nothing and a burst drops whole frames and counts them rather than splitting one
 setting (the switch is house-wide today). The `default` picker choice was checked on `table`
 (2026-11-21): the supervisor resolves the mix's playback device before every spawn and the guard
 refuses the mix sink, so the engine patches cleanly on a fresh mix and after a quit with the mix
-still in place. The earlier ALSA I/O error 5 did not reproduce and is not a routing decision. What
-is still missing is the failure's own context: a patch-time error should name the target it opened
-and the sink that was then the default, so a recurrence is diagnosable without guesswork.
+still in place. The earlier ALSA I/O error 5 was not a routing decision, and on 2026-11-21 it
+did reproduce: `table`'s house engine rendered ~149 s and then failed on its playback with
+`cannot patch: default: playback: ... 'I/O error (5)'`, with the plan's two inputs still capturing
+and the process never respawned. The failure now carries its own context (v0.1.3560): the raw error
+plus the PCM it opened, the PipeWire target, and the server's then-default sink, so the next
+occurrence is diagnosable without guesswork. The cause itself is still open.
 
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
