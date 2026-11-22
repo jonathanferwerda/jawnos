@@ -822,12 +822,18 @@ sub stock_days_for {
 		    and cast(timestamp as integer) >= ? and cast(timestamp as integer) <= ?
 		  group by unit",
 		$item, $now - 30 * 86400000, $now)->hashes || [];
+	# An away month is not a cheap month: the draw is spread over the days the
+	# house was lived in, so a shelf that sat untouched does not read as lasting
+	# forever and a low-stock alert is not delayed by the trip.
+	my $away_days = &subs::vacation_overlap($now - 30 * 86400000, $now) / 86400000;
+	my $active_days = 30 - $away_days;
+	$active_days = 0 if $active_days < 0;
 	my %out_30 = map { ($_->{'unit'} || 'each') => ($_->{'out_qty'} || 0) + 0 } @{$recent};
 	my @units = map {
 		my $unit = $_->{'unit'} || 'each';
 		my $level = ($_->{'level'} || 0) + 0;
 		my $drawn = $out_30{$unit} || 0;
-		my $daily = $drawn / 30;
+		my $daily = $active_days > 0 ? $drawn / $active_days : 0;
 		my $days = $level <= 0 ? 0 : ($daily > 0 ? $level / $daily : undef);
 		{
 			unit => $unit,
@@ -839,7 +845,7 @@ sub stock_days_for {
 			stock_state => !defined $days ? '' : $days <= $urgent_days ? 'urgent' : $days <= $low_days ? 'low' : '',
 		}
 	} @{$rows};
-	return { item => $item, low_days => $low_days, urgent_days => $urgent_days, units => \@units };
+	return { item => $item, low_days => $low_days, urgent_days => $urgent_days, away_days => $away_days, units => \@units };
 }
 
 # The shelf life (e.g. '3w') declared on an item's packaging, if any.

@@ -112,18 +112,21 @@ sub budget_calculator($data) {
 		# signed stock for the item, so its light says whether the shelf holds what it
 		# should.
 		my $handled;
+		$returner->{'measure_readings'} = 0;
 		if ($circumstance eq 'quantity' && $fixed) {
 			$value = &subs::warehouse_on_hand($app, $settings);
 			$returner->{'value'} = $value;
 			$handled = 1;
 		}
+		# A window the caller did not name is read here too: the vacation
+		# share of the reading needs the same edges the rows were read over.
+		my ($window_bt, $window_end);
 		unless ($value || $handled) {
 			my ($db) = &subs::database_grabber();
 			my $appts = $data->{'appts'};
 			# A duration is read over the budget's own window even when the caller
 			# passed the appointments, so a session that crossed the window's edge
 			# offers only the time spent inside it.
-			my ($window_bt, $window_end);
 			if (!$appts || $circumstance eq 'duration') {
 				my $ft_data = {
 					scope => $returner->{'scope_name'},
@@ -133,6 +136,8 @@ sub budget_calculator($data) {
 				};
 				($window_bt, $window_end) = &father_time($ft_data);
 			}
+			$returner->{'window_bt'} = $window_bt;
+			$returner->{'window_end'} = $window_end;
 			unless ($appts) {
 				my @params = ( $app, $window_end );
 				my $query = 'select * from appointments where app = ? and timestamp < ? ';
@@ -228,6 +233,8 @@ sub budget_calculator($data) {
 				$value = ( $mcalc eq 'average' && $m_count ) ? ($m_sum / $m_count) : $m_sum;
 			}
 			$value = 0 if scalar @{$appts} == 0;
+			$returner->{'measure_readings'} = $m_count;
+			$returner->{'measures_read'} = 1;
 			$returner->{'value'} = $value;
 		}
 		if ($bud[0] =~ /^\$/gi) {
@@ -336,6 +343,80 @@ sub budget_calculator($data) {
 		$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};
 		$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
 		$returner->{'timestamp'} = $timestamp;
+
+		# An away period changes the denominator, not the record. A floor rate
+		# budget is held against the part of the window the person was here; a
+		# ceiling or a fixed level keeps its target, because spending less is not a
+		# failure and a weight is not a rate. A whole away window is paused rather
+		# than read as abandoned, and a measure with no readings is "no data"
+		# rather than zero (a zero would make a ceiling look accomplished).
+		my $vacation_mode = 'count';
+		my $vacation_applied = 0;
+		my $vacation_paused = 0;
+		my $vacation_no_data = 0;
+		my $vacation_zero = 0;
+		my $window_scope = $returner->{'scope'};
+		my $active_scope = $window_scope;
+		my $active_elapsed = $window_scope;
+		my $elapsed_active = 1;
+		my ($vfrom, $vto) = ($returner->{'window_bt'}, $returner->{'window_end'});
+		unless (defined $vfrom && defined $vto && $vto > $vfrom) {
+			my ($cb, $ce) = &father_time({
+				scope => $returner->{'scope_name'},
+				ts => $ts,
+				lock => $settings->{'s_lock'},
+				timestamp => $timestamp,
+			});
+			($vfrom, $vto) = ($cb, $ce) if defined $cb && defined $ce && $ce > $cb;
+		}
+		if (defined $vfrom && defined $vto && $vto > $vfrom && $window_scope > 0) {
+			my $away_full = &subs::vacation_overlap($vfrom, $vto);
+			my $now_edge = $timestamp < $vto ? $timestamp : $vto;
+			$now_edge = $vfrom if $now_edge < $vfrom;
+			my $away_now = &subs::vacation_overlap($vfrom, $now_edge);
+			$returner->{'vacation_ms'} = $away_full;
+			$returner->{'vacation_days'} = $away_full / 86400000;
+			$vacation_mode = &subs::vacation_policy_for($app, $circumstance, $returner->{'direction'}, $returner->{'fixed'});
+			if ($away_full > 0) {
+				$active_scope = $window_scope - $away_full;
+				$active_scope = 0 if $active_scope < 0;
+				$active_elapsed = ($now_edge - $vfrom) - $away_now;
+				$active_elapsed = 0 if $active_elapsed < 0;
+				$active_elapsed = $active_scope if $active_elapsed > $active_scope;
+				$returner->{'active_scope'} = $active_scope;
+				$returner->{'active_ms'} = $active_elapsed;
+				if ($vacation_mode eq 'pause'
+					|| ($vacation_mode eq 'prorate' && !$returner->{'fixed'} && $active_scope <= 0)) {
+					$vacation_paused = 1;
+				}
+				elsif ($vacation_mode eq 'prorate' && !$returner->{'fixed'} && $active_scope > 0) {
+					$vacation_applied = 1;
+					$elapsed_active = $active_scope > 0 ? ($active_elapsed / $active_scope) : 0;
+					$elapsed_active = 0 if $elapsed_active < 0;
+					$elapsed_active = 1 if $elapsed_active > 1;
+				}
+				elsif ($vacation_mode eq 'freeze' && ($returner->{'value'} || 0) == 0) {
+					$vacation_zero = 1;
+				}
+			}
+		}
+		if ($is_measure && ($returner->{'measures_read'} || 0) && ($returner->{'measure_readings'} || 0) == 0 && $circumstance eq $returner->{'circumstance'}) {
+			$vacation_no_data = 1;
+		}
+		$returner->{'vacation_mode'} = $vacation_mode;
+		$returner->{'vacation_zero'} = 1 if $vacation_zero;
+		if ($vacation_paused || $vacation_no_data) {
+			$returner->{'paused'} = 1 if $vacation_paused;
+			$returner->{'no_data'} = 1 if $vacation_no_data;
+			$returner->{'on_track'} = 'paused' if $vacation_paused;
+			my $key = $vacation_paused ? 'paused' : 'no_data';
+			$returner = &{$gb::budget_statuses->{$key}->{'notifier'}}($returner);
+			return $returner;
+		}
+		if ($vacation_applied && $active_scope > 0) {
+			$returner->{'actual'} = sprintf("%.19f", $returner->{'value'} / $active_scope);
+			$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
+		}
 		if ($scope && !$returner->{'fixed'} && !$same_width && $returner->{'circumstance'} eq $circumstance) {
 			# The caller read a column of another width. The reading is still held
 			# against that column - the expected and the actual are rates per
@@ -372,18 +453,25 @@ sub budget_calculator($data) {
 		# a fixed level is not a period being run: it is not prorated, and its pace
 		# is not carried anywhere
 		$elapsed = 1 if $returner->{'fixed'};
+		my $elapsed_calendar = $elapsed;
+		$elapsed = $elapsed_active if $vacation_applied;
 		my $floor = $pace_floor{$unit} // 0.1;
 		my $early = ($elapsed > 0 && $elapsed <= $floor) ? 1 : 0;
 		my $pace_elapsed = $early ? 0 : (($elapsed - $floor) / (1 - $floor));
 		$pace_elapsed = 0 if $pace_elapsed < 0;
 		$pace_elapsed = 1 if $pace_elapsed > 1;
 		# the whole target the column's value is held against - already scaled to the
-		# column's own period when the budget is set to a different one
-		my $full_target = $returner->{'expected'} * $returner->{'scope'};
-		$returner->{'elapsed'} = $elapsed;
+		# column's own period when the budget is set to a different one. An away
+		# window only holds the person against the part of the column they were here
+		# for, so a floor target shrinks with the share of the time that was lived.
+		my $target_scope = $vacation_applied ? $active_scope : $returner->{'scope'};
+		my $full_target = $returner->{'expected'} * $target_scope;
+		$returner->{'elapsed'} = $elapsed_calendar;
+		$returner->{'active_elapsed'} = $vacation_applied ? $elapsed_active : $elapsed_calendar;
 		$returner->{'early'} = $early;
 		$returner->{'pace_floor'} = $floor;
-		$returner->{'progress'} = sprintf('%.0f', $elapsed * 100);
+		$returner->{'progress'} = sprintf('%.0f', $elapsed_calendar * 100);
+		$returner->{'active_progress'} = sprintf('%.0f', $elapsed * 100);
 		$returner->{'on_target'} = sprintf('%.19f', $full_target * $pace_elapsed);
 		$returner->{'on_track'} = ($returner->{'value'} >= $returner->{'on_target'}) ? 'yes' : 'no';
 		$returner->{'projected'} = $elapsed > 0 ? sprintf('%.19f', $returner->{'value'} / $elapsed) : $returner->{'value'};
@@ -396,6 +484,7 @@ sub budget_calculator($data) {
 		};
 		$returner->{'formatted_projected'} = $pace_format->($returner->{'projected'});
 		$returner->{'formatted_on_target'} = $early ? '0' : $pace_format->($returner->{'on_target'});
+		$returner->{'formatted_target'} = $pace_format->($full_target);
 		# The status and the graph line are held against the share of the target due
 		# by now, not the whole of it, so an on-pace start reads as on pace rather
 		# than a collapse; formatted_budgeted still names the whole period.

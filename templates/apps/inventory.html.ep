@@ -27,6 +27,8 @@
 		[ 'achievable', &subs::ui('Achievable') ],
 		[ 'neglected', &subs::ui('Neglected') ],
 		[ 'abandoned', &subs::ui('Abandoned') ],
+		[ 'paused', &subs::ui('Paused') ],
+		[ 'no_data', &subs::ui('No data') ],
 	);
 %>
 <% if ($returner->{'running'}) { %>

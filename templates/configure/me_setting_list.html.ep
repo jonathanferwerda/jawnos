@@ -61,6 +61,57 @@
 	</div>
 
 	<% my $me_device = &subs::device_setter(); %>
+	<%# Away is house-wide, not per device: one answer for every machine. The card
+	    starts an open-ended period, or a dated one, and ends it early. %>
+	<% my $vacation = &subs::vacation_status(); %>
+	<% my $current_away = $vacation->{'current'}; %>
+	<% my $next_away = $vacation->{'next'}; %>
+	<% my $date_text = sub { my ($ms) = @_; return '' unless defined $ms; my @l = localtime(int($ms / 1000)); return sprintf('%04d-%02d-%02d', $l[5] + 1900, $l[4] + 1, $l[3]); }; %>
+	<% my @now_l = localtime(); my @week_l = localtime(time() + 7 * 86400); %>
+	<% my $today = sprintf('%04d-%02d-%02d', $now_l[5] + 1900, $now_l[4] + 1, $now_l[3]); %>
+	<% my $week = sprintf('%04d-%02d-%02d', $week_l[5] + 1900, $week_l[4] + 1, $week_l[3]); %>
+	<div class="cfg-card" id="me_away_card">
+		<h3><%= &subs::ui('Away') %></h3>
+		<p class="cfg-note"><%= &subs::ui('A vacation, a trip or a stay away from the house. Budgets are read against the time you were here; routines and non-urgent notices wait.') %></p>
+		<% if ($current_away) { %>
+			<p><b><%= &subs::ui('Away') %></b>
+				<%= $date_text->($current_away->{'from'}) %>
+				<%= &subs::ui('until') %>
+				<% if (defined $current_away->{'to'}) { %><%= $date_text->($current_away->{'to'}) %><% } else { %><%= &subs::ui('you are home') %><% } %>
+			</p>
+			<button type="button" class="away_end"><%= &subs::ui('I am home') %></button>
+		<% } elsif ($next_away) { %>
+			<p><b><%= &subs::ui('Away planned') %></b>
+				<%= $date_text->($next_away->{'from'}) %>
+				<%= &subs::ui('until') %>
+				<% if (defined $next_away->{'to'}) { %><%= $date_text->($next_away->{'to'}) %><% } else { %><%= &subs::ui('you are home') %><% } %>
+			</p>
+			<button type="button" class="away_cancel" uuid="<%= $next_away->{'uuid'} %>"><%= &subs::ui('Cancel') %></button>
+		<% } else { %>
+			<div class="cfg-row">
+				<label><%= &subs::ui('From') %></label>
+				<span><input type="date" class="away_from" value="<%= $today %>"></span>
+			</div>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Until') %></label>
+				<span><input type="date" class="away_to" value="<%= $week %>"> <span class="cfg-note"><%= &subs::ui('Leave blank to stay away until you say you are home.') %></span></span>
+			</div>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Note') %></label>
+				<span><input type="text" class="away_note" maxlength="200" placeholder="<%= &subs::ui('Optional') %>"></span>
+			</div>
+			<button type="button" class="away_start"><%= &subs::ui('Start') %></button>
+		<% } %>
+		<% if (!$current_away && !$next_away && $vacation->{'digest'}) { %>
+			<% my $dg = $vacation->{'digest'}; %>
+			<p class="away_digest"><b><%= &subs::ui('While you were away') %></b>
+				<%= $date_text->($dg->{'from'}) %> - <%= $date_text->($dg->{'to'}) %>,
+				<%= sprintf('%.1f', $dg->{'days'}) %> <%= &subs::ui('days') %>.
+				<%= $dg->{'notices'} %> <%= $dg->{'notices'} == 1 ? &subs::ui('notice arrived') : &subs::ui('notices arrived') %>.
+			</p>
+		<% } %>
+		<span class="away_status" aria-live="polite"></span>
+	</div>
 	<% foreach my $d ( @gb::device_types ) { %>
 		<details class="cfg-acc" data-acc="me-<%= &subs::html_name($d) %>"<% if ($d eq $me_device) { %> open<% } %>>
 			<summary><%= $d %></summary>

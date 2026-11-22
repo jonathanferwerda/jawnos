@@ -1600,6 +1600,18 @@ sub clothesline_place_history($now) {
 	};
 	my $place = &clothesline_current_place($now);
 	return $fallback->() unless $place;
+	# A home day the person was away for is not a shape of their routine. The
+	# filter applies only at home: a hotel's own days are what a stay there should
+	# teach, and a return to that place resumes them.
+	my $home_rows = sub {
+		my ($rows) = @_;
+		return $rows unless $place->{'home'};
+		return [ grep { !&vacation_active($_->{'timestamp'}) } @{$rows} ];
+	};
+	my $home_fallback = sub {
+		my ($rows, $wd, $sd) = $fallback->();
+		return ($home_rows->($rows), $wd, $sd);
+	};
 	# the near-place box: a kilometre each way - the same place the person is
 	# standing on, to within a corner. Exact distance is for naming the place;
 	# a stay only needs to know a fix landed here, so the box serves and saves a
@@ -1630,7 +1642,7 @@ sub clothesline_place_history($now) {
 		$prev_day = $day;
 	}
 	push @visits, [$start, $end] if defined $start;
-	return $place->{'home'} ? $fallback->() : ([], 14, 14) unless @visits;
+	return $place->{'home'} ? $home_fallback->() : ([], 14, 14) unless @visits;
 	# the last fifty stays are plenty: an older visit teaches a routine the
 	# canonical day already keeps, and each adds a clause to the query below
 	@visits = @visits[-50 .. -1] if @visits > 50;
@@ -1651,8 +1663,8 @@ sub clothesline_place_history($now) {
 	my $rows = eval {
 		&db_query(q{select app, timestamp, stop_timestamp, type, source, source_uuid from appointments where type in (?, ?, ?) and (coalesce(source,'') in ('press','nfc') or (coalesce(source,'') = '' and coalesce(source_uuid,'') = '')) and (} . join(' or ', @where) . ')', @args)->hashes->to_array;
 	} || [];
-	return $place->{'home'} ? $fallback->() : ([], 14, 14) unless @{$rows};
-	return ($rows, $window_days, $session_days);
+	return $place->{'home'} ? $home_fallback->() : ([], 14, 14) unless @{$rows};
+	return ($home_rows->($rows), $window_days, $session_days);
 }
 
 # The local day a moment belongs to, as an integer that steps by one each

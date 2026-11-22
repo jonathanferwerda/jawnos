@@ -836,4 +836,33 @@ sub action_19400 {
 	});
 }
 
+# POST /manager/vacation/start
+sub action_60001 {
+	my $c = shift;
+	my $period = &subs::vacation_start({
+		from => $c->param('from'),
+		to => $c->param('to'),
+		note => $c->param('note'),
+	});
+	return $c->render(json => { ok => 0, error => &subs::ui('Could not save the away period.') }) unless $period;
+	return $c->render(json => { ok => 1, period => $period });
+}
+
+# POST /manager/vacation/end
+sub action_60002 {
+	my $c = shift;
+	my $period = &subs::vacation_end(undef, &subs::rightNow());
+	return $c->render(json => { ok => 0, error => &subs::ui('There is no current away period.') }) unless $period;
+	return $c->render(json => { ok => 1, period => $period });
+}
+
+# POST /manager/vacation/cancel
+sub action_60003 {
+	my $c = shift;
+	my $uuid = $c->param('uuid') // '';
+	my $done = &subs::vacation_cancel($uuid);
+	return $c->render(json => { ok => 0, error => &subs::ui('That away period is gone.') }) unless $done;
+	return $c->render(json => { ok => 1 });
+}
+
 1;

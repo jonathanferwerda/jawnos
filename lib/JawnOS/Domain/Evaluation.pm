@@ -476,6 +476,13 @@ sub nightly_evaluation_reconcile {
 sub appointment_evaluation_job {
 	my ($job, $data) = @_;
 	my $app = $data->{'app'} || '__president';
+	# A scheduled report on a house nobody is living in is a token bill and a
+	# misleading "the pace fell" headline. A run triggered by a real appointment
+	# (each_run) still goes: that activity is real, wherever it happened.
+	if (!$data->{'each_run'} && eval { &subs::vacation_active(&subs::rightNow()) }) {
+		$job->finish({ app => $app, skipped => 'away period' });
+		return;
+	}
 	# A job queued before this machine stopped scheduling (a restart, or a policy
 	# change with one still waiting behind the worker's delay) must not run on a
 	# phone or tablet.

@@ -318,6 +318,14 @@ sub budget_autocalc($data) {
 		$last = $ts if !defined $last || $ts > $last;
 	}
 	my $span = (defined $first && defined $last) ? ($last - $first) : 0;
+	# The typical amount is what a normal stretch holds. A person who was away
+	# did not have a cheaper life; the away time is not a denominator. The sum is
+	# left alone, so a real purchase made on the trip still counts, but the span
+	# it is spread over is only the time the house was lived in.
+	my $vacation_ms = (defined $first && defined $last) ? &subs::vacation_overlap($first, $last) : 0;
+	$span -= $vacation_ms;
+	$span = 0 if $span < 0;
+	$returner->{'vacation_ms'} = $vacation_ms;
 
 	foreach my $r ( @windows ) {
 		my $width = &subs::time_abbrev_translator(1 . $returner->{$r}->{'symbol'}, $server_time);

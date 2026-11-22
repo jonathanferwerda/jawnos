@@ -48,6 +48,14 @@ sub notification_sender($m,$db) {
 	my ($database,$sql);
 	($db,$database,$sql) = &subs::database_grabber();
 	my $app = &subs::unformat_name($m->{'app'} || '');
+	# While the person is away, a non-urgent notice is still stored, so the return
+	# digest can show it, but it does not sound, buzz, push or draw a live card.
+	# Security, calls and access pass (see subs::vacation_notify_allowed).
+	my $hold = 0;
+	if (!$m->{'urgent'} && eval { &subs::vacation_active($m->{'timestamp'} || &subs::rightNow()) }) {
+		$hold = eval { &subs::vacation_notify_allowed($app, $m->{'type'} || '', 0, $m->{'timestamp'} || &subs::rightNow()) } ? 0 : 1;
+	}
+	$m->{'silent'} = 1 if $hold;
 	$m->{'settings'} = &subs::settings_grabber({ app => $app, settings => [
 		'start_notification_text', 'stop_notification_text', 'budget_notification_text', 'notification_text',
 		'start_notification_sound', 'stop_notification_sound', 'budget_notification_sound', 'notification_sound'
@@ -95,7 +103,7 @@ sub notification_sender($m,$db) {
 			$chime_here = grep { defined $_ && ($_ eq 'all' || $_ eq $signatorial || $_ eq $device_type) } @{$chime_list} ? 1 : 0;
 		}
 	}
-	if ($m->{'update'} || $silenced || $m->{'silent'} || !$chime_here) {
+	if ($m->{'update'} || $silenced || $m->{'silent'} || $hold || !$chime_here) {
 		# an update only changes a card already on screen; silence, or the
 		# caller already sounds this (the phone's alarm channel), must not play
 		# a second sound over it
@@ -133,7 +141,7 @@ sub notification_sender($m,$db) {
 		}
 	}
 	$image =~ s/ /\\ /gi;
-	if ($device eq 'mobile' && $chime_here) {
+	if (!$hold && $device eq 'mobile' && $chime_here) {
 		# An update must land on the same Android notification the first press
 		# built; the event uuid is that handle.
 		# The event uuid is the handle a later reading updates: the same id makes
@@ -202,7 +210,7 @@ sub notification_sender($m,$db) {
 			$log->info('notification broadcast failed: ' . ($bc || 'not run')) if !$am_ok || $? != 0;
 		}
 	}
-	elsif ( eval { $sql->db } && $sql->dsn !~ /:$/) {
+	elsif ( !$hold && eval { $sql->db } && $sql->dsn !~ /:$/) {
 
 		my $c = &subs::controller_builder();
 		my $content = $c->render_to_string(
@@ -241,7 +249,7 @@ sub notification_sender($m,$db) {
 
 	}
 	foreach my $embedded (qw/ watch teletype /) {
-		next if $m->{'update'} || !$chime_here;
+		next if $m->{'update'} || $hold || !$chime_here;
 		my $watch = &subs::device_lister($m->{'timestamp'},$embedded);
 		if (eval {$watch->{'ip'}}) {
 

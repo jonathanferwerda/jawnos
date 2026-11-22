@@ -147,6 +147,24 @@ our $budget_statuses = {
 		},
 		n => 7
 	},
+	paused => {
+		notifier => sub {
+			my $rt = shift;
+			$rt->{'colour'} = 'lightgrey';
+			$rt->{'status'} = 'paused';
+			return $rt
+		},
+		n => 8
+	},
+	no_data => {
+		notifier => sub {
+			my $rt = shift;
+			$rt->{'colour'} = 'lightgrey';
+			$rt->{'status'} = 'no data';
+			return $rt
+		},
+		n => 9
+	},
 };
 
 our $months = [

@@ -122,6 +122,26 @@ sub alarm_clock() {
 			my $t = &subs::time_span($interval, $timestamp);
 			my $t1 = ($timestamp - $t);
 			foreach my $a ( @{$alarm} ) {
+				# A scheduled repeat is the routine's, not a one-off the person set for
+				# this day. While an away period covers it, the row is spent without
+				# running its command, recording, automation or notice. A one-off (its
+				# source is not 'schedule') and an app on the keep list still run.
+				my $routine_repeat = (lc($a->{'source'} || '') eq 'schedule') || $a->{'duty'};
+				if ($routine_repeat && &subs::vacation_routine_skip($a->{'app'}, $a->{'timestamp'} || $timestamp)) {
+					if ($a->{'duty'}) { next; }
+					my %spent = ( seen => 'yes' );
+					$spent{'stop_seen'} = 'yes' if $a->{'stop_timestamp'};
+					# an open start/record inside the period is closed at its own start,
+					# so it cannot accrue the vacation as duration
+					if (($a->{'type'} || '') =~ /^(?:start|record)$/ && !$a->{'stop_timestamp'}) {
+						$spent{'type'} = 'stop';
+						$spent{'stop_timestamp'} = $a->{'timestamp'};
+						$spent{'stop_seen'} = 'yes';
+						$spent{'duration'} = 0;
+					}
+					&subs::db_update('appointments', \%spent, { app => $a->{'app'}, uuid => $a->{'uuid'} });
+					next;
+				}
 #				&subs::db_query('update appointments set seen = ? where uuid=?', 'yes',$a->{'uuid'});
 				# A start that has never been announced is announced before its own stop
 				# is applied, even when a short window makes both due in the same pass.
@@ -274,6 +294,9 @@ sub alarm_clock() {
 						settings => $settings,
 						sound => $default_sound,
 						silent => $live_ring ? 1 : 0,
+						# a call is the one appointment notice an away period must not
+						# hold: the person may be waiting for it wherever they are.
+						urgent => $live_ring ? 1 : 0,
 						title => $name,
 						dedupe => $note_event,
 					},$dot);
@@ -452,6 +475,10 @@ sub budget_watcher() {
 						# A reading that moved is news too, but only an existing card is
 						# rewritten: the first announcement is still the crossing.
 						my $value_changed = (($cache_budget->{'formatted_value'} // '') ne ($budget->{'formatted_value'} // ''));
+						# An away window is not a falling pace. A paused budget, a measure
+						# with no reading, and a ceiling already at zero have nothing to
+						# announce; the light still moves, so the panel shows the state.
+						my $vacation_hold = ($budget->{'paused'} || $budget->{'no_data'} || $budget->{'vacation_zero'}) ? 1 : 0;
 						if ($status_changed) {
 							my $websockets = &subs::db_query('select * from websockets where app = ? and windows like ? and server_time > ? and windows is not null order by timestamp DESC',
 								'tab', '%app":"' . $app . '%', $server_time - 5000)->hashes;
@@ -468,8 +495,8 @@ sub budget_watcher() {
 								&Manager::centre_view_grabber({ app => &subs::unformat_name($app), timestamp => &subs::rightNow(), cached => 'no' });
 							}
 						}
-						if ($status_changed || $value_changed) {
-							my $message = &subs::format_name($app) . ' is ' . $budget->{'status'} . ' for ' . $circumstance . ': ' . $budget->{'formatted_value'} . '/' . $budget->{'formatted_budgeted'};
+						if (($status_changed || $value_changed) && !$vacation_hold) {
+							my $message = &subs::format_name($app) . ' is ' . $budget->{'status'} . ' for ' . $circumstance . ': ' . $budget->{'formatted_value'} . '/' . ($budget->{'formatted_target'} || $budget->{'formatted_budgeted'});
 							my $status_key = $budget->{'status'} || '';
 							$status_key = lc $status_key;
 							$status_key =~ s/[^a-z0-9]+/_/g;
@@ -530,6 +557,10 @@ sub budget_watcher() {
 # its vendors (or there is no fix at all), remind it to check out. At most once
 # every six hours, cleared the moment the cart is emptied.
 sub market_cart_watcher() {
+	# A cart is a place the person is standing in. Away from the house there is
+	# no cart to go back to, and the reminder is noise on a phone in another
+	# country.
+	return 0 if eval { &subs::vacation_active(&subs::rightNow()) };
 	my $gate = &subs::setting_grabber({ app => 'market', setting => 'cart_reminder', device => 'all' });
 	return 0 if defined $gate && $gate eq 'off';
 	my $cart = [ grep { $_->{'cart'} } @{ &Manager::market_list() } ];

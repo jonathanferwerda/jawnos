@@ -980,16 +980,23 @@ sub accounting_runway_steps {
 	# the projection on top of the pace.
 	my $pace_from = defined $args->{'pace_from'} ? $args->{'pace_from'} + 0 : $edges->[0];
 	$pace_from = $now - 1 if $pace_from >= $now;
-	my $estimate_days = ($now - $pace_from) / 86400000;
+	# An away span is not the house's normal burn. The money spent on the trip is
+	# already in the balance; the projection should learn the life the house will
+	# return to, so the away days and their transactions are left out of the pace.
+	my $pace_away = &subs::vacation_overlap($pace_from, $now);
+	my $pace_active_ms = ($now - $pace_from) - $pace_away;
+	$pace_active_ms = 0 if $pace_active_ms < 0;
+	my $estimate_days = $pace_active_ms / 86400000;
 	my $window_net = 0;
 	my $window_rows = 0;
 	foreach my $m ( @{$moves} ) {
 		my $ts = ($m->{'timestamp'} || 0) + 0;
 		next unless $ts > $pace_from && $ts <= $now;
+		next if eval { &subs::vacation_active($ts) };
 		$window_net += ($m->{'total'} || 0) + 0;
 		$window_rows++;
 	}
-	my $rate = ($now > $pace_from) ? ($window_net / ($now - $pace_from)) : 0;
+	my $rate = $pace_active_ms > 0 ? ($window_net / $pace_active_ms) : 0;
 	my $has_history = $window_rows ? 1 : 0;
 	my $current = $buckets[$current_index];
 	my $current_days = ($current->{'end'} - $current->{'start'}) / 86400000;
@@ -1048,6 +1055,7 @@ sub accounting_runway_steps {
 		pace_per_day => $rate * 86400000,
 		estimate_from => $pace_from,
 		estimate_days => $estimate_days,
+		away_days => ($pace_away / 86400000),
 		has_history => $has_history,
 		planned_total => $planned_total,
 		bills_total => $bills_total,

@@ -25,6 +25,9 @@ sub routes {
 	[19400, 'post', '/manager/configure/where_audit/run', 'action_19400'],
 	[19411, 'get', '/manager/configure/balance_period', 'action_19411'],
 	[19422, 'post', '/manager/configure/utility_controller/peer', 'action_19422'],
+	[60001, 'post', '/manager/vacation/start', 'action_60001'],
+	[60002, 'post', '/manager/vacation/end', 'action_60002'],
+	[60003, 'post', '/manager/vacation/cancel', 'action_60003'],
 	);
 }
 
