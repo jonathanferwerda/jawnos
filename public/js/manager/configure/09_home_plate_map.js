@@ -398,9 +398,17 @@ function homePlateLoadGround(st) {
 	var apply = function(g) {
 		if (!st.map) { return; }
 		st.ground = g || {};
-		var provider = (g && g.provider) || 'osm';
-		if (provider === 'none' || provider === 'custom' || provider === 'lambton') { provider = 'osm'; }
+		// Travel may be set to None (the person chose to see no basemap there),
+		// and the editor inherits that setting. A plate cannot be drawn on
+		// nothing, so None here means the house's own vector map - local, and no
+		// tile service to reach - or OSM when the chart is not installed. The
+		// dropdown is told which one is drawn, so it never claims None.
+		var provider = (g && g.provider) || 'none';
+		if (provider === 'none' || provider === 'custom' || provider === 'lambton') {
+			provider = homePlateBasemapReady() ? 'house' : 'osm';
+		}
 		if (provider === 'house' && typeof window.travelBasemapLoad !== 'function') { provider = 'osm'; }
+		st.ground.provider = provider;
 		st.map.setProvider(provider, (g && g.custom_url) || '', (g && g.keys) || {});
 		st.map.setMaps((g && g.maps) || []);
 		homePlateBuildProvider(st);

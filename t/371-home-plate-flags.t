@@ -74,6 +74,8 @@ like( $editor, qr/function homePlateBasemapReady/, 'the editor knows when that l
 like( $editor, qr/jawnosLoadApp\('travel'/, 'a Configure page asks for the lazy travel chunk instead of drawing a blank map' );
 like( $editor, qr/!st\.basemapAsked/, 'and asks only once per editor' );
 like( $editor, qr/st\.basemapPending/, 'a second init waits for the chunk instead of drawing the fallback' );
+like( $editor, qr/provider = homePlateBasemapReady\(\) \? 'house' : 'osm'/, 'a ground of None still gives the editor the house map' );
+like( $editor, qr/st\.ground\.provider = provider/, 'and the dropdown shows what is actually drawn' );
 like( $editor, qr/setTimeout\(build, 10000\)/, 'a chunk that never arrives still builds the map' );
 
 # ----------------------------------------------------------- the card handlers
