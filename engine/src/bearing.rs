@@ -105,7 +105,7 @@ pub const DEFAULT_JITTER_FRAMES: usize = 8 * MAX_FRAMES_PER_DATAGRAM;
 /// about 10.7 ms at 48 kHz. A frame is only declared lost when its whole span
 /// ended this far before the caller's master clock, so a datagram still in
 /// flight (or merely late) is never concealed out from under the network.
-pub const DEADLINE_GUARD_FRAMES: usize = MAX_FRAMES_PER_DATAGRAM;
+pub const DEADLINE_GUARD_FRAMES: usize = 4 * MAX_FRAMES_PER_DATAGRAM;
 
 /// The default resampler input budget. A caller that feeds bigger blocks at a
 /// time should use [`LinearResampler::with_capacity`].

@@ -99,6 +99,14 @@ impl std::fmt::Debug for ValidatedSend {
     }
 }
 
+/// Probes the fit needs before its drift is trusted: one second at the 10 ms
+/// probe interval.
+pub const FIT_MIN_PROBES: u64 = 100;
+
+/// The smallest estimator window a take's converter uses: 60 s of probes, so
+/// the fitted drift is a long-baseline measurement rather than a noisy rate.
+pub const SENDER_FIT_WINDOW: usize = 6_000;
+
 /// Read and check a send request.
 ///
 /// Everything that makes a run impossible *before* a socket opens lives here,
@@ -408,7 +416,13 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
         .map_err(|error| format!("send-take timeout: {error}"))?;
 
     let mut probe = ClockPeer::new(config.key);
-    let mut estimator = ClockEstimator::with_capacity(config.window, config.rate);
+    // A take is minutes long, so its converter needs a drift that is measured
+    // over a baseline worth tens of seconds, not the clock probe's 640 ms. The
+    // caller's `--window` still wins when it is larger.
+    let mut estimator = ClockEstimator::with_capacity(
+        config.window.max(SENDER_FIT_WINDOW),
+        config.rate,
+    );
     // The first pong is already a one-point offset. The least-squares fit needs
     // `MIN_SAMPLES`, and on a long-lived master its offset is the master's uptime
     // minus this process's, far larger than the receiver's jitter window: using
@@ -505,7 +519,15 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
             Err(error) if quiet_io(error.kind()) => {}
             Err(error) => return Err(format!("send-take receive: {error}")),
         }
-        sender.set_estimate(estimator.estimate().or(provisional));
+        // A slope fitted to a handful of noisy round trips can be thousands of ppm
+    // out, which stretches the take by percents. Until the fit has a second of
+    // probes, the one-point offset with drift 0 is the better model.
+    let fitted = if estimator.kept() >= FIT_MIN_PROBES {
+        estimator.estimate()
+    } else {
+        None
+    };
+    sender.set_estimate(fitted.or(provisional));
 
         // No pong yet means no position on the master's timeline. Sending the
         // take stamped at local zero would land it where the master is not, and
