@@ -136,7 +136,8 @@ pub struct UplinkStatus {
     pub bind: String,
     /// Why the bind failed, when `state` is `error`. Empty otherwise.
     pub error: String,
-    /// WELCOMEs issued, each of which (re)built every source's receiver.
+    /// Sessions issued (a retried HELLO for the session already attached does
+    /// not count). A new session rebuilds every source's receiver.
     pub sessions: u64,
     /// Datagrams dropped before they reached a source: an unknown stream, a
     /// failed tag/session check, a malformed header or a stereo payload.
@@ -202,6 +203,10 @@ pub struct UplinkSource {
     producer: Producer,
     /// `None` until a WELCOME issues a session.
     receiver: Option<AudioReceiver>,
+    /// The session the current receiver belongs to. A retried HELLO gets the
+    /// same session back, and its WELCOME must not replace the receiver that is
+    /// already filling with audio.
+    session: Option<u32>,
     /// Reused conversion buffers; a wake allocates nothing.
     pull_i16: Vec<i16>,
     pull_f32: Vec<f32>,
@@ -228,6 +233,7 @@ impl UplinkSource {
             stream,
             producer,
             receiver: None,
+            session: None,
             pull_i16: vec![0; PULL_MAX_FRAMES],
             pull_f32: vec![0.0; PULL_MAX_FRAMES * 2],
             past: RecvCounters::default(),
@@ -249,12 +255,22 @@ impl UplinkSource {
     /// A WELCOME issued `session`: rebuild the receiver with it. Any audio
     /// buffered for the old session belongs to a dead timeline and is dropped.
     ///
+    /// A WELCOME for the session already attached is a retried handshake, not a
+    /// new one: it returns `false` and keeps the receiver, its buffered audio
+    /// and its pull cursor. Rebuilding on every retry would throw away the
+    /// jitter window and make the next pull conceal the whole outage, which is
+    /// what a Wi-Fi handshake (several HELLOs before one WELCOME is read) looked
+    /// like from the master.
+    ///
     /// The receiver is replaced, its counters are not: the outgoing one's
     /// counters are folded into `past` first, so [`counters`](Self::counters)
     /// keeps the sum across a re-handshake. The last pull report is kept too
     /// (see the `last` field): the master clock is the same one either side of
-    /// the rebuild.
-    pub fn attach_session(&mut self, key: [u8; 32], session: u32) {
+    /// the rebuild. Returns true when a new session took the receiver.
+    pub fn attach_session(&mut self, key: [u8; 32], session: u32) -> bool {
+        if self.session == Some(session) && self.receiver.is_some() {
+            return false;
+        }
         if let Some(receiver) = self.receiver.take() {
             self.past = add_counters(self.past, receiver.counters());
         }
@@ -266,6 +282,8 @@ impl UplinkSource {
             DEFAULT_JITTER_FRAMES,
         )
         .ok();
+        self.session = self.receiver.is_some().then_some(session);
+        true
     }
 
     /// Whether a session has been issued and a receiver exists.
@@ -602,12 +620,18 @@ fn dispatch(
                 return;
             }
             // A WELCOME issued a session. One audio session at a time: every
-            // source's receiver is rebuilt with the new id. Two peers need a
-            // peer id in the stream or a session map before this can grow.
+            // source's receiver is rebuilt when the id changes. A retried HELLO
+            // gets the same id back, so it is neither counted as a new session
+            // nor allowed to discard the audio already buffered for it. Two
+            // peers need a peer id in the stream or a session map before this
+            // can grow.
             if let Ok(welcome) = peer::decode_welcome(&reply[..length], key) {
-                *sessions += 1;
+                let mut changed = false;
                 for source in sources.iter_mut() {
-                    source.attach_session(*key, welcome.session);
+                    changed |= source.attach_session(*key, welcome.session);
+                }
+                if changed {
+                    *sessions += 1;
                 }
             }
         }

@@ -1086,6 +1086,19 @@ impl ClockEstimator {
         self.accepted
     }
 
+    /// Local samples between the oldest and newest retained probe. A fitted
+    /// slope is only as good as the baseline it spans: a burst of probes inside
+    /// one second can report thousands of ppm, so a caller that needs a real
+    /// drift reads this before trusting [`estimate`](Self::estimate).
+    pub fn span_samples(&self) -> u64 {
+        match (self.samples.front(), self.samples.back()) {
+            (Some(first), Some(last)) => {
+                (last.local_midpoint() - first.local_midpoint()).max(0.0).round() as u64
+            }
+            _ => 0,
+        }
+    }
+
     /// Total probes rejected as high-RTT outliers.
     pub fn dropped(&self) -> u64 {
         self.dropped

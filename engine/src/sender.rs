@@ -103,9 +103,24 @@ impl std::fmt::Debug for ValidatedSend {
 /// probe interval.
 pub const FIT_MIN_PROBES: u64 = 100;
 
-/// The smallest estimator window a take's converter uses: 60 s of probes, so
+/// The smallest estimator span a take's converter trusts: one minute of probes,
+/// so a fitted drift is a long-baseline measurement rather than a noisy rate
+/// over a short take. Under it the sender keeps the one-point offset, drift 0.
+pub const SENDER_FIT_MIN_SPAN_SECONDS: u64 = 60;
+
+/// The smallest estimator window a take's converter keeps: 60 s of probes, so
 /// the fitted drift is a long-baseline measurement rather than a noisy rate.
 pub const SENDER_FIT_WINDOW: usize = 6_000;
+
+/// Whether the estimator has enough probes over a long enough baseline for its
+/// slope to drive the converter. A probe count alone is not enough: 100 probes
+/// at the 10 ms interval span one second, and a slope fitted to that burst can
+/// report thousands of ppm on a three-second take.
+fn drift_is_trusted(estimator: &ClockEstimator, rate: u32) -> bool {
+    estimator.kept() >= FIT_MIN_PROBES
+        && estimator.span_samples()
+            >= u64::from(rate).saturating_mul(SENDER_FIT_MIN_SPAN_SECONDS)
+}
 
 /// Read and check a send request.
 ///
@@ -548,9 +563,13 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
         }
         // A slope fitted to a handful of noisy round trips can be thousands of
         // ppm out, which stretches the take by percents. Until the fit has a
-        // second of probes, the one-point offset with drift 0 is the better
-        // model.
-        let fitted = if estimator.kept() >= FIT_MIN_PROBES {
+        // second of probes AND a minute of span, the one-point offset with drift
+        // 0 is the better model: 100 probes at 10 ms span one second, and a 3 s
+        // take would otherwise report a rate of -400 to -1300 ppm.
+        let fitted = if estimator.kept() >= FIT_MIN_PROBES
+            && estimator.span_samples()
+                >= u64::from(config.rate).saturating_mul(SENDER_FIT_MIN_SPAN_SECONDS)
+        {
             estimator.estimate()
         } else {
             None
@@ -569,7 +588,9 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
         sent,
         frames,
         handshakes,
-        estimator.estimate(),
+        // The model the take actually used, not the raw fit: a short take keeps
+        // drift 0, and its report must say so.
+        sender.estimate(),
     ))
 }
 
@@ -628,4 +649,43 @@ fn quiet_io(kind: ErrorKind) -> bool {
             | ErrorKind::ConnectionRefused
             | ErrorKind::ConnectionReset
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn probe(local: u64) -> ProbeSample {
+        ProbeSample {
+            local_send: local,
+            local_recv: local + 48,
+            master_recv: local + 500,
+            master_send: local + 548,
+            rtt_samples: 48,
+        }
+    }
+
+    #[test]
+    fn a_short_take_does_not_trust_a_fitted_drift() {
+        // 100 probes at the 10 ms interval: enough samples, one second of baseline.
+        let mut estimator = ClockEstimator::with_capacity(256, 48_000);
+        for index in 0..FIT_MIN_PROBES {
+            estimator.push(probe(index * 480));
+        }
+        assert_eq!(estimator.kept(), FIT_MIN_PROBES);
+        assert!(
+            !drift_is_trusted(&estimator, 48_000),
+            "one second is not a minute"
+        );
+
+        // The same count spread over 99 s is a baseline a slope can be read from.
+        let mut estimator = ClockEstimator::with_capacity(256, 48_000);
+        for index in 0..FIT_MIN_PROBES {
+            estimator.push(probe(index * 48_000));
+        }
+        assert!(
+            drift_is_trusted(&estimator, 48_000),
+            "99 s is a long enough baseline"
+        );
+    }
 }

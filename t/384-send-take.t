@@ -59,6 +59,10 @@ like( $sender, qr/\.hello\(/, 'a HELLO opens the session' );
 like( $sender, qr/accept_welcome\(/, 'only a WELCOME issues a session' );
 like( $sender, qr/CLOCK_SESSION/, 'no session means no audio' );
 like( $sender, qr/ClockEstimator::with_capacity/, 'one estimator keeps the fit fresh' );
+like( $sender, qr/fn drift_is_trusted/, 'a fitted drift waits for a long baseline' );
+like( $sender, qr/SENDER_FIT_MIN_SPAN_SECONDS/, 'the baseline is a minute, not just 100 probes' );
+like( $sender, qr/fn a_short_take_does_not_trust_a_fitted_drift/,
+	'a short take keeps drift 0 and says so' );
 like( $sender, qr/\.ping\(/, 'a CLOCK_PING goes out every loop' );
 like( $sender, qr/ProbeSample::from_pong/, 'the pong becomes an estimator point' );
 like( $sender, qr/AudioBearer::new\(config\.key, session\)/, 'the bearer signs with the same key and session' );

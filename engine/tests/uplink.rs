@@ -190,6 +190,43 @@ fn a_rehandshake_keeps_the_counters() {
 }
 
 #[test]
+fn a_retried_welcome_keeps_the_buffered_audio() {
+    let session_key = key(0x78);
+    let (producer, _consumer) = monbus::new(monbus::MIN_FRAMES);
+    let mut source =
+        UplinkSource::new(0, "phone".to_string(), producer).expect("source");
+    assert!(
+        source.attach_session(session_key, 7),
+        "the first session builds the receiver"
+    );
+    assert!(
+        !source.attach_session(session_key, 7),
+        "the same session is a retried handshake, not a rebuild"
+    );
+
+    // Two blocks arrive; the first is pulled, the second stays buffered.
+    let frames = signal(960);
+    let mut bearer = AudioBearer::new(session_key, 7);
+    for (index, chunk) in frames.chunks(480).enumerate() {
+        for datagram in datagrams(&mut bearer, source.stream(), chunk, (index * 480) as u64) {
+            source.accept(&datagram).expect("accepted");
+        }
+    }
+    assert_eq!(source.pump(PULL_FRAMES, 0).expect("pull").frames, 480);
+
+    // A WELCOME for the same session arrives while the second block waits. A
+    // rebuild would discard it and the next pull would conceal the hole.
+    assert!(!source.attach_session(session_key, 7));
+    let report = source.pump(PULL_FRAMES, 960).expect("pull");
+    assert_eq!(report.frames, 480);
+    assert_eq!(report.concealed_frames, 0, "{report:?}");
+    assert_eq!(source.status().received, 2);
+
+    // A genuinely new session is still a rebuild.
+    assert!(source.attach_session(session_key, 8));
+}
+
+#[test]
 fn two_real_sockets_carry_a_peer_block() {
     let session_key = key(0x55);
     let status = Arc::new(Mutex::new(UplinkStatus::idle()));

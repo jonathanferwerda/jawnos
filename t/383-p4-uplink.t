@@ -60,6 +60,7 @@ like( $uplink, qr/is_audio_stream\(stream\)/, 'an audio stream must be in the re
 like( $uplink, qr/ClockMaster::new/, 'the thread owns a clock master with the key' );
 like( $uplink, qr/decode_welcome/, 'a WELCOME names the session' );
 like( $uplink, qr/source\.attach_session\(/, 'a session rebuilds every source receiver' );
+like( $uplink, qr/self\.session == Some\(session\)/, 'a WELCOME for the attached session is a retry, not a rebuild' );
 like( $uplink, qr/past: RecvCounters/, 'a rebuilt receiver leaves its totals in a baseline' );
 like( $uplink, qr/fn add_counters/, 'the totals are summed field by field' );
 like( $uplink, qr/self\.past = add_counters/, 'a new session folds the outgoing receiver in' );
@@ -127,6 +128,8 @@ like( $tests, qr/fn a_lost_tail_is_concealed_and_visible_in_the_counters/, 'the 
 like( $tests, qr/fn two_real_sockets_carry_a_peer_block/, 'two real sockets are tested' );
 like( $tests, qr/fn an_audio_stream_with_no_peer_source_is_counted_not_mixed/, 'an unmapped stream is tested' );
 like( $tests, qr/fn a_rehandshake_keeps_the_counters/, 'the totals survive a re-handshake' );
+like( $tests, qr/fn a_retried_welcome_keeps_the_buffered_audio/,
+	'a retried WELCOME keeps the buffered audio' );
 like( $tests, qr/UdpSocket::bind\("127\.0\.0\.1:0"\)/, 'the loopback test uses an ephemeral port' );
 like( $patch, qr/fn a_peer_source_is_pending_not_silent/, 'the patchbay peer state is tested' );
 like( $patch, qr/fn a_peer_ring_mixes_like_a_parec_input/, 'the peer mix is tested' );

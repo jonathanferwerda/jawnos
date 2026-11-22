@@ -791,6 +791,10 @@ converter. It sends nothing until the first pong gives it a position, and the fi
 bridges the gap while the fit is one point. A live take is still a file: device capture feeding the
 same loop (while writing the take locally first, D14) is next.
 
+**The drift gate:** a short take keeps drift 0. The fit is used only after 100 probes over a minute
+of span, and the report prints the model the take actually used; before that a 3 s take could report
+-400 to -1300 ppm from a one-second burst and stretch the audio by percent.
+
 **The house side (2026-11-21, in the tree):** Sound owns the uplink address (`sound|audio_uplink`,
 empty off) and a generated session key that is never displayed; the boot file carries both while a
 `peer` source on this machine has an uplink, and the supervisor passes `--uplink` with the key in the
@@ -807,6 +811,12 @@ stereo block of its own, like the handset's, and mixed in `render` through the s
 but the replaced receiver's counters are folded into a running baseline before it goes, so `status`
 no longer reads `received: 0` after a peer's periodic quiet-spell re-handshake. The last pull report
 is kept too: `last_master` names a position on the one master clock.
+
+**A retried handshake is not a new session (2026-11-21, in the tree):** the master already answers a
+retried HELLO with the session it issued; the uplink now recognises that session and keeps its
+receiver, buffer and cursor. On Wi-Fi a 3 s take produced 24 WELCOMEs while the sender waited for the
+first reply; each one used to discard the jitter window, and the master reported ~14 s of concealed
+frames for 3 s of audio. The session count now counts sessions, not WELCOMEs.
 
 **Still to come:** the peer's live capture, a peer id in the stream so more than one peer can join,
 and each input's declared latency.
