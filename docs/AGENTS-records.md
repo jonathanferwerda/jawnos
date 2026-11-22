@@ -16,6 +16,18 @@ Read this before repairing appointments or restoring a database.
   source's stale rows, and review `tickets`, `backups` and `tunnels` for the source's paths. The
   missing-self-row scan bug is fixed in v0.1.1006; the identity repair is still manual.
 
+## A backfill re-stamped server_time
+
+- **A sync band is a server_time range; one bad write can collapse it.** On 2026-11-21 the settings
+  backfill that matched every row also re-stamped 41k appointments to two server_time values, so the
+  current week's band held 42k rows and every change read it again. `perl
+  scripts/appointments_time_repair.pl` is a dry run by default; `--apply --backup <older snapshot>`
+  restores only server_time, for rows whose every other column still matches the snapshot, and refuses
+  to guess without an older snapshot and a fresh safety snapshot. `--window-start <ms>` names the
+  incident's first stamp when the automatic burst is ambiguous. **Run it on every machine in the same
+  window**: the merge keeps the newer server_time, so an un-repaired peer puts the incident stamp back.
+  The settings half of the same incident is `scripts/settings_time_repair.pl`.
+
 ## SMS direction in the mailbox
 
 - **A phone row's status is its direction.** `scripts/mail_direction_repair.pl` reads the type the
