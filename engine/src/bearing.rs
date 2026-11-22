@@ -395,6 +395,9 @@ pub struct AudioReceiver {
     valid: Vec<bool>,
     started: bool,
     next_master: u64,
+    /// The first placed datagram's start, i.e. where this session's timeline
+    /// begins on the master clock. Zero until audio arrives.
+    first_master: u64,
     highest_start: Option<u64>,
     /// A hole is being concealed but its first real frame has not been read.
     after_gap: bool,
@@ -430,6 +433,7 @@ impl AudioReceiver {
             valid: vec![false; window_frames],
             started: false,
             next_master: 0,
+            first_master: 0,
             highest_start: None,
             after_gap: false,
             counters: RecvCounters::default(),
@@ -444,6 +448,16 @@ impl AudioReceiver {
     /// The next master position `pull` will return.
     pub fn next_master(&self) -> u64 {
         self.next_master
+    }
+
+    /// The first placed datagram's start, or zero before audio arrives.
+    pub fn first_master(&self) -> u64 {
+        self.first_master
+    }
+
+    /// Whether any audio has been placed yet.
+    pub fn started(&self) -> bool {
+        self.started
     }
 
     /// The jitter window, in frames.
@@ -518,6 +532,7 @@ impl AudioReceiver {
         if !self.started {
             self.started = true;
             self.next_master = start;
+            self.first_master = start;
         }
 
         if end <= self.next_master {
@@ -591,7 +606,7 @@ impl AudioReceiver {
     /// guessing: a gap is only concealed once later audio proves it is a hole.
     /// [`AudioReceiver::pull_at`] is the same read with a leading-edge deadline.
     pub fn pull(&mut self, out: &mut [i16], frames: usize) -> PullReport {
-        self.pull_with_deadline(out, frames, None)
+        self.pull_with_deadline(out, frames, None, None)
     }
 
     /// Read up to `frames` contiguous master-time frames, concealing a tail
@@ -612,7 +627,22 @@ impl AudioReceiver {
     /// [`Accepted::Late`] by [`AudioReceiver::accept`]; the read cursor never
     /// moves backwards.
     pub fn pull_at(&mut self, out: &mut [i16], frames: usize, now_master: i64) -> PullReport {
-        self.pull_with_deadline(out, frames, deadline_after(now_master))
+        self.pull_with_deadline(out, frames, deadline_after(now_master), None)
+    }
+
+    /// Read up to `frames` contiguous master-time frames but never past
+    /// `head_master`, concealing a hole up to that head.
+    ///
+    /// This is the jitter-buffer read. A caller that keeps `head_master` behind
+    /// its clock by the buffer depth gives every datagram that many frames to
+    /// arrive: a delayed or reordered datagram whose span is still ahead of the
+    /// head is placed before the cursor reaches it, instead of being refused as
+    /// [`Accepted::Late`] after the cursor has already read past it. Frames
+    /// missing at the head are genuinely due and are concealed; the guard in
+    /// [`AudioReceiver::pull_at`] is unnecessary here because the buffer itself
+    /// already holds the slack.
+    pub fn pull_to(&mut self, out: &mut [i16], frames: usize, head_master: u64) -> PullReport {
+        self.pull_with_deadline(out, frames, Some(head_master), Some(head_master))
     }
 
     fn pull_with_deadline(
@@ -620,8 +650,10 @@ impl AudioReceiver {
         out: &mut [i16],
         frames: usize,
         deadline: Option<u64>,
+        stop: Option<u64>,
     ) -> PullReport {
         let capacity = frames.min(out.len() / self.channels as usize);
+        let stop_at = stop.unwrap_or(u64::MAX);
         let first = self.next_master;
         let mut written = 0usize;
         let mut concealed = 0usize;
@@ -632,6 +664,9 @@ impl AudioReceiver {
             let window = self.window_frames as u64;
             while written < capacity {
                 let position = self.next_master;
+                if position >= stop_at {
+                    break;
+                }
                 let slot = self.slot(position);
                 if self.valid[slot] {
                     let source = slot * self.channels as usize;
@@ -665,13 +700,13 @@ impl AudioReceiver {
                     probe += 1;
                 }
                 let hole_end = match next_valid {
-                    Some(hole_end) => hole_end,
+                    Some(hole_end) => hole_end.min(stop_at),
                     None => {
                         // No later audio proves the hole. Conceal the prefix
                         // whose whole span is older than the deadline (never
                         // past the bounded window, never past the block).
                         let Some(deadline) = deadline else { break };
-                        let end = limit.min(deadline);
+                        let end = limit.min(deadline).min(stop_at);
                         if end <= position {
                             break;
                         }

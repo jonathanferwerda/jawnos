@@ -71,7 +71,10 @@ like( $uplink, qr/One session at a time|One audio session at a time/,
 # --- pacing and the ring ----------------------------------------------------
 like( $uplink, qr/PULL_FRAMES:\s*usize\s*=\s*480/, 'a wake pulls one 10 ms block' );
 like( $uplink, qr/PULL_INTERVAL_MS:\s*u64\s*=\s*10/, 'the thread wakes every 10 ms' );
+like( $uplink, qr/PULL_BUFFER_FRAMES/, 'the read cursor trails the clock by a jitter buffer' );
 like( $uplink, qr/pull_at\(/, 'the pull has a leading-edge deadline' );
+like( $uplink, qr/pull_to\(/, 'the paced read never passes the playback head' );
+like( $uplink, qr/\bsource\.pump_to\(/, 'the thread pulls to the playback head' );
 like( $uplink, qr/InstantClock::new/, 'one InstantClock is shared with the clock master' );
 like( $uplink, qr/DEFAULT_JITTER_FRAMES/, 'the receiver uses the bearer jitter window' );
 like( $uplink, qr/\.push\(&self\.pull_f32/, 'the block goes into a lock-free ring' );
@@ -96,6 +99,8 @@ like( $uplink, qr/\\"late\\"/, 'each source reports late datagrams' );
 like( $uplink, qr/\\"concealed\\"/, 'each source reports concealed frames' );
 like( $uplink, qr/\\"dropped\\"/, 'each source reports ring drops' );
 like( $uplink, qr/\\"last_master\\"/, 'each source reports the last master position' );
+like( $uplink, qr/\\"next_master\\"/, 'each source reports the next pull position' );
+like( $uplink, qr/\\"first_master\\"/, 'each source reports where the timeline starts' );
 like( $uplink, qr/\\"from_deadline\\"/, 'each source reports deadline concealment' );
 
 # --- the server wires it and keeps every existing key -----------------------
@@ -130,6 +135,8 @@ like( $tests, qr/fn an_audio_stream_with_no_peer_source_is_counted_not_mixed/, '
 like( $tests, qr/fn a_rehandshake_keeps_the_counters/, 'the totals survive a re-handshake' );
 like( $tests, qr/fn a_retried_welcome_keeps_the_buffered_audio/,
 	'a retried WELCOME keeps the buffered audio' );
+like( $tests, qr/fn a_datagram_delayed_inside_the_buffer_is_placed_not_late/,
+	'a delayed datagram inside the buffer is placed, not refused' );
 like( $tests, qr/UdpSocket::bind\("127\.0\.0\.1:0"\)/, 'the loopback test uses an ephemeral port' );
 like( $patch, qr/fn a_peer_source_is_pending_not_silent/, 'the patchbay peer state is tested' );
 like( $patch, qr/fn a_peer_ring_mixes_like_a_parec_input/, 'the peer mix is tested' );

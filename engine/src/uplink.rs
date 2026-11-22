@@ -35,12 +35,16 @@
 //!
 //! # Pacing
 //!
-//! The thread wakes every [`PULL_INTERVAL_MS`] and pulls the frames the clock advanced
-//! per source with [`AudioReceiver::pull_at`] against one process-wide
-//! [`InstantClock`] shared with the [`ClockMaster`]. That matters: the fitted
-//! `master_sample` a peer stamps its datagrams with is this clock's domain, so
-//! the leading-edge deadline turns a lost tail into silence at the right
-//! moment. A full ring counts the frames the producer dropped.
+//! The thread reads a playback head that trails the master clock by
+//! [`PULL_BUFFER_FRAMES`], a real jitter buffer. It wakes every
+//! [`PULL_INTERVAL_MS`] and pulls, per source, the frames the cursor is behind
+//! that head by, never past it, with [`AudioReceiver::pull_to`]. One process-wide
+//! [`InstantClock`] is shared with the [`ClockMaster`], so the fitted
+//! `master_sample` a peer stamps its datagrams with and the head are the same
+//! domain. Because the head never reaches a position until a datagram stamped
+//! there has had the buffer's frames to arrive, a delayed or reordered datagram
+//! is placed before its position is due instead of being refused as already
+//! read. A full ring counts the frames the producer dropped.
 //!
 //! No key is ever logged or put in status.
 
@@ -72,6 +76,26 @@ pub const PULL_MAX_FRAMES: usize = 4 * PULL_FRAMES;
 /// How long the uplink thread sleeps between drains and pulls.
 pub const PULL_INTERVAL_MS: u64 = 10;
 
+/// How far behind the master clock the read cursor runs: a real jitter buffer.
+///
+/// The cursor never reads a position newer than `now - PULL_BUFFER_FRAMES`, so
+/// a datagram delayed or reordered by up to this much slack is placed when it
+/// arrives rather than lost because the cursor already read past it.
+///
+/// It is two jitter windows, not one. The sender stamps a block at the start of
+/// the interval its clock advanced, so the newest block's start is already a
+/// block plus a network hop behind the master clock (the measured pipeline is
+/// ~73 ms on the house LAN); a one-window buffer leaves only ~12 ms of real
+/// slack, and an ordinary reorder exceeds it. Two windows leave the
+/// jitter window itself as slack after the pipeline is paid.
+pub const PULL_BUFFER_FRAMES: usize = 2 * DEFAULT_JITTER_FRAMES;
+
+/// The receiver window the uplink allocates: twice the read buffer, which is
+/// the buffer plus room for the newer datagrams a burst may carry ahead of the
+/// cursor (a stalled wake may hand the sender a burst of up to
+/// [`PULL_MAX_FRAMES`]).
+pub const PULL_WINDOW_FRAMES: usize = 4 * DEFAULT_JITTER_FRAMES;
+
 /// Where the uplink listens and the key every datagram is authenticated with.
 /// It has no `Debug` derivation on purpose: the key must never reach a log line
 /// or a status object.
@@ -102,6 +126,13 @@ pub struct UplinkSourceStatus {
     pub dropped: u64,
     /// The master position of the last pulled block.
     pub last_master: u64,
+    /// The next master position the receiver will pull. Read with `first_master`
+    /// and the clock it tells whether the read cursor has run ahead of the
+    /// datagrams that are still arriving.
+    pub next_master: u64,
+    /// The first placed datagram's start: where this session's timeline begins
+    /// on the master clock. Zero before audio arrives.
+    pub first_master: u64,
     /// The last pull concealed frames because of the deadline, not because a
     /// later datagram proved a hole.
     pub from_deadline: bool,
@@ -110,7 +141,7 @@ pub struct UplinkSourceStatus {
 impl UplinkSourceStatus {
     fn json(&self) -> String {
         format!(
-            "{{\"index\":{},\"id\":\"{}\",\"received\":{},\"late\":{},\"concealed\":{},\"dropped\":{},\"last_master\":{},\"from_deadline\":{}}}",
+            "{{\"index\":{},\"id\":\"{}\",\"received\":{},\"late\":{},\"concealed\":{},\"dropped\":{},\"last_master\":{},\"next_master\":{},\"first_master\":{},\"from_deadline\":{}}}",
             self.index,
             crate::loopback::json_escape(&self.id),
             self.received,
@@ -118,6 +149,8 @@ impl UplinkSourceStatus {
             self.concealed,
             self.dropped,
             self.last_master,
+            self.next_master,
+            self.first_master,
             self.from_deadline
         )
     }
@@ -279,7 +312,7 @@ impl UplinkSource {
             session,
             self.stream,
             1,
-            DEFAULT_JITTER_FRAMES,
+            PULL_WINDOW_FRAMES,
         )
         .ok();
         self.session = self.receiver.is_some().then_some(session);
@@ -310,11 +343,38 @@ impl UplinkSource {
     /// pull. A full ring is counted in `dropped`, never an error.
     pub fn pump(&mut self, frames: usize, now_master: i64) -> Option<PullReport> {
         let frames = frames.clamp(1, self.pull_i16.len());
-        let receiver = self.receiver.as_mut()?;
-        let report = receiver.pull_at(&mut self.pull_i16, frames, now_master);
+        let report = {
+            let receiver = self.receiver.as_mut()?;
+            receiver.pull_at(&mut self.pull_i16, frames, now_master)
+        };
+        Some(self.deliver(report))
+    }
+
+    /// Pull up to the playback head `head_master`, never past it.
+    ///
+    /// The head trails the master clock by [`PULL_BUFFER_FRAMES`], so this is
+    /// the paced read the uplink thread runs: it asks for exactly the frames the
+    /// cursor is behind the head by (at most [`PULL_MAX_FRAMES`]), and
+    /// [`AudioReceiver::pull_to`] conceals only what is genuinely due at the
+    /// head. `None` means no session exists, audio has not started, or the head
+    /// has not advanced past the cursor.
+    pub fn pump_to(&mut self, head_master: u64) -> Option<PullReport> {
+        let report = {
+            let receiver = self.receiver.as_mut()?;
+            if !receiver.started() || head_master <= receiver.next_master() {
+                return None;
+            }
+            let want = (head_master - receiver.next_master()).min(PULL_MAX_FRAMES as u64) as usize;
+            receiver.pull_to(&mut self.pull_i16, want, head_master)
+        };
+        Some(self.deliver(report))
+    }
+
+    /// Convert a pull report to stereo f32 and push it to the ring.
+    fn deliver(&mut self, report: PullReport) -> PullReport {
         self.last = Some(report);
         if report.frames == 0 {
-            return Some(report);
+            return report;
         }
         for frame in 0..report.frames {
             let sample = f32::from(self.pull_i16[frame]) / 32_768.0;
@@ -325,7 +385,7 @@ impl UplinkSource {
             .producer
             .push(&self.pull_f32[..report.frames * 2]);
         self.dropped += dropped as u64;
-        Some(report)
+        report
     }
 
     /// The counters for every session this source has carried, or zeroes before
@@ -347,6 +407,10 @@ impl UplinkSource {
     /// This source's `status` entry.
     pub fn status(&self) -> UplinkSourceStatus {
         let counters = self.counters();
+        let (next_master, first_master) = match self.receiver.as_ref() {
+            Some(receiver) => (receiver.next_master(), receiver.first_master()),
+            None => (0, 0),
+        };
         UplinkSourceStatus {
             index: self.index,
             id: self.id.clone(),
@@ -355,6 +419,8 @@ impl UplinkSource {
             concealed: counters.concealed_frames,
             dropped: self.dropped,
             last_master: self.last.map_or(0, |report| report.master_sample),
+            next_master,
+            first_master,
             from_deadline: self.last.is_some_and(|report| report.from_deadline),
         }
     }
@@ -496,15 +562,11 @@ fn run_uplink(
     status: Arc<Mutex<UplinkStatus>>,
 ) {
     // One clock for both roles. The master stamps its pongs from it and the
-    // deadline below is read from it, so a peer's fitted master position and
-    // this pull are the same timeline.
+    // playback head below is derived from it, so a peer's fitted master position
+    // and this read are the same timeline.
     let clock = InstantClock::new(rate);
     let mut master = ClockMaster::new(key);
     let mut sessions = 0u64;
-    // The master position the last wake pulled through. Pulls follow the
-    // clock, so a slow wake catches up rather than starving the ring by its
-    // own overhead.
-    let mut pulled_to = clock.now();
     let mut rejected = 0u64;
     let mut buffer = [0u8; MAX_DATAGRAM_LEN];
     let mut reply = [0u8; MAX_DATAGRAM_LEN];
@@ -542,12 +604,14 @@ fn run_uplink(
         }
 
         let now = clock.now();
-        let frames = (now.saturating_sub(pulled_to) as usize).min(PULL_MAX_FRAMES);
-        pulled_to = now;
-        if frames > 0 {
-            for source in &mut sources {
-                source.pump(frames, now as i64);
-            }
+        // Read behind the clock by the jitter buffer. Each source pulls exactly
+        // the frames its cursor is behind this head by, so a wake that could not
+        // fill its block carries the remainder into the next wake instead of
+        // discarding it, and no datagram is read before it has had the buffer's
+        // time to arrive.
+        let head = now.saturating_sub(PULL_BUFFER_FRAMES as u64);
+        for source in &mut sources {
+            source.pump_to(head);
         }
 
         publish(&status, &bound, sessions, rejected, &sources, "running");

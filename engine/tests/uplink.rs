@@ -227,6 +227,62 @@ fn a_retried_welcome_keeps_the_buffered_audio() {
 }
 
 #[test]
+fn a_datagram_delayed_inside_the_buffer_is_placed_not_late() {
+    let session_key = key(0x99);
+    let (producer, consumer) = monbus::new(monbus::MIN_FRAMES);
+    let mut source = UplinkSource::new(0, "phone".to_string(), producer).expect("source");
+    source.attach_session(session_key, 7);
+    let mut bearer = AudioBearer::new(session_key, 7);
+
+    let base = 100_000u64;
+    let signal_all = signal(3 * 480);
+    let block_a = signal_all[..480].to_vec();
+    let block_b = signal_all[480..960].to_vec();
+    let block_c = signal_all[960..].to_vec();
+
+    // A arrives. The playback head is still behind it, so nothing is read.
+    for datagram in datagrams(&mut bearer, source.stream(), &block_a, base) {
+        assert_eq!(source.accept(&datagram), Ok(Accepted::Buffered));
+    }
+    assert!(
+        source.pump_to(base).is_none(),
+        "the head has not reached A yet"
+    );
+
+    // C arrives before B: a reordered datagram, but still inside the window.
+    for datagram in datagrams(&mut bearer, source.stream(), &block_c, base + 960) {
+        assert_eq!(source.accept(&datagram), Ok(Accepted::Buffered));
+    }
+
+    // The head advances one block. Only A is due; C is ahead and is not read,
+    // and the cursor stops exactly at the head instead of jumping to C.
+    let report = source.pump_to(base + 480).expect("a session pulls");
+    assert_eq!(report.frames, 480);
+    assert_eq!(report.concealed_frames, 0, "{report:?}");
+
+    // B arrives late by nearly the whole buffer, before the head reaches it.
+    // The read cursor trails the clock, so B is still ahead of it.
+    for datagram in datagrams(&mut bearer, source.stream(), &block_b, base + 480) {
+        assert!(
+            matches!(source.accept(&datagram), Ok(Accepted::Buffered | Accepted::OutOfOrder)),
+            "a delayed datagram inside the buffer is placed, not refused"
+        );
+    }
+    let report = source.pump_to(base + 960).expect("the head reached B");
+    assert_eq!(report.frames, 480);
+    assert_eq!(report.concealed_frames, 0, "{report:?}");
+    assert_eq!(source.status().late, 0, "nothing was dropped as already read");
+
+    // The ring holds A then B, in order and untouched.
+    let mut out = vec![0.0f32; 960 * 2];
+    assert_eq!(consumer.pop(&mut out), 960);
+    for (index, expected) in block_a.iter().chain(block_b.iter()).enumerate() {
+        let expected = f32::from(*expected) / 32_768.0;
+        assert!((out[index * 2] - expected).abs() < 1e-6, "frame {index}");
+    }
+}
+
+#[test]
 fn two_real_sockets_carry_a_peer_block() {
     let session_key = key(0x55);
     let status = Arc::new(Mutex::new(UplinkStatus::idle()));
@@ -246,6 +302,7 @@ fn two_real_sockets_carry_a_peer_block() {
         }],
     )
     .expect("the uplink binds loopback");
+    let started = Instant::now();
     let address = uplink.local_addr();
     assert_ne!(address.port(), 0);
 
@@ -263,6 +320,10 @@ fn two_real_sockets_carry_a_peer_block() {
 
     let frames = signal(480);
     let mut bearer = AudioBearer::new(session_key, welcome.session);
+    // The read cursor trails the uplink's clock by the jitter buffer, so a
+    // block is placed only once the head reaches it. Stamp it at that clock —
+    // `started` is as close as a socket test can get to the thread's clock.
+    let stamp = (started.elapsed().as_secs_f64() * 48_000.0) as u64;
     bearer
         .send_block(
             &client,
@@ -270,23 +331,28 @@ fn two_real_sockets_carry_a_peer_block() {
             audio_stream(0).expect("stream"),
             1,
             &frames,
-            0,
+            stamp,
         )
         .expect("send audio");
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut out = vec![0.0f32; 480 * 2];
-    let mut got = 0usize;
-    while Instant::now() < deadline && got == 0 {
-        got = consumer.pop(&mut out);
-        if got == 0 {
+    let mut chunk = vec![0.0f32; 480 * 2];
+    let mut collected: Vec<f32> = Vec::new();
+    while Instant::now() < deadline && collected.len() < 480 * 2 {
+        let got = consumer.pop(&mut chunk);
+        if got > 0 {
+            collected.extend_from_slice(&chunk[..got * 2]);
+        } else {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
-    assert_eq!(got, 480, "the peer's block arrived through the real socket");
+    assert!(
+        collected.len() >= 480 * 2,
+        "the peer's block arrived through the real socket"
+    );
     for frame in 0..480 {
         let expected = f32::from(frames[frame]) / 32_768.0;
-        assert!((out[frame * 2] - expected).abs() < 1e-6, "frame {frame}");
+        assert!((collected[frame * 2] - expected).abs() < 1e-6, "frame {frame}");
     }
     assert_eq!(status.lock().expect("status").sessions, 1);
     uplink.stop();
