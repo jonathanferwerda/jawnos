@@ -51,6 +51,8 @@
 #sound .sound_patch_node { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 #sound .sound_patch_node_id { flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; }
 #sound .sound_patch_node_kind { opacity: .78; font-size: 13px; }
+#sound .sound_patch_node_latency { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+#sound .sound_patch_node_latency input[type=number] { width: 76px; }
 #sound .sound_patch_routes { width: 100%; border-collapse: collapse; font-size: 14px; }
 #sound .sound_patch_routes th, #sound .sound_patch_routes td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
 #sound .sound_patch_routes select { max-width: 150px; }

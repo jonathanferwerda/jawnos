@@ -50,6 +50,11 @@ our $audio_plan_gain_max = 1;
 our $audio_plan_pan_min  = -1;
 our $audio_plan_pan_max  = 1;
 
+# The engine refuses a peer source whose declared latency is above 2 000 ms;
+# the bound is a sanity limit, not a placement guarantee. Keep the read path's
+# clamp and the write path's refusal on this one number.
+our $audio_plan_max_peer_latency = 2_000;
+
 # An empty plan is valid and means "nothing routed", which is not the same as
 # "no plan": the engine sees four empty lists and leaves the interface alone
 # until a person draws something. A missing plan is the caller's problem.
@@ -150,7 +155,7 @@ sub audio_plan_on_this_machine {
 # (`id` and `kind`) is the entry; a missing rate or channel count is an older
 # declaration, so it takes the default rather than removing the node.
 sub _audio_plan_node {
-	my ($entry, $id, $kind) = @_;
+	my ($entry, $id, $kind, $type) = @_;
 	my $label = _audio_plan_text($entry->{label});
 	$label = $id unless defined $label;
 	# Which device channel the node binds to on the machine that runs it: an
@@ -166,6 +171,13 @@ sub _audio_plan_node {
 	# would be a command option rather than a source.
 	my $node = _audio_plan_text($entry->{node});
 	$node = undef unless defined $node && $kind eq 'input' && audio_plan_node_valid($node);
+	# A peer's placement is bounded by what the engine accepts: the non-negative
+	# rule below, plus the engine's sanity limit. A local input keeps the whole
+	# non-negative range; the engine does not place that declaration on this path.
+	my $latency = _audio_plan_nonnegative($entry->{latency_ms}, 0);
+	$latency = $audio_plan_max_peer_latency
+		if $type eq 'source' && $kind eq 'peer'
+			&& $latency > $audio_plan_max_peer_latency;
 	return {
 		id         => $id,
 		label      => $label,
@@ -175,7 +187,7 @@ sub _audio_plan_node {
 		channels   => _audio_plan_count($entry->{channels}, 1),
 		channel    => $channel,
 		node       => defined $node ? $node : '',
-		latency_ms => _audio_plan_nonnegative($entry->{latency_ms}, 0),
+		latency_ms => $latency,
 	};
 }
 
@@ -250,7 +262,7 @@ sub audio_plan_normalize {
 		my $kind = _audio_plan_text($entry->{kind});
 		next unless _audio_plan_kind($kind, \@audio_plan_source_kinds);
 		$kind_of{$id} = 'source';
-		push @sources, _audio_plan_node($entry, $id, $kind);
+		push @sources, _audio_plan_node($entry, $id, $kind, 'source');
 	}
 
 	foreach my $entry (@{ _audio_plan_list($decoded->{buses}) }) {
@@ -268,7 +280,7 @@ sub audio_plan_normalize {
 		my $kind = _audio_plan_text($entry->{kind});
 		next unless _audio_plan_kind($kind, \@audio_plan_sink_kinds);
 		$kind_of{$id} = 'sink';
-		push @sinks, _audio_plan_node($entry, $id, $kind);
+		push @sinks, _audio_plan_node($entry, $id, $kind, 'sink');
 	}
 
 	foreach my $entry (@{ _audio_plan_list($decoded->{routes}) }) {
@@ -365,6 +377,8 @@ sub _audio_plan_valid_node {
 	if (exists $entry->{latency_ms}) {
 		my $number = _audio_plan_number($entry->{latency_ms});
 		return 0 unless defined $number && $number >= 0;
+		return 0 if $type eq 'source' && $kind eq 'peer'
+			&& $number > $audio_plan_max_peer_latency;
 	}
 	if (exists $entry->{node}) {
 		# Only an `input` captures from a node; a node on any other kind is a

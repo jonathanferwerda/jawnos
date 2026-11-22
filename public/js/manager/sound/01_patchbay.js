@@ -176,6 +176,30 @@ function soundPatchNodeRow(kind, node, index, latency) {
 	if (node.machine) { facts += ' @ ' + node.machine; }
 	if (latency) { facts += ' \u00b7 ' + latency + ' ms'; }
 	row.append($('<span class="sound_patch_node_kind"></span>').text(facts));
+	// A peer's declared latency is a plan fact, not a live trim: it is held in
+	// the node and the next Save plan patches the engine, which reads it then.
+	if (kind == 'sources' && (node.kind || '') == 'peer') {
+		var peer_latency = $('<input type="number" class="sound_peer_latency" min="0" max="2000" step="1">')
+			.val(node.latency_ms == null ? 0 : node.latency_ms)
+			.attr('aria-label', jawnosT('Peer latency in milliseconds'))
+			.attr('hint', jawnosT('How late this peer\'s audio arrives, in milliseconds: 0 to 2000, and the engine places it that much earlier'));
+		peer_latency.on('change', function() {
+			var raw = $.trim(peer_latency.val());
+			var value = Number(raw);
+			if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw) || value < 0 || value > 2000) {
+				peer_latency.val(node.latency_ms == null ? 0 : node.latency_ms);
+				soundPatchNote(jawnosT('A peer\'s latency is a number of milliseconds from 0 to 2000'));
+				return;
+			}
+			node.latency_ms = value;
+			soundPatchNote(jawnosT('Held in the plan; it applies when the plan is saved and the engine patches the peer source'));
+		});
+		var field = $('<label class="sound_patch_node_latency"></label>');
+		field.append($('<span></span>').text(jawnosT('Peer latency')));
+		field.append(peer_latency);
+		field.append($('<span class="sound_patch_node_unit"></span>').text('ms'));
+		row.append(field);
+	}
 	var remove = $('<button type="button"></button>').text(jawnosT('Remove'));
 	remove.on('click', function() {
 		soundPlan[kind].splice(index, 1);

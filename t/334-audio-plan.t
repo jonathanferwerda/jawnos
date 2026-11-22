@@ -361,6 +361,28 @@ sub route {
 		],
 	};
 	is( latency($chain, 'zone'), 19, 'a send chain adds each declared delay once' );
+
+	# A peer's declaration is placed by the engine, so it carries the engine's
+	# bound. A local input's declaration is kept but not placed, so only the
+	# non-negative rule applies to it.
+	my $peer_plan = sub {
+		my ($kind, $latency) = @_;
+		return {
+			sources => [ source('x', kind => $kind, latency_ms => $latency) ],
+			buses   => [],
+			sinks   => [],
+			routes  => [],
+		};
+	};
+	ok( valid($peer_plan->('peer', 2_000)), 'a peer latency at the 2000 ms bound is valid' );
+	ok( !valid($peer_plan->('peer', 2_001)), 'a peer latency above the bound is refused on save' );
+	ok( !valid($peer_plan->('peer', -1)), 'and the non-negative rule still refuses a negative one' );
+	ok( valid($peer_plan->('input', 2_001)),
+		'a local input keeps the non-negative range above the peer bound' );
+	is( normalize($peer_plan->('peer', 5_000))->{sources}[0]{latency_ms}, 2_000,
+		'the read path clamps a peer declaration to the engine bound' );
+	is( normalize($peer_plan->('input', 5_000))->{sources}[0]{latency_ms}, 5_000,
+		'while a local input declaration is not clamped' );
 }
 
 # --- which machine a node belongs to -----------------------------------------
