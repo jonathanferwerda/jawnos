@@ -30,6 +30,7 @@ sub routes {
 	[60003, 'post', '/manager/vacation/cancel', 'action_60003'],
 	[60004, 'post', '/manager/vacation/detect', 'action_60004'],
 	[60005, 'post', '/manager/vacation/proposal', 'action_60005'],
+	[60006, 'post', '/manager/vacation/presence', 'action_60006'],
 	);
 }
 

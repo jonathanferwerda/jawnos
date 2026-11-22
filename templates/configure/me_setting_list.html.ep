@@ -134,6 +134,49 @@
 			</p>
 		<% } %>
 		<%= include 'configure/away_notices' %>
+		<%# Presence simulation lives with Away because it only runs while a period
+		    is active. It is opt-in: an empty board or remote is a no-op. The remote
+		    list refreshes from /manager/embedded/remotes when the board changes. %>
+		<% my $presence = &subs::presence_settings(); %>
+		<% my $presence_boards = &subs::presence_boards(); %>
+		<% my $presence_remotes = &subs::remote_store_read('microcontroller', $presence->{'chip_id'}); %>
+		<div class="cfg-card" id="me_presence_card" style="margin-top:10px;">
+			<h3><%= &subs::ui('Presence simulation') %></h3>
+			<div class="cfg-row">
+				<label><input type="checkbox" class="presence_enabled"<% if (($presence->{'enabled'} // 'no') eq 'yes') { %> checked<% } %>> <%= &subs::ui('Simulate presence') %></label>
+			</div>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Board') %></label>
+				<select class="presence_board" hint="<%= &subs::ui('The board that learned the remote') %>">
+					<option value=""><%= &subs::ui('Choose a board') %></option>
+					<% foreach my $board ( @{$presence_boards} ) { %>
+						<option value="<%= $board->{'id'} %>"<% if (($presence->{'chip_id'} // '') eq $board->{'id'}) { %> selected<% } %>><%= $board->{'name'} || $board->{'id'} %></option>
+					<% } %>
+				</select>
+			</div>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Remote') %></label>
+				<select class="presence_remote" hint="<%= &subs::ui('The learned remote to replay') %>">
+					<option value=""><%= &subs::ui('Choose a remote') %></option>
+					<% foreach my $remote_name ( sort keys %{$presence_remotes} ) { %>
+						<option value="<%= $remote_name %>"<% if (($presence->{'remote'} // '') eq $remote_name) { %> selected<% } %>><%= $remote_name %></option>
+					<% } %>
+				</select>
+			</div>
+			<div class="cfg-row">
+				<label><%= &subs::ui('On') %></label>
+				<span><input type="time" class="presence_on" value="<%= $presence->{'on'} %>"></span>
+				<label><%= &subs::ui('Off') %></label>
+				<span><input type="time" class="presence_off" value="<%= $presence->{'off'} %>"></span>
+				<label><%= &subs::ui('Jitter') %></label>
+				<span><input type="number" class="presence_jitter" min="0" max="120" step="1" value="<%= $presence->{'jitter'} %>"> <%= &subs::ui('minutes') %></span>
+			</div>
+			<div class="cfg-row">
+				<button type="button" class="presence_save"><%= &subs::ui('Save') %></button>
+				<span class="presence_status" aria-live="polite"></span>
+			</div>
+			<p class="cfg-note"><%= &subs::ui('A learned IR remote is sent at a slightly different time each evening while an away period is active.') %></p>
+		</div>
 		<span class="away_status" aria-live="polite"></span>
 	</div>
 	<% foreach my $d ( @gb::device_types ) { %>

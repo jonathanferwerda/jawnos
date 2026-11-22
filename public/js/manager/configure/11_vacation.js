@@ -104,3 +104,59 @@ $(document).on('click', '#me_away_card .away_accept', function () {
 $(document).on('click', '#me_away_card .away_dismiss', function () {
 	jawnosAwayProposal(this, false);
 });
+
+/* Presence simulation: a board's learned remotes are replayed while an away
+   period is active. The remote list belongs to the board, so changing the
+   board asks /manager/embedded/remotes for that board's names. */
+function jawnosPresenceStatus(text) {
+	var t = (typeof jawnosT === 'function') ? jawnosT : function (s) { return s; };
+	$('#me_presence_card .presence_status').text(t(text));
+}
+function jawnosPresenceRemotes(chip_id, keep) {
+	var select = $('#me_presence_card .presence_remote');
+	var t = (typeof jawnosT === 'function') ? jawnosT : function (s) { return s; };
+	select.empty().append($('<option>').val('').text(t('Choose a remote')));
+	if (!chip_id) { return; }
+	$.ajax({
+		url: '/manager/embedded/remotes',
+		type: 'GET',
+		dataType: 'json',
+		data: { edt: 'microcontroller', chip_id: chip_id }
+	}).done(function (response) {
+		if (!response || !response.ok) { return; }
+		var remotes = response.remotes || {};
+		var names = Object.keys(remotes).sort();
+		for (var i = 0; i < names.length; i++) {
+			var option = $('<option>').val(names[i]).text(names[i]);
+			if (names[i] === keep) { option.prop('selected', true); }
+			select.append(option);
+		}
+	}).fail(function () {
+		jawnosPresenceStatus('Could not read the remotes.');
+	});
+}
+$(document).on('change', '#me_presence_card .presence_board', function () {
+	jawnosPresenceRemotes($(this).val(), '');
+});
+$(document).on('click', '#me_presence_card .presence_save', function () {
+	var enabled = $('#me_presence_card .presence_enabled').is(':checked') ? 'yes' : 'no';
+	jawnosPresenceStatus('Saving\u2026');
+	$.ajax({
+		url: '/manager/vacation/presence',
+		type: 'POST',
+		data: {
+			enabled: enabled,
+			chip_id: $('#me_presence_card .presence_board').val() || '',
+			remote: $('#me_presence_card .presence_remote').val() || '',
+			on: $('#me_presence_card .presence_on').val() || '',
+			off: $('#me_presence_card .presence_off').val() || '',
+			jitter: $('#me_presence_card .presence_jitter').val() || '20',
+			timestamp: Date.now()
+		},
+		success: function (response) {
+			if (response && response.ok) { jawnosAwayReload(); }
+			else { jawnosPresenceStatus((response && response.error) || 'Could not save presence simulation.'); }
+		},
+		error: function () { jawnosPresenceStatus('Could not save presence simulation.'); }
+	});
+});

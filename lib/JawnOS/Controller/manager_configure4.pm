@@ -885,4 +885,20 @@ sub action_60005 {
 	return $c->render(json => { ok => 1, period => $period });
 }
 
+# POST /manager/vacation/presence
+# Presence simulation is part of the Away card, so it saves beside the period
+# rather than through a second settings path of its own.
+sub action_60006 {
+	my $c = shift;
+	my $presence = &subs::presence_save({
+		enabled => $c->param('enabled'),
+		chip_id => $c->param('chip_id'),
+		remote  => $c->param('remote'),
+		on      => $c->param('on'),
+		off     => $c->param('off'),
+		jitter  => $c->param('jitter'),
+	});
+	return $c->render(json => { ok => 1, presence => $presence });
+}
+
 1;

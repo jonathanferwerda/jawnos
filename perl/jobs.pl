@@ -109,6 +109,10 @@ sub job_slow_loops {
 		# An opt-in pass over the house's own liveness: a quiet gap longer than the
 		# card's setting becomes a question, never an automatic budget change.
 		{ name => 'vacation detect', first => 120, every => 600, run => sub { &subs::vacation_detect_tick(); } },
+		# While an accepted away period is active, replay a learned remote at a
+		# jittered on and off time so the house looks lived in. Opt-in: it does
+		# nothing until a board and a remote are chosen on the Away card.
+		{ name => 'presence simulate', first => 120, every => 300, run => sub { &subs::presence_tick(&subs::rightNow()); } },
 		{ name => 'ai balance', first => 30, every => 600, run => sub { &subs::ai_balance_refresh(); } },
 		# The thresholds set under the chart: an hour over the limit, or a runway
 		# under it, becomes one Handbook note per crossing. The ledger's prune
