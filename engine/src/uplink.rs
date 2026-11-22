@@ -52,6 +52,18 @@
 //! outgoing receiver's totals are folded into a running baseline, so `status`
 //! stays truthful across a peer's periodic quiet-spell re-handshake.
 //!
+//! # Declared latency
+//!
+//! A plan's `peer` source may carry `latency_ms`: the peer's own capture and
+//! pipeline delay. Positive means the peer's audio is late, so the receiver
+//! subtracts that many master frames from every datagram's stamped position
+//! ([`AudioReceiver::accept_shifted`]) and the source is placed that much
+//! earlier. The declaration travels [`UplinkSourceSpec`] -> [`UplinkSource`], is
+//! converted to frames once at the engine's rate, and is reported per source.
+//! A local `input` keeps its declaration in the plan but is not shifted here
+//! yet; the plan's `latency_ms` on any other kind is ignored rather than
+//! refused.
+//!
 //! # Pacing
 //!
 //! The thread reads a playback head that trails the master clock by
@@ -128,13 +140,19 @@ pub struct UplinkConfig {
 }
 
 /// One peer source's counters, as `status` reports them.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UplinkSourceStatus {
     /// The source's index in the compiled plan, which is also its stream id's
     /// offset from `AUDIO_STREAM_BASE`.
     pub index: usize,
     /// The plan's node id.
     pub id: String,
+    /// The plan's declared capture/pipeline latency, in milliseconds. Zero
+    /// when the plan declares none.
+    pub latency_ms: f64,
+    /// The same declaration in master frames: how far earlier this source's
+    /// audio is placed than the stamp on the wire.
+    pub latency_frames: u64,
     /// Authenticated datagrams that arrived, including late ones.
     pub received: u64,
     /// Duplicates and datagrams whose payload was already read.
@@ -160,9 +178,11 @@ pub struct UplinkSourceStatus {
 impl UplinkSourceStatus {
     fn json(&self) -> String {
         format!(
-            "{{\"index\":{},\"id\":\"{}\",\"received\":{},\"late\":{},\"concealed\":{},\"dropped\":{},\"last_master\":{},\"next_master\":{},\"first_master\":{},\"from_deadline\":{}}}",
+            "{{\"index\":{},\"id\":\"{}\",\"latency_ms\":{},\"latency_frames\":{},\"received\":{},\"late\":{},\"concealed\":{},\"dropped\":{},\"last_master\":{},\"next_master\":{},\"first_master\":{},\"from_deadline\":{}}}",
             self.index,
             crate::loopback::json_escape(&self.id),
+            self.latency_ms,
+            self.latency_frames,
             self.received,
             self.late,
             self.concealed,
@@ -176,7 +196,7 @@ impl UplinkSourceStatus {
 }
 
 /// What `status` reports for the uplink as a whole.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UplinkStatus {
     /// `off` when no uplink is configured, `idle` while configured but no patch
     /// with a peer source is running, `running` while the thread owns a bound
@@ -276,6 +296,13 @@ pub struct UplinkSource {
     id: String,
     stream: u16,
     producer: Producer,
+    /// The plan's declared capture/pipeline latency, in milliseconds. Positive
+    /// means the peer's audio is late, so [`Self::shift_frames`] moves its
+    /// placement that much earlier on the master timeline.
+    latency_ms: f64,
+    /// The same declaration in master frames, computed once from the engine's
+    /// rate: the number every datagram's placement is shifted by.
+    shift_frames: u64,
     /// `None` until the first authenticated audio datagram claims the stream
     /// with a session the master issued. A WELCOME does not attach a receiver.
     receiver: Option<AudioReceiver>,
@@ -302,10 +329,45 @@ pub struct UplinkSource {
     last: Option<PullReport>,
 }
 
+/// Convert a declared latency in milliseconds to whole master frames, rounded
+/// to the nearest frame. A non-positive or non-finite value is no latency; the
+/// plan parser refuses those for a peer, so this is only a safe floor for a
+/// caller that builds a source directly.
+fn latency_frames(latency_ms: f64, rate: u32) -> u64 {
+    if !latency_ms.is_finite() || latency_ms <= 0.0 {
+        return 0;
+    }
+    ((latency_ms / 1_000.0) * f64::from(rate)).round() as u64
+}
+
 impl UplinkSource {
     /// A source for plan index `index`, fed to `producer`. Its stream id is
     /// [`audio_stream(index)`], which is exactly `AUDIO_STREAM_BASE + index`.
     pub fn new(index: usize, id: String, producer: Producer) -> Result<Self, String> {
+        Self::build(index, id, producer, 0.0, 0)
+    }
+
+    /// A source that is `latency_ms` late, placed `latency_ms` earlier on the
+    /// master timeline. `rate` is the master's sample rate, so the declaration
+    /// is converted to frames once here instead of on every datagram.
+    pub fn with_latency(
+        index: usize,
+        id: String,
+        producer: Producer,
+        latency_ms: f64,
+        rate: u32,
+    ) -> Result<Self, String> {
+        let shift = latency_frames(latency_ms, rate);
+        Self::build(index, id, producer, latency_ms, shift)
+    }
+
+    fn build(
+        index: usize,
+        id: String,
+        producer: Producer,
+        latency_ms: f64,
+        shift_frames: u64,
+    ) -> Result<Self, String> {
         let stream = audio_stream(index)
             .ok_or_else(|| format!("peer source {id} at index {index} has no audio stream id"))?;
         Ok(UplinkSource {
@@ -313,6 +375,8 @@ impl UplinkSource {
             id,
             stream,
             producer,
+            latency_ms,
+            shift_frames,
             receiver: None,
             session: None,
             origin: None,
@@ -332,6 +396,17 @@ impl UplinkSource {
     /// The plan's node id.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The plan's declared latency for this source, in milliseconds.
+    pub fn latency_ms(&self) -> f64 {
+        self.latency_ms
+    }
+
+    /// The same declaration in master frames: how far earlier than the
+    /// datagram's stamp this source is placed.
+    pub fn shift_frames(&self) -> u64 {
+        self.shift_frames
     }
 
     /// The session that owns this stream, if any.
@@ -412,7 +487,9 @@ impl UplinkSource {
             Ok(receiver) => receiver,
             Err(error) => return Offer::Refused(error),
         };
-        let accepted = match candidate.accept(datagram) {
+        // The candidate is built for this source, so its placement carries the
+        // same declared shift as an already-attached receiver.
+        let accepted = match candidate.accept_shifted(datagram, self.shift_frames) {
             Ok(accepted) => accepted,
             Err(error) => return Offer::Refused(error),
         };
@@ -429,8 +506,20 @@ impl UplinkSource {
     /// foreign session, a stereo/non-mono payload and the bounded-window
     /// refusal; the caller counts it and carries on.
     pub fn accept(&mut self, datagram: &[u8]) -> Result<Accepted, BearerError> {
+        self.accept_shifted(datagram, self.shift_frames)
+    }
+
+    /// Authenticate and place one audio datagram, shifted `shift` frames
+    /// earlier. The source's own `accept` uses its declared shift; the
+    /// parameter exists so a caller (and a test) can ask for a different
+    /// placement without building a second source.
+    pub fn accept_shifted(
+        &mut self,
+        datagram: &[u8],
+        shift: u64,
+    ) -> Result<Accepted, BearerError> {
         match self.receiver.as_mut() {
-            Some(receiver) => receiver.accept(datagram),
+            Some(receiver) => receiver.accept_shifted(datagram, shift),
             // No session has claimed this stream, so there is nothing to
             // authenticate the datagram for.
             None => Err(BearerError::Session(0)),
@@ -516,6 +605,8 @@ impl UplinkSource {
         UplinkSourceStatus {
             index: self.index,
             id: self.id.clone(),
+            latency_ms: self.latency_ms,
+            latency_frames: self.shift_frames,
             received: counters.received,
             late: counters.late,
             concealed: counters.concealed_frames,
@@ -549,6 +640,10 @@ pub struct UplinkSourceSpec {
     pub id: String,
     /// The ring's producer. The patchbay holds the matching consumer.
     pub producer: Producer,
+    /// The plan's declared capture/pipeline latency, in milliseconds. The
+    /// source is placed this much earlier on the master timeline; zero for a
+    /// source that declares none.
+    pub latency_ms: f64,
 }
 
 /// The running uplink thread and the status it publishes.
@@ -574,7 +669,13 @@ impl Uplink {
     ) -> Result<Uplink, String> {
         let mut sources = Vec::with_capacity(specs.len());
         for spec in specs {
-            sources.push(UplinkSource::new(spec.index, spec.id, spec.producer)?);
+            sources.push(UplinkSource::with_latency(
+                spec.index,
+                spec.id,
+                spec.producer,
+                spec.latency_ms,
+                rate,
+            )?);
         }
 
         let socket = UdpSocket::bind(config.bind)

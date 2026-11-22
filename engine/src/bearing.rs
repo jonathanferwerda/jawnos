@@ -480,6 +480,26 @@ impl AudioReceiver {
     /// out-of-order datagrams are authenticated, counted, and handled without
     /// an error.
     pub fn accept(&mut self, datagram: &[u8]) -> Result<Accepted, BearerError> {
+        self.accept_shifted(datagram, 0)
+    }
+
+    /// Verify one datagram exactly as [`AudioReceiver::accept`] does, then place
+    /// it `shift` frames earlier on the master timeline.
+    ///
+    /// A peer that declares a capture/pipeline latency stamps each datagram
+    /// where its sender believes the audio belongs, but the audio itself is
+    /// that much late. A positive `shift` is therefore subtracted from the
+    /// decoded master position before the datagram enters the jitter buffer,
+    /// so the source is placed earlier and a take played `shift` frames late
+    /// is recorded in time. The tag is verified against the datagram's own
+    /// header, before any shift, so the wire format and authentication are
+    /// unchanged; `accept` is this call with a shift of zero.
+    ///
+    /// `first_master`, `next_master` and every pulled position are on the
+    /// shifted timeline. A datagram whose original position is smaller than
+    /// the shift (only possible near the master's own origin) saturates at
+    /// zero rather than wrapping.
+    pub fn accept_shifted(&mut self, datagram: &[u8], shift: u64) -> Result<Accepted, BearerError> {
         let decoded = match proto::decode(datagram) {
             Ok(decoded) => decoded,
             Err(error) => {
@@ -526,7 +546,7 @@ impl AudioReceiver {
                 return Err(error);
             }
         };
-        let start = header.master_sample;
+        let start = header.master_sample.saturating_sub(shift);
         let end = start.saturating_add(frames as u64);
 
         if !self.started {

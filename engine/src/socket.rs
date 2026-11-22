@@ -1325,13 +1325,14 @@ impl Server {
             } else {
                 let mut specs = Vec::with_capacity(peer_sources.len());
                 let mut consumers = Vec::with_capacity(peer_sources.len());
-                for (index, id) in peer_sources {
+                for (index, id, latency_ms) in peer_sources {
                     let (producer, consumer) =
                         jawn_audio::monbus::new(jawn_audio::monbus::MIN_FRAMES);
                     specs.push(UplinkSourceSpec {
                         index,
                         id,
                         producer,
+                        latency_ms,
                     });
                     consumers.push((index, consumer));
                 }

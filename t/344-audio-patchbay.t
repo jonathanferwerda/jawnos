@@ -7,6 +7,8 @@
 #            tagged with another machine stays refused. The house uplink's address is
 #            validated and cleared, its session key is generated once and kept, and the
 #            boot file carries the uplink and key only for a peer source on this machine.
+#            A peer source's declared latency_ms is kept in the saved plan and the boot
+#            copy, where the engine places that source earlier.
 
 use strict;
 use warnings;
@@ -362,15 +364,20 @@ require JawnOS::Domain::Audio;
 
 		my $with_peer = {
 			sources => [
-				{ id => 'phone', kind => 'peer', channel => 0 },
-				{ id => 'gtr',   kind => 'input', channel => 1 },
+				{ id => 'phone', kind => 'peer', channel => 0, latency_ms => 45 },
+				{ id => 'gtr',   kind => 'input', channel => 1, latency_ms => 2 },
 			],
 			buses  => [],
 			sinks  => [ { id => 'out', kind => 'interface' } ],
 			routes => [ { from => 'phone', to => 'out' }, { from => 'gtr', to => 'out' } ],
 		};
-		is(subs::audio_plan_write($with_peer)->{ok}, 1, 'a plan with a peer source is valid');
+		my $written_peer = subs::audio_plan_write($with_peer);
+		is($written_peer->{ok}, 1, 'a plan with a peer source is valid');
+		is($written_peer->{plan}{sources}[0]{latency_ms}, 45,
+			'a peer latency is kept in the saved plan');
 		$doc = JSON::PP::decode_json(read_file($path));
+		is($doc->{plan}{sources}[0]{latency_ms}, 45,
+			'and in the boot copy the engine reads');
 		is($doc->{uplink}, '127.0.0.1:7060', 'a peer source on this machine adds the uplink');
 		like($doc->{session_key}, qr/\A[0-9a-f]{64}\z/, 'and the audio session key');
 		is($doc->{session_key}, subs::audio_session_key_read(), 'the key is the stored one');

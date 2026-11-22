@@ -341,6 +341,56 @@ fn a_datagram_delayed_inside_the_buffer_is_placed_not_late() {
 }
 
 #[test]
+fn a_declared_latency_places_a_peer_earlier_than_an_undeclared_one() {
+    let session_key = key(0x9A);
+    let start = 48_000u64;
+    let frames = signal(480);
+
+    let (plain_producer, plain_consumer) = monbus::new(monbus::MIN_FRAMES);
+    let (late_producer, late_consumer) = monbus::new(monbus::MIN_FRAMES);
+    let mut plain = UplinkSource::new(0, "deck".to_string(), plain_producer).expect("source");
+    let mut declared =
+        UplinkSource::with_latency(0, "phone".to_string(), late_producer, 30.0, 48_000)
+            .expect("source");
+
+    // The same datagram, stamped at the same master position, offered to a
+    // source that declares no latency and one that declares 30 ms.
+    let mut bearer = AudioBearer::new(session_key, 7);
+    let sent = datagrams(&mut bearer, audio_stream(0).expect("stream"), &frames, start);
+    assert_eq!(
+        plain.offer(session_key, 7, loopback_origin(9006), false, true, None, &sent[0]),
+        Offer::Taken(Accepted::Buffered)
+    );
+    assert_eq!(
+        declared.offer(session_key, 7, loopback_origin(9007), false, true, None, &sent[0]),
+        Offer::Taken(Accepted::Buffered)
+    );
+
+    let shift = 30u64 * 48; // 30 ms at 48 kHz
+    assert_eq!(plain.status().first_master, start);
+    assert_eq!(
+        declared.status().first_master,
+        start - shift,
+        "a positive declaration places the source earlier"
+    );
+    assert_eq!(declared.status().latency_ms, 30.0);
+    assert_eq!(declared.status().latency_frames, shift);
+
+    let plain_report = plain.pump(PULL_FRAMES, 0).expect("a session pulls");
+    let declared_report = declared.pump(PULL_FRAMES, 0).expect("a session pulls");
+    assert_eq!(plain_report.master_sample, start);
+    assert_eq!(declared_report.master_sample, start - shift);
+    assert_eq!(declared_report.frames, 480);
+
+    // Both rings carry the same audio; only its position on the master
+    // timeline differs, and both pulled cursors advanced by the same block.
+    assert_block(&collect(&plain_consumer, 480), &frames);
+    assert_block(&collect(&late_consumer, 480), &frames);
+    assert_eq!(plain.status().next_master, start + 480);
+    assert_eq!(declared.status().next_master, start - shift + 480);
+}
+
+#[test]
 fn a_claimed_stream_is_the_peer_identity_not_the_port() {
     let session_key = key(0x7A);
     let (producer, _consumer) = monbus::new(monbus::MIN_FRAMES);
@@ -437,6 +487,7 @@ fn two_real_sockets_carry_a_peer_block() {
             index: 0,
             id: "phone".to_string(),
             producer,
+            latency_ms: 0.0,
         }],
     )
     .expect("the uplink binds loopback");
@@ -485,11 +536,13 @@ fn two_peers_share_the_uplink_and_a_third_cannot_take_a_busy_stream() {
                 index: 0,
                 id: "phone".to_string(),
                 producer: phone_producer,
+                latency_ms: 0.0,
             },
             UplinkSourceSpec {
                 index: 1,
                 id: "deck".to_string(),
                 producer: deck_producer,
+                latency_ms: 0.0,
             },
         ],
     )
@@ -660,6 +713,7 @@ fn a_repeat_take_from_a_new_port_takes_its_claimed_stream_back() {
             index: 0,
             id: "phone".to_string(),
             producer,
+            latency_ms: 0.0,
         }],
     )
     .expect("the uplink binds loopback");
@@ -770,6 +824,7 @@ fn an_audio_stream_with_no_peer_source_is_counted_not_mixed() {
             index: 0,
             id: "phone".to_string(),
             producer,
+            latency_ms: 0.0,
         }],
     )
     .expect("the uplink binds loopback");

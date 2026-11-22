@@ -22,6 +22,12 @@
 #            receiver's counters are folded in, so `status` never reads received
 #            0 after a re-handshake. `status.sessions` counts sessions the master
 #            issued, not WELCOMEs. Status keeps its keys and adds `uplink`.
+#            A `peer` source may declare `latency_ms`: its capture/pipeline
+#            latency. A positive declaration is carried to the uplink and
+#            subtracted from each datagram's master position, so that source is
+#            placed that much earlier and a take played late is recorded in
+#            time. Only a peer is shifted; a local input's declaration is kept
+#            by the plan but not compensated on this path yet.
 
 use strict;
 use warnings;
@@ -62,6 +68,17 @@ like( $patch, qr/!source\.peer/, 'a peer asks for no card capture or parec input
 like( $patch, qr/peer_blocks/, 'a peer is popped into a block of its own, not an interface channel' );
 like( $patch, qr/fn a_peer_mixes_with_every_interface_channel_taken/,
 	'a peer mixes when every interface channel is taken' );
+like( $patch, qr/fn peer_latency_ms/, 'a peer source may declare its latency' );
+like( $patch, qr/PEER_LATENCY_MAX_MS/, 'the declaration has a stated upper bound' );
+like( $patch, qr/latency_ms/, 'the compiled source carries the declaration to the uplink' );
+like( $patch, qr/fn a_peer_declares_its_latency_and_two_peers_can_differ/,
+	'two peers may declare different latencies' );
+like( $patch, qr/fn a_peer_latency_outside_the_bounds_is_refused/,
+	'a negative or over-bound declaration is refused by name' );
+like( $patch, qr/fn a_local_input_latency_is_kept_but_not_refused/,
+	'a local input latency is kept but not refused' );
+like( $patch, qr/\(index, source\.id\.clone\(\), source\.latency_ms\)/,
+	'wants_peer carries the declaration with the source' );
 
 # --- the stream mapping and the session rule --------------------------------
 like( $uplink, qr/audio_stream\(index\)/, 'the stream is AUDIO_STREAM_BASE + the plan index' );
@@ -81,6 +98,11 @@ like( $uplink, qr/past: RecvCounters/, 'a rebuilt receiver leaves its totals in 
 like( $uplink, qr/fn add_counters/, 'the totals are summed field by field' );
 like( $uplink, qr/self\.past = add_counters/, 'a new session folds the outgoing receiver in' );
 like( $uplink, qr/AudioReceiver::new\(/, 'a source owns a receiver' );
+like( $uplink, qr/fn with_latency/, 'a source can be built with a declared latency' );
+like( $uplink, qr/fn latency_frames/, 'the declaration is converted to master frames' );
+like( $uplink, qr/fn accept_shifted/, 'the receiver authenticates then shifts placement' );
+like( $uplink, qr/candidate\.accept_shifted\(datagram, self\.shift_frames\)/,
+	'a new receiver is built on the shifted timeline' );
 like( $uplink, qr/master\.issued\(\)/, 'status.sessions counts the sessions the master issued' );
 
 # --- pacing and the ring ----------------------------------------------------
@@ -121,6 +143,8 @@ like( $uplink, qr/\\"last_master\\"/, 'each source reports the last master posit
 like( $uplink, qr/\\"next_master\\"/, 'each source reports the next pull position' );
 like( $uplink, qr/\\"first_master\\"/, 'each source reports where the timeline starts' );
 like( $uplink, qr/\\"from_deadline\\"/, 'each source reports deadline concealment' );
+like( $uplink, qr/\\"latency_ms\\"/, 'each source reports its declared latency in ms' );
+like( $uplink, qr/\\"latency_frames\\"/, 'each source reports the same declaration in frames' );
 
 # --- the server wires it and keeps every existing key -----------------------
 like( $socket, qr/pub uplink:\s*Option<UplinkConfig>/, 'the serve config can name an uplink' );
@@ -162,6 +186,8 @@ like( $tests, qr/fn two_peers_share_the_uplink_and_a_third_cannot_take_a_busy_st
 	'two peers feed two streams and a third cannot take a busy one' );
 like( $tests, qr/fn a_datagram_delayed_inside_the_buffer_is_placed_not_late/,
 	'a delayed datagram inside the buffer is placed, not refused' );
+like( $tests, qr/fn a_declared_latency_places_a_peer_earlier_than_an_undeclared_one/,
+	'a declared latency places a peer earlier than an undeclared one' );
 like( $tests, qr/UdpSocket::bind\("127\.0\.0\.1:0"\)/, 'the loopback test uses an ephemeral port' );
 like( $patch, qr/fn a_peer_source_is_pending_not_silent/, 'the patchbay peer state is tested' );
 like( $patch, qr/fn a_peer_ring_mixes_like_a_parec_input/, 'the peer mix is tested' );

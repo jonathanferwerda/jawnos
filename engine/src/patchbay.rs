@@ -100,6 +100,12 @@ struct Source {
     /// uplink fills a stereo ring of its own, which the block mixes like a
     /// `parec` input, and it asks for no card capture and no `parec`.
     peer: bool,
+    /// The peer's declared capture/pipeline latency, in milliseconds. A
+    /// positive value means its audio is late, so the uplink places it that
+    /// much earlier on the master timeline. Zero for every source that is not
+    /// a `peer` on this machine: a local input's declaration is the plan's to
+    /// keep, but the engine does not compensate it yet.
+    latency_ms: f64,
     input: Option<Consumer>,
     routes: Vec<SourceRoute>,
 }
@@ -357,6 +363,16 @@ impl Patchbay {
             let system = kind == "device" && on_this_machine;
             let handset = kind == "handset" && on_this_machine;
             let peer = kind == "peer" && on_this_machine;
+            // Only a `peer` source's declaration is placed by this engine. The
+            // manager writes `latency_ms` on every source, so a number on a
+            // local `input` (or any other kind) is kept for the plan and
+            // ignored here rather than refused: a local input's latency is not
+            // compensated on this path yet.
+            let latency_ms = if kind == "peer" {
+                peer_latency_ms(entry, &id)?.unwrap_or(0.0)
+            } else {
+                0.0
+            };
             let mut reachable = kind == "input" && on_this_machine && channel < config_channels;
             // A named node this machine does not offer is silent, like a
             // channel the interface does not have. Falling back to the default
@@ -378,6 +394,7 @@ impl Patchbay {
                 system,
                 handset,
                 peer,
+                latency_ms,
                 input: None,
                 routes: Vec::new(),
             });
@@ -638,16 +655,17 @@ impl Patchbay {
         self.sources.iter().any(|source| source.handset)
     }
 
-    /// Every routed `peer` source on this machine, as (index, id). The caller
-    /// makes one ring per entry and the uplink feeds it; the block pops it into
-    /// that source's own stereo block, so a peer that is not routed costs no
-    /// thread, no ring and no UDP stream.
-    pub fn wants_peer(&self) -> Vec<(usize, String)> {
+    /// Every routed `peer` source on this machine, as (index, id, declared
+    /// latency in ms). The caller makes one ring per entry and the uplink feeds
+    /// it, placing that source earlier by its declaration; the block pops it
+    /// into that source's own stereo block, so a peer that is not routed costs
+    /// no thread, no ring and no UDP stream.
+    pub fn wants_peer(&self) -> Vec<(usize, String, f64)> {
         self.sources
             .iter()
             .enumerate()
             .filter(|(_index, source)| source.peer && !source.routes.is_empty())
-            .map(|(index, source)| (index, source.id.clone()))
+            .map(|(index, source)| (index, source.id.clone(), source.latency_ms))
             .collect()
     }
 
@@ -1477,6 +1495,37 @@ fn node_ref(object: &Object, key: &str) -> Result<String, String> {
     text(object, key).ok_or_else(|| format!("every route needs a \"{key}\" node id"))
 }
 
+/// The longest declared peer latency the engine will place: two seconds. A
+/// larger number is a mistake in the plan rather than a value to clamp
+/// silently, because clamping would place the source at a position the plan
+/// never asked for. The manager writes `latency_ms` on every source; this
+/// bound is the engine's own, checked only where the number is honoured.
+const PEER_LATENCY_MAX_MS: f64 = 2_000.0;
+
+/// A `peer` source's optional `"latency_ms"`: the capture/pipeline latency the
+/// phone or deck carries, in milliseconds. A finite, non-negative number no
+/// larger than [`PEER_LATENCY_MAX_MS`] is accepted; anything else is refused
+/// by name (the source and the field), so a bad declaration is visible rather
+/// than silently treated as zero.
+fn peer_latency_ms(object: &Object, id: &str) -> Result<Option<f64>, String> {
+    match get(object, "latency_ms") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Num(value)) if !value.is_finite() => Err(format!(
+            "the peer source {id} has a \"latency_ms\" that is not finite; a latency is a finite number of milliseconds"
+        )),
+        Some(Value::Num(value)) if *value < 0.0 => Err(format!(
+            "the peer source {id} has \"latency_ms\": {value}; a latency cannot be negative"
+        )),
+        Some(Value::Num(value)) if *value > PEER_LATENCY_MAX_MS => Err(format!(
+            "the peer source {id} has \"latency_ms\": {value}; the engine places at most {PEER_LATENCY_MAX_MS} ms"
+        )),
+        Some(Value::Num(value)) => Ok(Some(*value)),
+        Some(_) => Err(format!(
+            "the peer source {id} has a \"latency_ms\" that is not a number; a latency is milliseconds"
+        )),
+    }
+}
+
 fn number(object: &Object, key: &str) -> Result<Option<f32>, String> {
     match get(object, key) {
         None | Some(Value::Null) => Ok(None),
@@ -1725,10 +1774,78 @@ mod tests {
         assert_eq!(summary.peer, "pending");
         assert_eq!(
             patchbay.wants_peer(),
-            vec![(0, "phone".to_string())],
+            vec![(0, "phone".to_string(), 0.0)],
             "a routed peer needs one ring"
         );
         assert!(!patchbay.wants_input(), "a peer is not a card capture");
+    }
+
+    #[test]
+    fn a_peer_declares_its_latency_and_two_peers_can_differ() {
+        let patchbay = bay(
+            r#"{
+                "sources":[
+                    {"id":"phone","kind":"peer","latency_ms":30},
+                    {"id":"deck","kind":"peer","latency_ms":12.5}
+                ],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[
+                    {"from":"phone","to":"house"},
+                    {"from":"deck","to":"house"},
+                    {"from":"house","to":"out"}
+                ]
+            }"#,
+        );
+        assert_eq!(
+            patchbay.wants_peer(),
+            vec![
+                (0, "phone".to_string(), 30.0),
+                (1, "deck".to_string(), 12.5)
+            ],
+            "each peer carries its own declaration"
+        );
+    }
+
+    #[test]
+    fn a_peer_latency_outside_the_bounds_is_refused() {
+        for declaration in ["-1", "2001", "\"30\""] {
+            let object = parse_object(&format!(
+                r#"{{
+                    "sources":[{{"id":"phone","kind":"peer","latency_ms":{declaration}}}],
+                    "buses":[], "sinks":[{{"id":"out","kind":"interface"}}],
+                    "routes":[{{"from":"phone","to":"out"}}]
+                }}"#
+            ))
+            .expect("parse");
+            let error = Patchbay::from_object(&object, 2, "local").expect_err("refused");
+            assert!(error.contains("latency_ms"), "{error}");
+            assert!(error.contains("phone"), "the refusal names the source: {error}");
+        }
+
+        let at_the_bound = bay(
+            r#"{
+                "sources":[{"id":"phone","kind":"peer","latency_ms":2000}],
+                "buses":[], "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"phone","to":"out"}]
+            }"#,
+        );
+        assert_eq!(at_the_bound.wants_peer(), vec![(0, "phone".to_string(), 2000.0)]);
+    }
+
+    #[test]
+    fn a_local_input_latency_is_kept_but_not_refused() {
+        // The manager writes `latency_ms` on every source; only a peer's is
+        // placed by this engine, so an input's must not break the plan.
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"gtr","kind":"input","channel":0,"latency_ms":2}],
+                "buses":[], "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"gtr","to":"out"}]
+            }"#,
+        );
+        assert_eq!(patchbay.summary().bound_sources, 1);
+        assert!(patchbay.wants_peer().is_empty());
     }
 
     #[test]
@@ -1784,7 +1901,7 @@ mod tests {
         );
         assert_eq!(
             patchbay.wants_peer(),
-            vec![(2, "phone".to_string())],
+            vec![(2, "phone".to_string(), 0.0)],
             "the peer is the third source, after both interface inputs"
         );
         assert_eq!(patchbay.summary().peer, "pending");
