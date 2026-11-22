@@ -187,6 +187,7 @@ like( $part09, qr/%carry = map \{ \$_ => 1 \} \@\{ &subs::sync_carry_tables\(\) 
 my $carry = subs::sync_carry_tables();
 ok( (grep { $_ eq 'routers' } @{$carry}), 'the network inventory is carry-only' );
 ok( (grep { $_ eq 'where_calls' } @{$carry}), 'so is the locator ledger' );
+ok( (grep { $_ eq 'window_events' } @{$carry}), 'window events ride a pull but do not start one' );
 ok( (grep { $_ eq 'appointments' } @{$carry}) == 0, 'appointments still starts a pull' );
 
 # ---- the fork option, behaviourally ---------------------------------------

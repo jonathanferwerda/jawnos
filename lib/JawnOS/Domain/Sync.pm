@@ -53,12 +53,15 @@ our %note_standard_supported;
 # pass and the person's appointments would wait behind it. `ai_house` was the
 # first of these (its own row differs from every peer's by design, 2026-11-05);
 # the bookkeeping tables joined it after a phone's pass spent six slots on them
-# and the laptop sat nine minutes behind the phone (2026-11-16). They still
-# travel: sync_rows_pull includes every carry table in a planned pull.
+# and the laptop sat nine minutes behind the phone (2026-11-16). `window_events`
+# is the desktop's focus/blur stream, written constantly by every device, and
+# would otherwise take the single mobile slot or trigger a pull on every pass.
+# They still travel: sync_rows_pull includes every carry table in a planned pull.
 sub sync_carry_tables {
 	return [ qw(
 		continent ai_budget ai_jobs ai_house notifications
 		numbering paired_devices routers scan_house where_calls where_feedback
+		window_events
 	) ];
 }
 

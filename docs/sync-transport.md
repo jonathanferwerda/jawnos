@@ -11,9 +11,9 @@ snapshot remains the **full-migration / deep-gimme / v2 / archive** path.
   picture matches is not pulled; the tables `sync_carry_tables` names
   (`continent`, `ai_budget`, `ai_jobs`, `ai_house`, `notifications`,
   `numbering`, `paired_devices`, `routers`, `scan_house`, `where_calls`,
-  `where_feedback`) are **carry-only** (always ride a pull, never trigger one,
-  so a mobile pass spends its one table slot on the person's rows, not on
-  bookkeeping).
+  `where_feedback`, `window_events`) are **carry-only** (always ride a pull,
+  never trigger one, so a mobile pass spends its one table slot on the
+  person's rows, not on bookkeeping).
 - `Manager::sync_rows_pull` asks `GET /manager/sync_rows` for one table at a time,
   500 rows per batch, cursor = the last rowid received. A dropped link retries the
   batch; a 4xx is the peer's answer and is not retried.
