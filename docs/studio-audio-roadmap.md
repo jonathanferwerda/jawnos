@@ -780,8 +780,30 @@ open port, and accepts mono audio on `AUDIO_STREAM_BASE + source_index` into the
 `parec` input uses; the patchbay pops it into the plan's channel, so a peer mixes like any other
 source with no lock on the audio path. The uplink pulls the frames the clock advanced and conceals a
 lost tail through `pull_at`; `status` reports `uplink` and the patch summary names the source
-`off`, `pending` or `capturing`. Still to come: the peer's sending half, the supervisor flags, a
-peer id in the stream so more than one peer can join, and each input's declared latency.
+`off`, `pending` or `capturing`.
+
+**The sending half (2026-11-21, in the tree):** `--send-take FILE.wav --master IP:PORT --stream N`
+reads a mono take, handshakes for a session, and sends it on the master's clock. It pings every 10 ms
+to keep the fit fresh, sends the frames the local clock advanced, stamps each block with
+`to_master(local)` so consecutive blocks meet exactly, and applies the fitted drift through the
+converter. It sends nothing until the first pong gives it a position, and the first pong's midpoint
+bridges the gap while the fit is one point. A live take is still a file: device capture feeding the
+same loop (while writing the take locally first, D14) is next.
+
+**The house side (2026-11-21, in the tree):** Sound owns the uplink address (`sound|audio_uplink`,
+empty off) and a generated session key that is never displayed; the boot file carries both while a
+`peer` source on this machine has an uplink, and the supervisor passes `--uplink` with the key in the
+child's environment, never in argv. The Sound page shows the engine's `uplink.state` and the patch's
+`peer` state.
+
+**A gap the live plan shows:** a peer source takes a slot in the component's input block, bounded by
+the interface's channel count. `table` routes both UM2 channels (mic and instrument), so a peer
+source has no slot to bind to. The fix is the handset's shape: give a peer its own popped ring and
+mix it in `render` instead of borrowing an interface channel. Until then a peer source is a third
+channel this interface does not have.
+
+**Still to come:** the peer's live capture, a peer id in the stream so more than one peer can join,
+and each input's declared latency.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
