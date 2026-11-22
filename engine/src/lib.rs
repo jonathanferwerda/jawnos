@@ -11,6 +11,7 @@
 //! reports the monitoring round trip and its honest precision.
 
 pub mod backends;
+pub mod bearing;
 pub mod device;
 pub mod disk;
 pub mod effect;
@@ -35,6 +36,12 @@ pub mod alsa_device;
 pub mod jack_device;
 
 pub use backends::{availability, Availability, BackendKind, RunReport};
+pub use bearing::{
+    audio_stream, is_audio_stream, Accepted, AudioBearer, AudioReceiver, BearerError,
+    LinearResampler, PullReport, RecvCounters, SendCounters, AUDIO_MAC_LEN, AUDIO_STREAM_BASE,
+    AUDIO_STREAM_LAST, DEFAULT_JITTER_FRAMES, DEFAULT_RESAMPLER_CAPACITY, MAX_DATAGRAM_LEN,
+    MAX_FRAMES_PER_DATAGRAM,
+};
 pub use device::{Device, DeviceError, NullDevice};
 pub use disk::DiskWriter;
 pub use effect::{
