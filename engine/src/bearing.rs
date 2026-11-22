@@ -12,9 +12,8 @@
 //!
 //! # The datagram
 //!
-//! The wire layout is exactly `peer.rs`'s, and the two implementations **must
-//! stay identical**: `peer.rs` is owned by another change right now, so the
-//! tag helper is duplicated here rather than shared.
+//! The wire layout is exactly `peer.rs`'s, and both halves share one tag
+//! implementation: [`crate::auth::mac_tag`] in `auth.rs`.
 //!
 //! ```text
 //! offset 0                 32                      32 + body          + 16
@@ -22,8 +21,8 @@
 //! ```
 //!
 //! The body is `frames * channels * 2` bytes, little-endian signed 16-bit.
-//! The tag is `HMAC-SHA256(key, header.encode() || body)[..16]`, i.e. the same
-//! construction `peer::mac_tag` uses. The header's `master_sample` is the
+//! The tag is `HMAC-SHA256(key, header.encode() || body)[..16]`, the shared
+//! construction in [`crate::auth`]. The header's `master_sample` is the
 //! master-clock position of the body's **first** frame, so a receiver places a
 //! block by where it belongs and never by when it arrived (§10).
 //!
@@ -54,6 +53,13 @@
 //! gap or carries the first real frame after one, and `concealed_frames` says
 //! how much of this block was silence.
 //!
+//! [`AudioReceiver::pull`] stays conservative: it only conceals a hole that
+//! later audio has already closed, so a permanently lost tail is never filled.
+//! [`AudioReceiver::pull_at`] adds a leading-edge deadline: a frame whose whole
+//! span ended [`DEADLINE_GUARD_FRAMES`] before the caller's master clock is
+//! concealed even when no later audio proved the hole, which keeps a lost tail
+//! from stalling the caller.
+//!
 //! # Resampling
 //!
 //! [`LinearResampler`] is the first-slice converter: linear interpolation
@@ -63,16 +69,12 @@
 
 use std::net::{SocketAddr, UdpSocket};
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-
+use crate::auth::{mac_tag, tags_match};
 use crate::proto::{self, Codec, Header, ProtoError, HEADER_LEN};
 use crate::session::ClockOffset;
 
-type HmacSha256 = Hmac<Sha256>;
-
-/// The truncated tag length, the same as `peer::MAC_LEN`.
-pub const AUDIO_MAC_LEN: usize = 16;
+/// The bearer's name for the shared tag length ([`crate::auth::MAC_LEN`]).
+pub const AUDIO_MAC_LEN: usize = crate::auth::MAC_LEN;
 
 /// The largest number of frames one datagram may carry. 512 frames is 10.7 ms
 /// at 48 kHz, and its stereo PCM body is 2048 bytes — one engine block. The
@@ -98,6 +100,12 @@ pub const AUDIO_STREAM_LAST: u16 = 0x7FFF;
 /// enough for the LAN's reordering and a slow Wi-Fi hop, small enough that a
 /// lost packet is concealed rather than remembered.
 pub const DEFAULT_JITTER_FRAMES: usize = 8 * MAX_FRAMES_PER_DATAGRAM;
+
+/// The leading-edge guard for [`AudioReceiver::pull_at`]: one datagram's worth,
+/// about 10.7 ms at 48 kHz. A frame is only declared lost when its whole span
+/// ended this far before the caller's master clock, so a datagram still in
+/// flight (or merely late) is never concealed out from under the network.
+pub const DEADLINE_GUARD_FRAMES: usize = MAX_FRAMES_PER_DATAGRAM;
 
 /// The default resampler input budget. A caller that feeds bigger blocks at a
 /// time should use [`LinearResampler::with_capacity`].
@@ -181,7 +189,7 @@ pub enum Accepted {
     Late,
 }
 
-/// What one [`AudioReceiver::pull`] produced.
+/// What one [`AudioReceiver::pull`] or [`AudioReceiver::pull_at`] produced.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PullReport {
     /// The master position of the first frame in this block.
@@ -194,32 +202,9 @@ pub struct PullReport {
     pub discontinuity: bool,
     /// Silent frames emitted in this block. Counted in `frames` too.
     pub concealed_frames: usize,
-}
-
-/// The 16-byte tag: HMAC-SHA256 over the whole encoded header and the body,
-/// truncated. **This must stay byte-for-byte identical to `peer::mac_tag`.**
-/// Covering every header byte (codec, flags, channels and the reserved bytes)
-/// is what lets the audio path trust `flags` and `channels` later.
-fn mac_tag(key: &[u8; 32], header: &Header, body: &[u8]) -> [u8; AUDIO_MAC_LEN] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts a 32-byte key");
-    mac.update(&header.encode());
-    mac.update(body);
-    let full = mac.finalize().into_bytes();
-    let mut tag = [0u8; AUDIO_MAC_LEN];
-    tag.copy_from_slice(&full[..AUDIO_MAC_LEN]);
-    tag
-}
-
-/// Constant-time comparison, the same rule `peer::tags_match` follows.
-fn tags_match(expected: &[u8], found: &[u8]) -> bool {
-    if expected.len() != found.len() {
-        return false;
-    }
-    let mut difference = 0u8;
-    for (left, right) in expected.iter().zip(found) {
-        difference |= left ^ right;
-    }
-    difference == 0
+    /// At least some concealment here came from [`AudioReceiver::pull_at`]'s
+    /// deadline rather than from later audio proving a hole.
+    pub from_deadline: bool,
 }
 
 /// Validate the channel count and that the samples are whole frames, without
@@ -604,12 +589,44 @@ impl AudioReceiver {
     /// and how much of the block was concealment. If the next frame has not
     /// arrived but no later frame has either, the call stops rather than
     /// guessing: a gap is only concealed once later audio proves it is a hole.
+    /// [`AudioReceiver::pull_at`] is the same read with a leading-edge deadline.
     pub fn pull(&mut self, out: &mut [i16], frames: usize) -> PullReport {
+        self.pull_with_deadline(out, frames, None)
+    }
+
+    /// Read up to `frames` contiguous master-time frames, concealing a tail
+    /// that no later audio can prove.
+    ///
+    /// This is [`AudioReceiver::pull`] plus a deadline. A frame is declared
+    /// lost when its **whole span** has ended at least [`DEADLINE_GUARD_FRAMES`]
+    /// before `now_master`, i.e. when `position + 1 <= now_master -
+    /// DEADLINE_GUARD_FRAMES`. The guard is one datagram's worth: a datagram
+    /// still in flight, or one the jitter window is still holding room for, is
+    /// not concealed out from under the network. A hole that later audio
+    /// closes is still concealed exactly as `pull` does it (and is not counted
+    /// as `from_deadline`).
+    ///
+    /// The report's `from_deadline` is true when this block concealed frames
+    /// because of the deadline rather than because a later datagram arrived.
+    /// A datagram for a span the deadline already concealed is refused as
+    /// [`Accepted::Late`] by [`AudioReceiver::accept`]; the read cursor never
+    /// moves backwards.
+    pub fn pull_at(&mut self, out: &mut [i16], frames: usize, now_master: i64) -> PullReport {
+        self.pull_with_deadline(out, frames, deadline_after(now_master))
+    }
+
+    fn pull_with_deadline(
+        &mut self,
+        out: &mut [i16],
+        frames: usize,
+        deadline: Option<u64>,
+    ) -> PullReport {
         let capacity = frames.min(out.len() / self.channels as usize);
         let first = self.next_master;
         let mut written = 0usize;
         let mut concealed = 0usize;
         let mut discontinuity = false;
+        let mut from_deadline = false;
 
         if self.started && capacity > 0 {
             let window = self.window_frames as u64;
@@ -635,7 +652,8 @@ impl AudioReceiver {
                 }
 
                 // Is the hole closed by later data? Look only inside the
-                // bounded window; if nothing is there, wait for the next push.
+                // bounded window; if nothing is there, wait for the next push
+                // unless a deadline says the frames are already lost.
                 let limit = position.saturating_add(window);
                 let mut probe = position + 1;
                 let mut next_valid = None;
@@ -646,8 +664,20 @@ impl AudioReceiver {
                     }
                     probe += 1;
                 }
-                let Some(hole_end) = next_valid else {
-                    break;
+                let hole_end = match next_valid {
+                    Some(hole_end) => hole_end,
+                    None => {
+                        // No later audio proves the hole. Conceal the prefix
+                        // whose whole span is older than the deadline (never
+                        // past the bounded window, never past the block).
+                        let Some(deadline) = deadline else { break };
+                        let end = limit.min(deadline);
+                        if end <= position {
+                            break;
+                        }
+                        from_deadline = true;
+                        end
+                    }
                 };
 
                 if !self.after_gap {
@@ -674,8 +704,18 @@ impl AudioReceiver {
             frames: written,
             discontinuity,
             concealed_frames: concealed,
+            from_deadline,
         }
     }
+}
+
+/// The exclusive master position before which a frame is declared lost, or
+/// `None` when `now_master` is too small to have a deadline yet.
+fn deadline_after(now_master: i64) -> Option<u64> {
+    if now_master <= 0 {
+        return None;
+    }
+    Some((now_master as u64).saturating_sub(DEADLINE_GUARD_FRAMES as u64))
 }
 
 /// Linear-interpolation converter from a peer's local samples to the master.

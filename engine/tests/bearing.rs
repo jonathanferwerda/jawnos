@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use jawn_audio::{
     decode, Accepted, AudioBearer, AudioReceiver, BearerError, ClockOffset, Codec, LinearResampler,
-    AUDIO_MAC_LEN, AUDIO_STREAM_BASE, DEFAULT_JITTER_FRAMES, HEADER_LEN, MAX_DATAGRAM_LEN,
+    AUDIO_MAC_LEN, AUDIO_STREAM_BASE, DEADLINE_GUARD_FRAMES, DEFAULT_JITTER_FRAMES, HEADER_LEN,
+    MAX_DATAGRAM_LEN,
 };
 
 fn key(seed: u8) -> [u8; 32] {
@@ -189,6 +190,100 @@ fn a_lost_packet_becomes_silence_and_a_discontinuity_without_shifting() {
     assert_eq!(counters.gaps, 1);
     assert_eq!(counters.concealed_frames, 512);
     assert_eq!(counters.late, 0);
+}
+
+#[test]
+fn a_lost_tail_is_not_concealed_by_pull_and_the_deadline_conceals_it() {
+    let session = 12;
+    let stream = AUDIO_STREAM_BASE + 12;
+    let channels = 1u8;
+    let frames = signal(3 * 512, channels);
+
+    let mut bearer = AudioBearer::new(key(0x99), session);
+    let sent = datagrams(&mut bearer, stream, channels, &frames, 0);
+    assert_eq!(sent.len(), 3);
+
+    let mut receiver =
+        AudioReceiver::new(key(0x99), session, stream, channels, DEFAULT_JITTER_FRAMES)
+            .expect("receiver");
+    // The last packet never arrives. Two real packets do.
+    assert_eq!(receiver.accept(&sent[0]), Ok(Accepted::Buffered));
+    assert_eq!(receiver.accept(&sent[1]), Ok(Accepted::Buffered));
+
+    // `pull` cannot prove the tail is lost, so it stops after the real audio.
+    let mut pulled = vec![1i16; 3 * 512];
+    let report = receiver.pull(&mut pulled, 3 * 512);
+    assert_eq!(report.frames, 2 * 512);
+    assert_eq!(report.concealed_frames, 0);
+    assert!(!report.discontinuity);
+    assert!(!report.from_deadline);
+    assert_eq!(receiver.next_master(), 2 * 512);
+
+    // Still inside the guard: nothing is declared lost yet.
+    let mut held = vec![1i16; 512];
+    let report = receiver.pull_at(&mut held, 512, (2 * 512 + DEADLINE_GUARD_FRAMES) as i64);
+    assert_eq!(report.frames, 0, "the guard keeps a frame in flight alive");
+    assert!(!report.from_deadline);
+    assert_eq!(receiver.next_master(), 2 * 512);
+
+    // A caller whose master clock has passed the whole span declares it lost.
+    let mut concealed = vec![1i16; 512];
+    let now = (3 * 512 + DEADLINE_GUARD_FRAMES) as i64;
+    let report = receiver.pull_at(&mut concealed, 512, now);
+    assert_eq!(report.master_sample, 2 * 512);
+    assert_eq!(report.frames, 512);
+    assert_eq!(report.concealed_frames, 512);
+    assert!(report.discontinuity);
+    assert!(report.from_deadline, "the deadline, not later audio, closed it");
+    assert!(concealed.iter().all(|sample| *sample == 0));
+    assert_eq!(receiver.next_master(), 3 * 512);
+    assert_eq!(receiver.counters().concealed_frames, 512);
+    assert_eq!(receiver.counters().gaps, 1);
+}
+
+#[test]
+fn a_datagram_after_the_deadline_is_late_and_does_not_shift_the_timeline() {
+    let session = 13;
+    let stream = AUDIO_STREAM_BASE + 13;
+    let channels = 1u8;
+    let frames = signal(3 * 512, channels);
+
+    let mut bearer = AudioBearer::new(key(0xAA), session);
+    let sent = datagrams(&mut bearer, stream, channels, &frames, 0);
+    assert_eq!(sent.len(), 3);
+
+    let mut receiver =
+        AudioReceiver::new(key(0xAA), session, stream, channels, DEFAULT_JITTER_FRAMES)
+            .expect("receiver");
+    assert_eq!(receiver.accept(&sent[0]), Ok(Accepted::Buffered));
+    assert_eq!(receiver.accept(&sent[1]), Ok(Accepted::Buffered));
+
+    // Drain the two good packets first; `pull` then stops at the lost tail.
+    let mut drained = vec![1i16; 2 * 512];
+    let report = receiver.pull(&mut drained, 2 * 512);
+    assert_eq!(report.frames, 2 * 512);
+    assert_eq!(report.concealed_frames, 0);
+
+    // The deadline conceals the missing third packet's span.
+    let mut concealed = vec![1i16; 512];
+    let report = receiver.pull_at(&mut concealed, 512, (3 * 512 + DEADLINE_GUARD_FRAMES) as i64);
+    assert_eq!(report.concealed_frames, 512);
+    assert!(report.from_deadline);
+    assert_eq!(receiver.next_master(), 3 * 512);
+
+    // That packet arrives after the deadline. It is counted late, not inserted,
+    // and the read cursor does not move backwards to its position.
+    assert_eq!(receiver.accept(&sent[2]), Ok(Accepted::Late));
+    assert_eq!(receiver.counters().late, 1);
+    assert_eq!(receiver.counters().received, 3);
+    assert_eq!(receiver.next_master(), 3 * 512);
+
+    // Nothing is left to read; the timeline stays where it was.
+    let mut out = vec![1i16; 512];
+    let report = receiver.pull(&mut out, 512);
+    assert_eq!(report.frames, 0);
+    assert_eq!(report.master_sample, 3 * 512);
+    assert_eq!(receiver.next_master(), 3 * 512);
 }
 
 #[test]

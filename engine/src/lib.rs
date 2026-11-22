@@ -10,6 +10,7 @@
 //! default dependency and the suite builds anywhere. The patch-cable loopback
 //! reports the monitoring round trip and its honest precision.
 
+pub mod auth;
 pub mod backends;
 pub mod bearing;
 pub mod device;
@@ -35,12 +36,13 @@ pub mod alsa_device;
 #[cfg(feature = "jack")]
 pub mod jack_device;
 
+pub use auth::{mac_tag, tags_match, MAC_LEN};
 pub use backends::{availability, Availability, BackendKind, RunReport};
 pub use bearing::{
     audio_stream, is_audio_stream, Accepted, AudioBearer, AudioReceiver, BearerError,
     LinearResampler, PullReport, RecvCounters, SendCounters, AUDIO_MAC_LEN, AUDIO_STREAM_BASE,
-    AUDIO_STREAM_LAST, DEFAULT_JITTER_FRAMES, DEFAULT_RESAMPLER_CAPACITY, MAX_DATAGRAM_LEN,
-    MAX_FRAMES_PER_DATAGRAM,
+    AUDIO_STREAM_LAST, DEADLINE_GUARD_FRAMES, DEFAULT_JITTER_FRAMES, DEFAULT_RESAMPLER_CAPACITY,
+    MAX_DATAGRAM_LEN, MAX_FRAMES_PER_DATAGRAM,
 };
 pub use device::{Device, DeviceError, NullDevice};
 pub use disk::DiskWriter;
@@ -62,7 +64,7 @@ pub use peer::{
     encode_welcome, latest_estimate, new_shared_estimate, parse_session_key, publish_estimate,
     Clock, ClockEstimator, ClockMaster, ClockPeer, ClockReport, ControlReply, Hello, InstantClock,
     ManualClock, Pong, ProbeError, ProbeSample, SharedEstimate, SkewedClock, Welcome, CLOCK_SESSION,
-    DEFAULT_BIND, ESTIMATOR_CAPACITY, HELLO_PAYLOAD_LEN, MAC_LEN, MIN_SAMPLES, PING_INTERVAL_MS,
+    DEFAULT_BIND, ESTIMATOR_CAPACITY, HELLO_PAYLOAD_LEN, MIN_SAMPLES, PING_INTERVAL_MS,
     PING_PAYLOAD_LEN, PONG_PAYLOAD_LEN, PONG_TIMEOUT_MS, RTT_SLACK_MS, STREAM_CLOCK_HELLO,
     STREAM_CLOCK_PING, STREAM_CLOCK_PONG, STREAM_CLOCK_WELCOME, WELCOME_PAYLOAD_LEN,
 };

@@ -27,14 +27,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-
+pub use crate::auth::MAC_LEN;
+use crate::auth::{mac_tag, tags_match};
 use crate::loopback::json_escape;
 use crate::proto::{self, Codec, Header, ProtoError};
 use crate::session::ClockOffset;
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// The header `stream` id for a clock ping. The audio streams use small ids;
 /// the high half of the `u16` space is reserved for control traffic so a clock
@@ -64,9 +61,6 @@ pub const PING_BODY_LEN: usize = 8;
 /// and send times, each in device samples.
 pub const PONG_BODY_LEN: usize = 24;
 
-/// The authentication tag appended to every clock payload: HMAC-SHA256 over
-/// the header fields that matter and the body, truncated to 16 bytes.
-pub const MAC_LEN: usize = 16;
 
 /// The body lengths above, plus the tag, are the wire payload lengths.
 pub const HELLO_PAYLOAD_LEN: usize = HELLO_NONCE_LEN + MAC_LEN;
@@ -348,30 +342,6 @@ fn hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
-/// The 16-byte tag: HMAC-SHA256 over the whole encoded header and the body
-/// before the tag. Covering every header byte (codec, flags, channels and the
-/// reserved bytes too) keeps the same tag honest when the audio bearer starts
-/// carrying `flags` and `channels` that a receiver acts on.
-fn mac_tag(key: &[u8; 32], header: &Header, body: &[u8]) -> [u8; MAC_LEN] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts a 32-byte key");
-    mac.update(&header.encode());
-    mac.update(body);
-    let full = mac.finalize().into_bytes();
-    let mut tag = [0u8; MAC_LEN];
-    tag.copy_from_slice(&full[..MAC_LEN]);
-    tag
-}
-
-fn tags_match(expected: &[u8], found: &[u8]) -> bool {
-    if expected.len() != found.len() {
-        return false;
-    }
-    let mut difference = 0u8;
-    for (left, right) in expected.iter().zip(found) {
-        difference |= left ^ right;
-    }
-    difference == 0
-}
 
 /// Write a header and `body`, then its tag, into `out`.
 fn encode_authenticated(

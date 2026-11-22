@@ -1,4 +1,4 @@
-# tests-for: engine/src/peer.rs engine/src/main.rs engine/src/lib.rs
+# tests-for: engine/src/peer.rs engine/src/main.rs engine/src/lib.rs engine/src/auth.rs
 # covers:    P3's first spike (docs/studio-audio-roadmap.md §10 and §13 P3): a
 #            clock-only UDP probe between two engines. A peer sends HELLO and
 #            the master answers WELCOME with a session id; a CLOCK_PING for that
@@ -21,14 +21,18 @@ use Test::More;
 my $root = abs_path("$FindBin::Bin/..");
 my $peer = read_file("$root/engine/src/peer.rs");
 my $main = read_file("$root/engine/src/main.rs");
+my $auth = read_file("$root/engine/src/auth.rs");
 my $lib  = read_file("$root/engine/src/lib.rs");
 
 ok( length $peer, 'the clock peer module is found' );
 ok( length $main, 'the engine CLI is found' );
+ok( length $auth, 'the shared auth module is found' );
 ok( length $lib,  'the engine lib is found' );
 
 # --- the module is part of the crate ----------------------------------------
 like( $lib, qr/^pub mod peer;/m, 'the peer module is declared beside session and proto' );
+like( $lib, qr/^pub mod auth;/m, 'the shared tag module is declared' );
+like( $lib, qr/^pub use auth::\{/m, 'the shared tag API is re-exported from the crate root' );
 like( $lib, qr/^pub use peer::\{/m, 'the peer API is re-exported from the crate root' );
 
 # --- the protocol ------------------------------------------------------------
@@ -36,7 +40,8 @@ like( $peer, qr/STREAM_CLOCK_PING:\s*u16\s*=\s*0xFF00/, 'the ping stream id is r
 like( $peer, qr/STREAM_CLOCK_PONG:\s*u16\s*=\s*0xFF01/, 'the pong stream id is its pair' );
 like( $peer, qr/PING_PAYLOAD_LEN:\s*usize\s*=\s*PING_BODY_LEN\s*\+\s*MAC_LEN/, 'a ping carries its send time and a tag' );
 like( $peer, qr/PONG_PAYLOAD_LEN:\s*usize\s*=\s*PONG_BODY_LEN\s*\+\s*MAC_LEN/, 'a pong echoes the ping, carries both master times and a tag' );
-like( $peer, qr/MAC_LEN:\s*usize\s*=\s*16/, 'a tag is sixteen bytes' );
+like( $auth, qr/MAC_LEN:\s*usize\s*=\s*16/, 'a tag is sixteen bytes' );
+like( $peer, qr/pub use crate::auth::MAC_LEN;/, 'the peer re-exports the shared tag length' );
 like( $peer, qr/STREAM_CLOCK_HELLO:\s*u16\s*=\s*0xFF02/, 'the handshake has its own stream' );
 like( $peer, qr/STREAM_CLOCK_WELCOME:\s*u16\s*=\s*0xFF03/, 'the welcome is its pair' );
 like( $peer, qr/pub fn encode_hello/, 'a hello is encoded with its tag' );
@@ -50,8 +55,9 @@ like( $peer, qr/pub fn decode_pong/, 'a pong is decoded' );
 like( $peer, qr/pub struct ClockMaster/, 'the master owns the session table in one type' );
 like( $peer, qr/pub struct ClockPeer/, 'the peer owns its session and replay window' );
 like( $peer, qr/pub fn answer\(/, 'the master answers in one call' );
-like( $peer, qr/fn mac_tag/, 'every clock datagram carries an HMAC tag' );
-like( $peer, qr/fn tags_match/, 'a tag is compared without early exit' );
+like( $auth, qr/pub fn mac_tag/, 'every clock datagram carries an HMAC tag' );
+like( $auth, qr/pub fn tags_match/, 'a tag is compared without early exit' );
+like( $peer, qr/use crate::auth::\{mac_tag, tags_match\}/, 'the clock imports the shared tag implementation' );
 like( $peer, qr/pub fn parse_session_key/, 'the 32-byte key is parsed from hex' );
 like( $peer, qr/pub fn hello\(/, 'the peer handshakes before it pings' );
 like( $peer, qr/pub fn accept_welcome/, 'the peer takes the session id from the welcome' );
