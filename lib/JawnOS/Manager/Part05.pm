@@ -77,6 +77,17 @@ sub appointment_writer($c,$app) {
 		$given = undef unless defined $given && $given =~ /^\s*\d+(?:\.\d+)?\s*$/ && $given + 0 > 0;
 		$app->{'timestamp'} = $given || $app->{'server_time'};
 	}
+	# A panel left open since the 2026-11-21 backfill keeps posting the clock it
+	# was served, so every press made afterwards was written with that same stamp
+	# and the whole week collapsed into one sync band again. A live write cannot
+	# precede the press itself: take a millisecond write time older than the row's
+	# own timestamp as now. Seconds stamps and genuinely backdated rows (whose
+	# write time is newer than their timestamp) are left alone.
+	if (($app->{'server_time'} // '') =~ /^\s*\d{12,}\s*$/
+		&& ($app->{'timestamp'} // '') =~ /^\s*\d{12,}\s*$/
+		&& $app->{'server_time'} + 0 < $app->{'timestamp'} + 0 - 60000) {
+		$app->{'server_time'} = &subs::rightNow();
+	}
 	$app->{'browser_tab_id'} = $c->param('browser_tab_id') if $c->param('browser_tab_id') && !$app->{'browser_tab_id'};
 	my $remote_address = $app->{'remote_address'};
 	delete $app->{'remote_address'};

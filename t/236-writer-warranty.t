@@ -33,6 +33,14 @@ my $pos_at     = index($part05, "\$app->{'pos'} = \$settings->{'pos'} unless \$a
 ok($project_at >= 0 && $project_at < $insert_at, 'and so is the project');
 ok($pos_at >= 0 && $pos_at < $insert_at, 'and the pos');
 
+# A panel left open since the 2026-11-21 backfill kept posting the clock it was
+# served, so every press was written at that same stamp and the week collapsed
+# into one sync band again. A write time older than the row's own timestamp is
+# not a live write; it is taken as now, before the insert.
+my $clamp_at = index($part05, "\$app->{'server_time'} + 0 < \$app->{'timestamp'} + 0 - 60000");
+ok($clamp_at >= 0, 'a stale posted write time is clamped');
+ok($clamp_at < $insert_at, 'and clamped before the row is inserted');
+
 # The foot of the sub refreshes only these columns; warranty/project/pos must not
 # silently become its job again, because a start's insert has already happened.
 my ($maker_fields) = $part05 =~ /my %maker_fields = .*?qw[\/\(]([^\/\)]+)[\/\)]/;
