@@ -1525,15 +1525,16 @@ fn patch_runs_a_plan_and_reports_its_shape() {
     let server = Server::start("patch");
     let mut client = server.connect();
 
-    // Channel 0 is real, `phone` is a peer this machine cannot bind, and the
-    // plan routes both into the house bus.
+    // Channel 0 is real, `phone` is a peer on this machine (pending until an
+    // uplink attaches its ring), and the plan routes both into the house bus.
     let plan = "{\"sources\":[{\"id\":\"in0\",\"kind\":\"input\",\"channel\":0},{\"id\":\"phone\",\"kind\":\"peer\"}],\"buses\":[{\"id\":\"house\"}],\"sinks\":[{\"id\":\"out\",\"kind\":\"interface\"}],\"routes\":[{\"from\":\"in0\",\"to\":\"house\"},{\"from\":\"phone\",\"to\":\"house\"},{\"from\":\"house\",\"to\":\"out\"}]}";
     let reply = client.ask(&format!("{{\"cmd\":\"patch\",\"plan\":{plan}}}"));
     assert!(reply.contains("\"ok\":true"), "patch: {reply}");
     assert!(reply.contains("\"state\":\"patching\""), "patch: {reply}");
     assert!(reply.contains("\"sources\":2"), "patch: {reply}");
-    assert!(reply.contains("\"bound_sources\":1"), "patch: {reply}");
-    assert!(reply.contains("\"silent\":[\"phone\"]"), "patch: {reply}");
+    assert!(reply.contains("\"bound_sources\":2"), "patch: {reply}");
+    assert!(reply.contains("\"silent\":[]"), "patch: {reply}");
+    assert!(reply.contains("\"peer\":\"pending\""), "patch: {reply}");
     // The plan does not route a `device` source, so the machine's own mix is
     // carried at the output (the compile-time statement, not the runtime one).
     assert!(
@@ -1549,6 +1550,8 @@ fn patch_runs_a_plan_and_reports_its_shape() {
     assert!(status.contains("\"buses\":1"), "status: {status}");
     // The null backend never captures a system mix, and says so.
     assert!(status.contains("\"system\":\"off\""), "status: {status}");
+    // No `--uplink` was named, so the uplink object is present but off.
+    assert!(status.contains("\"uplink\":{\"state\":\"off\""), "status: {status}");
 
     // One capture and one set of outputs: a listen is refused while patching.
     let reply = client.ask("{\"cmd\":\"listen\",\"channel\":0}");

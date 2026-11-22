@@ -28,6 +28,7 @@ pub mod playback;
 pub mod proto;
 pub mod reverb;
 pub mod session;
+pub mod uplink;
 pub mod wav;
 pub mod wav_read;
 
@@ -73,5 +74,9 @@ pub use proto::{
     HEADER_LEN, VERSION,
 };
 pub use session::{align, elect, Candidate, ClockOffset, NodeId};
+pub use uplink::{
+    Uplink, UplinkConfig, UplinkSource, UplinkSourceSpec, UplinkSourceStatus, UplinkStatus,
+    PULL_FRAMES, PULL_INTERVAL_MS,
+};
 pub use wav::{to_i16, WavError, WavWriter, HEADER_LEN as WAV_HEADER_LEN};
 pub use wav_read::{read_wav, WavAudio, WavReadError};

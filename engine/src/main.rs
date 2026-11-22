@@ -250,6 +250,11 @@ jawn-audio — the JawnOS audio engine
   --handset-device NAME
                   capture a plan's `handset` source from this PulseAudio/
                   PipeWire source (default jawn_call_in.monitor)
+  --uplink ADDR   listen on UDP ADDR for a peer's audio (e.g.
+                  0.0.0.0:7060); needs --session-key-hex HEX64 (or
+                  $JAWNOS_AUDIO_SESSION_KEY). A plan's `peer` source is
+                  `pending` until a peer gets a clock session, then mixed
+                  like a local input
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64)
@@ -261,7 +266,12 @@ jawn-audio — the JawnOS audio engine
 unpatch, param, status, stop, quit. `patch` takes `plan`, the saved sources,
 buses, sinks and routes, and runs the house mixer until `unpatch` or `stop`;
 `status` reports its shape, the frames it has rendered and the nodes this
-machine cannot bind. `record` takes \"out\", \"seconds\", \"start_at\", \"tracks\" and \"inputs\";
+machine cannot bind. A `peer` source is another machine's input on the
+`--uplink`: audio stream 0x1000 + the source's plan index, carried on the
+clock session and mixed like a local input. `status` also reports
+\"uplink\":{\"state\",\"bind\",\"error\",\"sessions\",\"rejected\",\"sources\"}, where
+each source carries its received, late, concealed and dropped frame counts.
+`record` takes \"out\", \"seconds\", \"start_at\", \"tracks\" and \"inputs\";
 \"monitor\" is an array of absolute WAV paths, or of objects
 {\"file\":\"/abs/a.wav\",\"gain\":0.8,\"pan\":-0.2,\"inserts\":[\"tone\"]},
 played to the outputs while the take records (an overdub; the monitor never
@@ -417,6 +427,8 @@ struct Options {
     handset_device: Option<String>,
     /// Whether `--handset-device` was given on the command line.
     handset_device_given: bool,
+    /// `--uplink`: the UDP address a `--serve` listens on for peer audio.
+    uplink: Option<String>,
     start_at: u64,
     gain: f32,
     pan: f32,
@@ -498,6 +510,7 @@ fn default_options() -> Options {
         system_device_given: false,
         handset_device: None,
         handset_device_given: false,
+        uplink: None,
         start_at: 0,
         gain: 1.0,
         pan: 0.0,
@@ -682,6 +695,9 @@ fn parse_arguments(
                 options.handset_device = (!name.is_empty()).then_some(name);
                 options.handset_device_given = true;
             }
+            "--uplink" => {
+                options.uplink = Some(value(&mut args, "--uplink")?);
+            }
             "--start-at" => {
                 let raw = value(&mut args, "--start-at")?;
                 options.start_at = raw
@@ -747,8 +763,14 @@ fn parse_arguments(
 /// knobs that tune that loop belong to the peer alone.
 fn validate_clock_options(options: &Options) -> Result<(), String> {
     let clock = matches!(options.mode, Mode::ClockMaster | Mode::ClockPeer);
-    if options.session_key_given && !clock {
-        return Err("--session-key-hex applies only to --clock-master and --clock-peer".to_string());
+    // A serve's uplink is the other keyed transport: it answers a peer's HELLO
+    // and authenticates its audio with the same 32-byte key.
+    let keyed_serve = options.mode == Mode::Serve && options.uplink.is_some();
+    if options.session_key_given && !clock && !keyed_serve {
+        return Err(
+            "--session-key-hex applies only to --clock-master, --clock-peer and --serve --uplink"
+                .to_string(),
+        );
     }
     if options.bind.is_some() && options.mode != Mode::ClockMaster {
         return Err("--bind applies only to --clock-master".to_string());
@@ -945,6 +967,9 @@ fn run() -> Result<ExitCode, String> {
     }
     if options.handset_device_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
         return Err("--handset-device applies only to --patch and --serve".to_string());
+    }
+    if options.uplink.is_some() && options.mode != Mode::Serve {
+        return Err("--uplink applies only to --serve".to_string());
     }
     validate_clock_options(&options)?;
 
@@ -1506,6 +1531,17 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
         }
     }
     let plan = socket::default_plan_path(options.plan.as_deref());
+    // The uplink share of the serve config. The key comes from the same flag
+    // or environment the clock modes use; validation has already proved it.
+    let uplink = match options.uplink.as_deref() {
+        Some(address) => Some(jawn_audio::uplink::UplinkConfig {
+            bind: address.parse().map_err(|_| {
+                format!("--uplink wants an IP:PORT address, not `{address}`")
+            })?,
+            key: session_key(options)?,
+        }),
+        None => None,
+    };
     // A server that cannot bind is a runtime failure, not a usage error: exit 1
     // tells a supervisor to try again, while 2 would mean the arguments are bad.
     let outcome = socket::serve(
@@ -1522,6 +1558,7 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
             machine: options.machine.clone(),
             system_device: options.system_device.clone(),
             handset_device: options.handset_device.clone(),
+            uplink,
         },
         stop,
         wake_fd,
@@ -3096,6 +3133,19 @@ fn validate_serve(options: &Options) -> Result<(), String> {
         return Err("--rate must be at least 1".to_string());
     }
     validate_channels(options)?;
+    // An uplink is a keyed transport: without a key it would be an open UDP
+    // microphone, so the same rule as a clock session applies here.
+    if let Some(address) = options.uplink.as_deref() {
+        address.parse::<std::net::SocketAddr>().map_err(|_| {
+            format!("--uplink wants an IP:PORT address such as 0.0.0.0:7060, not `{address}`")
+        })?;
+        let key = options.session_key_hex.as_deref().ok_or_else(|| {
+            "an uplink needs a session key: pass --session-key-hex HEX64 \
+             or set $JAWNOS_AUDIO_SESSION_KEY"
+                .to_string()
+        })?;
+        peer::parse_session_key(key).map_err(|error| format!("--session-key-hex: {error}"))?;
+    }
     // A backend that cannot capture is a configuration mistake, so say it at
     // startup rather than when the first take is armed.
     record_support(options.backend)
@@ -3956,6 +4006,38 @@ mod tests {
 
     const TEST_KEY: &str =
         "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
+    #[test]
+    fn an_uplink_belongs_to_serve_and_needs_a_key() {
+        let parse = |words: &[&str]| {
+            let mut options = default_options();
+            parse_arguments(&mut options, words.iter().map(|word| word.to_string()))
+                .expect("a parse");
+            options
+        };
+
+        let serve = parse(&[
+            "--serve",
+            "--uplink",
+            "127.0.0.1:7060",
+            "--session-key-hex",
+            TEST_KEY,
+        ]);
+        assert_eq!(serve.uplink.as_deref(), Some("127.0.0.1:7060"));
+        validate_clock_options(&serve).expect("serve may carry the key when it names an uplink");
+        validate_serve(&serve).expect("a loopback uplink is valid");
+
+        // The address must parse before anything binds it.
+        let bad_address = parse(&["--serve", "--uplink", "not-an-address"]);
+        let error = validate_serve(&bad_address).expect_err("a bad address");
+        assert!(error.contains("--uplink wants an IP:PORT"), "{error}");
+
+        // No key is an open UDP microphone, so it is refused at startup.
+        let no_key = parse(&["--serve", "--uplink", "127.0.0.1:7060"]);
+        validate_clock_options(&no_key).expect("serve still reaches its own key check");
+        let error = validate_serve(&no_key).expect_err("no key");
+        assert!(error.contains("uplink needs a session key"), "{error}");
+    }
 
     #[test]
     fn a_lease_is_positive_and_only_the_master_may_set_it() {

@@ -94,6 +94,7 @@ use jawn_audio::{
     Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
     TransportSource, MASTER_ORDER,
 };
+use jawn_audio::uplink::{Uplink, UplinkConfig, UplinkSourceSpec, UplinkStatus};
 
 use crate::patchbay::{PatchSummary, Patchbay};
 use jawn_audio::pipewire_guard::{PlaybackGuard, FEEDBACK_PREFIX};
@@ -208,6 +209,9 @@ pub(crate) struct Config {
     /// from (`jawn_call_in.monitor` by default). `None` starts no capture and
     /// reports a declared handset as silent.
     pub handset_device: Option<String>,
+    /// The peer uplink, when `--serve --uplink ADDR` named one. `None` leaves
+    /// every `peer` source pending; a peer source never opens its own port.
+    pub uplink: Option<UplinkConfig>,
 }
 
 /// `--socket`, else `$JAWNOS_AUDIO_SOCKET`, else `$HOME/.president/audio.sock`.
@@ -1153,6 +1157,10 @@ struct Server {
     /// What the boot restore did with the saved plan, reported on every status
     /// line as `plan` or `plan_error` beside `machine`.
     boot: BootPlan,
+    /// The uplink's published state. One patch at a time owns the binding, but
+    /// the status object outlives a patch, so this is the server's. `off` or
+    /// `idle` until a patch with a peer source starts the thread.
+    uplink: Arc<Mutex<UplinkStatus>>,
 }
 
 /// The boot-restore outcome, in the shape `status` reports it.
@@ -1199,6 +1207,11 @@ impl Server {
         // one) plus the two tools the ports need. Readiness reads it while idle.
         let capable = jawn_audio::backends::command_exists("parec")
             && jawn_audio::backends::command_exists("pacat");
+        let uplink = Arc::new(Mutex::new(if config.uplink.is_some() {
+            UplinkStatus::idle()
+        } else {
+            UplinkStatus::off()
+        }));
         Server {
             config,
             current: None,
@@ -1212,6 +1225,7 @@ impl Server {
             gateway: Gateway::off(capable),
             next_take: 1,
             boot: BootPlan::Error("no audio plan file configured".to_string()),
+            uplink,
         }
     }
 
@@ -1294,6 +1308,62 @@ impl Server {
         // monitor captured here; one that does not runs no extra `parec`. A
         // missing sink silences the node and leaves the rest of the patch up.
         let handset = attach_handset(&mut patchbay, &self.config);
+
+        // Every routed `peer` source gets one ring; the uplink owns the
+        // producer and the patch bay the consumer. `--uplink` is the only way
+        // a peer can receive anything, so without it the sources stay pending
+        // and the rest of the plan runs. A bind failure is reported here and
+        // never stops the patch: a peer is a source, not the device.
+        let mut uplink = None;
+        let peer_sources = patchbay.wants_peer();
+        if let Some(uplink_config) = self.config.uplink.clone() {
+            if peer_sources.is_empty() {
+                *self
+                    .uplink
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = UplinkStatus::idle();
+            } else {
+                let mut specs = Vec::with_capacity(peer_sources.len());
+                let mut consumers = Vec::with_capacity(peer_sources.len());
+                for (index, id) in peer_sources {
+                    let (producer, consumer) =
+                        jawn_audio::monbus::new(jawn_audio::monbus::MIN_FRAMES);
+                    specs.push(UplinkSourceSpec {
+                        index,
+                        id,
+                        producer,
+                    });
+                    consumers.push((index, consumer));
+                }
+                match Uplink::start(
+                    &uplink_config,
+                    self.config.rate,
+                    Arc::clone(&self.uplink),
+                    specs,
+                ) {
+                    Ok(started) => {
+                        for (index, consumer) in consumers {
+                            patchbay.attach_input(index, consumer);
+                        }
+                        uplink = Some(started);
+                    }
+                    Err(error) => {
+                        eprintln!("jawn-audio: uplink: {error}");
+                        *self
+                            .uplink
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                            UplinkStatus::failed(error);
+                    }
+                }
+            }
+        } else {
+            *self
+                .uplink
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = UplinkStatus::off();
+        }
+
         let summary = patchbay.summary().clone();
         let params = patchbay.params();
         let executable = (0..patchbay.route_count())
@@ -1331,6 +1401,7 @@ impl Server {
                     params,
                     executable,
                     handset,
+                    uplink,
                 });
                 Ok(summary)
             }
@@ -1338,25 +1409,33 @@ impl Server {
         }
     }
 
-    /// Append `machine` and the boot-restore outcome (`plan` or `plan_error`) to
-    /// a status object, without changing any key already present.
+    /// Append `machine`, the boot-restore outcome (`plan` or `plan_error`) and
+    /// the uplink's state to a status object, without changing any key already
+    /// present.
     fn add_boot(&self, line: String) -> String {
         let head = match line.strip_suffix('}') {
             Some(head) => head,
             None => return line,
         };
+        let uplink = self
+            .uplink
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .json();
         match &self.boot {
             BootPlan::Armed(summary) => format!(
-                "{head},\"machine\":\"{}\",\"plan\":{{{}}},{}}}",
+                "{head},\"machine\":\"{}\",\"plan\":{{{}}},{},\"uplink\":{}}}",
                 jawn_audio::loopback::json_escape(&self.config.machine),
                 summary.json(),
-                self.gateway.fragment()
+                self.gateway.fragment(),
+                uplink
             ),
             BootPlan::Error(message) => format!(
-                "{head},\"machine\":\"{}\",\"plan_error\":\"{}\",{}}}",
+                "{head},\"machine\":\"{}\",\"plan_error\":\"{}\",{},\"uplink\":{}}}",
                 jawn_audio::loopback::json_escape(&self.config.machine),
                 jawn_audio::loopback::json_escape(message),
-                self.gateway.fragment()
+                self.gateway.fragment(),
+                uplink
             ),
         }
     }
@@ -5259,6 +5338,9 @@ struct PatchSession {
     /// The reception mixer's screened-call capture, when the plan declared a
     /// `handset` source. Stopped and joined with the patch.
     handset: Option<crate::system_capture::SystemCapture>,
+    /// The peer uplink thread, when `--uplink` is configured and the plan has
+    /// a routed peer source. Stopped and joined with the patch.
+    uplink: Option<Uplink>,
 }
 
 impl PatchSession {
@@ -5283,6 +5365,9 @@ impl PatchSession {
         };
         if let Some(mut handset) = self.handset.take() {
             handset.stop();
+        }
+        if let Some(mut uplink) = self.uplink.take() {
+            uplink.stop();
         }
         if joined.is_err() {
             let mut status = self
@@ -6998,10 +7083,26 @@ break"}"#).is_err());
                 machine: "test".to_string(),
                 system_device: None,
                 handset_device: None,
+                uplink: None,
             },
             &STOP,
             None,
         )
+    }
+
+    /// The status line keeps every existing key and always adds `uplink`; with
+    /// no `--uplink` the object says `off` rather than disappearing.
+    #[test]
+    fn every_status_line_reports_the_uplink() {
+        let mut server = socket_server();
+        let line = server.status_line();
+        let object = parse_object(&line).expect("the status parses");
+        let uplink = match get(&object, "uplink") {
+            Some(Value::Obj(uplink)) => uplink,
+            other => panic!("no uplink object: {other:?}"),
+        };
+        assert!(matches!(get(uplink, "state"), Some(Value::Str(state)) if state == "off"));
+        assert!(matches!(get(uplink, "bind"), Some(Value::Str(bind)) if bind.is_empty()));
     }
 
     fn take_status(inserts: &str) -> Status {
@@ -7666,6 +7767,7 @@ break"}"#).is_err());
                         system: route,
                         handset: "off",
                         mode: "playback",
+                        peer: "off",
                     },
                     system: capture.to_string(),
                     error: String::new(),

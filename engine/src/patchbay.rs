@@ -14,11 +14,13 @@
 //!   phone, a peer machine or a zone. On this machine an `input` source is a
 //!   capture channel, a `device` source is the machine's own system mix (Music,
 //!   video, notifications, calls), a `handset` source is the reception mixer's
-//!   screened-call monitor (`jawn_call_in.monitor`), and an
+//!   screened-call monitor (`jawn_call_in.monitor`), a `peer` source is another
+//!   machine's input carried over the uplink (`uplink.rs`), and an
 //!   `interface`/`speakers` sink is the local output; the rest are reported in
-//!   [`PatchSummary::silent`] and their routes contribute nothing. A plan is one
-//!   document for the whole house; applying it on one machine must not fail
-//!   because the rest of the house is elsewhere.
+//!   [`PatchSummary::silent`] and their routes contribute nothing. A peer that
+//!   is on this machine is `pending` until a receiver is attached, not silent.
+//!   A plan is one document for the whole house; applying it on one machine
+//!   must not fail because the rest of the house is elsewhere.
 //!
 //! * **Ordinary audio survives the engine taking the card.** A machine in
 //!   managed mode sends its apps to a virtual sink; the engine captures that
@@ -53,8 +55,9 @@ use crate::socket::{get, Object, Value};
 use crate::system_capture::DEFAULT_INPUT;
 
 /// The source kinds a saved plan may name. `input` is a capture channel,
-/// `device` is this machine's system mix, and `handset` is the reception
-/// mixer's screened call; `player` and `peer` are declared but silent here.
+/// `device` is this machine's system mix, `handset` is the reception mixer's
+/// screened call, and `peer` is another machine's input on the uplink;
+/// `player` is declared but silent here.
 const SOURCE_KINDS: &[&str] = &["input", "player", "peer", "handset", "device"];
 
 /// The sink kinds a saved plan may name. `interface` and `speakers` are the
@@ -76,9 +79,11 @@ enum SourceRoute {
 /// `system` marks a `device` source, which reads the machine's own mix from a
 /// second capture rather than a channel of the interface; `handset` marks a
 /// `handset` source, which reads the reception mixer's screened-call monitor
-/// (`jawn_call_in.monitor`) from a capture of its own. `input` is the source's
-/// own `parec` ring on a PipeWire machine, where the card is never opened for
-/// capture: its samples land in the plan's `channel` each block.
+/// (`jawn_call_in.monitor`) from a capture of its own; `peer` marks another
+/// machine's input, which the uplink (`uplink.rs`) feeds into the plan's
+/// `channel` through the same ring a `parec` input uses. `input` is the
+/// source's own `parec` ring on a PipeWire machine, where the card is never
+/// opened for capture: its samples land in the plan's `channel` each block.
 #[derive(Debug)]
 struct Source {
     id: String,
@@ -90,6 +95,10 @@ struct Source {
     node: Option<String>,
     system: bool,
     handset: bool,
+    /// Another machine's input on the uplink. It binds exactly like a local
+    /// input (its samples arrive in the plan's `channel`) but asks for no card
+    /// capture and no `parec`; the uplink attaches its ring.
+    peer: bool,
     input: Option<Consumer>,
     routes: Vec<SourceRoute>,
 }
@@ -167,9 +176,14 @@ pub struct PatchSummary {
     /// `duplex` when the plan needs the card's capture (a routed local
     /// `input` source) and the device loop opens capture and playback;
     /// `playback` when it does not and the loop opens only the output, leaving
-    /// the microphone to PipeWire. The system mix and the handset are external
-    /// `parec` captures and do not make a plan `duplex`.
+    /// the microphone to PipeWire. The system mix, the handset and a peer are
+    /// external captures and do not make a plan `duplex`.
     pub mode: &'static str,
+    /// `pending` while a routed `peer` source on this machine has no uplink
+    /// receiver attached, `capturing` once the uplink attaches its ring, and
+    /// `off` when the plan declares no peer source on this machine. A peer on
+    /// another machine is `silent` instead (see [`PatchSummary::silent`]).
+    pub peer: &'static str,
 }
 
 impl PatchSummary {
@@ -194,7 +208,7 @@ impl PatchSummary {
             .collect::<Vec<String>>()
             .join(",");
         format!(
-            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"inputs\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\"",
+            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"inputs\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\",\"peer\":\"{}\"",
             self.sources,
             self.buses,
             self.sinks,
@@ -205,7 +219,8 @@ impl PatchSummary {
             inputs,
             self.system,
             self.handset,
-            self.mode
+            self.mode,
+            self.peer
         )
     }
 }
@@ -329,11 +344,14 @@ impl Patchbay {
             // channel field is not consulted. A `handset` source is the
             // reception mixer's screened call, captured from `jawn_call_in`'s
             // monitor the same way and bound on this machine unless the plan
-            // places it elsewhere.
+            // places it elsewhere. A `peer` source is another machine's input
+            // on the uplink: it uses the plan's channel as its slot in the
+            // block, exactly like a `parec` input, but asks for no card capture.
             let system = kind == "device" && on_this_machine;
             let handset = kind == "handset" && on_this_machine;
+            let peer = kind == "peer" && on_this_machine && channel < config_channels;
             let mut reachable =
-                kind == "input" && on_this_machine && channel < config_channels;
+                (kind == "input" || kind == "peer") && on_this_machine && channel < config_channels;
             // A named node this machine does not offer is silent, like a
             // channel the interface does not have. Falling back to the default
             // source would record the wrong microphone and say nothing.
@@ -341,9 +359,10 @@ impl Patchbay {
                 reachable = false;
             }
             if !reachable && !system && !handset {
-                // A plan saved for a wider interface (or a peer/phone, or a
-                // route delegated elsewhere) is a declared node this machine
-                // cannot reach, not a broken plan.
+                // A plan saved for a wider interface (or a phone, or a route
+                // delegated elsewhere) is a declared node this machine cannot
+                // reach, not a broken plan. A `peer` on this machine is not in
+                // this list: it is pending until the uplink attaches its ring.
                 silent.push(id.clone());
             }
             sources.push(Source {
@@ -352,6 +371,7 @@ impl Patchbay {
                 node: reachable.then_some(node).flatten(),
                 system,
                 handset,
+                peer,
                 input: None,
                 routes: Vec::new(),
             });
@@ -477,6 +497,7 @@ impl Patchbay {
                     if sources[source].channel.is_some()
                         || sources[source].system
                         || sources[source].handset
+                        || sources[source].peer
                     {
                         sources[source].routes.push(SourceRoute::Bus {
                             index: bus,
@@ -490,7 +511,8 @@ impl Patchbay {
                 (NodeRef::Source(source), NodeRef::Sink(sink)) => {
                     if (sources[source].channel.is_some()
                         || sources[source].system
-                        || sources[source].handset)
+                        || sources[source].handset
+                        || sources[source].peer)
                         && sinks[sink].bound
                     {
                         sources[source].routes.push(SourceRoute::Sink {
@@ -539,6 +561,15 @@ impl Patchbay {
         } else {
             "playback"
         };
+        let peer_state = if sources.iter().any(|source| source.peer) {
+            if sources.iter().any(|source| source.peer && source.input.is_some()) {
+                "capturing"
+            } else {
+                "pending"
+            }
+        } else {
+            "off"
+        };
         let summary = PatchSummary {
             sources: sources.len(),
             buses: buses.len(),
@@ -547,7 +578,7 @@ impl Patchbay {
             bound_sources: sources
                 .iter()
                 .filter(|source| {
-                    source.channel.is_some() || source.system || source.handset
+                    source.channel.is_some() || source.system || source.handset || source.peer
                 })
                 .count(),
             bound_sinks: sinks.iter().filter(|sink| sink.bound).count(),
@@ -560,6 +591,7 @@ impl Patchbay {
                 "off"
             },
             mode,
+            peer: peer_state,
         };
 
         let bus_count = buses.len();
@@ -598,13 +630,26 @@ impl Patchbay {
         self.sources.iter().any(|source| source.handset)
     }
 
+    /// Every routed `peer` source on this machine, as (index, id). The caller
+    /// makes one ring per entry and the uplink feeds it, so a peer that is not
+    /// routed costs no thread, no ring and no UDP stream.
+    pub fn wants_peer(&self) -> Vec<(usize, String)> {
+        self.sources
+            .iter()
+            .enumerate()
+            .filter(|(_index, source)| source.peer && !source.routes.is_empty())
+            .map(|(index, source)| (index, source.id.clone()))
+            .collect()
+    }
+
     /// Whether the compiled plan needs the card's capture.
     ///
     /// True only when at least one local `input` source is bound to a real
     /// channel *and* has an executable route. A source declared for another
     /// machine, a `device` source (the system mix), a `handset` source (the
-    /// reception mixer's call monitor), an unrouted input and a muted route are
-    /// all external or silent and need no card capture. A plan without one runs
+    /// reception mixer's call monitor), a `peer` source (another machine's
+    /// input on the uplink), an unrouted input and a muted route are all
+    /// external or silent and need no card capture. A plan without one runs
     /// playback-only, so the microphone stays with PipeWire and its privacy
     /// indicator stays off.
     #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
@@ -627,6 +672,9 @@ impl Patchbay {
                 .iter()
                 .enumerate()
                 .filter_map(|(index, source)| {
+                    if source.peer {
+                        return None;
+                    }
                     let channel = source.channel?;
                     if source.routes.is_empty() {
                         return None;
@@ -650,11 +698,20 @@ impl Patchbay {
 
     /// Attach a routed input's own capture. Its samples are written into the
     /// source's plan channel at the top of each block, exactly where the ALSA
-    /// duplex loop's card capture would have put them.
+    /// duplex loop's card capture would have put them. A `peer` source uses the
+    /// same ring: the uplink is its capture, so attaching it moves the source
+    /// from `pending` to `capturing`.
     #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
     pub fn attach_input(&mut self, index: usize, consumer: Consumer) {
-        if let Some(source) = self.sources.get_mut(index) {
-            source.input = Some(consumer);
+        let peer = match self.sources.get_mut(index) {
+            Some(source) => {
+                source.input = Some(consumer);
+                source.peer
+            }
+            None => return,
+        };
+        if peer {
+            self.summary.peer = "capturing";
         }
     }
 
@@ -676,7 +733,9 @@ impl Patchbay {
         self.summary.bound_sources = self
             .sources
             .iter()
-            .filter(|source| source.channel.is_some() || source.system || source.handset)
+            .filter(|source| {
+                source.channel.is_some() || source.system || source.handset || source.peer
+            })
             .count();
         self.summary.inputs = bound_inputs(&self.sources);
     }
@@ -1172,16 +1231,17 @@ fn balance(gain: f32, pan: f32) -> (f32, f32) {
 fn sources_want_input(sources: &[Source]) -> bool {
     sources
         .iter()
-        .any(|source| source.channel.is_some() && !source.routes.is_empty())
+        .any(|source| source.channel.is_some() && !source.peer && !source.routes.is_empty())
 }
 
 /// Every bound local `input` and the node it captures: the plan's own name, or
 /// the Pulse alias for the machine's default source. The status line reports
-/// this, so a person can see which microphone a take will use.
+/// this, so a person can see which microphone a take will use. A `peer` source
+/// has a plan channel but no capture node of its own, so it is not an input.
 fn bound_inputs(sources: &[Source]) -> Vec<(String, String)> {
     sources
         .iter()
-        .filter(|source| source.channel.is_some())
+        .filter(|source| source.channel.is_some() && !source.peer)
         .map(|source| {
             (
                 source.id.clone(),
@@ -1567,7 +1627,7 @@ mod tests {
     }
 
     #[test]
-    fn a_peer_source_is_silent_and_named() {
+    fn a_peer_source_is_pending_not_silent() {
         let patchbay = bay(
             r#"{
                 "sources":[{"id":"phone","kind":"peer"}],
@@ -1577,8 +1637,57 @@ mod tests {
             }"#,
         );
         let summary = patchbay.summary();
+        assert_eq!(summary.bound_sources, 1);
+        assert!(summary.silent.is_empty(), "{:?}", summary.silent);
+        assert_eq!(summary.peer, "pending");
+        assert_eq!(
+            patchbay.wants_peer(),
+            vec![(0, "phone".to_string())],
+            "a routed peer needs one ring"
+        );
+        assert!(!patchbay.wants_input(), "a peer is not a card capture");
+    }
+
+    #[test]
+    fn a_peer_ring_mixes_like_a_parec_input() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"phone","kind":"peer"}],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"phone","to":"house"},{"from":"house","to":"out"}]
+            }"#,
+        );
+        let (producer, consumer) = jawn_audio::monbus::new(jawn_audio::monbus::MIN_FRAMES);
+        patchbay.attach_input(0, consumer);
+        assert_eq!(patchbay.summary().peer, "capturing");
+        producer.push(&[0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
+
+        let input = [0.0f32; 8];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+        let expected = 0.5f32 / std::f32::consts::SQRT_2;
+        for frame in output.chunks(2) {
+            assert!((frame[0] - expected).abs() < 1e-5, "{frame:?}");
+            assert!((frame[1] - expected).abs() < 1e-5, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn a_peer_on_another_machine_stays_silent() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"phone","kind":"peer","machine":"elsewhere"}],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"phone","to":"house"},{"from":"house","to":"out"}]
+            }"#,
+        );
+        let summary = patchbay.summary();
         assert_eq!(summary.bound_sources, 0);
         assert_eq!(summary.silent, vec!["phone".to_string()]);
+        assert_eq!(summary.peer, "off");
+        assert!(patchbay.wants_peer().is_empty());
     }
 
     #[test]

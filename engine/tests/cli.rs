@@ -1367,8 +1367,11 @@ fn patch_on_null_runs_a_plan_and_reports_its_shape() {
     assert!(text.contains("\"ok\":true"), "stdout: {text}");
     assert_eq!(json_number(&text, "frames"), 4_800.0, "stdout: {text}");
     assert_eq!(json_number(&text, "sources"), 2.0, "stdout: {text}");
-    assert_eq!(json_number(&text, "bound_sources"), 1.0, "stdout: {text}");
-    assert!(text.contains("\"silent\":[\"phone\"]"), "stdout: {text}");
+    // The peer on this machine binds like a routed input and is pending until
+    // the uplink (or this run's absence of one) attaches a ring.
+    assert_eq!(json_number(&text, "bound_sources"), 2.0, "stdout: {text}");
+    assert!(text.contains("\"silent\":[]"), "stdout: {text}");
+    assert!(text.contains("\"peer\":\"pending\""), "stdout: {text}");
     // A routed local input is what makes the plan need the card's capture.
     assert!(text.contains("\"mode\":\"duplex\""), "stdout: {text}");
 }
