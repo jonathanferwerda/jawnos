@@ -30,6 +30,12 @@
 	text-transform: uppercase;
 	color: var(--accent-line, #2f6cc4);
 }
+#pipedream .pd_level {
+	margin-left: 8px;
+	font: 600 11px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	letter-spacing: .06em;
+	color: var(--ink-muted, #5b6169);
+}
 #pipedream .pd_status {
 	flex: 1 1 220px;
 	min-width: 0;
@@ -115,6 +121,7 @@
 @media (max-width: 560px) {
 	#pipedream .pd_head { padding: 6px 10px 4px; }
 	#pipedream .pd_title { font-size: 13px; }
+	#pipedream .pd_level { font-size: 10px; }
 	#pipedream .pd_status { font-size: 12px; }
 	#pipedream .pd_hand { gap: 5px; padding: 6px 8px 2px; }
 	#pipedream .pd_hand_piece { width: 40px; height: 40px; }
@@ -124,7 +131,7 @@
 </style>
 <div id="pipedream" data-pd-state="ready">
 	<div class="pd_head">
-		<div class="pd_title"><%= &subs::ui('Pipedream') %></div>
+		<div class="pd_title"><%= &subs::ui('Pipedream') %><span class="pd_level" id="pd_level"></span></div>
 		<div class="pd_status" id="pd_status" aria-live="polite"><%= &subs::ui('Place a pipe, turn it, then start the flow.') %></div>
 	</div>
 	<div class="pd_stage">
@@ -132,10 +139,10 @@
 	</div>
 	<div class="pd_hand" id="pd_hand" role="group" aria-label="<%= &subs::ui('Pipe pieces') %>"></div>
 	<div class="pd_bar">
-		<button type="button" class="pd_btn primary" id="pd_start"><%= &subs::ui('Start flow') %></button>
+		<button type="button" class="pd_btn primary" id="pd_start" hint="<%= &subs::ui('Start or pause the liquid') %>"><%= &subs::ui('Start flow') %></button>
 		<button type="button" class="pd_btn" id="pd_rotate" hint="<%= &subs::ui('Turn the pipe under the cursor or the chosen piece') %>"><%= &subs::ui('Rotate') %></button>
 		<button type="button" class="pd_btn" id="pd_undo" hint="<%= &subs::ui('Lift the last pipe back into the hand') %>"><%= &subs::ui('Undo') %></button>
-		<button type="button" class="pd_btn" id="pd_new"><%= &subs::ui('New deal') %></button>
+		<button type="button" class="pd_btn" id="pd_new" hint="<%= &subs::ui('Deal a new board; after a win it opens the next level') %>"><%= &subs::ui('New deal') %></button>
 	</div>
 </div>
 <script>

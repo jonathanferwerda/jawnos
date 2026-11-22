@@ -12,18 +12,26 @@ function pipedreamInit() {
 	var c2d = canvas && canvas.getContext ? canvas.getContext('2d') : null;
 	var stage = canvas ? canvas.parentNode : null;
 	var statusEl = document.getElementById('pd_status');
+	var levelEl = document.getElementById('pd_level');
 	var handEl = document.getElementById('pd_hand');
 	var startBtn = document.getElementById('pd_start');
 	var rotateBtn = document.getElementById('pd_rotate');
 	var undoBtn = document.getElementById('pd_undo');
 	var newBtn = document.getElementById('pd_new');
 
+	var level = 1;
 	var seed = (Date.now() & 0x7fffffff) || 1;
-	var state = pipedreamNewState(6, 5, seed);
+	var board = pipedreamBoardForLevel(level);
+	var state = pipedreamNewState(board.cols, board.rows, seed, level);
 	var selected = 0;
 	var previewRot = 0;
 	var cursor = { x: Math.min(1, state.cols - 1), y: state.source.y };
 	var flowing = false;
+	var animating = false;
+	var flowPhase = 0;
+	var lastFrame = 0;
+	var stepAccum = 0;
+	var stepInterval = 560;
 	var cell = 40;
 	var boardX = 0;
 	var boardY = 0;
@@ -183,8 +191,44 @@ function pipedreamInit() {
 			strokeSides(cx, cy, r, sides, colors.accent, Math.max(2, inner * 0.55));
 			c2d.restore();
 		}
+		if (wet && flowing) {
+			// Beads of liquid travel from the joint out along each outlet, so the
+			// water reads as moving while the flow runs.
+			c2d.save();
+			c2d.fillStyle = colors.accentInk;
+			for (var s = 0; s < sides.length; s++) {
+				var p = edgePoint(cx, cy, r, sides[s], 0);
+				for (var b = 0; b < 2; b++) {
+					var f = (flowPhase * 1.15 + b / 2) % 1;
+					if (f < 0) { f += 1; }
+					var bx = cx + (p.x - cx) * f;
+					var by = cy + (p.y - cy) * f;
+					c2d.globalAlpha = 0.2 + 0.7 * Math.sin(Math.PI * f);
+					c2d.beginPath();
+					c2d.arc(bx, by, Math.max(1.2, inner * 0.32), 0, Math.PI * 2);
+					c2d.fill();
+				}
+			}
+			c2d.restore();
+		}
 		if (piece.kind === 'source') { drawSource(cx, cy); }
-		else if (piece.kind === 'drain') { drawDrain(cx, cy); }
+		else if (piece.kind === 'drain') {
+			drawDrain(cx, cy);
+			var di = -1;
+			for (var d = 0; d < state.drains.length; d++) {
+				if (state.drains[d].x === x && state.drains[d].y === y) { di = d; break; }
+			}
+			if (di >= 0 && state.reached[di]) {
+				var swallow = flowing ? (0.5 + 0.5 * Math.sin(flowPhase * 5)) : 0.5;
+				c2d.save();
+				c2d.globalAlpha = 0.22 + 0.34 * swallow;
+				c2d.beginPath();
+				c2d.arc(cx, cy, Math.max(7, cell * 0.3) * (1 + 0.12 * swallow), 0, Math.PI * 2);
+				c2d.fillStyle = colors.accent;
+				c2d.fill();
+				c2d.restore();
+			}
+		}
 	}
 
 	function drawSpill() {
@@ -271,8 +315,20 @@ function pipedreamInit() {
 		if (!state.won && !state.spilled) {
 			for (var f = 0; f < state.frontier.length; f++) {
 				var fr = cellRect(state.frontier[f].x, state.frontier[f].y);
+				var fcx = fr.x + fr.w / 2;
+				var fcy = fr.y + fr.h / 2;
+				var base = Math.max(3, cell * 0.08);
+				var pulse = flowing ? (0.5 + 0.5 * Math.sin(flowPhase * 6 + f)) : 0;
+				c2d.save();
 				c2d.beginPath();
-				c2d.arc(fr.x + fr.w / 2, fr.y + fr.h / 2, Math.max(3, cell * 0.08), 0, Math.PI * 2);
+				c2d.arc(fcx, fcy, base * (1 + pulse * 1.1), 0, Math.PI * 2);
+				c2d.lineWidth = Math.max(1.5, cell * 0.03);
+				c2d.strokeStyle = colors.accent;
+				c2d.globalAlpha = 0.5 - 0.3 * pulse;
+				c2d.stroke();
+				c2d.restore();
+				c2d.beginPath();
+				c2d.arc(fcx, fcy, base * 0.75, 0, Math.PI * 2);
 				c2d.fillStyle = colors.accent;
 				c2d.fill();
 			}
@@ -285,6 +341,7 @@ function pipedreamInit() {
 	function svgFor(kind) {
 		var d = kind === 'elbow' ? 'M20 34 V20 H34'
 			: kind === 'tee' ? 'M20 6 V34 M20 20 H34'
+			: kind === 'cross' ? 'M6 20 H34 M20 6 V34'
 			: 'M20 6 V34';
 		return '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="' + d
 			+ '" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -313,9 +370,10 @@ function pipedreamInit() {
 
 	function updateStatus() {
 		root.setAttribute('data-pd-state', state.won ? 'won' : state.spilled ? 'lost' : flowing ? 'flowing' : 'ready');
+		if (levelEl) { levelEl.textContent = text('Level') + ' ' + level; }
 		if (statusEl) {
 			var msg;
-			if (state.won) { msg = text('Connected — every drain is drinking.'); }
+			if (state.won) { msg = text('Connected — every drain is drinking. New deal opens the next level.'); }
 			else if (state.spilled) { msg = text('Spilled — the water found an open end. Turn a pipe or lift it.'); }
 			else if (flowing) { msg = text('The water is moving. Turn a pipe to change its way.'); }
 			else if (!leftCount()) { msg = text('No pipes left. Start the flow or deal again.'); }
@@ -343,12 +401,17 @@ function pipedreamInit() {
 		previewRot = 0;
 	}
 
-	function newDeal(nextSeed) {
-		if (typeof nextSeed === 'number') { seed = nextSeed; }
-		else { seed = (seed * 1664525 + 1013904223) >>> 0; }
+	function newDeal() {
+		// A win opens the next level; a spill re-rolls the same one so the
+		// person can try the difficulty again with a fresh board.
+		if (state.won) { level += 1; }
+		seed = (seed * 1664525 + 1013904223) >>> 0;
+		if (typeof Date !== 'undefined') { seed = (seed ^ (Date.now() & 0x7fffffff)) >>> 0; }
 		if (!seed) { seed = 1; }
-		state = pipedreamNewState(6, 5, seed);
+		var next = pipedreamBoardForLevel(level);
+		state = pipedreamNewState(next.cols, next.rows, seed, level);
 		flowing = false;
+		animating = false;
 		pipedreamStopTicker();
 		cursor = { x: Math.min(1, state.cols - 1), y: state.source.y };
 		selected = 0;
@@ -361,6 +424,7 @@ function pipedreamInit() {
 	function toggleFlow() {
 		if (flowing) {
 			flowing = false;
+			animating = false;
 			pipedreamStopTicker();
 		}
 		else {
@@ -371,24 +435,52 @@ function pipedreamInit() {
 		refresh();
 	}
 
-	function tick() {
-		if (!pipedreamScreen()) {
-			flowing = false;
+	// One animation frame advances the liquid on a clock and redraws the board,
+	// so the water slides along the pipes instead of jumping a cell at a time.
+	function frame(now) {
+		if (!animating || !pipedreamScreen()) {
+			animating = false;
 			pipedreamStopTicker();
 			return;
 		}
-		if (!flowing) { return; }
-		pipedreamStep(state);
-		if (state.won || state.spilled) {
-			flowing = false;
-			pipedreamStopTicker();
+		var when = (typeof now === 'number') ? now : ((typeof Date !== 'undefined') ? Date.now() : 0);
+		if (!lastFrame) { lastFrame = when; }
+		var dt = when - lastFrame;
+		lastFrame = when;
+		if (dt < 0) { dt = 0; }
+		if (dt > 200) { dt = 200; }
+		flowPhase = when / 1000;
+
+		if (flowing) {
+			stepAccum += dt;
+			var guard = 8;
+			while (stepAccum >= stepInterval && guard-- > 0) {
+				stepAccum -= stepInterval;
+				pipedreamStep(state);
+				if (state.won || state.spilled) { flowing = false; stepAccum = 0; break; }
+			}
+			updateStatus();
 		}
-		refresh();
+		draw();
+
+		if (flowing) {
+			pipedreamAnim = (typeof requestAnimationFrame === 'function')
+				? requestAnimationFrame(frame) : setTimeout(frame, 33);
+		}
+		else {
+			animating = false;
+			pipedreamAnim = null;
+			refresh();
+		}
 	}
 
 	function ensureTicker() {
-		if (pipedreamTicker) { return; }
-		pipedreamTicker = setInterval(tick, 620);
+		if (animating) { return; }
+		animating = true;
+		lastFrame = 0;
+		stepAccum = 0;
+		pipedreamAnim = (typeof requestAnimationFrame === 'function')
+			? requestAnimationFrame(frame) : setTimeout(frame, 33);
 	}
 
 	function moveCursor(dx, dy) {
@@ -522,6 +614,7 @@ function pipedreamInit() {
 		key: key,
 		pause: function () {
 			flowing = false;
+			animating = false;
 			pipedreamStopTicker();
 			refresh();
 		}

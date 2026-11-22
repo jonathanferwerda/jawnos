@@ -217,13 +217,13 @@ $topic{'cards'} = {
 	};
 $topic{'pipedream'} = {
 		title => 'Pipedream', category => 'apps', app => 'pipedream',
-		verified => '2026-11-19',
+		verified => '2026-11-21',
 		templates => [ 'templates/pipedream.html.ep', 'public/js/manager/pipedream.js', 'public/js/manager/pipedream/01_pipedream_flow.js', 'public/js/manager/pipedream/02_pipedream_ui.js' ],
-		controls => [ 'Turn the pipe under the cursor or the chosen piece', 'Lift the last pipe back into the hand' ],
+		controls => [ 'Turn the pipe under the cursor or the chosen piece', 'Lift the last pipe back into the hand', 'Start or pause the liquid', 'Deal a new board; after a win it opens the next level' ],
 		summary => 'The plumbing puzzle: lay pipes from the source to the drains before the liquid spills.',
 		body => [
-			'A source pushes liquid into a grid of empty cells. Pick a straight, elbow or tee piece from the hand, place it on a cell and turn it until its ends line up; the drains are on the far side. Start flow sends the liquid along the pipes one cell at a time. A pipe that leads into an empty cell spills and ends the deal; reach every drain to win.',
-			'Rotate turns the chosen piece or the pipe under the cursor, Undo lifts the last pipe back into the hand, and New deal lays another board. The board sizes itself to the window, so one deal fits a handheld panel and a desk alike.'
+			'A source pushes liquid into a grid of empty cells. Pick a straight, elbow, tee or cross piece from the hand, place it on a cell and turn it until its ends line up; the drains are on the far side. Start flow sends the liquid running along the pipes, and the water moves visibly along them while it travels. A pipe that leads into an empty cell spills and ends the deal; reach every drain to win.',
+			'Every deal is a fresh random board: the source sits on a different row, the drains move, and the route between them is laid out differently each time. Each level is a little harder than the last - the board gains a column, an extra row now and then, another drain and a few more spare pieces in the hand. A win opens the next level when New deal is pressed; a spill deals another board at the same level. Rotate turns the chosen piece or the pipe under the cursor, Undo lifts the last pipe back into the hand, and New deal lays a fresh board. The board sizes itself to the window, so one deal fits a handheld panel and a desk alike.'
 		],
 		related => [ 'games', 'twirl' ]
 	};

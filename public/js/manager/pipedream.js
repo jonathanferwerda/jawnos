@@ -5,15 +5,15 @@
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 // Pipedream: the plumbing game. A source on the left edge pushes liquid into a
-// grid; the player lays straight, elbow and tee pieces from a hand, turns them,
-// and tries to reach every drain on the right edge before a pipe pours into an
-// empty cell. The rules are plain functions at the top of this file so the
-// puzzle can be played in a bare JS context (t/350-pipedream.t); every DOM and
-// jQuery touch lives inside pipedreamInit(), which the template calls.
+// grid; the player lays straight, elbow, tee and cross pieces from a hand, turns
+// them, and tries to reach every drain on the right edge before a pipe pours
+// into an empty cell. The rules are plain functions at the top of this file so
+// the puzzle can be played in a bare JS context (t/350-pipedream.t); every DOM
+// and jQuery touch lives inside pipedreamInit(), which the template calls.
 //
 // State shape (plain data, no DOM):
 // {
-//   cols, rows, seed,
+//   cols, rows, seed, level,
 //   cells:   rows x cols -> null | { kind, rot, fixed, hand, sides? },
 //            source and drain pieces carry a fixed side list; placed pieces
 //            carry the hand index they came from.
@@ -34,10 +34,10 @@
 
 var PD_DIRS = [ [ 0, -1 ], [ 1, 0 ], [ 0, 1 ], [ -1, 0 ] ];
 var PD_OPPOSITE = [ 2, 3, 0, 1 ];
-var PD_BASE = { straight: [ 0, 2 ], elbow: [ 0, 1 ], tee: [ 0, 1, 2 ] };
+var PD_BASE = { straight: [ 0, 2 ], elbow: [ 0, 1 ], tee: [ 0, 1, 2 ], cross: [ 0, 1, 2, 3 ] };
 
 // A small seeded PRNG (mulberry32), never Math.random: the same seed deals the
-// same hand and the same route, which is what the test checks.
+// same board and the same hand, which is what the test checks.
 function pipedreamRng(seed) {
 	var a = (Number(seed) >>> 0) || 1;
 	return function () {
@@ -70,21 +70,225 @@ function pipedreamPieceSides(piece) {
 	return out;
 }
 
-// The board is generated around one guaranteed route: a trunk east from the
-// source, a tee at the junction, and two branches to the two right-edge drains.
-// The hand is that route's pieces plus two spare pieces, shuffled by the seed.
-function pipedreamNewState(cols, rows, seed) {
+// Each level buys a bigger table and more plumbing: one more column than the
+// level before, an extra row every other level, another drain now and then, and
+// a few more decoy pieces in the hand. Level 1 is six by six - about a quarter
+// more cells than the old six by five board.
+function pipedreamBoardForLevel(level) {
+	level = Math.floor(Number(level) || 1);
+	if (level < 1) { level = 1; }
+	var cols = 6 + (level - 1);
+	var rows = 6 + Math.floor((level - 1) / 2);
+	if (cols > 12) { cols = 12; }
+	if (rows > 10) { rows = 10; }
+	var drains = 2 + Math.floor((level - 1) / 2);
+	if (drains > rows - 1) { drains = rows - 1; }
+	if (drains > 4) { drains = 4; }
+	if (drains < 1) { drains = 1; }
+	var decoys = 1 + Math.floor((level - 1) / 2);
+	return { cols: cols, rows: rows, drains: drains, decoys: decoys };
+}
+
+function pipedreamCellKey(x, y) { return x + ',' + y; }
+
+function pipedreamSideFrom(cx, cy, nx, ny) {
+	if (nx === cx + 1 && ny === cy) { return 1; }
+	if (nx === cx - 1 && ny === cy) { return 3; }
+	if (nx === cx && ny === cy + 1) { return 2; }
+	if (nx === cx && ny === cy - 1) { return 0; }
+	return -1;
+}
+
+// The piece and rotation whose outlets are exactly this side set. Around four
+// sides every pair is opposite or adjacent, every triple is a tee and the whole
+// set is a cross, so a shape always exists.
+function pipedreamShapeForSides(sides) {
+	if (!sides || sides.length < 2) { return null; }
+	var kinds = [ 'straight', 'elbow', 'tee', 'cross' ];
+	for (var k = 0; k < kinds.length; k++) {
+		var kind = kinds[k];
+		var base = PD_BASE[kind];
+		if (base.length !== sides.length) { continue; }
+		for (var rot = 0; rot < 4; rot++) {
+			var got = [];
+			for (var i = 0; i < base.length; i++) { got.push((base[i] + rot) % 4); }
+			got.sort(function (a, b) { return a - b; });
+			var same = true;
+			for (var j = 0; j < got.length; j++) {
+				if (got[j] !== sides[j]) { same = false; break; }
+			}
+			if (same) { return { kind: kind, rot: rot }; }
+		}
+	}
+	return null;
+}
+
+// Build the deal's guaranteed route. It is a random tree: a seeded growth from
+// the cell east of the source that stops once it touches the west side of every
+// drain, then has its dead ends pruned away so every cell that remains is a
+// real connection. Each cell's outlets become a piece. Because the tree is
+// connected and has no open ends, the water reaches every drain when the route
+// is laid; the caller turns the route into the hand.
+function pipedreamBuildRoute(cols, rows, sy, drainRows, rnd) {
+	var placeable = {};
+	var x, y;
+	for (y = 0; y < rows; y++) {
+		for (x = 0; x < cols - 1; x++) {
+			if (x === 0 && y === sy) { continue; }
+			placeable[pipedreamCellKey(x, y)] = true;
+		}
+	}
+
+	var required = {};
+	required[pipedreamCellKey(1, sy)] = true;
+	for (var d = 0; d < drainRows.length; d++) {
+		required[pipedreamCellKey(cols - 2, drainRows[d])] = true;
+	}
+
+	var inTree = {};
+	var neighbors = {}; // key -> { side: true } to the cells it pipes toward
+	var queued = {};
+	var frontier = [];
+
+	function addCell(cx, cy) {
+		var key = pipedreamCellKey(cx, cy);
+		if (inTree[key]) { return; }
+		inTree[key] = true;
+		neighbors[key] = {};
+		var dirs = [ [ cx + 1, cy ], [ cx - 1, cy ], [ cx, cy + 1 ], [ cx, cy - 1 ] ];
+		for (var i = 0; i < dirs.length; i++) {
+			var nk = pipedreamCellKey(dirs[i][0], dirs[i][1]);
+			if (placeable[nk] && !inTree[nk] && !queued[nk]) {
+				queued[nk] = true;
+				frontier.push(nk);
+			}
+		}
+	}
+
+	function connect(aKey, bKey) {
+		var a = aKey.split(',');
+		var b = bKey.split(',');
+		var side = pipedreamSideFrom(parseInt(a[0], 10), parseInt(a[1], 10),
+			parseInt(b[0], 10), parseInt(b[1], 10));
+		if (side < 0) { return false; }
+		neighbors[aKey][side] = true;
+		neighbors[bKey][PD_OPPOSITE[side]] = true;
+		return true;
+	}
+
+	function treeSides(key) {
+		var out = [];
+		var n = neighbors[key] || {};
+		for (var s = 0; s < 4; s++) { if (n[s]) { out.push(s); } }
+		return out;
+	}
+
+	function allRequiredIn() {
+		for (var key in required) { if (!inTree[key]) { return false; } }
+		return true;
+	}
+
+	addCell(1, sy);
+	var guard = cols * rows * 8;
+	while (!allRequiredIn() && frontier.length && guard-- > 0) {
+		var pick = Math.floor(rnd() * frontier.length);
+		var key = frontier[pick];
+		frontier[pick] = frontier[frontier.length - 1];
+		frontier.pop();
+		queued[key] = false;
+		if (inTree[key]) { continue; }
+		var parts = key.split(',');
+		var cx = parseInt(parts[0], 10);
+		var cy = parseInt(parts[1], 10);
+		var joined = [];
+		var dirs = [ [ cx + 1, cy ], [ cx - 1, cy ], [ cx, cy + 1 ], [ cx, cy - 1 ] ];
+		for (var i = 0; i < dirs.length; i++) {
+			var nk = pipedreamCellKey(dirs[i][0], dirs[i][1]);
+			if (inTree[nk]) { joined.push(nk); }
+		}
+		if (!joined.length) { continue; }
+		var parent = joined[Math.floor(rnd() * joined.length)];
+		addCell(cx, cy);
+		connect(key, parent);
+	}
+
+	// Prune every dead end that is not the source's cell or a drain's cell: a
+	// one-outlet cell cannot be built from the hand's pieces and leads nowhere.
+	var pruned = true;
+	while (pruned) {
+		pruned = false;
+		for (var k in inTree) {
+			if (required[k]) { continue; }
+			var sidesHere = treeSides(k);
+			if (sidesHere.length > 1) { continue; }
+			var pp = k.split(',');
+			var px = parseInt(pp[0], 10);
+			var py = parseInt(pp[1], 10);
+			for (var s = 0; s < sidesHere.length; s++) {
+				var dir = PD_DIRS[sidesHere[s]];
+				var nb = pipedreamCellKey(px + dir[0], py + dir[1]);
+				if (neighbors[nb]) { delete neighbors[nb][PD_OPPOSITE[sidesHere[s]]]; }
+			}
+			delete inTree[k];
+			delete neighbors[k];
+			pruned = true;
+		}
+	}
+
+	// Turn the route into pieces. The first cell pipes west into the source and
+	// the cell in front of each drain pipes east into it.
+	var route = [];
+	for (var key2 in inTree) {
+		var q = key2.split(',');
+		var qx = parseInt(q[0], 10);
+		var qy = parseInt(q[1], 10);
+		var sides = treeSides(key2);
+		if (qx === 1 && qy === sy) { sides.push(3); }
+		for (var r = 0; r < drainRows.length; r++) {
+			if (qx === cols - 2 && qy === drainRows[r]) { sides.push(1); }
+		}
+		sides.sort(function (a, b) { return a - b; });
+		var uniq = [];
+		for (var z = 0; z < sides.length; z++) {
+			if (uniq[uniq.length - 1] !== sides[z]) { uniq.push(sides[z]); }
+		}
+		var shape = pipedreamShapeForSides(uniq);
+		if (!shape) { return null; }
+		route.push({ x: qx, y: qy, kind: shape.kind, rot: shape.rot });
+	}
+	return route;
+}
+
+// Deal a fresh board: a random source row, random drain rows and a random route
+// from pipedreamBuildRoute. The hand is that route's pieces plus a straight and
+// an elbow spare and the level's decoys, shuffled by the seed.
+function pipedreamNewState(cols, rows, seed, level) {
+	level = Math.floor(Number(level) || 1);
+	if (level < 1) { level = 1; }
 	cols = Math.floor(Number(cols) || 6);
-	rows = Math.floor(Number(rows) || 5);
+	rows = Math.floor(Number(rows) || 6);
 	if (cols < 4) { cols = 4; }
 	if (rows < 3) { rows = 3; }
 	seed = Math.floor(Math.abs(Number(seed) || 1)) || 1;
 
-	var sy = Math.floor(rows / 2);
+	var rnd = pipedreamRng(seed);
+	var sy = Math.floor(rnd() * rows);
+	if (sy > rows - 1) { sy = rows - 1; }
+
+	var drainsWanted = 2 + Math.floor((level - 1) / 2);
+	if (drainsWanted > rows - 1) { drainsWanted = rows - 1; }
+	if (drainsWanted > 4) { drainsWanted = 4; }
+	if (drainsWanted < 1) { drainsWanted = 1; }
+	var rowsPool = [];
+	for (var ry = 0; ry < rows; ry++) { rowsPool.push(ry); }
+	pipedreamShuffle(rowsPool, rnd);
+	var drainRows = rowsPool.slice(0, drainsWanted).sort(function (a, b) { return a - b; });
+
 	var state = {
 		cols: cols,
 		rows: rows,
 		seed: seed,
+		level: level,
 		cells: [],
 		wet: [],
 		frontier: [],
@@ -100,57 +304,42 @@ function pipedreamNewState(cols, rows, seed) {
 		steps: 0,
 		moves: 0
 	};
-	for (var y = 0; y < rows; y++) {
+	for (var yy = 0; yy < rows; yy++) {
 		state.cells.push([]);
 		state.wet.push([]);
-		for (var x = 0; x < cols; x++) {
-			state.cells[y].push(null);
-			state.wet[y].push(false);
+		for (var xx = 0; xx < cols; xx++) {
+			state.cells[yy].push(null);
+			state.wet[yy].push(false);
 		}
 	}
 
 	// The source enters from the left edge and pushes east.
 	state.cells[sy][0] = { kind: 'source', rot: 0, fixed: true, sides: [ 1 ] };
-	if (rows >= 3) {
-		state.drains.push({ x: cols - 1, y: sy - 1 });
-		state.drains.push({ x: cols - 1, y: sy + 1 });
-	}
-	else {
-		state.drains.push({ x: cols - 1, y: sy });
-	}
-	for (var d = 0; d < state.drains.length; d++) {
-		var drain = state.drains[d];
-		state.cells[drain.y][drain.x] = { kind: 'drain', rot: 0, fixed: true, sides: [ 3 ] };
+	for (var dd = 0; dd < drainRows.length; dd++) {
+		state.drains.push({ x: cols - 1, y: drainRows[dd] });
+		state.cells[drainRows[dd]][cols - 1] = { kind: 'drain', rot: 0, fixed: true, sides: [ 3 ] };
 		state.reached.push(false);
 	}
 
-	var route = [];
-	if (state.drains.length >= 2) {
-		var span = Math.max(1, cols - 3);
-		var jx = 2 + (seed % span);
-		if (jx > cols - 2) { jx = cols - 2; }
-		// Trunk: straights east-west, then a tee opening west, north and south.
-		for (x = 1; x < jx; x++) { route.push({ x: x, y: sy, kind: 'straight', rot: 1 }); }
-		route.push({ x: jx, y: sy, kind: 'tee', rot: 2 });
-		// Upper branch: out of the tee, north then east to the top drain.
-		route.push({ x: jx, y: sy - 1, kind: 'elbow', rot: 1 });
-		for (x = jx + 1; x <= cols - 2; x++) { route.push({ x: x, y: sy - 1, kind: 'straight', rot: 1 }); }
-		// Lower branch: out of the tee, south then east to the bottom drain.
-		route.push({ x: jx, y: sy + 1, kind: 'elbow', rot: 0 });
-		for (x = jx + 1; x <= cols - 2; x++) { route.push({ x: x, y: sy + 1, kind: 'straight', rot: 1 }); }
+	var route = null;
+	for (var attempt = 0; attempt < 4 && !route; attempt++) {
+		route = pipedreamBuildRoute(cols, rows, sy, drainRows, rnd);
 	}
-	else {
-		for (x = 1; x <= cols - 2; x++) { route.push({ x: x, y: sy, kind: 'straight', rot: 1 }); }
-	}
-
+	route = route || [];
 	state.solution = route.map(function (c) {
 		return { x: c.x, y: c.y, kind: c.kind, rot: c.rot };
 	});
 
 	var hand = route.map(function (c) { return { kind: c.kind, used: false }; });
+	// Always leave a straight and an elbow spare; the level adds more decoys.
 	hand.push({ kind: 'straight', used: false });
 	hand.push({ kind: 'elbow', used: false });
-	state.hand = pipedreamShuffle(hand, pipedreamRng(seed));
+	var decoys = 1 + Math.floor((level - 1) / 2);
+	var pool = [ 'straight', 'elbow', 'tee' ];
+	for (var dc = 0; dc < decoys; dc++) {
+		hand.push({ kind: pool[Math.floor(rnd() * pool.length)], used: false });
+	}
+	state.hand = pipedreamShuffle(hand, rnd);
 
 	pipedreamResetFlow(state);
 	return state;

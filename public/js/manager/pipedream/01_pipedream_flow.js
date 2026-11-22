@@ -9,14 +9,16 @@ function pipedreamScreen() {
 	return (root.offsetWidth || 0) > 0 && (root.offsetHeight || 0) > 0;
 }
 
-var pipedreamTicker = null;
+var pipedreamAnim = null;
 var pipedreamGame = null;
 var pipedreamBound = false;
 
+// Stop the frame loop that steps the liquid and redraws the board.
 function pipedreamStopTicker() {
-	if (pipedreamTicker) {
-		clearInterval(pipedreamTicker);
-		pipedreamTicker = null;
+	if (pipedreamAnim) {
+		if (typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(pipedreamAnim); }
+		else if (typeof clearTimeout === 'function') { clearTimeout(pipedreamAnim); }
+		pipedreamAnim = null;
 	}
 }
 
@@ -41,4 +43,3 @@ function pipedreamBindGlobal() {
 		});
 	}
 }
-
