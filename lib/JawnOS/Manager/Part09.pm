@@ -181,6 +181,7 @@ sub sync_rows_pull {
 		# failed map falls through to the plain read.
 		my $bands;
 		my $map_table = ($table eq 'settings') ? 'settings_durable' : $table;
+		my $table_band = &subs::sync_bucket_band_for($table);
 		my $base = (ref $prior_seen->{$map_table} eq 'HASH') ? $prior_seen->{$map_table} : undef;
 		my $settings_empty = ($table eq 'settings' && !$settings_count) ? 1 : 0;
 		# A baseline that already equals the peer's current picture cannot be the
@@ -188,7 +189,7 @@ sub sync_rows_pull {
 		# would not have asked. It is the stale baseline of a short pull, so read
 		# against our own table instead of re-confirming it.
 		my $peer_pic = (ref $params->{'remote_digest'} eq 'HASH') ? $params->{'remote_digest'}->{$map_table} : undef;
-		my $base_is_peer = (ref $base eq 'HASH' && ref $peer_pic eq 'HASH'
+		my $base_is_peer = ($table ne 'settings' && ref $base eq 'HASH' && ref $peer_pic eq 'HASH'
 			&& (($base->{'count'} || 0) + 0) == (($peer_pic->{'count'} || 0) + 0)
 			&& (($base->{'sum'} || 0) + 0) == (($peer_pic->{'sum'} || 0) + 0)
 			&& (($base->{'max'} || 0) + 0) == (($peer_pic->{'max'} || 0) + 0)) ? 1 : 0;
@@ -200,8 +201,14 @@ sub sync_rows_pull {
 		my $have_base = (ref $base eq 'HASH' && $base->{'full'}
 			&& ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }
 			&& !$base_is_peer) ? 1 : 0;
+		# A baseline measured at a different band names different buckets, so it
+		# cannot be diffed against this map: fall back to the gapless compare
+		# against our own table and learn the current band's map below. Without
+		# this, a settings baseline stored at the old weekly band kept the first
+		# hourly pull reading against it (or forced the bootstrap path forever).
+		$have_base = 0 if $have_base && (($base->{'band'} || 0) + 0) != $table_band;
 		if ($cut == 0 && !$settings_empty) {
-			my $band = &subs::sync_bucket_normalize($have_base ? $base->{'band'} : $subs::sync_bucket_band);
+			my $band = &subs::sync_bucket_normalize($table_band);
 			my ($bmap, $berr) = &sync_buckets_batch($remote, $signatorial, $secret, $map_table, $band);
 			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
 				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
@@ -347,7 +354,7 @@ sub sync_rows_pull {
 		# and without one every later divergence would fall back to a blind window.
 		if ($table eq 'settings' && $settings_count && !$bucket_maps->{$table}
 			&& !(ref $base eq 'HASH' && ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} })) {
-			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, 'settings_durable', $subs::sync_bucket_band);
+			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, 'settings_durable', $table_band);
 			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
 				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
 			}
@@ -389,7 +396,7 @@ sub sync_rows_pull {
 		# Settings reach here when they had only a partial baseline map and the
 		# full read just replaced it.
 		if ($cut == 0 && !$bucket_maps->{$table} && ($table ne 'settings' || $settings_count)) {
-			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, $map_table, $subs::sync_bucket_band);
+			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, $map_table, $table_band);
 			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
 				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
 			}

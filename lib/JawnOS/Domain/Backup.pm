@@ -739,6 +739,18 @@ sub sync_table_digest {
 	return { count => ($row->{'c'} || 0) + 0, sum => ($row->{'s'} || 0) + 0, max => ($row->{'m'} || 0) + 0 };
 }
 
+# The band a table's map is measured at. Settings carry a per-device copy of
+# every value, so their durable count can never match a peer's and the planner
+# keeps offering them; at the weekly band one write moved the whole week's ~29k
+# rows. Settings localise by the hour instead (a peer refuses any band under
+# one hour), so a change reads its own hour rather than the whole week.
+sub sync_bucket_band_for {
+	my ($table) = @_;
+	return ($subs::sync_bucket_band_settings || 3600000)
+		if defined $table && $table =~ /^(?:settings|settings_durable)$/;
+	return $subs::sync_bucket_band || (7 * 24 * 60 * 60 * 1000);
+}
+
 sub sync_bucket_normalize {
 	my ($band) = @_;
 	return $sync_bucket_band unless defined $band && $band =~ /^\d+$/ && $band > 0;

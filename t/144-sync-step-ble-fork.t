@@ -18,8 +18,24 @@ my $root = root();
 
 ok( subs::provides('sync_plan_step'), 'the domain loader maps sync_plan_step' );
 ok( subs::provides('sync_bucket_gaps'), 'the domain loader maps sync_bucket_gaps' );
+ok( subs::provides('sync_bucket_band_for'), 'the domain loader maps sync_bucket_band_for' );
 require JawnOS::Domain::Sync;
 ok( defined &subs::sync_plan_step, 'Domain::Sync defines it' );
+
+# Settings are the one table whose durable count carries a row per device class,
+# so the planner keeps offering them and the map is what keeps a quiet house
+# quiet. At the weekly band one settings write moved the single bucket that held
+# the whole week and every pull read all ~29k rows back. The peer refuses any
+# band under one hour, so settings localise by that floor and every other table
+# keeps the week.
+is( subs::sync_bucket_band_for('settings'), 3600000,
+	'settings localise by the hour' );
+is( subs::sync_bucket_band_for('settings_durable'), 3600000,
+	'the durable map is measured at the same hour' );
+is( subs::sync_bucket_band_for('appointments'), 7 * 24 * 60 * 60 * 1000,
+	'every other table keeps the weekly band' );
+cmp_ok( subs::sync_bucket_band_for('settings'), '>=', 3600000,
+	'the hourly band meets the peer floor' );
 
 my $plan = { appointments => 1, continent => 0, settings => 2 };
 
@@ -215,6 +231,11 @@ my $part09 = read_file("$root/lib/JawnOS/Manager/Part09.pm");
 like( $part09, qr/%carry = map \{ \$_ => 1 \} \@\{ &subs::sync_carry_tables\(\) \}/,
 	'the pull carries every table the planner refuses to let trigger' );
 like( $part09, qr/sync_bucket_gaps\(/, 'the pull reads only bands the local table does not cover' );
+like( $part09, qr/sync_bucket_band_for\(\$table\)/, 'the pull measures each table at its own band' );
+like( $part09, qr/\$table ne 'settings' && ref \$base eq 'HASH'/,
+	'a settled settings baseline is not mistaken for a stale short-pull one' );
+like( $part09, qr/\$have_base = 0 if \$have_base && .*\$table_band/,
+	'a baseline from another band is not diffed against this map' );
 my $carry = subs::sync_carry_tables();
 ok( (grep { $_ eq 'routers' } @{$carry}), 'the network inventory is carry-only' );
 ok( (grep { $_ eq 'where_calls' } @{$carry}), 'so is the locator ledger' );
