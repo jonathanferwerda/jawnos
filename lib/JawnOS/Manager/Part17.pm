@@ -409,7 +409,12 @@ sub merge_table_rows {
 											}
 											next;
 										}
-										my $heal = (!$incoming_default && $local_default && ref $local_row eq 'HASH') ? 1 : 0;
+										# Heal only a born default. A row that merely looks like a default - an
+										# older build's row, or a default value the person chose - is not
+										# unborn, and letting an older peer value replace it is how a newer
+										# setting came back older. `seed = 'yes'` is the only proof of birth;
+										# a panel write carries 'no'.
+										my $heal = (!$incoming_default && $local_seed && ref $local_row eq 'HASH') ? 1 : 0;
 										# A row we already hold at the peer's own server_time counts as present:
 										# the write below copies the peer's server_time verbatim, so with a strict
 										# '>' the test was false again on the very next sync and every one of
@@ -420,9 +425,9 @@ sub merge_table_rows {
 										# copy of the same setting must not hide it.
 										my $device_clause = $house_wide ? ' and device = ?' : '';
 										my @device_args = $house_wide ? ('all') : ();
-										my $time_check = $r->{'subsetting'} ? &subs::db_query('select app,setting,value from settings where app=? and setting=? and subsetting = ? and server_time >= ?' . $device_clause,
+										my $time_check = $r->{'subsetting'} ? &subs::db_query('select app,setting,value from settings where app=? and setting=? and subsetting = ? and cast(server_time as integer) >= cast(? as integer)' . $device_clause,
 												$r->{'app'}, $r->{'setting'}, $r->{'subsetting'}, $r->{'server_time'}, @device_args)->hashes :
-											&subs::db_query('select app,setting,value from settings where app=? and setting=? and server_time >= ?' . $device_clause,
+											&subs::db_query('select app,setting,value from settings where app=? and setting=? and cast(server_time as integer) >= cast(? as integer)' . $device_clause,
 												$r->{'app'}, $r->{'setting'}, $r->{'server_time'}, @device_args)->hashes;
 										if (scalar @{$time_check} == 0 || $heal) {
 											# A peer can carry an older copy under a device key this machine does
@@ -891,6 +896,7 @@ sub merge_database($c,$configuration) {
 					universal_settings => $universal_settings,
 					updateables => \@updateables,
 					sync_job => $sync_job,
+					sync_trace => 'S' . &subs::rightNow() . '-' . &subs::random_string_creator(4),
 					auuid => $auuid,
 					colour => $colour,
 				};

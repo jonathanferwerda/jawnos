@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part09.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Manager/Part36.pm scripts/sync_trace_report.pl
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part09.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Manager/Part36.pm scripts/sync_trace_report.pl
 # covers:    A mobile sync pass takes one table at a time, so a nine-table plan
 #            no longer merges all nine in one request and runs the gauge hot for
 #            most of a minute; and every subprocessor whose work can wait on the
@@ -295,6 +295,10 @@ like( $part09, qr/sync_trace\('read'/, 'and whether a read was a watermark or th
 my $part17 = read_file("$root/lib/JawnOS/Manager/Part17.pm");
 like( $part17, qr/sync_trace\('merged'/, 'the merge traces its row counts' );
 like( $part17, qr/sync_trace\('settings-backward'/, 'and names a newer settings value covered by an older one' );
+like( $part17, qr/my \$heal = \(!\$incoming_default && \$local_seed/,
+	'the heal is limited to a born default, never a chosen or unmarked row' );
+like( $part17, qr/cast\(server_time as integer\) >= cast\(\? as integer\)/,
+	'and the settings time check compares numbers, not text' );
 like( $part09, qr/sync_bucket_band_for\(\$table\)/, 'the pull measures each table at its own band' );
 like( $part09, qr/\$table ne 'settings' && ref \$base eq 'HASH'/,
 	'a settled settings baseline is not mistaken for a stale short-pull one' );
