@@ -850,15 +850,24 @@ take used the provisional path. The first run received 1 015 of 1 015 datagrams 
 990 of 990 with `late` +3 and no concealment added while its data arrived. Most of the 2 772 is the
 sender's own short tail below, so `PULL_BUFFER_FRAMES` can now shrink from 171 ms.
 
-**A no-`--seconds` take stops short (2026-11-22, found live):** the send ends 24–42 ms before the
-take does (1 133–2 011 of 480 000 frames), and the master conceals the missing tail. The absolute
-run deadline is checked before the last block rather than letting that block deliver the remainder.
-That is sender pacing, not the offset; it wants its own fix.
+**A no-`--seconds` take now delivers its tail (2026-11-22, fixed v0.1.3574):** the send used to end
+24–42 ms before the take did (1 133–2 011 of 480 000 frames) because a run deadline equal to the
+take's duration was checked before the last block could deliver the remainder. An explicit
+`--seconds` still sets an absolute stop; without one the loop runs until the take is exhausted,
+draining the remainder over as many capped blocks as a delayed wake needs. The combined 10 s run
+reported 480 000 of 480 000 frames.
+
+**The buffer halved (2026-11-22, v0.1.3575):** `PULL_BUFFER_FRAMES` is one jitter window (4 096
+frames, 85 ms at 48 kHz) instead of two; the receiver window stays four windows. On a noisy
+laptop → table path a same-path 8192 control was `late 31` with 10 010 concealed while data
+arrived, 4096 was `late 46–86` in discrete stalls, and 2048 was `late 824` of 999 with ~500 000
+concealed, so one window is the floor. The combined run on a quieter path was 1 134 of 1 134
+datagrams, `late 11`, and a 1 270-frame concealed plateau during the take; the jump after the last
+datagram is the read head crossing the end, not a loss.
 
 **Still to come:** the peer's live capture, a peer id in the stream so more than one peer can join,
-and each input's declared latency. The placement buffer can now shrink, and a no-`--seconds` take
-must deliver its last block before the deadline. The P4 gate itself — guitar through the UM2 and
-voice on the peer, one take, ten minutes — is the next live session.
+and each input's declared latency. The P4 gate itself — guitar through the UM2 and voice on the
+peer, one take, ten minutes — is the next live session.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
