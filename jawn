@@ -217,6 +217,13 @@ eval {
 	require JawnOS::Audio::Engine;
 	JawnOS::Audio::Engine::audio_engine_plan_migrate();
 };
+# The silence snapshot is the same kind of durable machine configuration: it is
+# what the next release puts back. A wipe while a silence was still held lost
+# it, and the release then restored the muted mixer it found instead.
+eval {
+	require JawnOS::Domain::Silence;
+	subs::silence_files_migrate();
+};
 # Wipe the tree's own run state, but keep the handshake files the Android app
 # and this tree exchange. The app's location service can write wake_ready a
 # moment before or after the master starts; deleting it here made the manager

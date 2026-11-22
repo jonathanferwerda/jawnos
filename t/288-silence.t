@@ -10,7 +10,8 @@ use utf8;
 use FindBin;
 use lib "$FindBin::Bin/lib", "$FindBin::Bin/../lib", "t/lib";
 use Test::More;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
+use File::Path qw(make_path);
 use File::Temp qw(tempdir);
 use Mojo::JSON qw(decode_json encode_json);
 
@@ -743,5 +744,89 @@ like(source('perl/Alarm.pl'), qr/silence_tick/, 'the alarm loop starts and stops
 like(source('lib/JawnOS/Controller/manager_silence.pm'), qr/silence_release_note/,
 	'a verified peer stop is remembered against a lagging row');
 like(source('lib/JawnOS/Domain/Loader.pm'), qr/silence_tick/, 'the reconcile helper is mapped');
+like(source('jawn'), qr/silence_files_migrate[\s\S]*?remove_tree/,
+	'the launcher moves the silence files before the boot wipe');
+
+# --- the snapshot outlives the boot wipe ------------------------------------
+# ./jawn wipes ~/.president at every start. A silence held across a restart
+# used to lose its snapshot there; the release then restored the muted mixer
+# it found instead, leaving every channel muted for good.
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+
+	local $ENV{HOME} = $home;
+	local $ENV{XDG_STATE_HOME} = "$dir/state";
+	delete $ENV{JAWNOS_SILENCE_LOCAL_FILE};
+	delete $ENV{JAWNOS_SILENCE_RELEASED_FILE};
+	local $subs::SILENCE_LOCAL_FILE = undef;
+	local $subs::SILENCE_RELEASED_FILE = undef;
+
+	is(subs::silence_local_file(), "$dir/state/jawnos/silence_local.json",
+		'the mixer snapshot lives in the durable state dir');
+	is(subs::silence_released_file(), "$dir/state/jawnos/silence_released.json",
+		'and the peer-release note sits beside it');
+	isnt(subs::silence_local_file(), "$home/.president/silence_local.json",
+		'the wiped run directory is never the snapshot path');
+}
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+
+	local $ENV{HOME} = $home;
+	local $ENV{XDG_STATE_HOME};
+	delete $ENV{XDG_STATE_HOME};
+	delete $ENV{JAWNOS_SILENCE_LOCAL_FILE};
+	delete $ENV{JAWNOS_SILENCE_RELEASED_FILE};
+	local $subs::SILENCE_LOCAL_FILE = undef;
+	local $subs::SILENCE_RELEASED_FILE = undef;
+
+	is(subs::silence_local_file(), "$home/.local/state/jawnos/silence_local.json",
+		'without XDG_STATE_HOME it falls back to ~/.local/state/jawnos');
+}
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+
+	local $ENV{HOME} = $home;
+	local $ENV{XDG_STATE_HOME} = "$dir/state";
+	delete $ENV{JAWNOS_SILENCE_LOCAL_FILE};
+	delete $ENV{JAWNOS_SILENCE_RELEASED_FILE};
+	local $subs::SILENCE_LOCAL_FILE = undef;
+	local $subs::SILENCE_RELEASED_FILE = undef;
+
+	my $old_local = "$home/.president/silence_local.json";
+	my $old_note  = "$home/.president/silence_released.json";
+	write_file($old_local, '{"channels":{"music":{"muted":0,"volume":71}}}');
+	write_file($old_note, '{"IUrr":{"at":1}}');
+
+	my $moved = subs::silence_files_migrate();
+	is($moved->{ok}, 1, 'the migration succeeds');
+	is($moved->{migrated}, 2, 'the snapshot and the release note both move');
+	ok(!-e $old_local, 'the run-state snapshot is gone');
+	ok(!-e $old_note, 'and so is the run-state note');
+
+	my $new_local = "$dir/state/jawnos/silence_local.json";
+	my $new_note  = "$dir/state/jawnos/silence_released.json";
+	ok(-e $new_local, 'the snapshot is at the durable path');
+	ok(-e $new_note, 'and the note beside it');
+	like(read_file($new_local), qr/"muted":0/, 'with the levels intact');
+
+	is(subs::silence_files_migrate()->{migrated}, 0, 'a second boot has nothing to move');
+
+	write_file($old_local, '{"stale":1}');
+	my $third = subs::silence_files_migrate();
+	is($third->{migrated}, 0, 'a durable copy is not overwritten');
+	ok(!-e $old_local, 'and the stale run-state file is removed');
+	like(read_file($new_local), qr/"muted":0/, 'the durable snapshot is untouched');
+
+	local $ENV{JAWNOS_SILENCE_LOCAL_FILE} = "$dir/pinned.json";
+	write_file($old_local, '{}');
+	is(subs::silence_files_migrate()->{skipped}, 'explicit state path',
+		'an explicit path never pulls a real file into a test');
+}
 
 done_testing();

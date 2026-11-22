@@ -10,8 +10,11 @@ package subs;
 # rail; the settings sync is the slower second copy, not the only one.
 #
 # What to put back is a fact about this machine's mixer, never a house one, so
-# the snapshot lives in ~/.president/silence_local.json. The two sinks the
-# receptionist's virtual handset owns (jawn_call_in, jawn_prompt) and the
+# the snapshot lives in the durable per-user state directory
+# (JawnOS::Platform::Paths::state_dir), not in ~/.president: ./jawn wipes that
+# run directory at every start, and a silence held across a restart used to
+# lose its snapshot and then restore the muted mixer it found. The two sinks
+# the receptionist's virtual handset owns (jawn_call_in, jawn_prompt) and the
 # Bluetooth sink that carries the call are deliberately left alone: a silenced
 # house still has to let the IVR speak to its caller.
 #
@@ -374,16 +377,22 @@ sub silence_app_setting_on {
 }
 
 # ---- the local snapshot ------------------------------------------------------
+# The mixer snapshot and the peer-release note are machine configuration: they
+# must outlive a restart, so they sit beside the audio engine's durable state
+# rather than under ~/.president. tmp_dir is the last resort only when the
+# platform cannot name a state directory at all.
+sub silence_state_dir {
+	my $dir = eval { JawnOS::Platform::Paths::state_dir() } || '';
+	$dir = JawnOS::Platform::Paths::tmp_dir() unless length $dir;
+	eval { require File::Path; File::Path::make_path($dir); } unless -d $dir;
+	return $dir;
+}
+
 sub silence_local_file {
 	return $SILENCE_LOCAL_FILE if defined $SILENCE_LOCAL_FILE && length $SILENCE_LOCAL_FILE;
 	my $env = $ENV{'JAWNOS_SILENCE_LOCAL_FILE'};
 	return $env if defined $env && length $env;
-	my $dir = eval { &subs::home('~/.president') } || '';
-	if (!length $dir || !-d $dir) {
-		$dir = JawnOS::Platform::Paths::tmp_dir();
-	}
-	eval { require File::Path; File::Path::make_path($dir); } unless -d $dir;
-	return $dir . '/silence_local.json';
+	return &silence_state_dir() . '/silence_local.json';
 }
 
 sub silence_local_read {
@@ -433,12 +442,41 @@ sub silence_released_file {
 	return $SILENCE_RELEASED_FILE if defined $SILENCE_RELEASED_FILE && length $SILENCE_RELEASED_FILE;
 	my $env = $ENV{'JAWNOS_SILENCE_RELEASED_FILE'};
 	return $env if defined $env && length $env;
-	my $dir = eval { &subs::home('~/.president') } || '';
-	if (!length $dir || !-d $dir) {
-		$dir = JawnOS::Platform::Paths::tmp_dir();
+	return &silence_state_dir() . '/silence_released.json';
+}
+
+# Move the pair out of the run directory once. ./jawn calls this before its
+# wipe, the same way it moves the audio plan and the system-mix state: a
+# silence still held across the restart must keep the levels it will restore.
+# An explicit override is a hand-run pin, so it never pulls a real file into it.
+sub silence_files_migrate {
+	return { ok => 1, migrated => 0, skipped => 'explicit state path' }
+		if ( defined $ENV{'JAWNOS_SILENCE_LOCAL_FILE'} && length $ENV{'JAWNOS_SILENCE_LOCAL_FILE'} )
+		|| ( defined $ENV{'JAWNOS_SILENCE_RELEASED_FILE'} && length $ENV{'JAWNOS_SILENCE_RELEASED_FILE'} );
+
+	my $old = eval { JawnOS::Platform::Paths::data_dir() } || '';
+	my $new = eval { JawnOS::Platform::Paths::state_dir() } || '';
+	return { ok => 1, migrated => 0 }
+		unless length $old && length $new && $old ne $new;
+
+	eval { require File::Path; File::Path::make_path($new); } unless -d $new;
+	my @moved;
+	for my $name ( 'silence_local.json', 'silence_released.json' ) {
+		my $from = $old . '/' . $name;
+		my $to   = $new . '/' . $name;
+		next unless -e $from;
+		if ( -e $to ) {
+			unlink $from;
+			next;
+		}
+		my $done = rename $from, $to;
+		unless ($done) {
+			require File::Copy;
+			$done = eval { File::Copy::copy($from, $to) && unlink $from };
+		}
+		push @moved, $name if $done;
 	}
-	eval { require File::Path; File::Path::make_path($dir); } unless -d $dir;
-	return $dir . '/silence_released.json';
+	return { ok => 1, migrated => scalar @moved, moved => \@moved, dir => $new };
 }
 
 sub silence_released_read {
