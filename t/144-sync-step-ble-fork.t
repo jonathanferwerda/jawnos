@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part09.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Manager/Part36.pm
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part09.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Manager/Part36.pm scripts/sync_trace_report.pl
 # covers:    A mobile sync pass takes one table at a time, so a nine-table plan
 #            no longer merges all nine in one request and runs the gauge hot for
 #            most of a minute; and every subprocessor whose work can wait on the
@@ -12,7 +12,8 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
+use File::Temp qw(tempdir);
 
 my $root = root();
 
@@ -38,6 +39,40 @@ is( subs::sync_bucket_band_for('notes'), 7 * 24 * 60 * 60 * 1000,
 	'every other table keeps the weekly band' );
 cmp_ok( subs::sync_bucket_band_for('settings'), '>=', 3600000,
 	'the hourly band meets the peer floor' );
+
+# Every pull and every table decision is written to a machine-local JSONL
+# trace, so a 72-hour watch can answer "why did this machine read the whole
+# table again?" without a live panel.
+{
+	my $home = tempdir(CLEANUP => 1);
+	local $ENV{'HOME'} = $home;
+	ok( subs::sync_trace('test-event', { table => 'appointments', moved => 3 }),
+		'a sync trace is written' );
+	my $line = read_file("$home/sync.log");
+	like($line, qr/"event":"test-event"/, 'the event names itself');
+	like($line, qr/"table":"appointments"/, 'and carries the decision data');
+	like($line, qr/"host":/, 'and the machine it came from');
+}
+
+# The report turns a 72-hour JSONL trace into one row per peer and table, so a
+# full-table pull and the rows it merged are visible together.
+{
+	my $home = tempdir(CLEANUP => 1);
+	my $at = time() * 1000;
+	write_file("$home/sync.log", join '', map { $_ . "\n" }
+		qq({"at":$at,"event":"pull-start","trace":"P1","peer":"abcd1234"}),
+		qq({"at":$at,"event":"table","trace":"P1","table":"appointments","path":"whole-table","moved":4}),
+		qq({"at":$at,"event":"read","trace":"P1","table":"appointments","mode":"whole","cut":0}),
+		qq({"at":$at,"event":"merged","trace":"P1","table":"appointments","read":120000,"inserted":2,"updated":1}),
+		qq({"at":$at,"event":"settings-backward","trace":"P1","app":"me","setting":"x"}),
+	);
+	local $ENV{'HOME'} = $home;
+	my $out = qx{$^X $root/scripts/sync_trace_report.pl --hours 100000 2>&1};
+	like($out, qr/abcd1234/, 'the report names the peer');
+	like($out, qr/appointments/, 'and the table');
+	like($out, qr/\bwhole\b/, 'and that the pull read the whole table');
+	like($out, qr/120000/, 'and the rows it merged');
+}
 
 my $plan = { appointments => 1, continent => 0, settings => 2 };
 
@@ -254,6 +289,12 @@ my $part09 = read_file("$root/lib/JawnOS/Manager/Part09.pm");
 like( $part09, qr/%carry = map \{ \$_ => 1 \} \@\{ &subs::sync_carry_tables\(\) \}/,
 	'the pull carries every table the planner refuses to let trigger' );
 like( $part09, qr/sync_bucket_gaps\(/, 'the pull reads only bands the local table does not cover' );
+like( $part09, qr/sync_trace\('pull-start'/, 'the pull traces itself' );
+like( $part09, qr/sync_trace\('table'/, 'and traces each table decision' );
+like( $part09, qr/sync_trace\('read'/, 'and whether a read was a watermark or the whole table' );
+my $part17 = read_file("$root/lib/JawnOS/Manager/Part17.pm");
+like( $part17, qr/sync_trace\('merged'/, 'the merge traces its row counts' );
+like( $part17, qr/sync_trace\('settings-backward'/, 'and names a newer settings value covered by an older one' );
 like( $part09, qr/sync_bucket_band_for\(\$table\)/, 'the pull measures each table at its own band' );
 like( $part09, qr/\$table ne 'settings' && ref \$base eq 'HASH'/,
 	'a settled settings baseline is not mistaken for a stale short-pull one' );

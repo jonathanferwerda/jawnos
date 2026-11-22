@@ -14,7 +14,7 @@ use Data::Dumper;
 use Date::Parse;
 use Digest::SHA qw(sha256_hex);
 use Encode qw(encode_utf8);
-use Fcntl qw(:flock);
+use Fcntl qw(:flock :DEFAULT);
 use File::Copy;
 use File::Find;
 use File::Path;
@@ -620,6 +620,43 @@ sub default_children_close {
 		}
 	}
 	return \@closed;
+}
+
+# A machine-local, append-only trace of what the sync decided. `manager.log`
+# carries the errors and the panel log; this file answers "why did the laptop
+# pull 120k rows again?" for a 72-hour watch, one JSON object per line.
+#   2026-11-22T18:40:12-0500  {"event":"bands", ...}
+# It is deliberately local (a `settings` or `cache` row would itself sync), it is
+# written under flock because several workers pull at once, and it rotates at
+# 20 MB keeping four parts. `sync_trace` never dies on a full disk: a missing
+# trace must not stop a pull.
+sub sync_trace {
+	my ($event, $data) = @_;
+	return unless defined $event && length $event;
+	my $now = &subs::rightNow();
+	my $record = { at => $now, iso => &subs::iso_local($now), host => &subs::machine_hostname(), event => $event };
+	if (ref $data eq 'HASH') { $record->{$_} = $data->{$_} for keys %{$data}; }
+	elsif (defined $data) { $record->{'value'} = $data; }
+	my $line = eval { encode_json($record) };
+	return unless defined $line && length $line;
+	$line .= "\n";
+	my $path = ($ENV{'HOME'} || '.') . '/sync.log';
+	my $fh;
+	return unless eval { sysopen($fh, $path, O_WRONLY | O_CREAT | O_APPEND, 0644) };
+	return unless eval { flock($fh, LOCK_EX) };
+	my $size = eval { -s $path } || 0;
+	if ($size > 20 * 1024 * 1024) {
+		close $fh;
+		for my $i (reverse 1 .. 4) {
+			eval { rename("$path.$i", $path . '.' . ($i + 1)) if -e "$path.$i" };
+		}
+		eval { rename($path, "$path.1") };
+		return unless eval { sysopen($fh, $path, O_WRONLY | O_CREAT | O_APPEND, 0644) };
+	}
+	eval { syswrite($fh, $line) };
+	eval { flock($fh, LOCK_UN) };
+	close $fh;
+	return 1;
 }
 
 sub log_writer {

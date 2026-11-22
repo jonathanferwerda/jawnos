@@ -425,6 +425,16 @@ sub merge_table_rows {
 											&subs::db_query('select app,setting,value from settings where app=? and setting=? and server_time >= ?' . $device_clause,
 												$r->{'app'}, $r->{'setting'}, $r->{'server_time'}, @device_args)->hashes;
 										if (scalar @{$time_check} == 0 || $heal) {
+											# A peer can carry an older copy under a device key this machine does
+											# not compare with the time check. Name the write so a 72-hour watch
+											# can see a newer value being covered by an older one.
+											if (ref $local_row eq 'HASH'
+												&& (($local_row->{'server_time'} || 0) + 0) > (($r->{'server_time'} || 0) + 0)) {
+												&subs::sync_trace('settings-backward', {
+													trace => $ctx->{'sync_trace'}, app => $r->{'app'}, setting => $r->{'setting'},
+													device => $target_device, incoming => $r->{'server_time'}, held => $local_row->{'server_time'},
+												});
+											}
 											eval {
 												&subs::setting_setter({
 													app => $r->{'app'},
@@ -723,6 +733,11 @@ sub merge_table_rows {
 						my $errors = $merge_errors ? ' errors=' . join(' | ', @insert_errors[0 .. ($#insert_errors > 2 ? 2 : $#insert_errors)]) : '';
 						my $skew = scalar keys %skewed_columns ? ' skipped-columns=' . join(',', sort keys %skewed_columns) : '';
 						&subs::log_writer('merge ' . $q . ': snapshot=' . $results_size . ' read=' . $rows_read . ' inserted=' . $rows_inserted . ' updated=' . $rows_updated . $short . $errors . $skew);
+						&subs::sync_trace('merged', {
+							trace => $ctx->{'sync_trace'}, table => $q, snapshot => $results_size,
+							read => $rows_read, inserted => $rows_inserted, updated => $rows_updated,
+							short => $short ? 1 : 0, errors => $merge_errors, skew => join(',', sort keys %skewed_columns),
+						});
 						if ($sync_job) {
 							&subs::sync_job_step($sync_job, 'merge:' . $q, { state => ($short || $merge_errors) ? 'failed' : 'done', current => ($results_size || $rows_read), total => ($results_size || $rows_read), note => $short ? 'read ' . $rows_read . ' of ' . $results_size : ($merge_errors ? $merge_errors . ' row errors' : '') });
 						}

@@ -93,6 +93,8 @@ sub sync_rows_pull {
 	# snapshot phase the job was created with.
 	&subs::db_query("update sync_jobs set phase = 'merge' where uuid = ?", $job);
 	my $remote_signatorial = $params->{'remote_signatorial'} || $remote->{'signatorial'};
+	# One id ties this pull's decision lines to its merge summary in `sync.log`.
+	my $trace_id = 'P' . &subs::rightNow() . '-' . &subs::random_string_creator(4);
 	my $signatorial = &subs::signatorial_designer();
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
 	my $security = &subs::db_select('security', ['credential'], { level => 1 })->hash || {};
@@ -123,10 +125,18 @@ sub sync_rows_pull {
 		universal_settings => {},
 		updateables => \@updateables,
 		sync_job => $job,
+		sync_trace => $trace_id,
 		auuid => $auuid,
 		colour => $colour,
 	};
 	my $plan = (ref $params->{'plan'} eq 'HASH') ? $params->{'plan'} : {};
+	&subs::sync_trace('pull-start', {
+		trace => $trace_id,
+		peer => substr($remote_signatorial // '', 0, 8),
+		plan => join(',', map { $_ . '=' . (defined $plan->{$_} ? $plan->{$_} : '') } sort keys %{$plan}),
+		default_cut => $params->{'default_cut'},
+		gimme => $params->{'gimme'} ? 1 : 0,
+	});
 	my $default_cut = (defined $params->{'default_cut'} && $params->{'default_cut'} =~ /^[0-9]+$/) ? $params->{'default_cut'} : 0;
 	my @tables = @{ &subs::sync_table_list() };
 	# With a plan (the digest says what differs), fetch only the tables that moved
@@ -253,6 +263,13 @@ sub sync_rows_pull {
 				elsif ($moved_n) {
 					&subs::log_writer('sync bucket repair skipped for ' . $table . ': moved=' . $moved_n . '/' . $bands_total . '; reading the whole table');
 				}
+				&subs::sync_trace('table', {
+					trace => $trace_id, table => $table, cut => $cut,
+					band => $bmap->{'band'}, base_band => ($base->{'band'} || 0) + 0,
+					have_base => $have_base ? 1 : 0, base_is_peer => $base_is_peer ? 1 : 0,
+					total_bands => $bands_total, moved => $moved_n,
+					path => $bands ? 'band-walk' : ($moved_n ? 'whole-table' : 'quiet'),
+				});
 				if ($moved_n == 0) {
 					# Every band matches the baseline: nothing to read. Record the
 					# new picture and move on instead of re-reading the table.
@@ -268,6 +285,7 @@ sub sync_rows_pull {
 				# from the caller's watermark window instead. The digest gate keeps the
 				# table in the plan, so a later pass with a working map still localises
 				# an old row the window could not name.
+				&subs::sync_trace('map-failed', { trace => $trace_id, table => $table, error => ($berr || 'no map'), cut => $cut, default_cut => $default_cut });
 				if ($default_cut && $default_cut > 0) {
 					$cut = $default_cut;
 					&subs::log_writer('sync bucket map failed for ' . $table . ': ' . ($berr || 'no map') . '; reading from the watermark instead of the whole table');
@@ -341,6 +359,7 @@ sub sync_rows_pull {
 			next;
 		}
 		my ($first, $err, $skip) = &sync_rows_batch($remote, $signatorial, $secret, $table, $cut, '');
+		&subs::sync_trace('read', { trace => $trace_id, table => $table, mode => ($cut ? 'watermark' : 'whole'), cut => $cut });
 		next if $skip;
 		unless ($first) {
 			$failed = $table . ': ' . ($err || 'no answer');
