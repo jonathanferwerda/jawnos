@@ -4,7 +4,9 @@
 #            master switch is the only thing that applies an engine patch, a sink's declared
 #            latency adds up from its source, and the engine client spells "patch" and "stop".
 #            An input source tagged with this machine's hostname is still local, while one
-#            tagged with another machine stays refused.
+#            tagged with another machine stays refused. The house uplink's address is
+#            validated and cleared, its session key is generated once and kept, and the
+#            boot file carries the uplink and key only for a peer source on this machine.
 
 use strict;
 use warnings;
@@ -301,13 +303,95 @@ require JawnOS::Domain::Audio;
 	}
 
 	subs::audio_manage_set(0);
-	{
-		my $doc = JSON::PP::decode_json(read_file($path));
-		is($doc->{manage}, 0, 'turning it off flips the copy back');
+		{
+			my $doc = JSON::PP::decode_json(read_file($path));
+			is($doc->{manage}, 0, 'turning it off flips the copy back');
+		}
 	}
-}
 
-# --- the client spells the two commands --------------------------------------
+	# --- the uplink address is a house setting, validated and clearable ---------
+	{
+		%STORE = ();
+		is(subs::audio_uplink_read(), '', 'a house with no uplink reads empty (off)');
+
+		my $saved = subs::audio_uplink_write('127.0.0.1:7060');
+		is($saved->{ok}, 1, 'a host and port saves');
+		is($STORE{'sound/audio_uplink/all'}, '127.0.0.1:7060', 'on the house row');
+		is(subs::audio_uplink_read(), '127.0.0.1:7060', 'and reads back');
+
+		is(subs::audio_uplink_write('not an address')->{ok}, 0, 'a bare word is refused');
+		is(subs::audio_uplink_write('127.0.0.1')->{ok}, 0, 'an address with no port is refused');
+		is(subs::audio_uplink_write('127.0.0.1:0')->{ok}, 0, 'port 0 is refused');
+		is(subs::audio_uplink_write('127.0.0.1:70000')->{ok}, 0, 'a port above 65535 is refused');
+		is(subs::audio_uplink_read(), '127.0.0.1:7060', 'a refused address changed nothing');
+
+		is(subs::audio_uplink_write('')->{ok}, 1, 'an empty address is a choice too');
+		is(subs::audio_uplink_read(), '', 'and turns the uplink off');
+		is($STORE{'sound/audio_uplink/all'}, '', 'the row holds empty, not undef');
+	}
+
+	# --- the uplink's session key is generated once and kept ---------------------
+	{
+		%STORE = ();
+		my $first = subs::audio_session_key_read();
+		like($first, qr/\A[0-9a-f]{64}\z/, 'a session key is 32 bytes as 64 hex characters');
+		is($STORE{'sound/audio_session_key/all'}, $first, 'and is stored on the house row');
+		is(subs::audio_session_key_read(), $first, 'reading again returns the same key');
+
+		my $stored = 'ab' x 32;
+		$STORE{'sound/audio_session_key/all'} = $stored;
+		is(subs::audio_session_key_read(), $stored, 'a stored key is kept, not replaced');
+	}
+
+	# --- the boot file names the uplink only for a peer on this machine ---------
+	{
+		%STORE = ();
+		my $path = $ENV{JAWNOS_AUDIO_PLAN};
+		is(subs::audio_uplink_write('127.0.0.1:7060')->{ok}, 1, 'the uplink saves before a plan uses it');
+
+		my $no_peer = {
+			sources => [ { id => 'gtr', kind => 'input', channel => 0 } ],
+			buses   => [],
+			sinks   => [ { id => 'out', kind => 'interface' } ],
+			routes  => [ { from => 'gtr', to => 'out' } ],
+		};
+		subs::audio_plan_write($no_peer);
+		my $doc = JSON::PP::decode_json(read_file($path));
+		ok(!exists $doc->{uplink}, 'a plan with no peer source writes no uplink');
+		ok(!exists $doc->{session_key}, 'and no session key');
+
+		my $with_peer = {
+			sources => [
+				{ id => 'phone', kind => 'peer', channel => 0 },
+				{ id => 'gtr',   kind => 'input', channel => 1 },
+			],
+			buses  => [],
+			sinks  => [ { id => 'out', kind => 'interface' } ],
+			routes => [ { from => 'phone', to => 'out' }, { from => 'gtr', to => 'out' } ],
+		};
+		is(subs::audio_plan_write($with_peer)->{ok}, 1, 'a plan with a peer source is valid');
+		$doc = JSON::PP::decode_json(read_file($path));
+		is($doc->{uplink}, '127.0.0.1:7060', 'a peer source on this machine adds the uplink');
+		like($doc->{session_key}, qr/\A[0-9a-f]{64}\z/, 'and the audio session key');
+		is($doc->{session_key}, subs::audio_session_key_read(), 'the key is the stored one');
+
+		my $far_peer = {
+			sources => [ { id => 'far', kind => 'peer', machine => 'elsewhere', channel => 0 } ],
+			buses   => [],
+			sinks   => [ { id => 'out', kind => 'interface' } ],
+			routes  => [ { from => 'far', to => 'out' } ],
+		};
+		subs::audio_plan_write($far_peer);
+		$doc = JSON::PP::decode_json(read_file($path));
+		ok(!exists $doc->{uplink}, 'a peer on another machine does not open the uplink here');
+
+		subs::audio_uplink_write('');
+		subs::audio_plan_write($with_peer);
+		$doc = JSON::PP::decode_json(read_file($path));
+		ok(!exists $doc->{uplink}, 'clearing the address removes the uplink from the boot file');
+	}
+
+	# --- the client spells the two commands --------------------------------------
 {
 	my $seen;
 	{
@@ -364,6 +448,7 @@ require JawnOS::Domain::Audio;
 	like($controller, qr/^sub action_53034\b/m, 'the device action exists');
 	like($controller, qr/audio_engine_device_write\(/, 'the device action calls the domain');
 	like($controller, qr/&subs::audio_plan_write\(/, 'the save action calls the domain');
+	like($controller, qr/&subs::audio_uplink_write\(/, 'the same save path carries the uplink');
 	like($controller, qr/&subs::audio_plan_status\(/, 'the window and read action use the status');
 	like($controller, qr/&subs::audio_manage_set\(/, 'the switch action calls the domain');
 	like($controller, qr/audio_engine_patch_param\(/, 'the live-fader action calls the engine wrapper');
@@ -376,6 +461,9 @@ require JawnOS::Domain::Audio;
 	like($template, qr/id="sound_sink_machine"/, 'and so does the sink form');
 	like($template, qr/id="sound_engine_device"/, 'the picker is in the patchbay');
 	like($template, qr/id="sound_engine_device_apply"/, 'and has an apply button');
+	like($template, qr/id="sound_uplink"/, 'the patchbay has an uplink field');
+	like($template, qr/id="sound_uplink_save"/, 'and a save button for it');
+	like($template, qr/<option value="peer">/, 'the source picker offers peer');
 
 	my $js = RepoSource::js_source('public/js/manager/sound.js');
 	like($js, qr#url: '/manager/sound/plan'#, 'the page reads and saves the plan route');
@@ -386,6 +474,8 @@ require JawnOS::Domain::Audio;
 	like($js, qr/function soundPatchRender/, 'the matrix has a renderer');
 	like($js, qr/function soundPatchFader/, 'the fader has a debounced poster');
 	like($js, qr/#sound_source_machine/, 'the source form reads its machine');
+	like($js, qr/function soundPatchUplinkSave/, 'the uplink field has a saver');
+	like($js, qr/data: \{ uplink: value \}/, 'which posts the address on the plan route');
 
 	my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 	like($loader, qr/JawnOS::Domain::Audio' for qw\([^)]*\baudio_plan_read\b/,

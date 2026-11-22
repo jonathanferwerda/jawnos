@@ -860,6 +860,101 @@ ENGINE
 	is($code, 0, 'the picker supervisor stops cleanly');
 }
 
+# --- a peer plan passes the uplink and its key, and only when both are there -
+{
+	delete local $ENV{JAWNOS_AUDIO_SESSION_KEY};
+	my $key = 'ab' x 32;
+	my $run = sub {
+		my ($doc) = @_;
+		my $dir  = tempdir(CLEANUP => 1);
+		my $home = "$dir/home";
+		make_path("$home/.president");
+		local $ENV{HOME} = $home;
+		my $plan = "$dir/audio-plan.json";
+		open(my $pfh, '>', $plan) or die "plan: $!";
+		print {$pfh} JSON::PP->new->encode($doc);
+		close $pfh;
+		local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+		my $args_log = "$dir/args.log";
+		my $env_log  = "$dir/env.log";
+		local $ENV{AUDIO_TEST_ARGS} = $args_log;
+		local $ENV{AUDIO_TEST_ENV}  = $env_log;
+		local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/uplink-engine", <<'ENGINE');
+open(my $log, '>>', $ENV{'AUDIO_TEST_ARGS'}) or exit 1;
+print {$log} join(' ', @ARGV), "\n";
+close $log;
+open(my $env, '>>', $ENV{'AUDIO_TEST_ENV'}) or exit 1;
+print {$env} 'SESSION_KEY=' . ($ENV{'JAWNOS_AUDIO_SESSION_KEY'} // '<unset>') . "\n";
+close $env;
+sleep 600;
+ENGINE
+		my $sup = start_supervisor(
+			args => [ '--socket', "$dir/audio.sock", '--backend', 'null', '--device', 'hw:9,9' ],
+			log  => "$dir/supervisor.log",
+		);
+		wait_for(sub { -s $args_log }, 10);
+		my $args = read_text($args_log);
+		my $env  = -s $env_log ? read_text($env_log) : '';
+		my $log  = read_text("$dir/supervisor.log");
+		stop_supervisor($sup);
+		return { args => $args, env => $env, log => $log };
+	};
+
+	my $peer_plan = {
+		manage => 0, backend => 'null', device => 'hw:9,9',
+		plan => {
+			sources => [ { id => 'phone', kind => 'peer', channel => 0 } ],
+			buses   => [], sinks => [], routes => [],
+		},
+	};
+
+	my $with = $run->({
+		%$peer_plan,
+		uplink => '127.0.0.1:7060', session_key => $key,
+	});
+	like($with->{args}, qr/--uplink 127\.0\.0\.1:7060/,
+		'a peer plan passes the saved uplink address');
+	like($with->{env}, qr/^SESSION_KEY=\Q$key\E$/m,
+		'and the session key reaches the child through the environment');
+	unlike($with->{args}, qr/\Q$key\E/, 'the key is not in argv');
+
+	my $missing = $run->($peer_plan);
+	unlike($missing->{args}, qr/--uplink\b/,
+		'a peer plan with no saved address passes no uplink');
+	like($missing->{env}, qr/^SESSION_KEY=<unset>$/m, 'and no key reaches the child');
+	like($missing->{log}, qr/not passing --uplink: .*no uplink address/,
+		'and the supervisor says why');
+
+	my $bad_address = $run->({
+		%$peer_plan,
+		uplink => 'not-an-address', session_key => $key,
+	});
+	unlike($bad_address->{args}, qr/--uplink\b/, 'an invalid address passes no uplink');
+	like($bad_address->{env}, qr/^SESSION_KEY=<unset>$/m, 'and still no key');
+	like($bad_address->{log}, qr/not passing --uplink: .*not a host and port/,
+		'and the supervisor names the bad address');
+
+	my $bad_key = $run->({
+		%$peer_plan,
+		uplink => '127.0.0.1:7060', session_key => 'short',
+	});
+	unlike($bad_key->{args}, qr/--uplink\b/, 'a missing key passes no uplink');
+	like($bad_key->{env}, qr/^SESSION_KEY=<unset>$/m, 'and the child gets no key');
+	like($bad_key->{log}, qr/not passing --uplink: .*no session key/,
+		'and the supervisor says the key is missing');
+
+	my $far = $run->({
+		%$peer_plan,
+		uplink => '127.0.0.1:7060', session_key => $key,
+		plan => {
+			sources => [ { id => 'far', kind => 'peer', machine => 'elsewhere', channel => 0 } ],
+			buses   => [], sinks => [], routes => [],
+		},
+	});
+	unlike($far->{args}, qr/--uplink\b/,
+		'a peer on another machine opens no uplink here');
+}
+
 # --- the machine's own audio is carried while the engine manages ------------
 {
 	my $dir  = tempdir(CLEANUP => 1);

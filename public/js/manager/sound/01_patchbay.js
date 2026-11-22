@@ -75,6 +75,62 @@ function soundPatchDeviceApply() {
 }
 
 
+// The uplink is one house-wide address, empty for off. The engine's own status
+// says whether an uplink is configured (`uplink.state`) and how the patch treats
+// a peer (`peer`: off, pending or capturing); the saved address is what the
+// field shows, so a value that has not reached the engine reads back too.
+function soundPatchUplinkRender() {
+	var field = $('#sound_uplink');
+	if (!field.length) { return; }
+	if (!field.is(':focus')) {
+		field.val((soundAudio && soundAudio.uplink) || '');
+	}
+	var engine = (soundAudio && soundAudio.engine) || {};
+	var uplink = engine.uplink || {};
+	var state;
+	if (!soundAudio || !soundAudio.uplink) {
+		state = jawnosT('off');
+	}
+	else if (!soundAudio.engine_available) {
+		state = jawnosT('The engine is not running on this machine');
+	}
+	else {
+		state = uplink.state || jawnosT('waiting');
+	}
+	if (engine.peer) {
+		state += ' \u00b7 ' + jawnosT('peer') + ' ' + engine.peer;
+	}
+	$('#sound_uplink_state').text(state);
+}
+
+function soundPatchUplinkSave() {
+	var value = ($('#sound_uplink').val() || '').replace(/^\s+|\s+$/g, '');
+	$.ajax({
+		url: '/manager/sound/plan',
+		type: 'POST',
+		data: { uplink: value },
+		success: function(result) {
+			result = result || {};
+			if (!result.ok) {
+				soundPatchNote(result.error || jawnosT('The uplink could not be saved'));
+				return;
+			}
+			var applied = result.applied;
+			if (applied && applied.ok && !applied.skipped) {
+				soundPatchNote(jawnosT('Uplink saved; the engine is restarting'));
+				setTimeout(soundPatchLoad, 1500);
+			}
+			else {
+				soundPatchNote(jawnosT('Uplink saved'));
+				soundPatchLoad();
+			}
+		},
+		error: function() { soundPatchNote(jawnosT('The uplink could not be saved')); }
+	});
+}
+
+$(document).on('click', '#sound_uplink_save', function() { soundPatchUplinkSave(); });
+
 function soundPatchSelect(ids, value) {
 	var select = $('<select></select>');
 	$.each(ids, function(i, id) { select.append($('<option></option>').attr('value', id).text(id)); });
@@ -248,6 +304,7 @@ function soundPatchRender(audio) {
 	}
 	$('#sound_engine_state').text(state);
 	soundPatchDeviceRender();
+	soundPatchUplinkRender();
 }
 
 function soundPatchLoad() {

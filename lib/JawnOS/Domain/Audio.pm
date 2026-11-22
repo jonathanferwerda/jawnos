@@ -55,6 +55,115 @@ sub audio_manage_read {
 	return (defined $raw && $raw =~ /^(?:1|on|true|yes)$/i) ? 1 : 0;
 }
 
+# The house's uplink is one address, not a per-device choice: the machine that
+# mixes a peer's input listens there, and every machine reads the same value.
+# Empty means the uplink is off. Its session key is generated the first time an
+# uplink is written and then kept, because the engine signs every datagram with
+# it and changing it would strand the peers. The key is never shown in a page or
+# a log; it is read only to write the boot file and the child's environment.
+our $audio_uplink_setting      = 'audio_uplink';
+our $audio_session_key_setting = 'audio_session_key';
+
+# host:port, where host is an IPv4 literal, a bracketed IPv6 literal or a DNS
+# name, and the port is 1..65535. The value is never joined into a path or a
+# shell command; the engine binds it, and a name it cannot resolve stays its own
+# reported error rather than a manager crash.
+sub _audio_uplink_valid {
+	my ($address) = @_;
+	return 0 unless defined $address && !ref $address;
+	$address = "$address";
+	return 0 unless length $address && length $address <= 255;
+	return 0 unless $address =~ /\A(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?):(\d{1,5})\z/;
+	my $port = $1 + 0;
+	return $port >= 1 && $port <= 65_535 ? 1 : 0;
+}
+
+# The saved address, or '' when the uplink is off. A stored value that does not
+# fit the shape reads as off rather than reaching the supervisor as a bad flag.
+sub audio_uplink_read {
+	my $raw = &subs::setting_grabber({
+		app     => 'sound',
+		setting => $audio_uplink_setting,
+		device  => 'all',
+	});
+	return '' unless defined $raw && !ref $raw;
+	$raw =~ s/\A\s+|\s+\z//g;
+	return _audio_uplink_valid($raw) ? $raw : '';
+}
+
+# Save the address; an empty one clears it. The boot file is rewritten at once,
+# because it is what the supervisor reads at every spawn, and a running engine
+# is asked to quit so it comes back with the new flag. A machine with no engine
+# still saves the address for later.
+sub audio_uplink_write {
+	my ($address) = @_;
+	$address = '' if !defined $address || ref $address;
+	$address =~ s/\A\s+|\s+\z//g;
+	return { ok => 0, error => 'an uplink is host:port, for example 0.0.0.0:7060' }
+		if length $address && !_audio_uplink_valid($address);
+
+	&subs::setting_setter({
+		app     => 'sound',
+		setting => $audio_uplink_setting,
+		device  => 'all',
+		value   => $address,
+	});
+	# Generate the key with the first address, so a peer source added later never
+	# has to create one while a spawn is deciding whether to pass the flag.
+	&audio_session_key_read() if length $address;
+	my $choice = &audio_engine_device_read();
+	&_audio_plan_boot_write(
+		&audio_manage_read(), &audio_plan_read(),
+		$choice->{backend}, $choice->{device},
+	);
+
+	require JawnOS::Audio::Engine;
+	my $available = eval { JawnOS::Audio::Engine::audio_engine_available() } ? 1 : 0;
+	my $applied = $available
+		? JawnOS::Audio::Engine::audio_engine_quit()
+		: { ok => 1, skipped => 1, error => '' };
+	return { ok => 1, uplink => $address, applied => $applied };
+}
+
+# 32 random bytes as 64 hex characters, generated once and then kept. A stored
+# value that is not exactly that shape is replaced rather than trusted, so a
+# hand-edited setting can never leave the engine with a key it cannot parse.
+sub audio_session_key_read {
+	my $raw = &subs::setting_grabber({
+		app     => 'sound',
+		setting => $audio_session_key_setting,
+		device  => 'all',
+	});
+	if (defined $raw && !ref $raw) {
+		$raw = lc "$raw";
+		return $raw if $raw =~ /\A[0-9a-f]{64}\z/;
+	}
+	require Crypt::PRNG;
+	my $key = lc Crypt::PRNG::random_bytes_hex(32);
+	&subs::setting_setter({
+		app     => 'sound',
+		setting => $audio_session_key_setting,
+		device  => 'all',
+		value   => $key,
+	});
+	return $key;
+}
+
+# Does this plan declare a peer source on this machine? The boot file names an
+# uplink only then: a peer on another machine is silent here, and an uplink with
+# nothing to feed is a socket the engine would hold open for no reason.
+sub _audio_plan_has_local_peer {
+	my ($plan) = @_;
+	return 0 unless ref $plan eq 'HASH' && ref $plan->{sources} eq 'ARRAY';
+	require JawnOS::Audio::Plan;
+	foreach my $source (@{ $plan->{sources} }) {
+		next unless ref $source eq 'HASH';
+		next unless (($source->{kind} // '') eq 'peer');
+		return 1 if JawnOS::Audio::Plan::audio_plan_on_this_machine($source->{machine});
+	}
+	return 0;
+}
+
 # The backends the engine can open, and the default device for each. The
 # picker's pair is a fact about this machine: it is kept on this device's
 # settings row (the same way the other local facts are), with the supervisor's
@@ -172,6 +281,7 @@ sub audio_plan_status {
 		plan             => $plan,
 		latency          => \%latency,
 		manage           => &audio_manage_read(),
+		uplink           => &audio_uplink_read(),
 		engine_available => $available,
 		engine           => $engine,
 		devices          => &audio_engine_devices(),
@@ -417,7 +527,9 @@ sub audio_plan_apply {
 }
 
 # The engine's startup copy: `{"manage":0|1,"plan":{...},"backend":"alsa",
-# "device":"hw:1,0"}`. The setting on the house row is the source of truth
+# "device":"hw:1,0"}`, plus `"uplink":"host:port"` and `"session_key":"<hex>"`
+# while a peer source on this machine has a saved uplink. The setting on the
+# house row is the source of truth
 # for the plan, and this device's row for the picker pair; the file exists so a
 # fresh engine can arm the saved plan and open the chosen interface without a
 # running manager to ask. It lives in the durable audio state dir, not beside
@@ -444,12 +556,23 @@ sub _audio_plan_boot_write {
 		$doc->{backend} = $backend;
 		$doc->{device} = $device;
 	}
+
+	# An uplink is a pair: the address the supervisor listens on and the key the
+	# engine signs every datagram with. The key is the audio session key, not the
+	# house key; this file is the durable audio state dir's private copy (0600) and
+	# the only place besides the child's environment that it is written.
+	my $uplink = &audio_uplink_read();
+	if (length $uplink && &_audio_plan_has_local_peer($plan)) {
+		$doc->{uplink} = $uplink;
+		$doc->{session_key} = &audio_session_key_read();
+	}
 	my $json = encode_json($doc);
 	my $tmp  = "$path.tmp.$$";
 	my $wrote = eval {
 		open my $fh, '>', $tmp or die "open: $!";
 		print {$fh} $json or die "write: $!";
 		close $fh or die "close: $!";
+		chmod 0600, $tmp;
 		rename $tmp, $path or die "rename: $!";
 		1;
 	};

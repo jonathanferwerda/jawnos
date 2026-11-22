@@ -463,6 +463,9 @@ my $active_playback_device = undef;
 # Why the last spawn attempt started no engine, for the status file and the
 # retry below. Never a reason to stop supervising.
 my $spawn_refused;
+# The last reason --uplink was withheld. The reason, not each backoff spawn, is
+# what a person needs; repeating it every few seconds only hides the rest.
+my $uplink_announced;
 
 sub write_status {
 	my $data = {
@@ -700,11 +703,55 @@ sub plan_config {
 	my $device  = $doc->{'device'};
 	my $pair = defined $backend && $backend =~ /\A(?:alsa|pipewire|null)\z/
 		&& defined $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/;
+	my $uplink = $doc->{'uplink'};
+	$uplink = undef if !defined $uplink || ref $uplink || !length $uplink;
+	my $session_key = $doc->{'session_key'};
+	$session_key = undef if !defined $session_key || ref $session_key || !length $session_key;
 	return {
 		($pair ? (backend => $backend, device => $device) : ()),
+		($uplink ? (uplink => $uplink) : ()),
+		($session_key ? (session_key => $session_key) : ()),
 		manage  => $doc->{'manage'} ? 1 : 0,
 		plan    => $doc->{'plan'},
 	};
+}
+
+# The uplink is a spawn flag with two halves: an address from the boot file and
+# the session key the engine signs datagrams with. An address is host:port, the
+# key 64 hex characters. A value that does not fit is treated as absent, so a
+# hand-edited boot file cannot make the engine refuse to start.
+sub uplink_address_ok {
+	my ($address) = @_;
+	return 0 unless defined $address && !ref $address;
+	$address = "$address";
+	return 0 unless length $address && length $address <= 255;
+	return 0 unless $address =~ /\A(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?):(\d{1,5})\z/;
+	my $port = $1 + 0;
+	return $port >= 1 && $port <= 65_535 ? 1 : 0;
+}
+
+sub session_key_ok {
+	my ($key) = @_;
+	return 0 unless defined $key && !ref $key;
+	return "$key" =~ /\A[0-9a-fA-F]{64}\z/ ? 1 : 0;
+}
+
+# A peer source belongs to this machine when its `machine` is blank (the older
+# spelling of "here") or names this host; one tagged with another machine is not
+# an uplink this supervisor can feed.
+sub plan_has_local_peer {
+	my ($plan) = @_;
+	return 0 unless ref $plan eq 'HASH' && ref $plan->{'sources'} eq 'ARRAY';
+	for my $source (@{ $plan->{'sources'} }) {
+		next unless ref $source eq 'HASH';
+		next unless defined $source->{'kind'} && !ref $source->{'kind'}
+			&& $source->{'kind'} eq 'peer';
+		my $on = $source->{'machine'};
+		next if defined $on && !ref $on && length $on
+			&& (!defined $machine || lc($on) ne lc($machine));
+		return 1;
+	}
+	return 0;
 }
 
 # Whether a backend carries the machine's own audio through the engine, and so
@@ -1229,6 +1276,37 @@ sub spawn_engine {
 	$buffer = defined $pinned_buffer ? $pinned_buffer : $plan_buffer;
 	my $chosen  = plan_config();
 	my $manage  = $chosen ? $chosen->{'manage'} : 0;
+
+	# The uplink is passed only when a peer source on this machine, an address
+	# and a key are all present. Withholding the flag is safe: the engine starts
+	# with no receiver and the plan's peer sources stay `pending`. Say why once.
+	my $uplink;
+	{
+		my $wanted  = $chosen && plan_has_local_peer($chosen->{'plan'});
+		my $address = $chosen ? $chosen->{'uplink'} : undef;
+		my $key     = $chosen ? $chosen->{'session_key'} : undef;
+		my $reason;
+		if ($wanted) {
+			if (!defined $address || !length $address) {
+				$reason = 'the plan has a peer source but no uplink address is saved';
+			}
+			elsif (!uplink_address_ok($address)) {
+				$reason = "the saved uplink `$address` is not a host and port";
+			}
+			elsif (!session_key_ok($key)) {
+				$reason = 'the saved uplink has no session key';
+			}
+			else {
+				$uplink = { address => $address, key => $key };
+				$uplink_announced = undef;
+			}
+		}
+		if ($reason && (!defined $uplink_announced || $uplink_announced ne $reason)) {
+			$uplink_announced = $reason;
+			print "audio supervisor: not passing --uplink: $reason\n";
+		}
+	}
+
 	my $choice  = spawn_choice();
 	$backend = $choice->{'backend'};
 	$device  = $choice->{'device'};
@@ -1293,6 +1371,9 @@ sub spawn_engine {
 		# Belt and braces: FD_CLOEXEC should already have done this on exec.
 		close $lock;
 		$ENV{'PIPEWIRE_NODE'} = $pipewire_node if defined $pipewire_node;
+		# The key is a secret: the environment, never argv, so it does not show in
+		# a process listing. It reaches the child only when --uplink does.
+		$ENV{'JAWNOS_AUDIO_SESSION_KEY'} = $uplink->{'key'} if $uplink;
 		my @args = (
 			$binary, '--serve',
 			'--backend', $backend,
@@ -1307,6 +1388,7 @@ sub spawn_engine {
 			if defined $system_source && length $system_source;
 		push @args, ('--handset-device', $handset_device)
 			if $handset_given && defined $handset_device && length $handset_device;
+		push @args, ('--uplink', $uplink->{'address'}) if $uplink;
 		exec { $binary } @args or do {
 				print STDERR "audio supervisor: cannot run $binary: $!\n";
 				POSIX::_exit(127);

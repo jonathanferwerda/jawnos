@@ -107,13 +107,43 @@ sub action_53026 {
 	$c->render(json => &sound_reading());
 }
 
-# POST /manager/sound/plan - save the house's routing plan
+# POST /manager/sound/plan - save the house's routing plan and its uplink.
+# The uplink is a house setting too, so it rides this existing save path rather
+# than a route of its own: a request may carry a plan, an uplink, or both. A
+# request with only an uplink must not overwrite the stored plan with an empty
+# document, so each half is saved only when it was posted.
 sub action_53030 {
 	my $c = shift;
 	my $raw = $c->param('plan');
-	my $plan = (defined $raw && length $raw) ? eval { decode_json($raw) } : undef;
-	my $result = eval { &subs::audio_plan_write($plan) };
-	$c->render(json => $result || { ok => 0, error => 'the plan could not be saved' });
+	my $uplink = $c->param('uplink');
+
+	my $saved_plan;
+	my $saved_uplink;
+	if (defined $raw && length $raw) {
+		my $plan = eval { decode_json($raw) };
+		$saved_plan = eval { &subs::audio_plan_write($plan) };
+		$saved_plan = { ok => 0, error => 'the plan could not be saved' }
+			unless ref $saved_plan eq 'HASH';
+	}
+	if (defined $uplink) {
+		$saved_uplink = eval { &subs::audio_uplink_write($uplink) };
+		$saved_uplink = { ok => 0, error => 'the uplink could not be saved' }
+			unless ref $saved_uplink eq 'HASH';
+	}
+
+	my $result;
+	if ($saved_plan && $saved_uplink) {
+		$result = { %{$saved_plan}, %{$saved_uplink} };
+		$result->{ok} = ($saved_plan->{ok} && $saved_uplink->{ok}) ? 1 : 0;
+		$result->{error} = $saved_plan->{error} || $saved_uplink->{error}
+			unless $result->{ok};
+	}
+	elsif ($saved_plan)    { $result = $saved_plan }
+	elsif ($saved_uplink)  { $result = $saved_uplink }
+	else {
+		$result = { ok => 0, error => 'the plan could not be saved' };
+	}
+	$c->render(json => $result);
 }
 
 # GET /manager/sound/plan - the saved plan, the switch and the engine's answer
