@@ -148,6 +148,48 @@ fn a_lost_tail_is_concealed_and_visible_in_the_counters() {
 }
 
 #[test]
+fn a_rehandshake_keeps_the_counters() {
+    let session_key = key(0x77);
+    let (producer, _consumer) = monbus::new(monbus::MIN_FRAMES);
+    let mut source =
+        UplinkSource::new(0, "phone".to_string(), producer).expect("source");
+    source.attach_session(session_key, 7);
+
+    // One block from the first session is accepted and pulled.
+    let frames = signal(480);
+    let mut bearer = AudioBearer::new(session_key, 7);
+    for datagram in datagrams(&mut bearer, source.stream(), &frames, 0) {
+        source.accept(&datagram).expect("accepted");
+    }
+    assert_eq!(source.pump(PULL_FRAMES, 0).expect("a session pulls").frames, 480);
+    let before = source.status();
+    assert_eq!(before.received, 1);
+
+    // The peer re-handshakes after a quiet spell: a new session, a new receiver.
+    source.attach_session(session_key, 8);
+    let after = source.status();
+    assert_eq!(after.received, before.received, "received survives the rebuild");
+    assert_eq!(after.late, before.late, "late survives the rebuild");
+    assert_eq!(
+        after.concealed, before.concealed,
+        "concealed survives the rebuild"
+    );
+    assert_eq!(
+        after.last_master, before.last_master,
+        "the last pull is on the same master clock"
+    );
+
+    // Audio on the new session keeps adding to the pre-rebuild total.
+    let mut bearer = AudioBearer::new(session_key, 8);
+    for datagram in datagrams(&mut bearer, source.stream(), &frames, 0) {
+        source.accept(&datagram).expect("accepted");
+    }
+    assert_eq!(source.pump(PULL_FRAMES, 0).expect("the new session pulls").frames, 480);
+    let later = source.status();
+    assert_eq!(later.received, before.received + 1);
+}
+
+#[test]
 fn two_real_sockets_carry_a_peer_block() {
     let session_key = key(0x55);
     let status = Arc::new(Mutex::new(UplinkStatus::idle()));

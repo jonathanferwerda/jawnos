@@ -26,7 +26,10 @@
 //!
 //! P3/P4's first slice is one peer. When a WELCOME issues a session, every
 //! source's receiver is rebuilt with that session id, so a re-handshake (or a
-//! master restart on the other side) starts a clean timeline. Multiple peers
+//! master restart on the other side) starts a clean timeline. The received,
+//! late and concealed totals are not reset: each rebuild folds the outgoing
+//! receiver's counters into the source's running total, so `status` stays
+//! truthful across a peer's periodic quiet-spell re-handshake. Multiple peers
 //! need a peer id in the stream id or in a session map before two sessions may
 //! live at once; this module deliberately does not pretend otherwise.
 //!
@@ -202,7 +205,14 @@ pub struct UplinkSource {
     /// Reused conversion buffers; a wake allocates nothing.
     pull_i16: Vec<i16>,
     pull_f32: Vec<f32>,
+    /// Every replaced receiver's counters, folded in by [`Self::attach_session`],
+    /// so a re-handshake does not restart the house's totals.
+    past: RecvCounters,
     dropped: u64,
+    /// The last pull report. Kept across a re-handshake: it names a position on
+    /// the one master clock, which a new session does not change, so clearing it
+    /// would only make `last_master` blink without telling the house anything
+    /// false.
     last: Option<PullReport>,
 }
 
@@ -220,6 +230,7 @@ impl UplinkSource {
             receiver: None,
             pull_i16: vec![0; PULL_MAX_FRAMES],
             pull_f32: vec![0.0; PULL_MAX_FRAMES * 2],
+            past: RecvCounters::default(),
             dropped: 0,
             last: None,
         })
@@ -237,7 +248,16 @@ impl UplinkSource {
 
     /// A WELCOME issued `session`: rebuild the receiver with it. Any audio
     /// buffered for the old session belongs to a dead timeline and is dropped.
+    ///
+    /// The receiver is replaced, its counters are not: the outgoing one's
+    /// counters are folded into `past` first, so [`counters`](Self::counters)
+    /// keeps the sum across a re-handshake. The last pull report is kept too
+    /// (see the `last` field): the master clock is the same one either side of
+    /// the rebuild.
     pub fn attach_session(&mut self, key: [u8; 32], session: u32) {
+        if let Some(receiver) = self.receiver.take() {
+            self.past = add_counters(self.past, receiver.counters());
+        }
         self.receiver = AudioReceiver::new(
             key,
             session,
@@ -246,7 +266,6 @@ impl UplinkSource {
             DEFAULT_JITTER_FRAMES,
         )
         .ok();
-        self.last = None;
     }
 
     /// Whether a session has been issued and a receiver exists.
@@ -291,12 +310,20 @@ impl UplinkSource {
         Some(report)
     }
 
-    /// The receiver's counters, or zeroes before a session exists.
+    /// The counters for every session this source has carried, or zeroes before
+    /// a session exists.
+    ///
+    /// A re-handshake replaces the receiver, not the totals: `past` holds what
+    /// the replaced receivers counted, and this returns that plus the current
+    /// receiver's own counters. `received`, `late` and `concealed` therefore
+    /// never go backwards when a peer re-handshakes.
     pub fn counters(&self) -> RecvCounters {
-        self.receiver
+        let session = self
+            .receiver
             .as_ref()
             .map(AudioReceiver::counters)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        add_counters(self.past, session)
     }
 
     /// This source's `status` entry.
@@ -312,6 +339,19 @@ impl UplinkSource {
             last_master: self.last.map_or(0, |report| report.master_sample),
             from_deadline: self.last.is_some_and(|report| report.from_deadline),
         }
+    }
+}
+
+/// Add two counter snapshots field by field, saturating at `u64::MAX` so a
+/// lifetime's total can never wrap into a smaller, untrue number.
+fn add_counters(base: RecvCounters, session: RecvCounters) -> RecvCounters {
+    RecvCounters {
+        received: base.received.saturating_add(session.received),
+        rejected: base.rejected.saturating_add(session.rejected),
+        out_of_order: base.out_of_order.saturating_add(session.out_of_order),
+        late: base.late.saturating_add(session.late),
+        gaps: base.gaps.saturating_add(session.gaps),
+        concealed_frames: base.concealed_frames.saturating_add(session.concealed_frames),
     }
 }
 
