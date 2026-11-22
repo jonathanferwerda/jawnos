@@ -748,8 +748,19 @@ sends HELLO (`0xFF02`) and the master answers WELCOME (`0xFF03`) with a fresh se
 every ping and pong after them, carry a 16-byte HMAC-SHA256 tag over the whole header and payload. A
 datagram with a bad tag, a session this master did not issue, or a repeated `seq` is dropped and
 counted, and the reports carry `session` and `rejected`. The key comes from `--session-key-hex` or
-`$JAWNOS_AUDIO_SESSION_KEY`, and a clock mode with no key is a usage error. Still to come: the peer
-must re-HELLO after a master restart, and the master's session table needs a lease.
+`$JAWNOS_AUDIO_SESSION_KEY`, and a clock mode with no key is a usage error. A session now lives on a
+lease (30 s, `--lease-ms`) refreshed by every accepted ping, and the table is capped at 64, so a
+vanished peer and a HELLO flood both come back to nothing; the peer handshakes again after two
+seconds of quiet and reports `handshakes`, so a master restart no longer strands it.
+
+**Audio bearer (2026-11-21, in the tree):** an input's PCM16 frames travel between engines in
+authenticated datagrams on that session — a 32-byte header, the samples and the same 16-byte tag,
+with stream ids `0x1000`–`0x7FFF` reserved for audio. The receiver places each datagram by its
+master position rather than its arrival, folds out-of-order and duplicate packets in, refuses one
+past its window instead of growing memory, and turns a gap into silence with the timeline advanced
+over it. The converter maps a peer's local samples to the master through the fitted offset and
+drift; it is linear interpolation for now, behind a `push`/`process` contract a windowed-sinc
+converter can replace. No device opens in the bearer: wiring capture and the patchbay is P4.
 
 ### P4 — Sources that are late (2 weeks)
 
