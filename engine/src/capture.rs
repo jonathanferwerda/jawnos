@@ -26,7 +26,6 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::backends::BackendKind;
-use crate::bearing::DEFAULT_JITTER_FRAMES;
 use crate::wav::WavWriter;
 
 /// Frames the capture thread may run ahead of the sender: 341 ms at 48 kHz.
@@ -34,14 +33,6 @@ use crate::wav::WavWriter;
 /// send loop. A full ring overwrites its oldest frames, so the ring always holds
 /// the newest audio and the sender can resynchronise to it.
 pub const LIVE_RING_FRAMES: usize = 16_384;
-
-/// The most capture the sender lets pile up before it skips to the live edge.
-///
-/// It is the master's jitter window ([`DEFAULT_JITTER_FRAMES`], 85 ms): a
-/// datagram stamped further behind the master clock than this is refused as
-/// late, so a live send drops the backlog rather than carrying it forever. The
-/// sender's own clock catch-up is bounded by the same number.
-pub const LIVE_MAX_LAG_FRAMES: usize = DEFAULT_JITTER_FRAMES;
 
 /// How often the local take's header is synced while it records. The samples
 /// are written every block; only the sizes wait, so a killed take is a valid,
@@ -73,7 +64,13 @@ pub fn synthetic_sample(rate: u32, index: u64) -> i16 {
 
 /// A known-signal input for the tests: no hardware, same contract as a device.
 pub struct SyntheticSource {
+    /// The sample rate the samples are numbered at. It is also the rate the
+    /// sender expects in `--rate`.
     rate: u32,
+    /// Frames the source actually produces per wall second. Equal to `rate`
+    /// unless a test injects a device rate error, which is exactly how a real
+    /// crystal differs from the host.
+    cadence_hz: u32,
     period: usize,
     total: u64,
     produced: u64,
@@ -84,8 +81,17 @@ pub struct SyntheticSource {
 
 impl SyntheticSource {
     pub fn new(rate: u32, total: u64, period: usize) -> Self {
+        Self::with_cadence(rate, rate, total, period)
+    }
+
+    /// A source whose samples are at `rate` but which produces `cadence_hz`
+    /// frames per wall second. A cadence below the rate models a capture device
+    /// that runs slow; the sender must clock it by the frames it actually
+    /// produces, not by the wall.
+    pub fn with_cadence(rate: u32, cadence_hz: u32, total: u64, period: usize) -> Self {
         SyntheticSource {
             rate,
+            cadence_hz: cadence_hz.max(1),
             period: period.max(1),
             total,
             produced: 0,
@@ -104,10 +110,11 @@ impl LiveSource for SyntheticSource {
             return 0;
         }
         let started = *self.started.get_or_insert_with(Instant::now);
-        // Frame `n` is due `n / rate` seconds after the source started. If the
-        // sender is behind, the source catches up without sleeping, the way a
-        // device fills the ring it was given.
-        let nanos = (u128::from(self.produced) * 1_000_000_000 / u128::from(self.rate)) as u64;
+        // Frame `n` is due `n / cadence` seconds after the source started. If
+        // the sender is behind, the source catches up without sleeping, the way
+        // a device fills the ring it was given.
+        let nanos =
+            (u128::from(self.produced) * 1_000_000_000 / u128::from(self.cadence_hz)) as u64;
         let due = started + Duration::from_nanos(nanos);
         let now = Instant::now();
         if due > now {

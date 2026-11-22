@@ -12,10 +12,11 @@
 #            local WAV first, then offers the same frames to a fixed ring the
 #            clock loop pops. A full ring overwrites its oldest frames so the live
 #            edge survives; a window whose whole span is older than the ring
-#            resynchronises to the live edge instead of stalling. The loop pads a
-#            short capture with silence, bounds the capture backlog to the
-#            master's jitter window, and reports captured, sent, dropped,
-#            padded and resynced.
+#            resynchronises to the live edge instead of stalling. The capture
+#            sequence is the local timeline: every wake sends exactly the frames
+#            the device produced since the last send, so a device that runs at
+#            47 976 Hz is not padded up to the wall's 48 000. The loop reports
+#            captured, sent, dropped, padded and resynced.
 
 use strict;
 use warnings;
@@ -66,7 +67,8 @@ like( $capture, qr/write\s*\.\s*saturating_sub\(out\.len\(\) as u64\)/,
 	'the window resynchronises to the newest full window, not the stale oldest' );
 like( $capture, qr/read\.fetch_max/, 'the consumer cursor never moves backwards' );
 like( $capture, qr/overflow\s*\.\s*fetch_add/, 'ring overwrites are counted, never blocking' );
-like( $capture, qr/pub const LIVE_MAX_LAG_FRAMES/, 'the live backlog is bounded by the master jitter window' );
+like( $capture, qr/pub fn with_cadence/, 'a test source can produce at a deliberate device rate' );
+like( $capture, qr/cadence_hz: u32/, 'the source separates its sample rate from its wall cadence' );
 
 # --- the request is validated before a socket opens -------------------------
 like( $sender, qr/pub struct SendSpec/, 'the CLI request has one struct' );
@@ -82,10 +84,16 @@ like( $sender, qr/pub fn run_send_live_with_source/, 'the suite can run a softwa
 like( $sender, qr/pub fn success_live/, 'a live report carries the capture counts' );
 like( $sender, qr/\\"resynced\\":/, 'the live report carries the live-edge skip count' );
 like( $sender, qr/pub fn resync_to/, 'a live sender can adopt a resynchronised position' );
-like( $sender, qr/last_now\.saturating_add\(elapsed as u64\)/,
-	'a delayed wake carries its capped excess instead of losing it' );
-like( $sender, qr/LIVE_MAX_LAG_FRAMES/, 'the sender never carries more capture than the jitter window' );
-like( $sender, qr/producer\.written\(\)/, 'the live edge is the ring write cursor' );
+like( $sender, qr/let local_send = producer\.produced\(\);/,
+	'the ping timestamp is a captured position, not the wall' );
+like( $sender, qr/let local_recv = producer\.produced\(\);/,
+	'the pong is received at a captured position' );
+like( $sender, qr/let available = producer\.written\(\)\.saturating_sub\(sender\.local\(\)\);/,
+	'each wake sends exactly the frames captured since the last send' );
+like( $sender, qr/available\.min\(PULL_MAX_FRAMES as u64\)/,
+	'a capture burst is still capped per wake' );
+like( $sender, qr/provisional\.current\(producer\.produced\(\)\)/,
+	'the provisional offset ages on the capture timeline' );
 like( $sender, qr/window\.resync/, 'the sender adopts the consumer resynchronisation' );
 like( $sender, qr/--send-live needs --device NAME/, 'a live send requires a device' );
 like( $sender, qr/--send-live needs --out FILE\.wav/, 'a live send requires its local take' );
@@ -193,6 +201,10 @@ like( $tests, qr/fn a_live_capture_survives_a_sender_stall_without_late_audio/,
 	'a delayed sender wake is resynchronised and the master is not late' );
 like( $tests, qr/fn a_live_capture_survives_a_source_stall_and_a_ring_wrap/,
 	'a source stall and small ring still deliver live audio' );
+like( $tests, qr/fn a_live_capture_is_clocked_by_its_source_not_the_wall/,
+	'a slow device is clocked by its frames, not by the wall' );
+like( $tests, qr/SyntheticSource::with_cadence\(rate, cadence, total, 480\)/,
+	'the regression source injects the device rate error' );
 like( $capture, qr/fn a_full_ring_resynchronises_to_the_live_edge_instead_of_stalling/,
 	'the full-ring resync is unit tested' );
 like( $capture, qr/fn a_window_never_stalls_while_the_ring_wraps/,

@@ -1146,14 +1146,12 @@ fn send_live(
         )?,
     };
 
-    // Anchor the send clock on the first captured block. A source that opens a
-    // moment after the session would otherwise leave the capture sequence
-    // permanently behind the wall clock, and every window would drop its tail
-    // as stale. One block of lead time is the price of a clean origin.
+    // The capture sequence is the local timeline. The wall clock paces the loop
+    // and bounds `--seconds`; it must not decide how many frames to send, or a
+    // device that produces 47 976 frames per second is padded up to the wall's
+    // 48 000 and the real frames that arrive later are discarded as stale.
     capture.wait_started(Duration::from_millis(1_000));
-    let clock = InstantClock::new(config.rate);
     let pong_max_age = u64::from(config.rate).saturating_mul(PONG_MAX_AGE_MS) / 1_000;
-    let mut last_now = clock.now();
     let mut sender = LiveSender::new();
     let mut bearer = AudioBearer::new(config.key, session);
     let run_deadline = config
@@ -1200,7 +1198,10 @@ fn send_live(
             }
         }
 
-        let local_send = clock.now();
+        // The probe's local stamps are captured positions, so the fit measures
+        // master time against the device's own rate; its drift corrects the
+        // device, not the host's wall clock.
+        let local_send = producer.produced();
         let length = probe
             .ping(&mut outgoing, local_send, 0)
             .map_err(|error| format!("send-live ping: {error:?}"))?;
@@ -1210,51 +1211,35 @@ fn send_live(
             }
         }
 
-        let now = clock.now();
-        let elapsed = now.saturating_sub(last_now).min(PULL_MAX_FRAMES as u64) as usize;
-        if sender.estimate().is_some() && elapsed > 0 {
-            // Advance the pacing cursor by the block actually sent, not all the
-            // way to the wall clock: a delayed wake's excess is carried into
-            // the next wake instead of being lost forever. That permanent loss
-            // was what made a long take drift behind the master's buffer and
-            // turn every datagram late.
-            last_now = last_now.saturating_add(elapsed as u64);
-
-            // Never carry more capture than the master's jitter window. Beyond
-            // it the audio is late by definition, so skip to the live edge and
-            // count what was skipped rather than replaying it late.
-            let written = producer.written();
-            let local = sender.local();
-            if written.saturating_sub(local) > capture::LIVE_MAX_LAG_FRAMES as u64 {
-                let target = written.saturating_sub(elapsed as u64);
-                if target > local {
-                    sender.resync_to(target);
-                    resynced += target - local;
-                }
-            }
-
-            let window = consumer.window(sender.local(), &mut chunk[..elapsed]);
-            // The ring can also resynchronise when its oldest frame is past the
-            // whole window (a burst filled it faster than the lag check saw).
-            if let Some(target) = window.resync {
-                let local = sender.local();
-                if target > local {
-                    sender.resync_to(target);
-                    resynced += target - local;
-                }
-            }
-            captured_used += window.used as u64;
-            padded += window.padded as u64;
-            if let Some((master_sample, block)) = sender.fill(&chunk[..elapsed]) {
-                match bearer.packetize(config.stream, 1, block, master_sample, |datagram| {
-                    socket.send(datagram).map(|_| ())
-                }) {
-                    Ok(emitted) => {
-                        sent += emitted;
-                        frames += block.len() as u64;
+        // Send exactly the frames the capture has published since the last
+        // send, capped at one burst. A wake where the device produced nothing
+        // sends nothing: there is no wall-clock amount to pad up to. The ring
+        // still overwrites and resynchronises if the producer really outran it.
+        if sender.estimate().is_some() {
+            let available = producer.written().saturating_sub(sender.local());
+            let elapsed = available.min(PULL_MAX_FRAMES as u64) as usize;
+            if elapsed > 0 {
+                let window = consumer.window(sender.local(), &mut chunk[..elapsed]);
+                if let Some(target) = window.resync {
+                    let local = sender.local();
+                    if target > local {
+                        sender.resync_to(target);
+                        resynced += target - local;
                     }
-                    Err(BearerError::Io(kind)) if quiet_io(kind) => {}
-                    Err(error) => return Err(format!("send-live audio: {error:?}")),
+                }
+                captured_used += window.used as u64;
+                padded += window.padded as u64;
+                if let Some((master_sample, block)) = sender.fill(&chunk[..elapsed]) {
+                    match bearer.packetize(config.stream, 1, block, master_sample, |datagram| {
+                        socket.send(datagram).map(|_| ())
+                    }) {
+                        Ok(emitted) => {
+                            sent += emitted;
+                            frames += block.len() as u64;
+                        }
+                        Err(BearerError::Io(kind)) if quiet_io(kind) => {}
+                        Err(error) => return Err(format!("send-live audio: {error:?}")),
+                    }
                 }
             }
         }
@@ -1263,7 +1248,7 @@ fn send_live(
 
         match socket.recv(&mut incoming) {
             Ok(length) => {
-                let local_recv = clock.now();
+                let local_recv = producer.produced();
                 if let Some(pong) =
                     probe.accept_pong_since(&incoming[..length], local_send, pong_max_age)
                 {
@@ -1284,7 +1269,8 @@ fn send_live(
         } else {
             None
         };
-        sender.set_estimate(fitted.or(provisional.current(clock.now())));
+        // The provisional's age check runs on the capture timeline too.
+        sender.set_estimate(fitted.or(provisional.current(producer.produced())));
 
         let spent = cycle.elapsed();
         if spent < interval {

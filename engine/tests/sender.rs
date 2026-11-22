@@ -914,6 +914,85 @@ fn a_live_capture_survives_a_sender_stall_without_late_audio() {
 }
 
 #[test]
+fn a_live_capture_is_clocked_by_its_source_not_the_wall() {
+    // The hardware take produced 28 785 600 frames in 600 s (~47 976/s). The
+    // old sender asked for 48 000 frames per wall second, padded the 24 it did
+    // not have, then discarded the real frames as stale. Five seconds at the
+    // same 500 ppm makes the same 120-frame mismatch without a ten-minute test.
+    let session_key = key(0x76);
+    let stream = audio_stream(1).expect("an audio stream");
+    let stop = Arc::new(AtomicBool::new(false));
+    let (address, state, handle) = start_master_full(
+        session_key,
+        stream,
+        Arc::clone(&stop),
+        0,
+        None,
+        true,
+    );
+
+    let rate = 48_000u32;
+    let cadence = 47_976u32;
+    let seconds = 5u64;
+    let total = u64::from(cadence) * seconds; // 239 880 frames
+    let take = TempWav::new("live-clock");
+    let mut spec = live_spec(address, &take.path);
+    spec.key_hex = Some("76".repeat(32));
+    let validated = validate_live(&spec).expect("the live shape reads");
+    let source = Box::new(SyntheticSource::with_cadence(rate, cadence, total, 480));
+
+    let report = run_send_live_with_source(&validated, source);
+    stop.store(true, Ordering::SeqCst);
+    handle.join().expect("join the test master");
+
+    assert!(report.ok, "report: {}", report.to_json());
+    assert_eq!(
+        report.captured, total,
+        "the source produced every frame: {}",
+        report.to_json()
+    );
+    assert!(
+        report.dropped < 10,
+        "the capture, not the wall, decided how many frames to send: {}",
+        report.to_json()
+    );
+    assert!(
+        report.padded < 10,
+        "no wall-sized gap is padded: {}",
+        report.to_json()
+    );
+    assert_eq!(
+        report.resynced, 0,
+        "a steady device never runs the ring past the sender: {}",
+        report.to_json()
+    );
+
+    // D14: the local WAV holds every captured frame at its declared sample rate.
+    let audio = read_wav(&take.path).expect("the local take is a valid WAV");
+    assert_eq!(audio.rate, rate);
+    assert_eq!(audio.frames, total);
+    let expected: Vec<i16> = (0..total)
+        .map(|index| synthetic_sample(rate, index))
+        .collect();
+    assert_eq!(audio.samples, expected);
+
+    let snapshot = state.lock().expect("snapshot");
+    let counters = snapshot
+        .receiver
+        .as_ref()
+        .expect("the welcome built a receiver")
+        .counters();
+    assert!(counters.received > 0, "the master received the audio");
+    assert_eq!(counters.rejected, 0, "the clocked capture was never refused");
+    assert!(
+        counters.late < counters.received / 10,
+        "the master's buffer absorbs the device rate error: {} late of {}",
+        counters.late,
+        counters.received
+    );
+}
+
+#[test]
 fn a_live_send_needs_a_device_an_out_and_an_audio_stream() {
     let out = TempWav::new("live-validation");
     let base = live_spec(
