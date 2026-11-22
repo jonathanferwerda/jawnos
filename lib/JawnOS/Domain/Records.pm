@@ -651,6 +651,9 @@ sub records_backup_now {
 	my $appendage = $gb::universal_splitter . &encrypter($secret, $standard);
 	if (open(my $af, '>>', $out)) { print $af $appendage . "\n"; close $af; }
 	system('shred', '-u', $tmp) if -e $tmp;
+	# A phone or tablet may have no shred, or a PATH without it; the temp
+	# is a full plaintext database, so the unlink must always run.
+	unlink $tmp if -e $tmp;
 	return undef unless -e $out && -s $out > 5000;
 	return $out;
 }
