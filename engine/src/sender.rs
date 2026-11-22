@@ -49,6 +49,11 @@ use crate::wav_read::read_wav;
 
 /// What the CLI collects for `--send-take`, before anything is opened.
 ///
+/// How old a ping whose pong arrives may be and still be measured. A reply
+/// that outlives one 10 ms cycle is normal on Wi-Fi; one older than a second
+/// is not the reply the sender is waiting on.
+const PONG_MAX_AGE_MS: u64 = 1_000;
+///
 /// `seconds` is `None` when `--seconds` was not given: the take's own length
 /// is then the run length, and the run ends the moment the take is exhausted.
 #[derive(Clone, Debug)]
@@ -474,6 +479,7 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
     // The clock starts with the audio, not with the handshake: local sample 0
     // is what the take's first frame should occupy on the master.
     let clock = InstantClock::new(config.rate);
+    let pong_max_age = u64::from(config.rate).saturating_mul(PONG_MAX_AGE_MS) / 1_000;
     let mut last_now = clock.now();
     let mut sender = TakeSender::new(config.take.clone());
     let mut bearer = AudioBearer::new(config.key, session);
@@ -547,10 +553,14 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
         match socket.recv(&mut incoming) {
             Ok(length) => {
                 let local_recv = clock.now();
-                // `accept_pong` checks the tag, session, echo and replay window
-                // before the point reaches the fit.
-                if let Some(pong) = probe.accept_pong(&incoming[..length], local_send) {
-                    let sample = ProbeSample::from_pong(pong, local_send, local_recv);
+                // `accept_pong_since` checks the tag, session, echo age and replay
+                // window before the point reaches the fit. A Wi-Fi reply can
+                // outlive the cycle it was sent in; the echoed stamp is the ping
+                // its round trip is measured from, not the newest one.
+                if let Some(pong) =
+                    probe.accept_pong_since(&incoming[..length], local_send, pong_max_age)
+                {
+                    let sample = ProbeSample::from_pong(pong, pong.echo_local_send, local_recv);
                     provisional = Some(ClockOffset::new(
                         (sample.master_midpoint() - sample.local_midpoint()).round() as i64,
                         0.0,

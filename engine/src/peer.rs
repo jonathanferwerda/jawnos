@@ -919,6 +919,24 @@ impl ClockPeer {
     /// a foreign session or a replay is also counted as rejected. An accepted
     /// pong refreshes the quiet timer.
     pub fn accept_pong(&mut self, datagram: &[u8], local_send: u64) -> Option<Pong> {
+        self.accept_pong_since(datagram, local_send, 0)
+    }
+
+    /// The same, for a pong that echoes any ping sent no more than `max_age`
+    /// samples before `now`.
+    ///
+    /// A reply that outlives one send cycle is normal on Wi-Fi. Requiring the
+    /// newest stamp makes the reader discard the reply it finds, so the socket
+    /// stays one answer behind: every later read is stale too, the quiet timer
+    /// expires, and the peer re-handshakes every two seconds. The echoed stamp
+    /// is the ping time the round trip must be measured from; the tag and the
+    /// replay window still make a duplicate harmless.
+    pub fn accept_pong_since(
+        &mut self,
+        datagram: &[u8],
+        now: u64,
+        max_age: u64,
+    ) -> Option<Pong> {
         let (header, pong) = match decode_pong(datagram, &self.key) {
             Ok(pong) => pong,
             Err(error) => {
@@ -932,7 +950,7 @@ impl ClockPeer {
             self.rejected += 1;
             return None;
         }
-        if pong.echo_local_send != local_send {
+        if pong.echo_local_send > now || now.saturating_sub(pong.echo_local_send) > max_age {
             return None;
         }
         if !self.seen.insert(header.seq) {
@@ -1667,6 +1685,54 @@ mod tests {
                 master_recv: 1_000,
                 master_send: 1_000,
             })
+        );
+    }
+
+    #[test]
+    fn a_pong_for_an_older_ping_is_measured_within_the_window() {
+        let clock = ManualClock::new(1_000);
+        let mut master = ClockMaster::new(KEY);
+        let mut peer = ClockPeer::new(KEY);
+        let session = handshake(&mut master, &mut peer, &clock);
+        assert_ne!(session, CLOCK_SESSION);
+
+        // The ping goes out at local 5_000; its reply is read only after the
+        // next ping, as a Wi-Fi round trip that outlives a 10 ms cycle does.
+        let mut ping = [0u8; 128];
+        let length = peer.ping(&mut ping, 5_000, 0).expect("encode ping");
+        let mut reply = [0u8; 128];
+        let answer = master
+            .answer(&ping[..length], &clock, &mut reply)
+            .expect("a pong");
+        let pong_length = answer.length();
+
+        assert_eq!(
+            peer.accept_pong(&reply[..pong_length], 5_480),
+            None,
+            "the exact-stamp rule refuses a reply one cycle old"
+        );
+        assert!(
+            peer.accept_pong_since(&reply[..pong_length], 5_480, 48_000)
+                .is_some(),
+            "the echoed stamp is still a valid measurement inside the window"
+        );
+
+        // The same reply, read a second later, is outside the window and is not
+        // measured; the refusal does not consume its seq.
+        let length = peer.ping(&mut ping, 5_480, 0).expect("encode ping");
+        let answer = master
+            .answer(&ping[..length], &clock, &mut reply)
+            .expect("a pong");
+        let pong_length = answer.length();
+        assert_eq!(
+            peer.accept_pong_since(&reply[..pong_length], 5_480 + 48_001, 48_000),
+            None,
+            "one second old is not the reply being waited on"
+        );
+        assert!(
+            peer.accept_pong_since(&reply[..pong_length], 5_480, 48_000)
+                .is_some(),
+            "the refused probe can still be measured at its real age"
         );
     }
 

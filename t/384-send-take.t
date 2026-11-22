@@ -64,6 +64,9 @@ like( $sender, qr/SENDER_FIT_MIN_SPAN_SECONDS/, 'the baseline is a minute, not j
 like( $sender, qr/fn a_short_take_does_not_trust_a_fitted_drift/,
 	'a short take keeps drift 0 and says so' );
 like( $sender, qr/\.ping\(/, 'a CLOCK_PING goes out every loop' );
+like( $sender, qr/accept_pong_since/, 'a reply older than the newest ping is measured within a window' );
+like( $sender, qr/pong\.echo_local_send/, 'the echoed stamp is the ping time the round trip uses' );
+like( $sender, qr/PONG_MAX_AGE_MS/, 'the window is bounded, so an old reply is not a sample' );
 like( $sender, qr/ProbeSample::from_pong/, 'the pong becomes an estimator point' );
 like( $sender, qr/AudioBearer::new\(config\.key, session\)/, 'the bearer signs with the same key and session' );
 like( $sender, qr/bearer\.packetize\(/, 'the block becomes bearer datagrams' );

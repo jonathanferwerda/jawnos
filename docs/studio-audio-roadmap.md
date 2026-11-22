@@ -795,6 +795,14 @@ same loop (while writing the take locally first, D14) is next.
 of span, and the report prints the model the take actually used; before that a 3 s take could report
 -400 to -1300 ppm from a one-second burst and stretch the audio by percent.
 
+**A reply may outlive its cycle (2026-11-21, in the tree):** the exact-stamp check refused a Wi-Fi
+pong that arrived after the next ping had gone out, so the socket stayed one reply behind, no probe
+was accepted, and the sender re-handshaked every two seconds. It now measures a pong whose echoed
+ping is at most a second old, using the echoed stamp for the round trip; the replay window still
+makes a duplicate harmless. Live, a 10 s Wi-Fi take went from five handshakes and four receiver
+rebuilds to one session. That run used a debug build whose loop could not keep the 10 ms cadence, so
+its own concealment is not a release measurement; the release engine is the next run.
+
 **The house side (2026-11-21, in the tree):** Sound owns the uplink address (`sound|audio_uplink`,
 empty off) and a generated session key that is never displayed; the boot file carries both while a
 `peer` source on this machine has an uplink, and the supervisor passes `--uplink` with the key in the

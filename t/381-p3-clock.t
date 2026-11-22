@@ -62,6 +62,9 @@ like( $peer, qr/pub fn parse_session_key/, 'the 32-byte key is parsed from hex' 
 like( $peer, qr/pub fn hello\(/, 'the peer handshakes before it pings' );
 like( $peer, qr/pub fn accept_welcome/, 'the peer takes the session id from the welcome' );
 like( $peer, qr/pub fn accept_pong/, 'a pong is verified before it reaches the estimator' );
+like( $peer, qr/pub fn accept_pong_since/, 'a reply that outlives its cycle is still measured' );
+like( $peer, qr/fn a_pong_for_an_older_ping_is_measured_within_the_window/,
+	'a stale-but-recent reply is tested' );
 like( $peer, qr/STREAM_CLOCK_PONG/, 'the master replies on the pong stream' );
 like( $peer, qr/echo_local_send/, 'the pong echoes the ping so a late reply is ignored' );
 
