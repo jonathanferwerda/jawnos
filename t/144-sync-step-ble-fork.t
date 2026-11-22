@@ -158,6 +158,27 @@ is_deeply( [ keys %{$warehouse_settled} ], ['appointments'],
 	}}), 'the same count with a different picture is not complete' );
 }
 
+# An appointment's write time is not comparable across machines after a
+# re-stamp, so the same rows land in different bands. Completeness there is
+# judged by the row count, or a finished whole-table read is never recorded and
+# the next tick reads all ~121k rows again.
+{
+	local *subs::sync_table_digest = sub { return { count => 300, sum => 1, max => 1 } };
+	my $map = { band => 3600000, buckets => {
+		10 => { count => 120, sum => 999, max => 99 },
+		11 => { count => 80,  sum => 999, max => 99 },
+	} };
+	ok( subs::sync_bands_complete('appointments', $map),
+		'a divergent band picture is complete when every row is held' );
+	$map->{'buckets'}->{11}->{'count'} = 181;
+	ok( !subs::sync_bands_complete('appointments', $map),
+		'a peer row we do not hold is still incomplete' );
+	ok( subs::sync_table_complete('appointments', { count => 200, sum => 1, max => 1 }),
+		'the whole-table fallback counts rows too' );
+	ok( !subs::sync_table_complete('appointments', { count => 301, sum => 1, max => 1 }),
+		'and still names a row we do not hold' );
+}
+
 # A band the local table already covers is not a gap, even when the peer's
 # baseline says the band moved. A local appointment write comes back through a
 # peer's merge; with one-week bands the current week holds ~42k appointments, so

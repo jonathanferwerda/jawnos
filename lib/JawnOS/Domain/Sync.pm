@@ -489,6 +489,20 @@ sub sync_seen_set {
 sub sync_bands_complete {
 	my ($table, $map) = @_;
 	return 1 unless ref $map eq 'HASH' && ref $map->{'buckets'} eq 'HASH';
+	# An appointment's server_time is not comparable across machines after a
+	# re-stamp: the same row can sit in a different hour on each side, so a band
+	# count never matches even when every row is held. Judge this table by the
+	# number of rows alone, or a completed whole-table read is never recorded as
+	# reconciled and the next tick reads all ~121k rows again.
+	if (($table // '') eq 'appointments') {
+		my $want = 0;
+		foreach my $b ( keys %{ $map->{'buckets'} } ) {
+			my $p = $map->{'buckets'}->{$b};
+			$want += ($p->{'count'} || 0) + 0 if ref $p eq 'HASH';
+		}
+		my $local = eval { &sync_table_digest('appointments') } || {};
+		return (($local->{'count'} || 0) + 0) >= $want ? 1 : 0;
+	}
 	my $local = eval { &sync_table_buckets($table, $map->{'band'}) } || {};
 	my $lb = (ref $local eq 'HASH' && ref $local->{'buckets'} eq 'HASH') ? $local->{'buckets'} : {};
 	foreach my $b ( keys %{ $map->{'buckets'} } ) {
@@ -513,6 +527,12 @@ sub sync_table_complete {
 	my ($table, $peer) = @_;
 	return 1 unless ref $peer eq 'HASH';
 	my $local = eval { &sync_table_digest($table) } || {};
+	# The same count-only test as `sync_bands_complete`: appointments carry a
+	# write time that a re-stamp made machine-specific, so sum and max can never
+	# agree even when both sides hold the same rows.
+	if (($table // '') eq 'appointments') {
+		return (($local->{'count'} || 0) + 0) >= (($peer->{'count'} || 0) + 0) ? 1 : 0;
+	}
 	return (($local->{'count'} || 0) + 0) == (($peer->{'count'} || 0) + 0)
 		&& (($local->{'sum'} || 0) + 0) == (($peer->{'sum'} || 0) + 0)
 		&& (($local->{'max'} || 0) + 0) == (($peer->{'max'} || 0) + 0) ? 1 : 0;
