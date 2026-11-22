@@ -230,7 +230,7 @@ function homePlateState($editor) {
 			flags: (data.flags && data.flags.length) ? data.flags : [],
 			selected: '', area: null, tool: '', pending: null, trace: null,
 			flagArmed: false, branchArmed: false, map: null, width: 200, dirty: false,
-			ground: null, branchResults: null, basemapAsked: false
+			ground: null, branchResults: null, basemapAsked: false, basemapPending: false
 		};
 		homePlateEditors[key] = st;
 	}
@@ -335,18 +335,23 @@ function homePlateInit($editor) {
 	if (st.map && typeof st.map.destroy === 'function') { try { st.map.destroy(); } catch (e) {} }
 	var anchor = homePlateAnchor(homePlateSelectedPlate(st));
 	var start = anchor || homePlateHere() || { lat: 43.0, lon: -81.94 };
-	if (!homePlateBasemapReady() && !st.basemapAsked && typeof window.jawnosLoadApp === 'function') {
-		st.basemapAsked = true;
-		var built = false;
-		var build = function() {
-			if (built) { return; }
-			built = true;
-			homePlateInit($editor);
-		};
-		homePlateMapStatus(st, homePlateT('Loading the map...'));
-		window.jawnosLoadApp('travel', build);
-		setTimeout(build, 10000);
-		return;
+	if (!homePlateBasemapReady()) {
+		if (st.basemapPending) { return; }
+		if (!st.basemapAsked && typeof window.jawnosLoadApp === 'function') {
+			st.basemapAsked = true;
+			st.basemapPending = true;
+			var built = false;
+			var build = function() {
+				if (built) { return; }
+				built = true;
+				st.basemapPending = false;
+				homePlateInit($editor);
+			};
+			homePlateMapStatus(st, homePlateT('Loading the map...'));
+			window.jawnosLoadApp('travel', build);
+			setTimeout(build, 10000);
+			return;
+		}
 	}
 	// Travel draws its ground with the house's own vector basemap, and the engine
 	// only paints that layer when create() is handed the loader. Without it the
