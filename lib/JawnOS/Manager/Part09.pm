@@ -211,14 +211,28 @@ sub sync_rows_pull {
 				$watermark = $bmap->{'server_time'} if $bmap->{'server_time'} && $bmap->{'server_time'} > $watermark;
 				my $moved;
 				if ($have_base) {
-					$moved = &subs::sync_bucket_diff($base->{'buckets'}, $bmap->{'buckets'});
+					# A peer change can be this machine's own write coming back through
+					# the peer's merge. Read only the changed bands our own table does
+					# not already hold - a band where we have at least the peer's rows,
+					# newest row and sum has nothing to fetch. Without this the current
+					# week's 42k-row block was read back every few minutes, because the
+					# peer could never catch up to the writes it had just relayed.
+					my $changed = &subs::sync_bucket_diff($base->{'buckets'}, $bmap->{'buckets'});
+					$moved = $changed;
+					if (scalar @{$changed}) {
+						my $local = &subs::sync_table_buckets($map_table, $bmap->{'band'});
+						$moved = &subs::sync_bucket_gaps($local->{'buckets'}, $bmap->{'buckets'}, $changed);
+						my $settled = scalar(@{$changed}) - scalar(@{$moved});
+						&subs::log_writer('sync bucket covered ' . $table . ': settled=' . $settled . '/' . scalar(@{$changed}) . ' band=' . $bmap->{'band'}) if $settled;
+					}
 				}
 				else {
 					# No reconciled peer picture yet: compare the peer's map with this
-					# machine's own. A band either side differs in is read - counts and
-					# sums cannot say which side holds the row the other lacks.
+					# machine's own. Only a band the peer holds and we do not is read;
+					# a band we already cover has nothing to fetch even when the two
+					# pictures differ in their newer copies.
 					my $local = &subs::sync_table_buckets($map_table, $bmap->{'band'});
-					$moved = &subs::sync_bucket_diff($local->{'buckets'}, $bmap->{'buckets'});
+					$moved = &subs::sync_bucket_gaps($local->{'buckets'}, $bmap->{'buckets'});
 					&subs::log_writer('sync bucket bootstrap ' . $table . ': moved=' . scalar(@{$moved}) . ' band=' . $bmap->{'band'});
 				}
 				my $moved_n = scalar @{$moved};

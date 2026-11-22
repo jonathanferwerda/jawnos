@@ -777,6 +777,36 @@ sub sync_bucket_diff {
 	return [ sort { $b <=> $a } @moved ];
 }
 
+# Bands of the peer's map this machine does not already hold. The direction is
+# the one that matters for a pull: the local band must have at least the peer's
+# rows, at least its newest, and at least its sum. A peer that is merely behind
+# has nothing to read - the union already landed here. Without this filter a
+# local appointment write came back through a peer's merge, the current week's
+# band looked changed, and its whole 42k-row block was read back every few
+# minutes; the peer never caught up, so the same read repeated forever.
+sub sync_bucket_gaps {
+	my ($local, $peer, $bands) = @_;
+	return [] unless ref $peer eq 'HASH';
+	my @candidates = ref $bands eq 'ARRAY' ? @{$bands} : sort { $b <=> $a } keys %{$peer};
+	my @gaps;
+	foreach my $b (@candidates) {
+		my $p = $peer->{$b};
+		next unless ref $p eq 'HASH';
+		my $l = (ref $local eq 'HASH') ? $local->{$b} : undef;
+		my $covers = ref $l eq 'HASH' ? 1 : 0;
+		if ($covers) {
+			foreach my $k (qw(count sum max)) {
+				if ((($p->{$k} || 0) + 0) > (($l->{$k} || 0) + 0)) {
+					$covers = 0;
+					last;
+				}
+			}
+		}
+		push @gaps, $b unless $covers;
+	}
+	return \@gaps;
+}
+
 sub sync_bands_peer {
 	my ($version, $flag) = @_;
 	return 1 if $flag;

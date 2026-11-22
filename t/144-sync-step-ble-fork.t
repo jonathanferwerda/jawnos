@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part09.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Manager/Part36.pm
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part09.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Manager/Part36.pm
 # covers:    A mobile sync pass takes one table at a time, so a nine-table plan
 #            no longer merges all nine in one request and runs the gauge hot for
 #            most of a minute; and every subprocessor whose work can wait on the
@@ -17,6 +17,7 @@ use File::Slurp qw(read_file);
 my $root = root();
 
 ok( subs::provides('sync_plan_step'), 'the domain loader maps sync_plan_step' );
+ok( subs::provides('sync_bucket_gaps'), 'the domain loader maps sync_bucket_gaps' );
 require JawnOS::Domain::Sync;
 ok( defined &subs::sync_plan_step, 'Domain::Sync defines it' );
 
@@ -139,6 +140,35 @@ is_deeply( [ keys %{$warehouse_settled} ], ['appointments'],
 	}}), 'the same count with a different picture is not complete' );
 }
 
+# A band the local table already covers is not a gap, even when the peer's
+# baseline says the band moved. A local appointment write comes back through a
+# peer's merge; with one-week bands the current week holds ~42k appointments, so
+# reading that band back every tick is a whole table-sized pull every few
+# minutes. Only a peer band that is newer, larger, or newer-summed is read.
+{
+	my $local = {
+		1 => { count => 42341, sum => 76014875947713774, max => 1795361550140 },
+		2 => { count => 10,    sum => 100,                max => 100 },
+	};
+	my $peer = {
+		1 => { count => 42328, sum => 75991536250919174, max => 1795361216646 },
+		2 => { count => 11,    sum => 110,                max => 110 },
+	};
+	is_deeply( subs::sync_bucket_gaps($local, $peer, [ 1, 2 ]), [2],
+		'a band the local table already covers is not read back' );
+	is_deeply( subs::sync_bucket_gaps($local, $peer), [2],
+		'the same filter names every uncovered peer band without a change list' );
+	my $newer = { 1 => { count => 42341, sum => 76014875947713775, max => 1795361550141 } };
+	is_deeply( subs::sync_bucket_gaps($local, $newer, [1]), [1],
+		'a peer row newer than ours is still a gap' );
+	my $more = { 1 => { count => 42342, sum => 76014875947713774, max => 1795361550140 } };
+	is_deeply( subs::sync_bucket_gaps($local, $more, [1]), [1],
+		'a peer row we do not hold is still a gap' );
+	my $extra = { 3 => { count => 1, sum => 1, max => 1 } };
+	is_deeply( subs::sync_bucket_gaps($local, $extra, [3]), [3],
+		'a band we do not hold at all is still a gap' );
+}
+
 # The bridge client waits for the radio to acknowledge the write, and a watch
 # that has slept suspends its link: the wait runs to the link-supervision
 # timeout. subprocessor() runs inline when another job is already running, so
@@ -184,6 +214,7 @@ like( $part36, qr/sync_plan_step\(\$plan, 1, \$seen\)/, 'the mobile cap is one t
 my $part09 = read_file("$root/lib/JawnOS/Manager/Part09.pm");
 like( $part09, qr/%carry = map \{ \$_ => 1 \} \@\{ &subs::sync_carry_tables\(\) \}/,
 	'the pull carries every table the planner refuses to let trigger' );
+like( $part09, qr/sync_bucket_gaps\(/, 'the pull reads only bands the local table does not cover' );
 my $carry = subs::sync_carry_tables();
 ok( (grep { $_ eq 'routers' } @{$carry}), 'the network inventory is carry-only' );
 ok( (grep { $_ eq 'where_calls' } @{$carry}), 'so is the locator ledger' );

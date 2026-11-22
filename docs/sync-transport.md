@@ -14,6 +14,10 @@ snapshot remains the **full-migration / deep-gimme / v2 / archive** path.
   `where_feedback`, `window_events`) are **carry-only** (always ride a pull,
   never trigger one, so a mobile pass spends its one table slot on the
   person's rows, not on bookkeeping).
+- `Manager::sync_rows_pull` reads only the bands this machine does not already
+  hold: a peer that is merely behind has nothing to fetch even when its picture
+  moved. A peer's own write coming back through a merge is not a reason to
+  re-read the block.
 - `Manager::sync_rows_pull` asks `GET /manager/sync_rows` for one table at a time,
   500 rows per batch, cursor = the last rowid received. A dropped link retries the
   batch; a 4xx is the peer's answer and is not retried.
