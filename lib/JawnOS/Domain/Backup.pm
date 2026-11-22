@@ -758,6 +758,21 @@ sub sync_bucket_normalize {
 	return $band + 0;
 }
 
+# The write times the 2026-11-21 backfill collapsed ~25k settings rows onto.
+# They are newer than the true times, so a peer that still carries one would
+# re-stamp a repaired machine on every pull and keep a 25k-row hour in motion.
+# A live write cannot honestly wear these; the merge refuses them. Remove this
+# list when no machine carries them any more.
+our $settings_backfill_stamps = {
+	1795299504000 => 1, 1795299699000 => 1,
+	1795304127000 => 1, 1795304385765 => 1,
+};
+sub settings_time_backfilled {
+	my ($time) = @_;
+	return 0 unless defined $time && $time =~ /^\d+$/;
+	return $settings_backfill_stamps->{ $time + 0 } ? 1 : 0;
+}
+
 sub sync_table_buckets {
 	my ($table, $band) = @_;
 	$band = &sync_bucket_normalize($band);

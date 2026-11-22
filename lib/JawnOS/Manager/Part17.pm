@@ -394,6 +394,14 @@ sub merge_table_rows {
 											? &subs::db_query('select * from settings where app=? and setting=? and subsetting is ? and device = ? order by cast(server_time as integer) desc limit 1',
 												$r->{'app'}, $r->{'setting'}, $r->{'subsetting'}, $target_device)->hashes->[0]
 											: undef;
+										# A row wearing one of the 2026-11-21 backfill stamps is not a live
+										# write. Those stamps are newer than the true times, so trusting one
+										# re-stamps a repaired machine and keeps the 25k-row hour moving.
+										# Keep the row we hold; if we hold none, take the value at now.
+										if (&subs::settings_time_backfilled($r->{'server_time'})) {
+											next if ref $local_row eq 'HASH';
+											$r->{'server_time'} = &subs::rightNow();
+										}
 										my $local_seed = (ref $local_row eq 'HASH' && ($local_row->{'seed'} // '') eq 'yes') ? 1 : 0;
 										my $local_chosen = (ref $local_row eq 'HASH' && ($local_row->{'seed'} // '') eq 'no') ? 1 : 0;
 										my $local_default = ref $local_row ne 'HASH' ? 1

@@ -36,6 +36,14 @@ like($where, qr/app not in/, 'the per-device app exclusion is still there');
 like($where, qr/app = 'cards' and setting in \('mode','variant'\)/,
 	'the cards mode/variant rows are triggers on a protected app');
 
+# The merge refuses the write times the 2026-11-21 backfill collapsed ~25k rows
+# onto: they are newer than the true times, so trusting one re-stamps a repaired
+# machine and keeps a 25k-row hour in motion.
+ok( subs::settings_time_backfilled('1795299699000'), 'the bulk stamp is refused as a live write' );
+ok( subs::settings_time_backfilled('1795304127000'), 'and the incident stamp' );
+ok( !subs::settings_time_backfilled('1795387000000'), 'a live stamp is not' );
+ok( !subs::settings_time_backfilled(undef), 'and neither is a missing one' );
+
 my $dir = tempdir(CLEANUP => 1);
 my $db  = "$dir/jawnos.db";
 my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '',
