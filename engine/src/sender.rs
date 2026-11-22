@@ -19,9 +19,9 @@
 //! `[local, local + elapsed)` is stamped at `offset.to_master(local)` and its
 //! end is `offset.to_master(local + elapsed)`, so consecutive blocks meet on
 //! the master timeline even though the fitted offset moves between loops.
-//! Before the estimator has [`MIN_SAMPLES`](crate::peer::MIN_SAMPLES) probes,
-//! the local position is the master position: a short prefix is placed as if
-//! the clocks agreed, and the first estimate only shifts what follows.
+//! Before the estimator has a trusted fit, the take is stamped with the
+//! least-delayed pong's one-point offset; only a run with no accepted pong at
+//! all falls back to the local position.
 //!
 //! # Refusals
 //!
@@ -116,6 +116,11 @@ pub const SENDER_FIT_MIN_SPAN_SECONDS: u64 = 60;
 /// The smallest estimator window a take's converter keeps: 60 s of probes, so
 /// the fitted drift is a long-baseline measurement rather than a noisy rate.
 pub const SENDER_FIT_WINDOW: usize = 6_000;
+
+/// How long the least-delayed exchange keeps stamping the take. A clock step
+/// after a clean sample must not be hidden for longer than this; within it, the
+/// sample's offset is a better estimate than any noisier, newer pong.
+pub const PROVISIONAL_MAX_AGE_SECONDS: u64 = 5;
 
 /// Whether the estimator has enough probes over a long enough baseline for its
 /// slope to drive the converter. A probe count alone is not enough: 100 probes
@@ -325,6 +330,77 @@ impl TakeSender {
     }
 }
 
+/// One pong's one-point offset, with the round trip that produced it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ProbePoint {
+    offset: ClockOffset,
+    rtt_samples: u64,
+    at: u64,
+}
+
+/// The one-point offset the take uses until a fitted drift is trusted.
+///
+/// The newest pong's midpoint is not the best estimate of the clock offset: on
+/// Wi-Fi its round trip swings by tens of milliseconds, and a take stamped from
+/// each fresh swing moves back and forth until the master refuses the overlap
+/// as already read. The least-delayed exchange carries the least path noise, so
+/// it is the one that stamps the take. A cleaner sample replaces it, and when
+/// it is older than [`PROVISIONAL_MAX_AGE_SECONDS`] the newest sample takes
+/// over, so a clock step cannot hide behind an old measurement.
+#[derive(Clone, Debug)]
+struct ProvisionalOffset {
+    rate: u32,
+    best: Option<ProbePoint>,
+    latest: Option<ProbePoint>,
+}
+
+impl ProvisionalOffset {
+    fn new(rate: u32) -> Self {
+        Self {
+            rate,
+            best: None,
+            latest: None,
+        }
+    }
+
+    /// The oldest a clean exchange may be and still count.
+    fn max_age(&self) -> u64 {
+        u64::from(self.rate).saturating_mul(PROVISIONAL_MAX_AGE_SECONDS)
+    }
+
+    /// Offer a completed exchange. Its local receive position is the moment the
+    /// offset is measured at.
+    fn offer(&mut self, sample: &ProbeSample) {
+        let point = ProbePoint {
+            offset: ClockOffset::new(
+                (sample.master_midpoint() - sample.local_midpoint()).round() as i64,
+                0.0,
+            ),
+            rtt_samples: sample.rtt_samples,
+            at: sample.local_recv,
+        };
+        // An expired sample must not keep winning: a path whose floor rose
+        // would otherwise never be measured again. Expiry is judged at the new
+        // sample's instant, so the comparison is against `point.at`, not a
+        // caller's later `now`.
+        let expired = self
+            .best
+            .map_or(true, |best| point.at.saturating_sub(best.at) > self.max_age());
+        if expired || point.rtt_samples < self.best.map_or(u64::MAX, |best| best.rtt_samples) {
+            self.best = Some(point);
+        }
+        self.latest = Some(point);
+    }
+
+    /// The offset to stamp with at local position `now`.
+    fn current(&self, now: u64) -> Option<ClockOffset> {
+        match self.best {
+            Some(best) if now.saturating_sub(best.at) <= self.max_age() => Some(best.offset),
+            _ => self.latest.map(|latest| latest.offset),
+        }
+    }
+}
+
 /// One `--send-take` result, in the one-line JSON shape the CLI promises.
 #[derive(Clone, Debug)]
 pub struct SenderReport {
@@ -447,10 +523,11 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
     // `MIN_SAMPLES`, and on a long-lived master its offset is the master's uptime
     // minus this process's, far larger than the receiver's jitter window: using
     // the bare local position for those first blocks and then jumping would make
-    // the master reject the stream. The provisional midpoint keeps the take on
-    // the master's timeline from the first datagram; `TakeSender` still has the
-    // local fallback when no pong has been accepted at all.
-    let mut provisional: Option<ClockOffset> = None;
+    // the master reject the stream. The provisional offset keeps the take on the
+    // master's timeline from the first datagram, and takes the least-delayed
+    // exchange rather than the newest, so Wi-Fi queueing cannot move the stamp;
+    // `TakeSender` still has the local fallback when no pong has been accepted.
+    let mut provisional = ProvisionalOffset::new(config.rate);
     let mut outgoing = [0u8; 128];
     let mut incoming = [0u8; 2048];
 
@@ -561,11 +638,10 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
                     probe.accept_pong_since(&incoming[..length], local_send, pong_max_age)
                 {
                     let sample = ProbeSample::from_pong(pong, pong.echo_local_send, local_recv);
-                    provisional = Some(ClockOffset::new(
-                        (sample.master_midpoint() - sample.local_midpoint()).round() as i64,
-                        0.0,
-                    ));
                     estimator.push(sample);
+                    // The fit may take a minute; until then the take is stamped
+                    // from the least-delayed exchange, not this one.
+                    provisional.offer(&sample);
                 }
             }
             Err(error) if quiet_io(error.kind()) => {}
@@ -584,7 +660,7 @@ fn send_take(config: &ValidatedSend) -> Result<SenderReport, String> {
         } else {
             None
         };
-        sender.set_estimate(fitted.or(provisional));
+        sender.set_estimate(fitted.or(provisional.current(clock.now())));
 
         let spent = cycle.elapsed();
         if spent < interval {
@@ -673,6 +749,91 @@ mod tests {
             master_send: local + 548,
             rtt_samples: 48,
         }
+    }
+
+    /// An exchange that completed at `local`, with `rtt` samples of round trip
+    /// and an implied clock offset of `offset` samples.
+    fn exchange(local: u64, rtt: u64, offset: i64) -> ProbeSample {
+        let midpoint = local as i64 + (rtt / 2) as i64;
+        ProbeSample {
+            local_send: local,
+            local_recv: local + rtt,
+            master_recv: (midpoint + offset) as u64,
+            master_send: (midpoint + offset) as u64,
+            rtt_samples: rtt,
+        }
+    }
+
+    #[test]
+    fn a_jittery_pong_does_not_move_the_stamp() {
+        let mut provisional = ProvisionalOffset::new(48_000);
+        provisional.offer(&exchange(0, 12, 500));
+        assert_eq!(provisional.current(0), Some(ClockOffset::new(500, 0.0)));
+
+        // Newer exchanges on a loaded path arrive later and their midpoints
+        // imply a different offset. None is cleaner than the first, so none may
+        // stamp the take: that swing is the overlap the master refused.
+        for index in 1..20u64 {
+            let at = index * 480;
+            provisional.offer(&exchange(at, 12 + 40 * index, 500 + 100 * index as i64));
+            assert_eq!(
+                provisional.current(at),
+                Some(ClockOffset::new(500, 0.0)),
+                "the take still uses the least-delayed exchange"
+            );
+        }
+
+        // A cleaner exchange is a better measurement and does replace it.
+        provisional.offer(&exchange(10_000, 8, 480));
+        assert_eq!(provisional.current(10_000), Some(ClockOffset::new(480, 0.0)));
+    }
+
+    #[test]
+    fn a_provisional_offset_falls_back_when_the_clean_sample_goes_stale() {
+        let rate = 48_000;
+        let max_age = u64::from(rate) * PROVISIONAL_MAX_AGE_SECONDS;
+        let mut provisional = ProvisionalOffset::new(rate);
+        provisional.offer(&exchange(0, 12, 500));
+
+        // A later, noisier exchange cannot displace the clean one while it is fresh.
+        provisional.offer(&exchange(max_age - 60, 60, 700));
+        assert_eq!(
+            provisional.current(max_age),
+            Some(ClockOffset::new(500, 0.0))
+        );
+
+        // One sample past the cap the clean exchange is no longer evidence about
+        // the clocks today; the newest exchange takes over rather than hiding a
+        // clock step behind an old measurement. Age is counted from the clean
+        // sample's receive position (`local + rtt`), not its send position.
+        let stale = 12 + max_age + 1;
+        assert_eq!(
+            provisional.current(stale),
+            Some(ClockOffset::new(700, 0.0))
+        );
+        assert_eq!(ProvisionalOffset::new(rate).current(0), None);
+    }
+
+    #[test]
+    fn a_clean_sample_that_has_expired_does_not_block_the_path_it_measures() {
+        let rate = 48_000;
+        let max_age = u64::from(rate) * PROVISIONAL_MAX_AGE_SECONDS;
+        let mut provisional = ProvisionalOffset::new(rate);
+
+        // The first five seconds have a 12 ms floor; then the path changes and
+        // the floor is 60 ms.
+        provisional.offer(&exchange(0, 12, 500));
+        provisional.offer(&exchange(max_age, 60, 700));
+
+        // The newest exchange on the new path is noisier still. The take must
+        // stay on the 60 ms sample: expiry drops the old floor without making
+        // "newest wins" the rule again.
+        provisional.offer(&exchange(max_age + 480, 70, 800));
+        assert_eq!(
+            provisional.current(max_age + 550),
+            Some(ClockOffset::new(700, 0.0)),
+            "the least-delayed exchange on the new path is kept"
+        );
     }
 
     #[test]

@@ -63,6 +63,15 @@ like( $sender, qr/fn drift_is_trusted/, 'a fitted drift waits for a long baselin
 like( $sender, qr/SENDER_FIT_MIN_SPAN_SECONDS/, 'the baseline is a minute, not just 100 probes' );
 like( $sender, qr/fn a_short_take_does_not_trust_a_fitted_drift/,
 	'a short take keeps drift 0 and says so' );
+like( $sender, qr/struct ProvisionalOffset/, 'the pre-fit offset is one named holder' );
+like( $sender, qr/PROVISIONAL_MAX_AGE_SECONDS/, 'a clean exchange does not stamp forever' );
+like( $sender, qr/fn offer\(/, 'every measured pong is offered to the pre-fit offset' );
+like( $sender, qr/provisional\.current\(/, 'each block asks the stable offset, not the newest pong' );
+like( $sender, qr/fn a_jittery_pong_does_not_move_the_stamp/, 'jitter is tested against the stamp' );
+like( $sender, qr/fn a_provisional_offset_falls_back_when_the_clean_sample_goes_stale/,
+	'the stale fallback is tested' );
+like( $sender, qr/fn a_clean_sample_that_has_expired_does_not_block_the_path_it_measures/,
+	'a changed path is re-learned after expiry' );
 like( $sender, qr/\.ping\(/, 'a CLOCK_PING goes out every loop' );
 like( $sender, qr/accept_pong_since/, 'a reply older than the newest ping is measured within a window' );
 like( $sender, qr/pong\.echo_local_send/, 'the echoed stamp is the ping time the round trip uses' );

@@ -836,10 +836,19 @@ concealed frames (was 355 012) and one session. The cost is ~171 ms of peer late
 `late` count is mostly partial overlap from the sender's per-pong offset swinging ~64 ms; the next
 step is a minimum-RTT offset, which should let the buffer shrink.
 
+**An offset that does not follow the queue (2026-11-22, in the tree):** until the fit was trusted,
+every pong replaced the one-point offset, so a Wi-Fi path's queueing moved the stamp by tens of
+milliseconds and the master refused partial overlaps as already read (`late 443` on the 10 s take).
+The sender now keeps the least-delayed exchange for `PROVISIONAL_MAX_AGE_SECONDS` (5 s), drops an
+expired one so a path whose floor changed is measured afresh, falls back to the newest sample when
+the clean one is stale so a clock step cannot hide, and stamps every block from that stable offset;
+three unit tests pin the jitter, stale and changed-path cases. Measured live: not yet — the same
+10 s LAN take is the check, and only then can `PULL_BUFFER_FRAMES` shrink from 171 ms.
+
 **Still to come:** the peer's live capture, a peer id in the stream so more than one peer can join,
-each input's declared latency, and a minimum-RTT offset so the placement buffer can shrink. The P4
-gate itself — guitar through the UM2 and voice on the peer, one take, ten minutes — is the next
-live session.
+and each input's declared latency. The placement buffer can only shrink once the stable offset above
+has been measured live. The P4 gate itself — guitar through the UM2 and voice on the peer, one take,
+ten minutes — is the next live session.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
