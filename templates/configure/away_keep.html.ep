@@ -1,0 +1,51 @@
+<%
+	my $lists = &subs::vacation_keep_lists();
+	my %groups;
+	my %kept;
+	foreach my $kind (qw(budgets routines notifications)) {
+		my %seen;
+		my @apps;
+		foreach my $app (@{ &subs::vacation_keep_candidates($kind) }, @{ $lists->{$kind} || [] }) {
+			next unless defined $app && length $app && !$seen{$app}++;
+			push @apps, $app;
+		}
+		$groups{$kind} = [ sort { &subs::format_name($a) cmp &subs::format_name($b) } @apps ];
+		$kept{$kind} = { map { $_ => 1 } @{ $lists->{$kind} || [] } };
+	}
+%>
+<div class="away_keep">
+	<h4><%= &subs::ui('Keep running while away') %></h4>
+	<p class="cfg-note"><%= &subs::ui('A kept budget keeps counting, a kept routine still runs, and a kept notice still speaks while the house is away.') %></p>
+	<div class="away_keep_groups">
+		<div class="away_keep_group">
+			<b><%= &subs::ui('Budgets') %></b>
+			<% if (scalar @{ $groups{'budgets'} }) { %>
+				<% foreach my $app (@{ $groups{'budgets'} }) { %>
+					<label class="away_keep_row"><input type="checkbox" class="away_keep_toggle" app="<%= $app %>" kind="budgets"<% if ($kept{'budgets'}->{$app}) { %> checked<% } %>> <%= &subs::format_name($app) %></label>
+				<% } %>
+			<% } else { %>
+				<span class="cfg-note"><%= &subs::ui('No budgets yet.') %></span>
+			<% } %>
+		</div>
+		<div class="away_keep_group">
+			<b><%= &subs::ui('Routines') %></b>
+			<% if (scalar @{ $groups{'routines'} }) { %>
+				<% foreach my $app (@{ $groups{'routines'} }) { %>
+					<label class="away_keep_row"><input type="checkbox" class="away_keep_toggle" app="<%= $app %>" kind="routines"<% if ($kept{'routines'}->{$app}) { %> checked<% } %>> <%= &subs::format_name($app) %></label>
+				<% } %>
+			<% } else { %>
+				<span class="cfg-note"><%= &subs::ui('No routines yet.') %></span>
+			<% } %>
+		</div>
+		<div class="away_keep_group">
+			<b><%= &subs::ui('Notices') %></b>
+			<% if (scalar @{ $groups{'notifications'} }) { %>
+				<% foreach my $app (@{ $groups{'notifications'} }) { %>
+					<label class="away_keep_row"><input type="checkbox" class="away_keep_toggle" app="<%= $app %>" kind="notifications"<% if ($kept{'notifications'}->{$app}) { %> checked<% } %>> <%= &subs::format_name($app) %></label>
+				<% } %>
+			<% } else { %>
+				<span class="cfg-note"><%= &subs::ui('No notices yet.') %></span>
+			<% } %>
+		</div>
+	</div>
+</div>
