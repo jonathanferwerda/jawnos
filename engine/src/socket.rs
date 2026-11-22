@@ -5643,7 +5643,19 @@ fn patch_hardware(
             note_feedback(status, &error);
             return Ok((0, 0));
         }
-        Err(error) => return Err(format!("cannot patch: {error}")),
+        Err(error) => {
+            let sink = if config.backend == BackendKind::PipeWire {
+                crate::system_capture::default_sink()
+            } else {
+                None
+            };
+            return Err(patch_error(
+                &error,
+                &config.device,
+                config.target.as_deref(),
+                sink.as_deref(),
+            ));
+        }
     };
     for mut capture in input_captures {
         capture.stop();
@@ -5652,6 +5664,24 @@ fn patch_hardware(
         capture.stop();
     }
     Ok((run.frames, run.xruns))
+}
+
+/// The sentence a failed patch reports: the backend's own error plus the PCM
+/// it opened, the node it was told to play out, and the sink the server would
+/// otherwise have used. A fact that is not known is left out rather than shown
+/// empty, and a value already named is not repeated.
+#[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+fn patch_error(error: &str, device: &str, target: Option<&str>, sink: Option<&str>) -> String {
+    let mut facts = vec![format!("pcm \"{device}\"")];
+    let target = target.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(target) = target.filter(|value| *value != device) {
+        facts.push(format!("target \"{target}\""));
+    }
+    let sink = sink.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(sink) = sink.filter(|value| *value != device && Some(*value) != target) {
+        facts.push(format!("default sink \"{sink}\""));
+    }
+    format!("cannot patch: {error} ({})", facts.join("; "))
 }
 
 /// Record a playback-guard refusal as the pass's system-mix verdict. The
@@ -6905,6 +6935,45 @@ mod tests {
             Some(Value::Num(value)) => Some(*value),
             _ => None,
         }
+    }
+
+    #[test]
+    fn a_failed_patch_names_the_pcm_and_only_the_facts_it_knows() {
+        // No target and no sink: the raw error plus the PCM the backend opened.
+        let line = patch_error(
+            "ALSA function 'snd_pcm_writei' failed with error 'I/O error (5)'",
+            "default",
+            None,
+            None,
+        );
+        assert!(line.starts_with("cannot patch:"), "{line}");
+        assert!(line.contains("ALSA function 'snd_pcm_writei' failed"), "{line}");
+        assert!(line.contains("pcm \"default\""), "{line}");
+        assert!(!line.contains("target"), "{line}");
+        assert!(!line.contains("default sink"), "{line}");
+
+        // A named target, still no sink to report.
+        let line = patch_error("boom", "default", Some("jawn_system"), None);
+        assert!(line.starts_with("cannot patch:"), "{line}");
+        assert_eq!(line.matches("jawn_system").count(), 1, "{line}");
+        assert!(line.contains("target \"jawn_system\""), "{line}");
+        assert!(!line.contains("default sink"), "{line}");
+
+        // Both facts, each exactly once.
+        let line = patch_error(
+            "boom",
+            "default",
+            Some("jawn_system"),
+            Some("alsa_output.pci.analog-stereo"),
+        );
+        assert!(line.starts_with("cannot patch:"), "{line}");
+        assert_eq!(line.matches("jawn_system").count(), 1, "{line}");
+        assert_eq!(
+            line.matches("alsa_output.pci.analog-stereo").count(),
+            1,
+            "{line}"
+        );
+        assert!(line.contains("default sink \"alsa_output.pci.analog-stereo\""), "{line}");
     }
 
     #[test]

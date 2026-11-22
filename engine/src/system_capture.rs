@@ -272,6 +272,34 @@ pub fn source_exists(device: &str) -> Option<bool> {
     Some(lists_source(&String::from_utf8_lossy(&output.stdout), device))
 }
 
+/// The sink the sound server routes to by default right now. `None` means the
+/// question cannot be asked here (no `pactl`, or it failed), and a caller then
+/// names no sink rather than inventing one. A failed patch asks this only on
+/// the PipeWire backend, where the ALSA `default` PCM plays out this node.
+#[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+pub fn default_sink() -> Option<String> {
+    if !jawn_audio::backends::command_exists("pactl") {
+        return None;
+    }
+    let output = Command::new("pactl").arg("get-default-sink").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_default_sink(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// One `pactl get-default-sink` reply is the sink's name and a newline. Trim
+/// it, take the first line, and treat nothing there as no answer at all.
+#[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+fn parse_default_sink(text: &str) -> Option<String> {
+    let name = text.lines().next()?.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
 /// One `pactl list short sources` line is `index<TAB>name<TAB>driver<TAB>…`.
 fn lists_source(listing: &str, device: &str) -> bool {
     listing
@@ -374,6 +402,20 @@ mod tests {
             monitor_name("alsa_output.pci.monitor"),
             "alsa_output.pci.monitor"
         );
+    }
+
+    #[test]
+    fn a_default_sink_is_the_first_trimmed_line_and_a_blank_reply_is_none() {
+        assert_eq!(
+            parse_default_sink("alsa_output.pci.analog-stereo\n"),
+            Some("alsa_output.pci.analog-stereo".to_string())
+        );
+        assert_eq!(
+            parse_default_sink("  alsa_output.headset  \n"),
+            Some("alsa_output.headset".to_string())
+        );
+        assert_eq!(parse_default_sink(""), None);
+        assert_eq!(parse_default_sink("\n"), None);
     }
 
     #[test]
