@@ -765,7 +765,7 @@ converter can replace. The tag now lives in one module (`auth.rs`), and `pull_at
 whose whole span ended a datagram before the caller's master position, so a sender that stops no
 longer stalls a block. No device opens in the bearer: wiring capture and the patchbay is P4.
 
-### P4 — Sources that are late (2 weeks)
+### P4 — Sources that are late (2 weeks) — **engine code complete; gate unrun (needs a Studio guitar/peer take)**
 
 The uplink proper, with compensation: the phone (C) and the T-Deck (D) become channels on the master,
 each placed by its declared latency, so a take played 30 ms late is recorded in time. Each peer
@@ -903,9 +903,21 @@ was read after the take and includes post-take pulls, so its in-take rate is not
 was the laptop's built-in microphone, clipping at full scale; the phone app's own capture half is
 outside this engine change.
 
-**Still to come:** the P4 gate — guitar through the UM2 and voice on the peer, one take, ten
-minutes, on the house LAN — is the next live session. The tailnet's opening minute, and per-source
-buffering when a declaration exceeds the 85 ms placement window, are this slice's follow-ups.
+**P4 close-out (2026-11-22, engine code complete; gate unrun):** every engine path the gate needs is
+in the tree and measured without a performance: the 10 s file take (1 015/1 015, `late 3`); the 600 s
+live capture (`dropped`/`padded`/`resynced` 0, master `late` 6.1%); and two peers on one master
+(two sessions, `rejected 0`, 1 046/1 045 datagrams, 480 000 frames each, with `late` 105 and 246 on
+that tailnet path). The 30 ms declaration in that run reported `latency_frames 1440` and moved
+`first_master` 1 440 frames earlier. The gate itself is deliberately **unrun**, not passed: it needs
+a person playing the UM2 and a peer voice in one Studio take, with the click, for ten minutes on
+the house LAN, then the T-Deck clip. To run it: add the peer source(s) to the plan with their
+`latency_ms`, set the Uplink and save; start `--send-live --device ... --out ... --master ...
+--stream N --seconds 600` on the peer; arm the Studio take with the click and perform; then read the
+engine `status` (`late`, `concealed`, `handshakes`) and the take's alignment against the click.
+
+**Still to come:** the gate above; the tailnet's opening minute (28.7% late before the fit is
+trusted); per-source buffering when a declaration exceeds the 85 ms placement window; and the phone
+app's own capture half.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
