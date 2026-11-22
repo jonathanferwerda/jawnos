@@ -244,7 +244,7 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 		);
 		$c->render(text => $contents);
 	}
-	unless ($remote_render) {
+	unless ($remote_render || $unlocked) {
 		&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents });
 		# The shell just written is the only one a read can reach: it is keyed by
 		# this code revision and this queue. The shells left by an earlier version

@@ -251,6 +251,10 @@ sub music_archive_entries($data) {
 # used to carry it is only kept for the running code revision - so a deploy lost
 # the list. These files are the list itself, in the order it was shown.
 sub music_queue_remember($crate, $settings, $permissive) {
+	# An unlocked render must not store a queue: its media grant dies with the
+	# window, so the list could be replayed into a window that may not list
+	# those tracks. The previous locked queue stays in place instead.
+	return undef if $permissive;
 	return undef unless $crate && (ref $crate->{'queue'} eq 'ARRAY' || ref $crate->{'songs'} eq 'ARRAY');
 	# The queue is the whole ordered list, not the slice this render drew. A
 	# remembered slice would lose every track beyond the window on the next open.

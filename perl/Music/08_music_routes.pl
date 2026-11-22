@@ -62,7 +62,7 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	my $list = eval { return decode_json $c->param('list') } || [];
 	my $now_playing = eval { return decode_json $c->param('now_playing') } || {};
 	my $same_order = $c->param('same_order');
-	&subs::cache_delete({ app => 'music', context => 'content' }) unless $remote_render;
+	&subs::cache_delete({ app => 'music', context => 'content' }) unless $remote_render || $unlocked;
 	my $artist = $c->param('artist');
 	my $album = $c->param('album');
 	my $misc_settings = &Manager::misc_setting_list();
@@ -171,7 +171,7 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 		);
 		$c->render(text => $contents);
 	}
-	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents }) unless $remote_render;
+	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents }) unless $remote_render || $unlocked;
 });
 
 # One slice of the queue, for a scroll. The client sends back the manifest

@@ -29,6 +29,23 @@ like($saver // '', qr/\bfile: playerCacheFile\(\)/,
 unlike($saver // '', qr/tree\.songs\[0\]/,
 	'the saver no longer reads tree.songs[0] at all');
 
+# --- an unlocked window never writes the cache ------------------------------
+# A window holding a media grant is never restored, so anything it wrote could
+# only be replayed into a window that may no longer list those tracks. The
+# helper and both guards keep the content shell and the player cache clean.
+like($music, qr/function musicUnlocked\(\) \{ return !!\(\$\('#music'\)\.attr\('unlock'\)\); \}/,
+	'the unlocked test reads the window media grant');
+my ($content_cache) = $music =~ /(function musicContentCache\(html\)\s*\{.*?\n\})/s;
+ok(defined $content_cache, 'musicContentCache is found');
+like($content_cache // '', qr/^\s*if \(musicUnlocked\(\)\) \{ return; \}/m,
+	'a content-shell save is skipped while the window holds a grant');
+like($saver // '', qr/if \(musicUnlocked\(\)\) \{/,
+	'the player cache saver refuses to write while unlocked');
+my $unlock_guard = index($saver // '', 'if (musicUnlocked())');
+my $cache_set    = index($saver // '', 'cacheSet(');
+ok($unlock_guard >= 0 && $cache_set >= 0 && $unlock_guard < $cache_set,
+	'and the guard runs before any cacheSet');
+
 # --- the restore resolves the saved KEY first -------------------------------
 # A cache written before the saver read the element can name a stranger in
 # `file` while `key` still names the track the person was on, so the restore

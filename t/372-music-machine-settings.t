@@ -200,7 +200,7 @@ unlike($maker, qr/music_budget_files\(/, 'and there is no budget split');
 my $main = read_file("$FindBin::Bin/../perl/Music.pl");
 like($main, qr/my \$remote_render = .*'remoted'.*eq 'yes'/,
 	'a relayed open is recognised too');
-like($main, qr/unless \(\$remote_render\) \{\s*&subs::cache_set/s,
-	'and its shell is not cached over the host\'s own');
+like($main, qr/unless \(\$remote_render \|\| \$unlocked\) \{\s*&subs::cache_set/s,
+	'and its shell is not cached over the host\'s own, nor while the window is unlocked');
 
 done_testing();

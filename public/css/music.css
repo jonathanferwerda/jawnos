@@ -130,6 +130,13 @@ html, body {
 #music_files {
 	border-top: solid;
 	border-top-width: 5px;
+	/* the window owns where the scroll lands; the browser's own anchoring would
+	   fight the row restore after a slice swap */
+	overflow-anchor: none;
+}
+
+#music_window {
+	overflow-anchor: none;
 }
 
 #music_albums {

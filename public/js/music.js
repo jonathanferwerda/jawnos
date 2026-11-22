@@ -2297,7 +2297,12 @@ var lastMusicRawHtml, lastMusicCacheHtml;
 // player cache on restore - a frozen copy made the browser load the old source
 // first and showed a stale row until the restore caught up. Nothing is sent
 // unless the stored shell actually changed.
+// A media grant dies with the window, so a stored view could only be replayed
+// into a window that may no longer list those tracks: an unlocked window never
+// caches anything.
+function musicUnlocked() { return !!($('#music').attr('unlock')); }
 function musicContentCache(html) {
+	if (musicUnlocked()) { return; }
 	// a save can arrive after the window has closed (pagehide, the once-a-second
 	// beat): there is no window content left to store, and storing the undefined
 	// it returns would replay an empty window on the next open
@@ -2406,6 +2411,9 @@ function musicBarIntervalArm() {
 }
 
 async function musicInit(method) {
+	// the saved list view (offset and top row) comes back with the player cache,
+	// so the rows the person was looking at are mounted again on the next open
+	var saved_view = null;
 	// a search keeps the band (and its auto/manual state) that is on screen; a
 	// fresh open starts from the default until a save or a drag says otherwise
 	if (method != 'search') { musicShelfAuto = true; }
@@ -2557,6 +2565,8 @@ async function musicInit(method) {
 			$('#music_artists').scrollTop(artists_saved.scrollTop || 0);
 			$('#music_albums').scrollTop(saved.scrollTop || 0);
 		}
+		// the view the list was left at; it is applied once the window is up, below
+		saved_view = (pd.view && typeof pd.view == 'object') ? pd.view : null;
 		playerCacheSaver();
 		musicVisualApply();
 	}
@@ -2569,7 +2579,7 @@ async function musicInit(method) {
 
 	// the rendered slice is a window over the queue: measure it, pad the rows
 	// it hides and arm the scroll/resize watchers
-	musicWindowInit();
+	musicWindowInit(saved_view);
 	musicFormatDurations(document);
 	musicApplyPlaying(tree.current_track);
 	$('#video').trigger('mouseenter');
@@ -2637,6 +2647,15 @@ function playerCacheSaver(type, force) {
 	// back to the previous track, at its beginning, because that was the last
 	// thing written.
 	if (force || tree.cache_dirty || timestamp - tree.lastCache >= 5000) {
+		// An unlocked window is exempt from the cache: its grant dies with the
+		// window, so a stored view could only be replayed somewhere it may no
+		// longer list those tracks. Settle the throttle so the once-a-second
+		// beat does not retry, and write nothing.
+		if (musicUnlocked()) {
+			tree.lastCache = timestamp;
+			tree.cache_dirty = false;
+			return;
+		}
 		var unlocked = 0;
 		if ($('#music').attr('unlock')) { unlocked = 1; }
 		// A media element that has not read its metadata yet reports 0:00 for a
@@ -2665,6 +2684,9 @@ function playerCacheSaver(type, force) {
 				music_artists: { bottom: $('#music_artists').css('top'), height: musicShelfBand(), auto: musicShelfAuto ? 1 : 0 },
 				music_files: { top: $('#music_files').css('top'), height: $('#music_files').height() }
 			},
+			// the slice and top row the person was looking at; applied on the next
+			// open so the same rows come back without mounting the whole queue
+			view: musicViewOf(),
 			type: $('#video').attr('type'),
 			visualization: musicVisual.mode,
 			normalize: music_normalize,
@@ -2911,6 +2933,27 @@ function musicWindowPitch(rows, gap) {
 	return best + (gap > 0 ? gap : 0);
 }
 
+// The slice a saved list view asks for. The offset is clamped to a real row and
+// snapped down to a grid row's first column, and the end is clamped to the queue
+// and rounded up to a whole row. Pure, so a test can hand it plain numbers.
+function musicViewWindow(saved, total, limit, columns) {
+	saved = saved || {};
+	total = Math.floor(Number(total) || 0);
+	if (total < 0) { total = 0; }
+	limit = Math.floor(Number(limit) || 0);
+	if (!(limit > 0)) { limit = 60; }
+	columns = Math.floor(Number(columns) || 0);
+	if (!(columns > 1)) { columns = 1; }
+	var offset = Math.floor(Number(saved.offset) || 0);
+	if (!isFinite(offset) || offset < 0) { offset = 0; }
+	var max_offset = Math.max(0, total - 1);
+	if (offset > max_offset) { offset = max_offset; }
+	if (columns > 1) { offset = Math.floor(offset / columns) * columns; }
+	var end = Math.min(total, offset + limit);
+	if (columns > 1) { end = Math.min(total, Math.ceil(end / columns) * columns); }
+	return { offset: offset, start: offset, end: end };
+}
+
 // The mounted row at the top of the viewport: the first card whose bottom is
 // below the viewport's top edge. `bottomAt(i)` is that card's bottom in the
 // scroller's own coordinates; `guess` is the pitch-based estimate, so a scroll
@@ -2928,7 +2971,7 @@ function musicWindowRowAt(count, bottomAt, topY, guess) {
 }
 // [[/music-window-math]]
 
-function musicWindowInit() {
+function musicWindowInit(restore) {
 	var el = document.getElementById('music_window');
 	var s = musicWindowState;
 	if (!el) { s.el = null; return; }
@@ -2954,9 +2997,32 @@ function musicWindowInit() {
 	musicWindowMeasure();
 	musicWindowApply();
 	musicApplyRowState();
+	// A saved view is clamped through musicViewWindow and dropped when its queue
+	// token names a different list, so only this window's own rows come back. It
+	// is applied before the empty-slice fallback, which would otherwise ask for
+	// the top of the list and lose the place the person left.
+	var restored = false;
+	if (restore) {
+		var view = musicViewPending(restore);
+		if (view) {
+			if (s.offset === view.offset && el.querySelector('.music_track')) {
+				musicViewAlign(view);
+			}
+			else {
+				musicWindowFetch(view.offset, Math.min(s.total, view.offset + s.limit), true, function () {
+					// a cursor or scroll that superseded the restore owns the view now
+					if (musicWindowState.offset === view.offset) {
+						musicViewAlign(view);
+						playerCacheSaver(undefined, true);
+					}
+				});
+			}
+			restored = true;
+		}
+	}
 	// a cached shell can arrive with the manifest but no slice (a save taken
 	// while scrolled); ask for the first window it should have carried
-	if (s.total > 0 && !el.querySelector('.music_track')) {
+	if (!restored && s.total > 0 && !el.querySelector('.music_track')) {
 		musicWindowFetch(0, Math.min(s.total, s.limit), true);
 	}
 	if (s.ro) { s.ro.disconnect(); s.ro = null; }
@@ -3061,6 +3127,22 @@ function musicWindowSchedule() {
 	s.frame = raf(function () { s.frame = 0; musicWindowSync(); });
 }
 
+// How many rows the scroller shows at once. The sync and a re-fetch must
+// agree on the same lead, so both read this one helper.
+function musicWindowVisible() {
+	var s = musicWindowState;
+	if (!s.scroller || !(s.pitch > 0)) { return 10; }
+	return Math.max(1, Math.ceil(s.scroller.clientHeight / s.pitch) + 1);
+}
+
+// True when the row the person was reading is mounted by the slice that just
+// arrived. A row outside it means they scrolled past the request while it was
+// out, so drawing that answer would move the view under them.
+function musicWindowAnchorCovered(anchor, start, end) {
+	return !!(anchor && typeof anchor === 'object' && isFinite(anchor.index)
+		&& start <= anchor.index && anchor.index < end);
+}
+
 function musicWindowSync() {
 	var s = musicWindowState;
 	if (!s.el || !s.scroller || s.busy || s.total <= 0) { return; }
@@ -3085,7 +3167,7 @@ function musicWindowSync() {
 	}, scRect.top, guess);
 	var topIndex = s.offset + rowAt;
 	topIndex = Math.max(0, Math.min(s.total - 1, topIndex));
-	var visible = Math.max(1, Math.ceil(s.scroller.clientHeight / s.pitch) + 1);
+	var visible = musicWindowVisible();
 	var mountedEnd = s.offset + cards.length;
 	// Fetch when the viewport is within two screens of an edge. Half a screen
 	// was not enough lead: the new rows are probed before they are drawn, so the
@@ -3133,19 +3215,84 @@ function musicWindowAnchor() {
 
 function musicWindowRestoreAnchor(anchor, start) {
 	var s = musicWindowState;
-	if (!anchor || !s.el || !s.scroller) { return; }
+	if (!anchor || !s.el || !s.scroller) { return false; }
 	var cards = s.el.querySelectorAll('.music_track');
 	var at = anchor.index - start;
-	if (at < 0 || at >= cards.length) { return; }
+	if (at < 0 || at >= cards.length) { return false; }
 	var scRect = s.scroller.getBoundingClientRect();
 	var now = cards[at].getBoundingClientRect().top - scRect.top;
 	var dy = now - anchor.top;
 	if (dy) { s.scroller.scrollTop += dy; }
+	return true;
 }
 
-function musicWindowFetch(start, end, force) {
+// The view the person is leaving: the mounted slice, the row at the top of the
+// scroller and how far it sits, tied to the queue's token. Null when there is no
+// list to describe, so a window that never mounted one stores nothing.
+function musicViewOf() {
 	var s = musicWindowState;
-	if (!s.el || s.total <= 0) { return; }
+	if (!s.el || !s.scroller || !(s.total > 0)) { return null; }
+	var data = document.getElementById('music_queue_data');
+	if (!data) { return null; }
+	var token = data.getAttribute('token') || '';
+	if (!token) { return null; }
+	var anchor = musicWindowAnchor();
+	var index = (anchor && typeof anchor == 'object') ? anchor.index : s.offset;
+	var top = (anchor && typeof anchor == 'object') ? anchor.top : 0;
+	var scrollTop = Number(s.scroller.scrollTop);
+	if (!isFinite(scrollTop)) { scrollTop = 0; }
+	return { token: token, total: s.total, offset: s.offset, index: index, top: top, scrollTop: scrollTop };
+}
+
+// A saved view is only worth restoring onto the list it was taken from. A view
+// from another machine's files, or from before a new queue was built, names rows
+// this window does not hold, so it is dropped. The live total wins when known.
+function musicViewPending(saved) {
+	if (!saved || typeof saved != 'object') { return null; }
+	var saved_total = Number(saved.total);
+	if (!(saved_total > 0)) { return null; }
+	var data = document.getElementById('music_queue_data');
+	var current_token = data ? (data.getAttribute('token') || '') : '';
+	var saved_token = typeof saved.token == 'string' ? saved.token : '';
+	if (saved_token && current_token && saved_token != current_token) { return null; }
+	var s = musicWindowState;
+	var total = (s.total > 0) ? s.total : saved_total;
+	var win = musicViewWindow(saved, total, s.limit, s.columns);
+	var index = Math.floor(Number(saved.index) || 0);
+	if (!isFinite(index) || index < 0) { index = 0; }
+	if (index > total - 1) { index = total - 1; }
+	var top = Number(saved.top);
+	if (!isFinite(top)) { top = 0; }
+	var scrollTop = Number(saved.scrollTop);
+	if (!isFinite(scrollTop)) { scrollTop = 0; }
+	return { total: total, offset: win.offset, index: index, top: top, scrollTop: scrollTop };
+}
+
+// Put the saved row back where it was inside the scroller. When the mounted slice
+// holds that row this is exact; otherwise the raw scroll offset is the best the
+// window can do.
+function musicViewAlign(view) {
+	var s = musicWindowState;
+	if (!view || !s.el || !s.scroller) { return false; }
+	var cards = s.el.querySelectorAll('.music_track');
+	var at = view.index - s.offset;
+	if (at >= 0 && at < cards.length) {
+		var scRect = s.scroller.getBoundingClientRect();
+		var now = cards[at].getBoundingClientRect().top - scRect.top;
+		s.scroller.scrollTop += now - view.top;
+		return true;
+	}
+	s.scroller.scrollTop = view.scrollTop;
+	return false;
+}
+
+function musicWindowFetch(start, end, force, done) {
+	var s = musicWindowState;
+	// the restore waiter must never hang: every exit path settles it
+	var finish = function () {
+		if (typeof done == 'function') { try { done(); } catch (e) {} }
+	};
+	if (!s.el || s.total <= 0) { finish(); return; }
 	start = Math.max(0, Math.min(start, s.total));
 	end = Math.max(start, Math.min(end, s.total));
 	// the grid draws cards left to right; a slice that starts mid-row would
@@ -3154,10 +3301,10 @@ function musicWindowFetch(start, end, force) {
 		start = Math.floor(start / s.columns) * s.columns;
 		end = Math.min(s.total, Math.ceil(end / s.columns) * s.columns);
 	}
-	if (end - start <= 0) { return; }
-	if (s.busy && !force) { return; }
+	if (end - start <= 0) { finish(); return; }
+	if (s.busy && !force) { finish(); return; }
 	var manifest = musicManifestRead();
-	if (!manifest || !Array.isArray(manifest.songs)) { return; }
+	if (!manifest || !Array.isArray(manifest.songs)) { finish(); return; }
 	var rows = manifest.songs.slice(start, end);
 	var nowPlaying = musicCurrentEntry();
 	var seq = ++s.seq;
@@ -3176,9 +3323,28 @@ function musicWindowFetch(start, end, force) {
 		},
 		success: function (r) {
 			// a later scroll owns the window; drop this answer
-			if (seq !== s.seq) { return; }
-			if (!r || typeof r.html != 'string') { s.busy = false; return; }
+			if (seq !== s.seq) { finish(); return; }
+			if (!r || typeof r.html != 'string') { s.busy = false; finish(); return; }
 			var anchor = musicWindowAnchor();
+			// A scroll fetch may have been overtaken by the person scrolling on
+			// while it was out. If the mounted row they are reading is not in the
+			// slice that came back, drawing it would jump the view; ask for a slice
+			// centred on that row instead and keep the current DOM and scroll. A
+			// forced fetch is a restore and must land, so it skips this guard.
+			if (!force && anchor && !musicWindowAnchorCovered(anchor, start, end)) {
+				s.busy = false;
+				var visible = musicWindowVisible();
+				var again_start = Math.max(0, anchor.index - visible * 2 * s.columns);
+				var again_end = Math.min(s.total, anchor.index + visible * 4 * s.columns);
+				if (s.columns > 1) {
+					again_start = Math.floor(again_start / s.columns) * s.columns;
+					again_end = Math.min(s.total, Math.ceil(again_end / s.columns) * s.columns);
+				}
+				if (again_start !== start || again_end !== end) {
+					musicWindowFetch(again_start, again_end, true, done);
+					return;
+				}
+			}
 			s.offset = start;
 			// the cache saver reads this to tell a fresh top-of-list view from one
 			// the person had scrolled away before the shell was stored
@@ -3192,11 +3358,13 @@ function musicWindowFetch(start, end, force) {
 			musicApplyRowState();
 			// put the row the person was reading back where it was
 			musicWindowRestoreAnchor(anchor, start);
+			finish();
 			// a scroll that arrived while this was out was refused; look again now
 			musicWindowSchedule();
 		},
 		error: function () {
 			if (seq === s.seq) { s.busy = false; musicWindowSchedule(); }
+			finish();
 		}
 	});
 }

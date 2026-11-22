@@ -129,8 +129,16 @@
 					<% if ($source eq 'music') { %>
 					// the title is placed and wrapped by its own css now; sizing it here
 					// every tick made it either dwarf the toolbar or duck under the
-					// buttons, and it never wrapped
-					$('#<%= $id %>_full_title').text($('.playing').find('.full_title').text());
+					// buttons, and it never wrapped. The manifest is the fallback
+					// because the playing row may not be mounted (a virtualized list,
+					// a restored shell or a re-render), so reading the DOM alone
+					// would blank the title on every tick.
+					var played_title = $('.playing').find('.full_title').text();
+					if (!played_title && typeof musicCurrentEntry == 'function') {
+						var played_entry = musicCurrentEntry();
+						if (played_entry) { played_title = played_entry.display_track || played_entry.song || ''; }
+					}
+					$('#<%= $id %>_full_title').text(played_title);
 					<% } %>
 				}, 1000);
 			}

@@ -257,9 +257,9 @@ like($details_route // '', qr/&music_json_param\(\$c, \x27row\x27\)/,
 	'the details press decodes its row the same way');
 
 # ---------------------------------------------------------- the client window
-like($js, qr/function musicWindowFetch\(start, end, force\)/, 'the client can fetch a slice');
-like($js, qr/if \(seq !== s\.seq\) \{ return; \}/,
-	'a late reply is discarded by sequence number');
+like($js, qr/function musicWindowFetch\(start, end, force, done\)/, 'the client can fetch a slice');
+like($js, qr/if \(seq !== s\.seq\) \{ finish\(\); return; \}/,
+	'a late reply is discarded by sequence number, settling its waiter');
 like($js, qr/type: \x27POST\x27,\s*\n\s*dataType: \x27json\x27,\s*\n\s*data: \{\s*\n\s*rows: JSON\.stringify\(rows\)/,
 	'it sends the manifest rows it wants drawn');
 like($js, qr/new ResizeObserver/, 'and re-measures when the window resizes');
@@ -304,8 +304,38 @@ like($apply // '', qr/before_rows \* s\.pitch/, 'the padding is offset rows at t
 unlike($apply // '', qr/getBoundingClientRect/, 'not the mounted rows\x27 real heights');
 like($js, qr/function musicWindowAnchor\(\)/, 'a slice swap captures its top row');
 like($js, qr/function musicWindowRestoreAnchor\(anchor, start\)/, 'and puts it back');
-like($js, qr/musicWindowRestoreAnchor\(anchor, start\);\s*\n\s*\/\/ a scroll that arrived/,
+like($js, qr/musicWindowRestoreAnchor\(anchor, start\);\s*\n\s*finish\(\);\s*\n\s*\/\/ a scroll that arrived/,
 	'after the new slice is padded and its rows are restored');
+
+# A scroll fetch can be overtaken while it is in flight. The row the person is
+# reading must stay put, so a reply that no longer covers it is not drawn; a
+# slice centred on that row is asked for instead. A forced restore must land.
+my ($fetch) = $js =~ /(function musicWindowFetch\(start, end, force, done\)\s*\{.*?\n\})/s;
+ok(defined $fetch, 'musicWindowFetch is found for the restore contract');
+like($fetch // '', qr/var finish = function \(\) \{/,
+	'every exit path settles the restore waiter');
+my $success_at = index($fetch // '', 'success: function (r)');
+ok($success_at >= 0, 'its success handler is found');
+my $success = substr($fetch // '', $success_at);
+like($success, qr/musicWindowAnchorCovered\(anchor, start, end\)/,
+	'a reply that no longer covers the row being read is not drawn');
+like($success, qr/musicWindowFetch\(again_start, again_end, true, done\)/,
+	'it asks again for a slice centred on that row and keeps the mounted one');
+my $error_at = index($fetch // '', 'error: function');
+ok($error_at >= 0, 'its error handler is found');
+like(substr($fetch // '', $error_at), qr/finish\(\);/,
+	'and a failed request still settles the waiter');
+like($js, qr/function musicWindowAnchorCovered\(anchor, start, end\)/,
+	'the coverage of a slice by the row being read is one pure helper');
+# The sync is bidirectional: at a restored offset above zero, nearing the top
+# requests rows below the mounted slice (topIndex - visible), not just more
+# below it.
+like($sync // '', qr/var nearTop = s\.offset > 0 && topIndex < s\.offset \+ margin;/,
+	'a restored slice asks upward when the viewport nears its top');
+like($sync // '', qr/var start = Math\.max\(0, topIndex - visible \* 2 \* s\.columns\);/,
+	'and the request can reach rows above the mounted slice');
+like($sync // '', qr/var visible = musicWindowVisible\(\);/,
+	'the sync and a re-fetch share the visible-row count');
 
 # The arithmetic is pure, so its two shapes are driven with plain numbers: a
 # wrapped title or an open panel must not change the pitch, and a mixed slice
@@ -338,6 +368,28 @@ JS
 	close $fh;
 	my $rc = system($node, $file);
 	is($rc, 0, 'a mixed-height slice keeps one pitch and names the real top row');
+}
+
+# The coverage test is pure too: a slice covers only the rows it mounts.
+my ($covered) = $js =~ /(function musicWindowAnchorCovered\(anchor, start, end\)\s*\{.*?\n\})/s;
+ok(defined $covered, 'the coverage helper is marked for the runtime check');
+SKIP: {
+	skip 'node is not installed', 1 unless $node && defined $covered;
+	my $script = <<"JS";
+$covered
+function fail(message) { console.error(message); process.exit(1); }
+if (musicWindowAnchorCovered({ index: 5, top: 0 }, 0, 10) !== true) { fail('inside the slice'); }
+if (musicWindowAnchorCovered({ index: 0, top: 0 }, 0, 10) !== true) { fail('at the first row'); }
+if (musicWindowAnchorCovered({ index: 10, top: 0 }, 0, 10) !== false) { fail('the end is excluded'); }
+if (musicWindowAnchorCovered(null, 0, 10) !== false) { fail('no anchor'); }
+if (musicWindowAnchorCovered({ index: NaN, top: 0 }, 0, 10) !== false) { fail('an unusable index'); }
+process.exit(0);
+JS
+	my ($fh, $file) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print {$fh} $script;
+	close $fh;
+	my $rc = system($node, $file);
+	is($rc, 0, 'a slice covers only the rows it mounts');
 }
 
 # ------------------------------------------------ the manifest walk per list
@@ -407,6 +459,10 @@ like($help_js, qr/var list = \(r\.files && r\.files\.length\) \? r\.files : \[r\
 	is($r->{'same_order'}, 0, 'an unshuffled request keeps the ranked order');
 }
 
+like($css, qr/#music_files \{[^}]*overflow-anchor: none;/s,
+	'the list disables the browser\'s own scroll anchoring');
+like($css, qr/#music_window \{[^}]*overflow-anchor: none;/s,
+	'and so does the slice it mounts');
 like($css, qr/#music \.music_track \{[^}]*content-visibility: auto;/s,
 	'a mounted but off-screen row skips its own layout');
 like($css, qr/contain-intrinsic-size: auto 74px/, 'with a row-sized placeholder');

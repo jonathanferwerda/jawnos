@@ -75,4 +75,9 @@ like($video, qr/if \(!el\) \{\s*\n\s*if \(\$\('#music'\)\.length == 0\) \{\s*\n\
 like($video, qr/var bar_miss = \$\('#<%= \$id %>'\)\.attr\('miss'\) \|\| '<%= \$miss %>';/,
 	'the tick resolves the seek input from the element current miss');
 
+# 7. the bar title falls back to the queue manifest, so a playing row that is
+#    not mounted does not blank the title on every tick
+like($video_script, qr/typeof musicCurrentEntry == 'function'[\s\S]*?display_track \|\| played_entry\.song/,
+	'the tick falls back to the manifest when the playing row is not mounted');
+
 done_testing();
