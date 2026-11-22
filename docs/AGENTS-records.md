@@ -26,7 +26,12 @@ Read this before repairing appointments or restoring a database.
   to guess without an older snapshot and a fresh safety snapshot. `--window-start <ms>` names the
   incident's first stamp when the automatic burst is ambiguous. **Run it on every machine in the same
   window**: the merge keeps the newer server_time, so an un-repaired peer puts the incident stamp back.
-  The settings half of the same incident is `scripts/settings_time_repair.pl`.
+  A phone or tablet should use `--sql`: it keeps the 121k-row comparison inside SQLite instead of loading
+  it as Perl hashes (the first house-wide run OOM'd on the phone). `--include-changed` also restores the
+  snapshot time for rows whose other columns changed; use it when those changed rows are themselves the
+  reservoir that keeps re-stamping the repaired ones (the 2026-11-21 appointments incident needed it). It
+  moves the write time; the data itself is not touched. The settings half of the same incident is
+  `scripts/settings_time_repair.pl`.
 
 ## SMS direction in the mailbox
 

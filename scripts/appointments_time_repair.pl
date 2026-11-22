@@ -4,6 +4,7 @@
 #
 #   perl scripts/appointments_time_repair.pl [--backup <path>] [--window-start <ms>]
 #                                            [--apply] [--json] [--limit N]
+#                                            [--sql] [--include-changed]
 #
 # The settings backfill that matched every row (an always-null `id` in the
 # predicate) also re-stamped appointments: on 2026-11-21 it wrote two
@@ -19,6 +20,12 @@
 # overwritten by a peer that still carries the incident stamp (the merge keeps
 # the newer server_time), so one machine alone cannot hold the repair.
 #
+# --include-changed is for an incident whose changed rows are themselves the
+# reservoir: the pure rows are repaired, then a peer's changed row (still at the
+# incident stamp) re-stamps them. It restores the snapshot time for those rows
+# too; the changed data stays, only its write time goes back. Repair every
+# machine in the same window before the sync settles.
+#
 # Dry run by default. --apply needs an explicit older --backup, takes a fresh
 # safety snapshot, re-reads the live rows, and writes in one transaction. The
 # snapshot's own time (its filename, else its mtime) must predate the window.
@@ -28,6 +35,9 @@
 use strict;
 use warnings;
 use FindBin;
+use IPC::Open2;
+use IPC::Open3;
+use Symbol qw(gensym);
 require Mojo::JSON;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
 require './perl/subroutines.pl';
@@ -48,7 +58,7 @@ my %IGNORED_COLUMNS = map { $_ => 1 } qw(
 # snapshot) are worth pinning without touching a live database.
 sub main {
 	my (@argv) = @_;
-	my ($opt_backup, $explicit_backup, $opt_window, $apply, $json, $limit);
+	my ($opt_backup, $explicit_backup, $opt_window, $apply, $json, $limit, $sql, $dump_sql, $include_changed);
 	$limit = $SAMPLE_LIMIT;
 	for (my $i = 0; $i < @argv; $i++) {
 		my $a = $argv[$i];
@@ -58,6 +68,9 @@ sub main {
 		}
 		elsif ($a eq '--window-start' && defined $argv[$i + 1]) { $opt_window = $argv[$i + 1]; }
 		elsif ($a eq '--apply') { $apply = 1; }
+		elsif ($a eq '--sql') { $sql = 1; }
+		elsif ($a eq '--dump-sql') { $dump_sql = 1; }
+		elsif ($a eq '--include-changed') { $include_changed = 1; }
 		elsif ($a eq '--json') { $json = 1; }
 		elsif ($a eq '--limit' && defined $argv[$i + 1] && $argv[$i + 1] =~ /^\d+$/) { $limit = $argv[$i + 1]; }
 	}
@@ -76,10 +89,19 @@ sub main {
 		$opt_window = 0 + $opt_window;
 	}
 
-	my $live = _live_rows();
-	unless ($live) {
-		print "appointments time repair: could not read the live appointments\n";
-		return 1;
+	my $live;
+	if ($sql) {
+		unless (defined $opt_window) {
+			print "appointments time repair: --sql needs --window-start <ms> (the SQL path does not name a burst for you)\n";
+			return 1;
+		}
+	}
+	else {
+		$live = _live_rows();
+		unless ($live) {
+			print "appointments time repair: could not read the live appointments\n";
+			return 1;
+		}
 	}
 
 	my $window = defined $opt_window ? $opt_window : _burst_window_start($live);
@@ -122,6 +144,13 @@ sub main {
 		print "appointments time repair: could not unseal $backup (key or format)\n";
 		return 1;
 	}
+	if ($sql) {
+		my $rc = _sql_repair($old_db, $backup, $snap_ms, $window, { apply => $apply, json => $json, limit => $limit, dump_sql => $dump_sql, include_changed => $include_changed });
+		unlink $old_db;
+		unlink $old_db . '-wal';
+		unlink $old_db . '-shm';
+		return $rc;
+	}
 	my ($backup_rows, $read_error);
 	{
 		my $db = eval { Mojo::SQLite->new('sqlite:' . $old_db)->db };
@@ -137,7 +166,7 @@ sub main {
 		return 1;
 	}
 
-	my $plan = appointments_time_plan($backup_rows, $live, { window_start => $window });
+	my $plan = appointments_time_plan($backup_rows, $live, { window_start => $window, include_changed => $include_changed });
 	my $summary = $plan->{'summary'};
 
 	if ($json && !$apply) {
@@ -182,7 +211,7 @@ sub main {
 		print "appointments time repair: could not re-read the live appointments; nothing written\n";
 		return 1;
 	}
-	my $replan = appointments_time_plan($backup_rows, $live_now, { window_start => $window });
+	my $replan = appointments_time_plan($backup_rows, $live_now, { window_start => $window, include_changed => $include_changed });
 
 	my ($applied, $error) = (0, undef);
 	eval {
@@ -281,13 +310,17 @@ sub appointments_time_plan {
 
 		# Only a pure re-stamp is safe to undo. Any other difference means the
 		# row was genuinely written after the snapshot, and the current time is
-		# the honest one for it.
-		my $changed = 0;
-		foreach my $col ( keys %columns ) {
-			next if $IGNORED_COLUMNS{$col};
-			if (_defined($live->{$col}) ne _defined($match->{$col})) { $changed = 1; last; }
+		# the honest one for it. --include-changed is the escape hatch for an
+		# incident whose changed rows are themselves the reservoir that keeps
+		# re-stamping the repaired set.
+		unless ($opts->{'include_changed'}) {
+			my $changed = 0;
+			foreach my $col ( keys %columns ) {
+				next if $IGNORED_COLUMNS{$col};
+				if (_defined($live->{$col}) ne _defined($match->{$col})) { $changed = 1; last; }
+			}
+			if ($changed) { $summary{'changed_since'}++; next; }
 		}
-		if ($changed) { $summary{'changed_since'}++; next; }
 
 		push @plan, {
 			uuid => $uuid,
@@ -306,6 +339,154 @@ sub appointments_time_plan {
 	} @plan;
 
 	return { window_start => $window, summary => \%summary, plan => \@plan };
+}
+
+# The SQL path keeps the comparison where the rows already are. Loading 121k
+# appointments as Perl hashes needs more memory than a phone has (the first
+# house-wide run OOM'd on the phone), so --sql joins the sealed snapshot to the
+# live table inside SQLite and writes the plan to a temp table. Same columns,
+# same guards; only the loop moves.
+sub appointments_time_sql {
+	my ($snap_db, $window, $columns, $limit, $apply, $include_changed) = @_;
+	$limit = 20 unless defined $limit && $limit =~ /^\d+$/;
+	my $q = defined $snap_db ? $snap_db : '';
+	$q =~ s/'/''/g;
+	my @cols = grep { defined $_ && $_ =~ /^[A-Za-z0-9_]+$/ } @{ $columns || [] };
+	my $match = $include_changed ? '1'
+		: join(' AND ', map { "COALESCE(CAST(l.\"$_\" AS TEXT), '') = COALESCE(CAST(s.\"$_\" AS TEXT), '')" } @cols);
+	$match = '1' unless length $match;
+	my $sql = "ATTACH DATABASE '$q' AS snap;\n"
+		. "CREATE TEMP TABLE appt_time_plan AS\n"
+		. "  SELECT l.uuid AS uuid, s.server_time AS to_time\n"
+		. "  FROM main.appointments l JOIN snap.appointments s ON s.uuid = l.uuid\n"
+		. "  WHERE CAST(l.server_time AS INTEGER) >= " . (0 + $window) . "\n"
+		. "    AND l.server_time != s.server_time\n"
+		. "    AND ($match);\n"
+		. "SELECT 'planned', count(*) FROM appt_time_plan;\n"
+		. "SELECT 'sample', l.app, l.type, l.uuid, l.server_time, p.to_time\n"
+		. "  FROM appt_time_plan p JOIN main.appointments l ON l.uuid = p.uuid\n"
+		. "  ORDER BY l.app, l.type, l.uuid LIMIT $limit;\n";
+	if ($apply) {
+		$sql .= "BEGIN;\n"
+			. "UPDATE main.appointments\n"
+			. "  SET server_time = (SELECT p.to_time FROM appt_time_plan p WHERE p.uuid = appointments.uuid)\n"
+			. "  WHERE uuid IN (SELECT uuid FROM appt_time_plan);\n"
+			. "SELECT 'applied', changes();\n"
+			. "COMMIT;\n";
+	}
+	return $sql;
+}
+
+sub _sql_repair {
+	my ($snap_db, $backup, $snap_ms, $window, $opts) = @_;
+	my ($apply, $json, $limit) = ($opts->{'apply'}, $opts->{'json'}, $opts->{'limit'});
+	my $include_changed = $opts->{'include_changed'} ? 1 : 0;
+	my @live_cols = map { $_->{'name'} } @{ &subs::db_query("select name from pragma_table_info('appointments')")->hashes || [] };
+	my @snap_cols;
+	{
+		my ($lines, $err) = _sql_run($snap_db, "select name from pragma_table_info('appointments');");
+		if ($err || !$lines || !scalar @{$lines}) {
+			print "appointments time repair: could not read the snapshot's columns" . ($err ? " ($err)" : '') . "\n";
+			return 1;
+		}
+		chomp @{$lines};
+		@snap_cols = @{$lines};
+	}
+	my %snap = map { $_ => 1 } @snap_cols;
+	my @cols = grep { $snap{$_} && !$IGNORED_COLUMNS{$_} } @live_cols;
+	unless (@cols || $include_changed) {
+		print "appointments time repair: the snapshot and live table share no comparable columns\n";
+		return 1;
+	}
+
+	my $sql = appointments_time_sql($snap_db, $window, \@cols, $limit, 0, $include_changed);
+	if ($opts->{'dump_sql'}) {
+		print $sql;
+		return 0;
+	}
+	my ($lines, $err) = _sql_run('database/jawnos.db', $sql);
+	if ($err) {
+		print "appointments time repair: the read-only SQL plan failed ($err)\n";
+		return 1;
+	}
+	my ($planned, @samples) = (0);
+	foreach my $line (@{$lines}) {
+		chomp $line;
+		my ($kind, @rest) = split /\t/, $line, -1;
+		if ($kind eq 'planned') { $planned = 0 + ($rest[0] || 0); }
+		elsif ($kind eq 'sample') { push @samples, \@rest; }
+	}
+
+	if ($json && !$apply) {
+		print Mojo::JSON::encode_json({ backup => $backup, backup_time => $snap_ms, window_start => $window, planned => $planned, sample => \@samples }), "\n";
+		return 0;
+	}
+	unless ($json) {
+		printf "appointments time repair (sql) - snapshot %s (%s), window start %s (%d)\n\n",
+			$backup, &subs::iso_local($snap_ms), &subs::iso_local($window), $window;
+		printf "planned %d row(s); columns compared: %d\n\n", $planned, scalar @cols;
+		foreach my $s (@samples) {
+			printf "  %s/%s  %s  %s -> %s\n", map { defined $_ ? $_ : '' } @{$s};
+		}
+	}
+	if (!$apply) {
+		print "\ndone - nothing written. Re-run with --apply --backup <the same snapshot> to restore only server_time.\n" unless $json;
+		return 0;
+	}
+	if (!$planned) {
+		print "nothing to restore\n" unless $json;
+		print Mojo::JSON::encode_json({ backup => $backup, backup_time => $snap_ms, window_start => $window, planned => 0, applied => 0 }), "\n" if $json;
+		return 0;
+	}
+
+	my $fresh = &subs::records_backup_ensure_fresh(600000);
+	unless ($fresh->{'fresh'}) {
+		print "appointments time repair: refusing to apply - no snapshot younger than ten minutes could be taken\n";
+		return 1;
+	}
+	print "safety snapshot: " . ($fresh->{'made'} ? 'taken now - ' : 'using ') . $fresh->{'path'} . "\n" unless $json;
+
+	my $apply_sql = appointments_time_sql($snap_db, $window, \@cols, $limit, 1, $include_changed);
+	my ($alines, $aerr) = _sql_run('database/jawnos.db', $apply_sql);
+	if ($aerr) {
+		print "appointments time repair: the apply failed ($aerr)\n";
+		return 1;
+	}
+	my ($applied, $planned_now) = (0, 0);
+	foreach my $line (@{$alines}) {
+		chomp $line;
+		my ($kind, @rest) = split /\t/, $line, -1;
+		if ($kind eq 'planned') { $planned_now = 0 + ($rest[0] || 0); }
+		elsif ($kind eq 'applied') { $applied = 0 + ($rest[0] || 0); }
+	}
+	&subs::log_writer("appointments time repair (sql): restored server_time on $applied appointment row(s) from $backup (window start $window)");
+	if ($json) {
+		print Mojo::JSON::encode_json({ backup => $backup, backup_time => $snap_ms, window_start => $window, planned => $planned_now, applied => $applied }), "\n";
+	}
+	else {
+		printf "appointments time repair APPLIED (sql): %d row(s) restored\n", $applied;
+	}
+	return 0;
+}
+
+	sub _sql_run {
+	my ($db, $sql) = @_;
+	my ($out, $in);
+	my $err = gensym;
+	my $pid = eval { IPC::Open3::open3($in, $out, $err, 'sqlite3', '-batch', '-noheader', '-separator', "\t", $db) };
+	return (undef, 'sqlite3 is not available') unless $pid;
+	print $in $sql;
+	close $in;
+	my @lines = <$out>;
+	my @errors = <$err>;
+	close $out;
+	close $err;
+	waitpid($pid, 0);
+	my $rc = $? >> 8;
+	my $message = join('', @errors);
+	$message =~ s/\s+/ /g;
+	$message =~ s/^ //;
+	return (\@lines, $rc ? ('sqlite3 exited ' . $rc . (length $message ? ": $message" : '')) : undef);
 }
 
 sub _live_rows {

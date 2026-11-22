@@ -7,6 +7,7 @@ use strict;
 use warnings;
 
 use FindBin;
+use File::Temp qw(tempdir);
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 
@@ -109,6 +110,13 @@ sub plan_for {
 	);
 	is(scalar @{ $plan->{'plan'} }, 0, 'a changed event time is a real write, not a re-stamp');
 	is($plan->{'summary'}{'changed_since'}, 1, 'and is counted as changed');
+	my $include = main::appointments_time_plan(
+		[ row(uuid => 'u1', timestamp => '100', server_time => '100') ],
+		[ row(uuid => 'u1', timestamp => '400', server_time => '500') ],
+		{ 'window_start' => 200, 'include_changed' => 1 },
+	);
+	is(scalar @{ $include->{'plan'} }, 1, '--include-changed restores a changed row');
+	is($include->{'plan'}[0]{'to'}, '100', 'to the snapshot time');
 }
 {
 	my $plan = plan_for(
@@ -208,6 +216,54 @@ sub plan_for {
 	close $fh;
 	is($rc, 1, '--apply without --backup exits 1');
 	like($buf, qr/--apply requires an explicit --backup/, 'and says what is missing');
+}
+
+# --- --sql needs the window named, because it does not load the table --------
+{
+	my $buf = '';
+	open my $fh, '>', \$buf or die "capture: $!";
+	my $rc;
+	{
+		local *STDOUT = $fh;
+		$rc = main('--sql');
+	}
+	close $fh;
+	is($rc, 1, '--sql without --window-start exits 1');
+	like($buf, qr/--sql needs --window-start/, 'and says what is missing');
+}
+
+# --- the SQL builder names the join, the columns and the update --------------
+{
+	my $sql = main::appointments_time_sql('/tmp/snap.db', 123, [ 'app', 'type' ], 5, 0);
+	like($sql, qr/ATTACH DATABASE '\/tmp\/snap\.db' AS snap/, 'the SQL attaches the snapshot');
+	like($sql, qr/CAST\(l\.server_time AS INTEGER\) >= 123/, 'the window is the cut');
+	like($sql, qr/COALESCE\(CAST\(l\."app" AS TEXT\), ''\) = COALESCE\(CAST\(s\."app" AS TEXT\), ''\)/, 'each comparable column is compared as text');
+	unlike($sql, qr/UPDATE main\.appointments/, 'a dry SQL plan does not update');
+	my $apply = main::appointments_time_sql('/tmp/snap.db', 123, ['app'], 5, 1);
+	like($apply, qr/UPDATE main\.appointments/, 'an apply SQL plan updates');
+	like($apply, qr/SELECT 'applied', changes\(\)/, 'and counts what it changed');
+	my $include = main::appointments_time_sql('/tmp/snap.db', 123, ['app'], 5, 0, 1);
+	unlike($include, qr/COALESCE\(CAST/, '--include-changed does not compare columns');
+	like($include, qr/AND \(1\)/, 'and takes every peer row at the window');
+}
+
+# --- the SQL path and the Perl plan make the same decision -------------------
+SKIP: {
+	my $version = `sqlite3 -version 2>&1`;
+	skip 'no sqlite3 command', 5 unless defined $version && $version =~ /^\d/ && $? == 0;
+	my $dir = tempdir(CLEANUP => 1);
+	my $live = "$dir/live.db";
+	my $snap = "$dir/snap.db";
+	my $schema = 'create table appointments (uuid text, app text, type text, timestamp text, data text, server_time text);';
+	main::_sql_run($live, $schema . "insert into appointments values ('u1','vape','stop','100','same','500'),('u2','vape','stop','100','changed','500'),('u3','vape','stop','100','same','100');");
+	main::_sql_run($snap, $schema . "insert into appointments values ('u1','vape','stop','100','same','100'),('u2','vape','stop','100','original','100'),('u3','vape','stop','100','same','100');");
+	my ($out) = main::_sql_run($live, main::appointments_time_sql($snap, 200, [qw(app type timestamp data)], 10, 1));
+	my $text = join '', @{$out || []};
+	like($text, qr/^planned\t1$/m, 'one pure re-stamp is planned in SQL');
+	like($text, qr/^applied\t1$/m, 'and one row is updated');
+	my ($after) = main::_sql_run($live, 'select uuid, data, server_time from appointments order by uuid;');
+	is_deeply($after, [ "u1\tsame\t100\n", "u2\tchanged\t500\n", "u3\tsame\t100\n" ],
+		'only the pure re-stamp moves; the changed row keeps its honest time');
 }
 
 done_testing();
