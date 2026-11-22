@@ -363,6 +363,8 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 		data: {
 			timestamp: Date.now(),
 			enabled: $('#phone_app #phone_ivr_enabled').is(':checked') ? 'yes' : 'no',
+			away: $('#phone_app #phone_ivr_away').is(':checked') ? 'yes' : 'no',
+			away_greeting: $('#phone_app #phone_ivr_away_greeting').val() || '',
 			machine: firstGateway ? firstGateway.key : '',
 			voice: receptionist.voice || '',
 			bluetooth: firstGateway ? firstGateway.bluetooth : '',

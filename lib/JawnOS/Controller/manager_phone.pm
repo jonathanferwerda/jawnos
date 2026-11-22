@@ -90,6 +90,7 @@ sub action_23201 {
 	my $ivr_machine = &phone_ivr_machine($ivr->{'machine'});
 	$ivr->{'machine_available'} = ($ivr_machine && (($ivr_machine->{'connection'} || '') eq 'active')) ? 1 : 0;
 	$ivr->{'machine_label'} = $ivr_machine ? ($ivr_machine->{'hostname'} || $ivr_machine->{'ip'} || '') : '';
+	$ivr->{'away_active'} = &subs::vacation_active(&subs::rightNow()) ? 1 : 0;
 	# The pane's status line says which audio backend carries the gateway's call
 	# and whether it is ready; a not-ready gateway says why instead of pretending.
 	&_ivr_audio_state($ivr, $ivr->{'machine'});
@@ -320,6 +321,8 @@ sub action_24760 {
 		voicemail => $c->param('voicemail'),
 		thanks    => $c->param('thanks'),
 		hold      => $c->param('hold'),
+		away      => $c->param('away'),
+		away_greeting => $c->param('away_greeting'),
 		flows     => $c->param('flows'),
 		flow_defs => $c->param('flow_defs'),
 		flow_order => $c->param('flow_order'),
@@ -454,7 +457,7 @@ sub action_24755 {
 		my $picture = &phone_avatar_data($names{$number});
 		$avatars{$number} = $picture if $picture;
 	}
-	my $ivr = &phone_ivr_settings();
+	my $ivr = &subs::phone_ivr_broadcast_settings();
 	my $ivr_machine = &phone_ivr_machine($ivr->{'machine'});
 	$ivr->{'machine_available'} = ($ivr_machine && (($ivr_machine->{'connection'} || '') eq 'active')) ? 1 : 0;
 	$ivr->{'machine_host'} = $ivr_machine ? ($ivr_machine->{'hostname'} || $ivr_machine->{'ip'} || '') : '';

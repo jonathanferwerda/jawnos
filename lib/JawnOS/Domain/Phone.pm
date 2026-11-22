@@ -33,6 +33,11 @@ sub phone_ivr_defaults {
 		# what the caller hears after the thanks while somebody decides to pick
 		# up: '' (none), 'shuffle' for the whole library, or one track's path
 		hold      => '',
+		# the words the reception speaks while an away period is active. Off by
+		# default: the away card is the person's choice, and this is the phone's
+		# own answer to it.
+		away      => 'no',
+		away_greeting => &subs::ui('I am away right now. Please leave a message after the tone.'),
 		flows     => &subs::phone_ivr_flow_defaults('unknown'),
 	};
 }
@@ -742,6 +747,8 @@ sub phone_ivr_legacy_settings {
 		$settings->{$key} = $value if length $value;
 	}
 	$settings->{'enabled'} = ($settings->{'enabled'} eq 'yes') ? 'yes' : 'no';
+	$settings->{'away'} = ($settings->{'away'} eq 'yes') ? 'yes' : 'no';
+	$settings->{'away_greeting'} = substr($settings->{'away_greeting'}, 0, 1000);
 	$settings->{'route'} = 'unknown' unless $settings->{'route'} =~ /^(?:unknown|all|off)$/;
 	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
 	$settings->{'voice'} = &subs::say_default_voice() unless $voices{ $settings->{'voice'} };
@@ -768,6 +775,60 @@ sub phone_ivr_settings {
 	$settings->{'machine'} = $first ? $first->{'key'} : '';
 	$settings->{'bluetooth'} = $first ? $first->{'bluetooth'} : ($settings->{'bluetooth'} || 'jawn-gateway');
 	$settings->{'flow_defs'} = $defs;
+	return $settings;
+}
+
+# ---- the away greeting -----------------------------------------------------
+#
+# While an away period is active and the pane's away greeting is on, every flow
+# the gateway can answer speaks the away words and then offers a message. The
+# stored flows are not edited: this is the copy Reception.pl arms and the phone
+# reads, so the flow's own words come back on the next pass after the period.
+# A ring or reject bucket is not a flow and is left exactly as the person set
+# it; calls still pass while away, as the vacation policy says.
+sub phone_ivr_away_ready {
+	my ($settings) = @_;
+	return 0 unless ref $settings eq 'HASH';
+	return 0 unless ($settings->{'away'} || '') eq 'yes';
+	return 0 unless defined $settings->{'away_greeting'} && length $settings->{'away_greeting'};
+	return eval { &subs::vacation_active(&subs::rightNow()) } ? 1 : 0;
+}
+
+# One flow as the away reception speaks it: the away greeting, then the
+# voicemail step, which plays the flow's own message prompt and records.
+sub phone_ivr_away_flow {
+	my ($flow, $settings) = @_;
+	my %copy = %{ ref $flow eq 'HASH' ? $flow : {} };
+	$copy{'greeting'} = $settings->{'away_greeting'};
+	$copy{'steps'} = [
+		{ type => 'say', text_key => 'greeting' },
+		{ type => 'voicemail' },
+	];
+	$copy{'after'} = 'voicemail';
+	return \%copy;
+}
+
+# The settings as the phone and the gateway should hear them now. The canonical
+# phone_ivr_settings() stays what the pane edits, so the editor never shows the
+# away words as if they were the flow's own.
+sub phone_ivr_broadcast_settings {
+	my $settings = &subs::phone_ivr_settings();
+	return $settings unless &phone_ivr_away_ready($settings);
+	my $defs = $settings->{'flow_defs'};
+	return $settings unless ref $defs eq 'HASH';
+	my %away;
+	foreach my $key ( keys %{$defs} ) {
+		next unless ref $defs->{$key} eq 'HASH';
+		$away{$key} = &phone_ivr_away_flow($defs->{$key}, $settings);
+	}
+	$settings->{'flow_defs'} = \%away;
+	my $receptionist = $away{'receptionist'};
+	if (ref $receptionist eq 'HASH') {
+		foreach my $key (qw(voice greeting prompt voicemail thanks hold)) {
+			$settings->{$key} = $receptionist->{$key} if exists $receptionist->{$key};
+		}
+	}
+	$settings->{'away_active'} = 1;
 	return $settings;
 }
 

@@ -35,6 +35,11 @@ and routine actions.
 - The desktop calendar shades the away days across the shown month and labels
   the first day of a run **Away**. It reads the same period list and writes
   nothing.
+- Phone -> IVR carries an opt-in **Away greeting**. While an away period is
+  active, every flow the reception can answer speaks those words and then
+  offers the caller a message; Ring and Reject stay as set, so calls still
+  pass. The stored flows are never edited, so their own words return when the
+  period ends.
 - `evaluation` scheduled runs skip while away; an `each_run` report from real
   activity still runs.
 - A small Away card in Configure -> Me starts, ends or cancels a period, and shows a short return digest (days away and notices that arrived).
@@ -57,7 +62,7 @@ and routine actions.
 
 ## Not yet built
 
-- An away phone greeting and presence simulation.
+- Presence simulation.
 
 ## Tests
 

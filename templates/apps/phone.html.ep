@@ -46,6 +46,9 @@
 	.phone_app_ivr_save { align-self:flex-start; padding:7px 18px; border-radius:999px;
 		border:1px solid var(--line); background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_ivr_status { min-height:18px; color:var(--muted,#8e8e8e); font-size:12px; }
+	.phone_app_ivr_away { display:flex; flex-direction:column; gap:6px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; }
+	.phone_app_ivr_away_note { font-size:12px; color:var(--muted,#8e8e8e); }
+	.phone_app_ivr_away_on { color:var(--accent,#4a90d9); font-weight:600; }
 	.phone_app_ivr_gateways { display:flex; flex-direction:column; gap:6px; }
 	.phone_app_ivr_gateways_title { font-size:13px; font-weight:600; }
 	.phone_app_ivr_gateway_list { display:flex; flex-direction:column; gap:6px; }
@@ -313,6 +316,18 @@
 	<div class="phone_app_pane" pane="ivr">
 		<div class="phone_app_ivr">
 			<label class="phone_app_ivr_toggle"><input type="checkbox" id="phone_ivr_enabled" <%= (($ivr->{'enabled'} || '') eq 'yes') ? 'checked' : '' %>> <%= &subs::ui('Enable IVR') %></label>
+			<%# The away greeting is the phone's answer to an away period: the
+			    reception speaks these words and offers a message instead of the
+			    flow's own greeting. The stored flows keep their words, so ending
+			    the period restores them on the next pass. %>
+			<div class="phone_app_ivr_away">
+				<label class="phone_app_ivr_toggle"><input type="checkbox" id="phone_ivr_away" <%= (($ivr->{'away'} || '') eq 'yes') ? 'checked' : '' %>> <%= &subs::ui('Away greeting') %></label>
+				<label><%= &subs::ui('While away') %><textarea id="phone_ivr_away_greeting" rows="2"><%= $ivr->{'away_greeting'} || '' %></textarea></label>
+				<div class="phone_app_ivr_away_note">
+					<% if ($ivr->{'away_active'}) { %><span class="phone_app_ivr_away_on"><%= &subs::ui('An away period is active now.') %></span> <% } %>
+					<%= &subs::ui('When IVR is on and an away period is active, every flow the reception answers speaks this greeting and then offers the caller a message. Ring and Reject stay as set.') %>
+				</div>
+			</div>
 			<%# The ordered gateways. The scalar rows stay as hidden inputs so the
 			    rest of the page (and an older app build) still reads one machine and
 			    one Bluetooth name; the first enabled row is mirrored into them. %>

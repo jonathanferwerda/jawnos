@@ -279,18 +279,20 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $saved->{'flows'}->{'enemy'}, 'reject', 'a missing flow keeps its default';
 	is $saved->{'flow_defs'}->{'receptionist'}->{'greeting'}, 'Hello',
 		'the legacy prompt edits the receptionist flow, so the two agree';
-	is scalar @writes, 13, 'every IVR setting is written';
+	is scalar @writes, 15, 'every IVR setting is written';
 	is $writes[0]->{'app'}, 'phone', 'the settings belong to the phone app';
 	like $writes[0]->{'setting'}, qr/^ivr_/, 'the settings carry the ivr_ prefix';
 	is $writes[9]->{'setting'}, 'ivr_hold', 'the hold music is one more house row';
-	is $writes[10]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row';
-	like $writes[10]->{'value'}, qr/"unknown":"reject"/, 'the flow row is JSON';
-	is $writes[11]->{'setting'}, 'ivr_flow_defs', 'the named flows are one more house row';
-	is $writes[11]->{'device'}, 'all', 'and the house, not the device, owns them';
-	like $writes[11]->{'value'}, qr/"receptionist"/, 'the flow row is JSON';
-	is $writes[12]->{'setting'}, 'ivr_machines', 'the ordered gateways are one more house row';
-	is $writes[12]->{'device'}, 'all', 'and the house owns them';
-	like $writes[12]->{'value'}, qr/"gw-sig"/, 'the row carries the gateway JSON';
+	is $writes[10]->{'setting'}, 'ivr_away', 'the away switch is one more house row';
+	is $writes[11]->{'setting'}, 'ivr_away_greeting', 'and its words are one more';
+	is $writes[12]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row';
+	like $writes[12]->{'value'}, qr/"unknown":"reject"/, 'the flow row is JSON';
+	is $writes[13]->{'setting'}, 'ivr_flow_defs', 'the named flows are one more house row';
+	is $writes[13]->{'device'}, 'all', 'and the house, not the device, owns them';
+	like $writes[13]->{'value'}, qr/"receptionist"/, 'the flow row is JSON';
+	is $writes[14]->{'setting'}, 'ivr_machines', 'the ordered gateways are one more house row';
+	is $writes[14]->{'device'}, 'all', 'and the house owns them';
+	like $writes[14]->{'value'}, qr/"gw-sig"/, 'the row carries the gateway JSON';
 	is $saved->{'machines'}->[0]->{'key'}, 'gw-sig', 'the saved list names the gateway';
 	is $saved->{'machine'}, 'gw-sig', 'and the legacy scalar is its first entry';
 }
@@ -392,7 +394,7 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $saved->{'flows'}->{'unknown'}, 'night', 'a bucket may point at the new flow';
 	is $saved->{'greeting'}, 'Hello', 'the legacy greeting follows the receptionist flow';
 	is $saved->{'voice'}, 'piper-john', 'and so does the voice';
-	like $writes[11]->{'value'}, qr/"night"/, 'the saved flow row carries the custom flow';
+	like $writes[13]->{'value'}, qr/"night"/, 'the saved flow row carries the custom flow';
 }
 {
 	# a client that posts no flows (or a payload that is not JSON) must not wipe

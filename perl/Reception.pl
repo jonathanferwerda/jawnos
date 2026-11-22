@@ -289,7 +289,7 @@ sub tick {
 	# the same settings the Phone app saves, defaults included. Silence is the
 	# king of the phone: the reception is armed even when the person turned it
 	# off, and a call that names no flow lands on the receptionist.
-	my $settings = &subs::phone_ivr_settings();
+	my $settings = &subs::phone_ivr_broadcast_settings();
 	if (eval { &subs::silence_active() }) {
 		$settings->{'enabled'} = 'yes';
 		$settings->{'flows'}->{'unknown'} = 'ivr'
