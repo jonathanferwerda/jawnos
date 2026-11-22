@@ -865,4 +865,24 @@ sub action_60003 {
 	return $c->render(json => { ok => 1 });
 }
 
+# POST /manager/vacation/detect
+sub action_60004 {
+	my $c = shift;
+	my $auto = &subs::vacation_auto_save({
+		detect => $c->param('detect'),
+		after_hours => $c->param('after_hours'),
+	});
+	return $c->render(json => { ok => 1, auto => $auto });
+}
+
+# POST /manager/vacation/proposal
+sub action_60005 {
+	my $c = shift;
+	my $uuid = $c->param('uuid') // '';
+	my $accept = $c->param('accept') ? 1 : 0;
+	my $period = &subs::vacation_proposal_answer($uuid, $accept);
+	return $c->render(json => { ok => 0, error => &subs::ui('That quiet period is gone.') }) unless $period;
+	return $c->render(json => { ok => 1, period => $period });
+}
+
 1;

@@ -416,26 +416,51 @@ sub vacation_cancel($uuid) {
 }
 
 # A quiet gap the house noticed. It is kept as a question until the person
-# answers; a proposal never pauses a budget.
+# answers; a proposal never pauses a budget. An ongoing gap has no `to`, so the
+# card can say "until you are home"; a gap that has ended keeps its end. A later
+# pass extends or closes the same proposal instead of stacking another.
 sub vacation_propose($data) {
 	$data = {} unless ref $data eq 'HASH';
 	my $from = _vacation_number($data->{'from'});
 	my $to = _vacation_number($data->{'to'});
-	return undef unless defined $from && $from > 0 && defined $to && $to > $from;
+	return undef unless defined $from && $from > 0;
+	return undef if defined $to && $to <= $from;
+	my $now = &rightNow();
+	my $end = defined $to ? $to : $now;
+	my $changed = 0;
 	foreach my $p ( @{ &vacation_periods() } ) {
-		next unless ($p->{'state'} // '') eq 'proposed' || ($p->{'state'} // '') eq 'dismissed';
-		next if $p->{'from'} > $to || (defined $p->{'to'} && $p->{'to'} < $from);
+		my $p_to = $p->{'to'};
+		next if $p->{'from'} > $end;
+		next if defined $p_to && $p_to < $from;
+		# An accepted span already covers this quiet time: nothing to ask.
+		return $p if &vacation_accepted($p);
+		return $p unless ($p->{'state'} // '') eq 'proposed';
+		# One proposal, kept current: an ongoing gap opens it, a finished gap
+		# closes it, and the earliest start is the one the person remembers.
+		$p->{'from'} = $from if $from < $p->{'from'};
+		if (!defined $to) {
+			if (defined $p->{'to'}) { delete $p->{'to'}; $changed = 1; }
+		}
+		elsif (!defined $p->{'to'} || $to > $p->{'to'}) {
+			$p->{'to'} = $to;
+			$changed = 1;
+		}
+		if ($changed) {
+			my $settings = &vacation_settings();
+			$settings->{'periods'} = &vacation_periods();
+			&vacation_save($settings);
+		}
 		return $p;
 	}
 	my $period = {
 		uuid => &random_string_creator(24),
 		from => $from,
-		to => $to,
+		(defined $to ? (to => $to) : ()),
 		state => 'proposed',
 		kind => ($data->{'kind'} // 'away'),
 		note => ($data->{'note'} // ''),
 		place => ($data->{'place'} // ''),
-		created => &rightNow(),
+		created => $now,
 	};
 	my $settings = &vacation_settings();
 	push @{ $settings->{'periods'} }, $period;
@@ -446,18 +471,79 @@ sub vacation_propose($data) {
 sub vacation_proposal_answer($uuid, $accept) {
 	my $period = &vacation_period($uuid);
 	return undef unless $period && ($period->{'state'} // '') eq 'proposed';
+	my $now = &rightNow();
 	if ($accept) {
-		$period->{'state'} = $period->{'from'} > &rightNow() ? 'planned' : 'active';
-		$period->{'accepted'} = &rightNow();
+		my $to = $period->{'to'};
+		if (!defined $to || $to >= $now - 5 * 60 * 1000) {
+			# Still away (or only just back): the period is open ended until the
+			# person presses I am home, so the budget does not resume mid-gap.
+			delete $period->{'to'};
+			$period->{'state'} = $period->{'from'} > $now ? 'planned' : 'active';
+		}
+		else {
+			# A finished quiet spell is history: accepted, but not active now.
+			$period->{'state'} = 'ended';
+		}
+		$period->{'accepted'} = $now;
+		&vacation_close_open_sessions($period->{'from'}) if $period->{'from'} <= $now;
 	}
 	else {
 		$period->{'state'} = 'dismissed';
-		$period->{'dismissed'} = &rightNow();
+		$period->{'dismissed'} = $now;
 	}
 	my $settings = &vacation_settings();
 	$settings->{'periods'} = &vacation_periods();
 	&vacation_save($settings);
 	return $period;
+}
+
+# Save the opt-in detector. The hours are the quiet length that becomes a
+# proposal; nothing is applied until the person confirms it.
+sub vacation_auto_save($data) {
+	$data = {} unless ref $data eq 'HASH';
+	my $raw = $data->{'detect'} // '';
+	my $detect = ($raw =~ /^(?:on|yes|true|1)$/i) ? 1 : 0;
+	my $hours = _vacation_number($data->{'after_hours'});
+	$hours = 24 unless defined $hours && $hours >= 1 && $hours <= 720;
+	my $settings = &vacation_settings();
+	$settings->{'auto'} = { detect => $detect, after_hours => $hours };
+	&vacation_save($settings);
+	return $settings->{'auto'};
+}
+
+# One pass over the house's own liveness: a quiet gap longer than the setting
+# becomes a question. A server or computer runs it; a phone leaves the pass to
+# the house. `live` and `force` are for the test, not for the job.
+sub vacation_detect_tick($opts) {
+	$opts ||= {};
+	my $now = $opts->{'now'} || &rightNow();
+	my $settings = &vacation_settings();
+	my $auto = $settings->{'auto'} || {};
+	return 0 unless ($auto->{'detect'} || 0);
+	return 0 unless $opts->{'force'} || eval { &evaluation_auto_here() };
+	my $hours = _vacation_number($auto->{'after_hours'});
+	$hours = 24 unless defined $hours && $hours >= 1 && $hours <= 720;
+	my $after_ms = $hours * 3600000;
+	my $live = $opts->{'live'} || eval { &clothesline_device_liveness($now) };
+	return 0 unless ref $live eq 'HASH';
+	my $devices = $live->{'devices'} || {};
+	return 0 unless ref $devices eq 'HASH' && %{$devices};
+	my $made = 0;
+	foreach my $span ( @{ $live->{'down'} || [] } ) {
+		next unless ref $span eq 'ARRAY' && scalar @{$span} >= 2;
+		my ($from, $to) = (0 + $span->[0], 0 + $span->[1]);
+		next unless $from > 0 && $to > $from;
+		next if ($to - $from) < $after_ms;
+		my $ongoing = $to >= $now - 5 * 60 * 1000;
+		my $proposal = &vacation_propose({
+			from => $from,
+			($ongoing ? () : (to => $to)),
+			kind => 'away',
+			note => 'quiet period',
+		});
+		$made++ if $proposal;
+	}
+	return $made;
 }
 
 # What a card or a status call needs, without every caller reading the JSON.
@@ -490,12 +576,15 @@ sub vacation_status($ts) {
 		};
 	}
 	my $data = &vacation_settings();
+	my @proposals = sort { $a->{'from'} <=> $b->{'from'} }
+		grep { ($_->{'state'} // '') eq 'proposed' } @{ $data->{'periods'} || [] };
 	return {
 		active => $current ? 1 : 0,
 		current => $current,
 		next => $next,
 		last => $last,
 		digest => $digest,
+		proposals => \@proposals,
 		periods => $data->{'periods'} || [],
 		policy => $data->{'policy'},
 		auto => $data->{'auto'},

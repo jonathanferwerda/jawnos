@@ -106,6 +106,9 @@ sub job_slow_loops {
 		{ name => 'error watch', first => 25, every => 60, run => sub { &subs::error_watch_tick(); } },
 		{ name => 'guide watch', first => 40, every => 60, run => sub { &subs::guide_watch_tick(); } },
 		{ name => 'records watch', first => 120, every => 7200, run => sub { &subs::records_watch_tick(); } },
+		# An opt-in pass over the house's own liveness: a quiet gap longer than the
+		# card's setting becomes a question, never an automatic budget change.
+		{ name => 'vacation detect', first => 120, every => 600, run => sub { &subs::vacation_detect_tick(); } },
 		{ name => 'ai balance', first => 30, every => 600, run => sub { &subs::ai_balance_refresh(); } },
 		# The thresholds set under the chart: an hour over the limit, or a runway
 		# under it, becomes one Handbook note per crossing. The ledger's prune

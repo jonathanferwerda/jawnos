@@ -65,3 +65,42 @@ $(document).on('click', '#me_away_card .away_cancel', function () {
 		error: function () { jawnosAwayStatus('Could not cancel the away period.'); }
 	});
 });
+
+$(document).on('click', '#me_away_card .away_detect_save', function () {
+	var detect = $('#me_away_card .away_detect').is(':checked') ? 'on' : 'off';
+	var hours = $('#me_away_card .away_after_hours').val() || '24';
+	jawnosAwayStatus('Saving\u2026');
+	$.ajax({
+		url: '/manager/vacation/detect',
+		type: 'POST',
+		data: { detect: detect, after_hours: hours, timestamp: Date.now() },
+		success: function (response) {
+			if (response && response.ok) { jawnosAwayReload(); }
+			else { jawnosAwayStatus((response && response.error) || 'Could not save the detector.'); }
+		},
+		error: function () { jawnosAwayStatus('Could not save the detector.'); }
+	});
+});
+
+function jawnosAwayProposal(button, accept) {
+	var uuid = $(button).attr('uuid') || '';
+	jawnosAwayStatus('Saving\u2026');
+	$.ajax({
+		url: '/manager/vacation/proposal',
+		type: 'POST',
+		data: { uuid: uuid, accept: accept ? 1 : 0, timestamp: Date.now() },
+		success: function (response) {
+			if (response && response.ok) { jawnosAwayReload(); }
+			else { jawnosAwayStatus((response && response.error) || 'Could not answer the quiet period.'); }
+		},
+		error: function () { jawnosAwayStatus('Could not answer the quiet period.'); }
+	});
+}
+
+$(document).on('click', '#me_away_card .away_accept', function () {
+	jawnosAwayProposal(this, true);
+});
+
+$(document).on('click', '#me_away_card .away_dismiss', function () {
+	jawnosAwayProposal(this, false);
+});

@@ -65,6 +65,14 @@ sub clear_appointments {
 	$db->query('delete from appointments');
 }
 
+sub clear_vacation {
+	$db->query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'vacation', 'all');
+	$db->query('insert into settings (setting, value, app, device, uuid, server_time) values (?,?,?,?,?,?)',
+		'vacation', encode_json({ version => 1, periods => [], policy => {}, auto => { detect => 0, after_hours => 24 } }),
+		'__president', 'all', 'vacation-empty', $now);
+	&subs::vacation_forget();
+}
+
 # --- the period itself ------------------------------------------------------
 my $start = ts(2026, 11, 1, 0, 0, 0);
 my $end   = ts(2026, 11, 8, 0, 0, 0);
@@ -100,6 +108,65 @@ ok($ended->{'last'}, 'the ended period is remembered');
 ok($ended->{'digest'} && $ended->{'digest'}->{'days'} == 5, 'the digest counts the five days away');
 is($ended->{'digest'}->{'notices'}, 0, 'a house with no notice table reads zero notices');
 set_vacation($start, $end);
+
+# --- the opt-in quiet-period detector --------------------------------------
+clear_vacation();
+my $auto = &subs::vacation_auto_save({ detect => 'on', after_hours => '12' });
+is($auto->{'detect'}, 1, 'the detector is opt-in and can be switched on');
+is($auto->{'after_hours'}, 12, 'the card stores the quiet hours it was given');
+my $auto_default = &subs::vacation_auto_save({ detect => 'on', after_hours => '0' });
+is($auto_default->{'after_hours'}, 24, 'a bad length falls back to twenty-four hours');
+&subs::vacation_auto_save({ detect => 'on', after_hours => '12' });
+
+my $made = &subs::vacation_detect_tick({
+	force => 1,
+	now => $now,
+	live => { devices => { 'a' => {} }, down => [ [ $now - 30 * 3600000, $now - 2 * 3600000 ] ] },
+});
+ok($made, 'a quiet gap longer than the setting becomes a proposal');
+my $proposed = &subs::vacation_status($now);
+is(scalar @{ $proposed->{'proposals'} }, 1, 'the card has one question to answer');
+ok(!$proposed->{'active'}, 'a proposal does not pause a budget');
+my $proposal = $proposed->{'proposals'}->[0];
+my $accepted = &subs::vacation_proposal_answer($proposal->{'uuid'}, 1);
+is($accepted->{'state'}, 'ended', 'a finished quiet gap is accepted as history');
+my $after = &subs::vacation_status($now);
+is(scalar @{ $after->{'proposals'} }, 0, 'the question is gone once answered');
+ok(!$after->{'active'}, 'a finished gap does not make the house away now');
+
+# a dismissal keeps the same gap from being asked again
+clear_vacation();
+&subs::vacation_auto_save({ detect => 'on', after_hours => '12' });
+my $gap = [ $now - 30 * 3600000, $now - 2 * 3600000 ];
+&subs::vacation_detect_tick({ force => 1, now => $now, live => { devices => { 'a' => {} }, down => [ $gap ] } });
+my $again = (&subs::vacation_status($now))->{'proposals'}->[0];
+&subs::vacation_proposal_answer($again->{'uuid'}, 0);
+&subs::vacation_detect_tick({ force => 1, now => $now, live => { devices => { 'a' => {} }, down => [ $gap ] } });
+is(scalar @{ (&subs::vacation_status($now))->{'proposals'} }, 0,
+	'a dismissed quiet gap is not asked again');
+
+# an ongoing gap is open ended until the person says they are home
+clear_vacation();
+&subs::vacation_auto_save({ detect => 'on', after_hours => '12' });
+&subs::vacation_detect_tick({
+	force => 1,
+	now => $now,
+	live => { devices => { 'a' => {} }, down => [ [ $now - 30 * 3600000, $now ] ] },
+});
+my $ongoing = (&subs::vacation_status($now))->{'proposals'}->[0];
+ok(!defined $ongoing->{'to'}, 'an ongoing gap has no end yet');
+my $opened = &subs::vacation_proposal_answer($ongoing->{'uuid'}, 1);
+is($opened->{'state'}, 'active', 'accepting an ongoing gap opens an away period');
+ok(&subs::vacation_active($now), 'the accepted ongoing gap is active now');
+&subs::vacation_end($opened->{'uuid'}, $now);
+
+# an opt-out leaves the pass alone
+clear_vacation();
+&subs::vacation_auto_save({ detect => 'off', after_hours => '24' });
+my $off = &subs::vacation_detect_tick({
+	live => { devices => { 'a' => {} }, down => [ [ $now - 30 * 3600000, $now - 2 * 3600000 ] ] },
+});
+is($off, 0, 'a detector that is off proposes nothing');
 
 # --- the policy -------------------------------------------------------------
 is(&subs::vacation_policy_for('walk', 'duration', 'floor', 0), 'prorate',

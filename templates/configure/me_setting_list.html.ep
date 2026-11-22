@@ -66,6 +66,9 @@
 	<% my $vacation = &subs::vacation_status(); %>
 	<% my $current_away = $vacation->{'current'}; %>
 	<% my $next_away = $vacation->{'next'}; %>
+	<% my $auto = $vacation->{'auto'} || {}; %>
+	<% my $auto_hours = $auto->{'after_hours'} || 24; %>
+	<% my $proposals = $vacation->{'proposals'} || []; %>
 	<% my $date_text = sub { my ($ms) = @_; return '' unless defined $ms; my @l = localtime(int($ms / 1000)); return sprintf('%04d-%02d-%02d', $l[5] + 1900, $l[4] + 1, $l[3]); }; %>
 	<% my @now_l = localtime(); my @week_l = localtime(time() + 7 * 86400); %>
 	<% my $today = sprintf('%04d-%02d-%02d', $now_l[5] + 1900, $now_l[4] + 1, $now_l[3]); %>
@@ -73,6 +76,25 @@
 	<div class="cfg-card" id="me_away_card">
 		<h3><%= &subs::ui('Away') %></h3>
 		<p class="cfg-note"><%= &subs::ui('A vacation, a trip or a stay away from the house. Budgets are read against the time you were here; routines and non-urgent notices wait.') %></p>
+		<div class="cfg-row" id="me_away_detect">
+			<label><input type="checkbox" class="away_detect"<% if ($auto->{'detect'}) { %> checked<% } %>> <%= &subs::ui('Detect quiet periods') %></label>
+			<span><%= &subs::ui('after') %> <input type="number" class="away_after_hours" min="1" max="720" step="1" value="<%= $auto_hours %>"> <%= &subs::ui('hours') %></span>
+			<button type="button" class="away_detect_save"><%= &subs::ui('Save') %></button>
+			<span class="cfg-note"><%= &subs::ui('A quiet gap becomes a question on this card; nothing pauses until you confirm it.') %></span>
+		</div>
+		<% if (scalar @{$proposals}) { %>
+			<div class="away_proposals">
+				<% foreach my $pp ( @{$proposals} ) { %>
+					<p><b><%= &subs::ui('Quiet period') %></b>
+						<%= $date_text->($pp->{'from'}) %>
+						<% if (defined $pp->{'to'}) { %><%= &subs::ui('until') %> <%= $date_text->($pp->{'to'}) %><% } else { %><%= &subs::ui('until now') %><% } %>.
+						<%= &subs::ui('Was that a vacation?') %>
+						<button type="button" class="away_accept" uuid="<%= $pp->{'uuid'} %>"><%= &subs::ui('Yes') %></button>
+						<button type="button" class="away_dismiss" uuid="<%= $pp->{'uuid'} %>"><%= &subs::ui('No') %></button>
+					</p>
+				<% } %>
+			</div>
+		<% } %>
 		<% if ($current_away) { %>
 			<p><b><%= &subs::ui('Away') %></b>
 				<%= $date_text->($current_away->{'from'}) %>
