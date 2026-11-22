@@ -800,8 +800,7 @@ pong that arrived after the next ping had gone out, so the socket stayed one rep
 was accepted, and the sender re-handshaked every two seconds. It now measures a pong whose echoed
 ping is at most a second old, using the echoed stamp for the round trip; the replay window still
 makes a duplicate harmless. Live, a 10 s Wi-Fi take went from five handshakes and four receiver
-rebuilds to one session. That run used a debug build whose loop could not keep the 10 ms cadence, so
-its own concealment is not a release measurement; the release engine is the next run.
+rebuilds to one session, and the release build then sent all 988 datagrams with one handshake.
 
 **The house side (2026-11-21, in the tree):** Sound owns the uplink address (`sound|audio_uplink`,
 empty off) and a generated session key that is never displayed; the boot file carries both while a
@@ -826,8 +825,21 @@ receiver, buffer and cursor. On Wi-Fi a 3 s take produced 24 WELCOMEs while the 
 first reply; each one used to discard the jitter window, and the master reported ~14 s of concealed
 frames for 3 s of audio. The session count now counts sessions, not WELCOMEs.
 
+**Placing a late peer (2026-11-21, v0.1.3567):** the master used to read at the leading edge of its
+own clock: each 10 ms wake pulled a 480-frame block and concealed a span 43 ms old, then refused the
+datagram that filled that span as already read; 70% of a Wi-Fi take landed that way. The read now
+follows a playback head that trails the clock by `PULL_BUFFER_FRAMES` (8192 frames, 171 ms) through
+`AudioReceiver::pull_to`, pulls exactly the frames the cursor is behind that head, and allocates a
+four-window receiver (341 ms) so a burst still fits. `DEADLINE_GUARD_FRAMES` is untouched: the buffer
+is the slack, not a wider guard. A clean 10 s take then received 988 of 988 datagrams with 73 207
+concealed frames (was 355 012) and one session. The cost is ~171 ms of peer latency, and the residual
+`late` count is mostly partial overlap from the sender's per-pong offset swinging ~64 ms; the next
+step is a minimum-RTT offset, which should let the buffer shrink.
+
 **Still to come:** the peer's live capture, a peer id in the stream so more than one peer can join,
-and each input's declared latency.
+each input's declared latency, and a minimum-RTT offset so the placement buffer can shrink. The P4
+gate itself — guitar through the UM2 and voice on the peer, one take, ten minutes — is the next
+live session.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
@@ -877,7 +889,14 @@ did reproduce: `table`'s house engine rendered ~149 s and then failed on its pla
 `cannot patch: default: playback: ... 'I/O error (5)'`, with the plan's two inputs still capturing
 and the process never respawned. The failure now carries its own context (v0.1.3560): the raw error
 plus the PCM it opened, the PipeWire target, and the server's then-default sink, so the next
-occurrence is diagnosable without guesswork. The cause itself is still open.
+occurrence is diagnosable without guesswork. The cause is proved (v0.1.3568): through
+pipewire-alsa, `--period 64` pins the server graph to a 64-frame quantum, and a graph
+reconfiguration loses the stream with EIO — which `snd_pcm_recover` cannot repair. Forcing
+`clock.force-quantum 1024` reproduces it on the old binary and leaves 256/1024 running. A PipeWire
+engine now asks for 256/1024 whatever the mode (ALSA duplex keeps 64/256), the playback loop reopens
+the PCM and replays the block inside a two-second window, and the supervisor ends a `failed` patch
+once so it respawns rather than leaving the house silent. Live after the change: `period 256 /
+buffer 1024`, `xruns 0`, patching past three minutes where the old engine never reached 150 s.
 
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
