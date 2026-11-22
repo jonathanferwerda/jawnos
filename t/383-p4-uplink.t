@@ -71,7 +71,11 @@ like( $uplink, qr/One session at a time|One audio session at a time/,
 # --- pacing and the ring ----------------------------------------------------
 like( $uplink, qr/PULL_FRAMES:\s*usize\s*=\s*480/, 'a wake pulls one 10 ms block' );
 like( $uplink, qr/PULL_INTERVAL_MS:\s*u64\s*=\s*10/, 'the thread wakes every 10 ms' );
-like( $uplink, qr/PULL_BUFFER_FRAMES/, 'the read cursor trails the clock by a jitter buffer' );
+like( $uplink, qr/PULL_BUFFER_FRAMES:/, 'the read cursor trails the clock by a jitter buffer' );
+like( $uplink, qr/PULL_BUFFER_FRAMES:\s*usize\s*=\s*DEFAULT_JITTER_FRAMES;/,
+	'the placement buffer is one jitter window (4096 frames), not two' );
+like( $uplink, qr/PULL_WINDOW_FRAMES:\s*usize\s*=\s*4\s*\*\s*DEFAULT_JITTER_FRAMES;/,
+	'the receiver window stays four windows so a burst still fits' );
 like( $uplink, qr/pull_at\(/, 'the pull has a leading-edge deadline' );
 like( $uplink, qr/pull_to\(/, 'the paced read never passes the playback head' );
 like( $uplink, qr/\bsource\.pump_to\(/, 'the thread pulls to the playback head' );

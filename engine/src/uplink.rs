@@ -82,17 +82,19 @@ pub const PULL_INTERVAL_MS: u64 = 10;
 /// a datagram delayed or reordered by up to this much slack is placed when it
 /// arrives rather than lost because the cursor already read past it.
 ///
-/// It is two jitter windows, not one. The sender stamps a block at the start of
-/// the interval its clock advanced, so the newest block's start is already a
-/// block plus a network hop behind the master clock (the measured pipeline is
-/// ~73 ms on the house LAN); a one-window buffer leaves only ~12 ms of real
-/// slack, and an ordinary reorder exceeds it. Two windows leave the
-/// jitter window itself as slack after the pipeline is paid.
-pub const PULL_BUFFER_FRAMES: usize = 2 * DEFAULT_JITTER_FRAMES;
+/// It is one jitter window ([`DEFAULT_JITTER_FRAMES`], about 85 ms at 48 kHz).
+/// The sender now keeps the least-delayed exchange for five seconds, so a
+/// block's stamp no longer swings with the path's queue depth; the pipeline it
+/// still pays is one block plus the path's floor, and a window leaves an
+/// ordinary reorder room after that. Two windows cost 171 ms of placement
+/// latency for slack the stable stamp no longer needs. Half a window (43 ms)
+/// measured below the pipeline on the live laptop → table path: a 10 s take at
+/// 2048 was late on nearly every datagram, so one window is the floor.
+pub const PULL_BUFFER_FRAMES: usize = DEFAULT_JITTER_FRAMES;
 
-/// The receiver window the uplink allocates: twice the read buffer, which is
-/// the buffer plus room for the newer datagrams a burst may carry ahead of the
-/// cursor (a stalled wake may hand the sender a burst of up to
+/// The receiver window the uplink allocates: four jitter windows, independent
+/// of the read buffer so a datagram ahead of the cursor still fits when a burst
+/// drains (a stalled wake may hand the sender a burst of up to
 /// [`PULL_MAX_FRAMES`]).
 pub const PULL_WINDOW_FRAMES: usize = 4 * DEFAULT_JITTER_FRAMES;
 
