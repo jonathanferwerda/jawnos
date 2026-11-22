@@ -603,15 +603,12 @@ body.dark_theme .music_cfg_drawer {
 	box-shadow: var(--music-shadow);
 	border-color: var(--music-line);
 }
-/* A safety net under the window: a row that has scrolled out of the rendered
-   slice is never in the DOM, and a row inside the slice but off screen skips
-   its own layout. Measured in WebEngine, this cut a 5,000-row layout from 876 ms
-   to 89 ms; it does not cut parse or node count, which is why the window above
-   (files.html.ep) is what keeps those bounded. */
-#music .music_track {
-	content-visibility: auto;
-	contain-intrinsic-size: auto 74px;
-}
+/* The window above already bounds the DOM to one slice, so every mounted row
+   is laid out. `content-visibility: auto` used to skip an off-screen row's
+   layout, but a freshly mounted slice measured its skipped rows at the old
+   intrinsic size and grew them as they scrolled in - the rows below the anchor
+   then moved, which is the jump a lazy load caused. The window is the bound;
+   do not put the skipped layout back. */
 /* the details panel is fetched on first press; this is the one-line waiting
    state that holds the row's shape while that request is out */
 #music .track_description.music_detail_pending {
@@ -624,11 +621,7 @@ body.dark_theme .music_cfg_drawer {
 #music .music_grid {
 	grid-auto-rows: min-content;
 }
-/* the grid's cards are roughly square (a 150px column plus its words), so an
-   off-screen card remembers a grid-shaped height rather than a list row's */
-#music .music_grid .music_track {
-	contain-intrinsic-size: auto 190px;
-}
+
 #music .music_track.playing {
 	border-color: var(--music-accent);
 	box-shadow: inset 4px 0 0 var(--music-accent), 0 0 0 1px var(--music-accent);

@@ -463,9 +463,10 @@ like($css, qr/#music_files \{[^}]*overflow-anchor: none;/s,
 	'the list disables the browser\'s own scroll anchoring');
 like($css, qr/#music_window \{[^}]*overflow-anchor: none;/s,
 	'and so does the slice it mounts');
-like($css, qr/#music \.music_track \{[^}]*content-visibility: auto;/s,
-	'a mounted but off-screen row skips its own layout');
-like($css, qr/contain-intrinsic-size: auto 74px/, 'with a row-sized placeholder');
+unlike($css, qr/#music \.music_track \{[^}]*content-visibility/s,
+	'a mounted row lays out at its real height, so a new slice cannot measure short');
+unlike($css, qr/contain-intrinsic-size/,
+	'and no intrinsic placeholder stands in for a row that is about to render');
 
 done_testing();
 
