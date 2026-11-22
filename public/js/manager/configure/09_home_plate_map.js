@@ -230,7 +230,7 @@ function homePlateState($editor) {
 			flags: (data.flags && data.flags.length) ? data.flags : [],
 			selected: '', area: null, tool: '', pending: null, trace: null,
 			flagArmed: false, branchArmed: false, map: null, width: 200, dirty: false,
-			ground: null, branchResults: null
+			ground: null, branchResults: null, basemapAsked: false
 		};
 		homePlateEditors[key] = st;
 	}
@@ -316,6 +316,16 @@ function homePlateReload($editor) {
 	if (st.map) { st.map.draw(); }
 }
 
+// The Travel basemap loader is in the lazy travel chunk, and a Configure page
+// never opens Travel. On a fresh session the loader is absent, the house
+// provider has no ground, and the canvas stays blank - the session where the
+// map did appear had already opened Travel. Ask for the chunk, then build with
+// the vector block; if it does not arrive, build anyway and let
+// homePlateLoadGround fall back to a tile provider.
+function homePlateBasemapReady() {
+	return typeof window.travelBasemapLoad === 'function' && typeof window.travelBasemapStyle === 'function';
+}
+
 function homePlateInit($editor) {
 	if (!$editor || !$editor.length) { return; }
 	var st = homePlateState($editor);
@@ -325,6 +335,19 @@ function homePlateInit($editor) {
 	if (st.map && typeof st.map.destroy === 'function') { try { st.map.destroy(); } catch (e) {} }
 	var anchor = homePlateAnchor(homePlateSelectedPlate(st));
 	var start = anchor || homePlateHere() || { lat: 43.0, lon: -81.94 };
+	if (!homePlateBasemapReady() && !st.basemapAsked && typeof window.jawnosLoadApp === 'function') {
+		st.basemapAsked = true;
+		var built = false;
+		var build = function() {
+			if (built) { return; }
+			built = true;
+			homePlateInit($editor);
+		};
+		homePlateMapStatus(st, homePlateT('Loading the map...'));
+		window.jawnosLoadApp('travel', build);
+		setTimeout(build, 10000);
+		return;
+	}
 	// Travel draws its ground with the house's own vector basemap, and the engine
 	// only paints that layer when create() is handed the loader. Without it the
 	// `house` provider has no ground and the canvas stays blank, so pass the same
@@ -376,6 +399,7 @@ function homePlateLoadGround(st) {
 		st.map.setProvider(provider, (g && g.custom_url) || '', (g && g.keys) || {});
 		st.map.setMaps((g && g.maps) || []);
 		homePlateBuildProvider(st);
+		homePlateMapStatus(st, '');
 		var anchor = homePlateAnchor(homePlateSelectedPlate(st));
 		if (anchor) { st.map.focusOn(anchor.lat, anchor.lon, 0.006); }
 		st.map.draw();

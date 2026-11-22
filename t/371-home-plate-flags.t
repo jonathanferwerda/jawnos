@@ -1,7 +1,8 @@
 # tests-for: templates/configure/home_plate_map.html.ep templates/configure/home_plate.html.ep templates/configure/me_setting_list.html.ep public/js/manager/configure/09_home_plate_map.js public/js/manager/configure/05_database_records.js public/js/manager/configure.js public/js/manager/mapmarkers.js public/js/manager/travel.js public/js/manager/travel/01_map_render_points.js lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Routes/manager_configure5.pm lib/JawnOS/Controller/manager_misc10.pm
 # covers:    the map editor is the only place a plate's ground is defined:
 #            drag or click a flag, draw a circle/box/path/polygon, trace a river,
-#            cache OSM branches for a pattern, and save the whole flag at once
+#            cache OSM branches for a pattern, and save the whole flag at once;
+#            the editor loads the lazy travel basemap before it draws
 
 use strict;
 use warnings;
@@ -69,6 +70,10 @@ like( $editor, qr/window\.homePlateTraceWater/, 'the trace is handed to the wate
 like( $editor, qr#/manager/configure/home_plate/shape#, 'the save posts the whole flag' );
 like( $editor, qr/function homePlateDropFlag/, 'the card delete updates the map too' );
 like( $editor, qr/mapOpts\.vector/, 'the map hands the engine the house vector basemap loader' );
+like( $editor, qr/function homePlateBasemapReady/, 'the editor knows when that loader is present' );
+like( $editor, qr/jawnosLoadApp\('travel'/, 'a Configure page asks for the lazy travel chunk instead of drawing a blank map' );
+like( $editor, qr/!st\.basemapAsked/, 'and asks only once per editor' );
+like( $editor, qr/setTimeout\(build, 10000\)/, 'a chunk that never arrives still builds the map' );
 
 # ----------------------------------------------------------- the card handlers
 unlike( $records, qr/\$\(document\)\.on\('change', '\.manual_home_plate'/, 'the manual lat/long handler is gone' );
