@@ -865,9 +865,40 @@ concealed, so one window is the floor. The combined run on a quieter path was 1 
 datagrams, `late 11`, and a 1 270-frame concealed plateau during the take; the jump after the last
 datagram is the read head crossing the end, not a loss.
 
-**Still to come:** the peer's live capture, a peer id in the stream so more than one peer can join,
-and each input's declared latency. The P4 gate itself — guitar through the UM2 and voice on the
-peer, one take, ten minutes — is the next live session.
+**More than one peer (2026-11-22, v0.1.3579):** the session is the peer id and the 32-byte
+audio header is unchanged. A source's receiver is built by its peer's first authenticated audio,
+never by a WELCOME, so one peer's handshake no longer rebuilds another's stream. The HELLO now
+carries the audio stream the peer will feed, inside its existing authenticated tag: a new session
+claiming a source's stream takes it over at once (a repeat `--send-take` is a new process on a new
+ephemeral port), a session claiming a different stream is refused and counted, and a retried HELLO
+keeps the receiver, buffer, cursor and counters. Two peers on two streams, a repeat take from a new
+port, and a third session refused on a busy stream are tested over real sockets. The control wire
+changed, so both engine ends must ship together.
+
+**Declared latency (2026-11-22, v0.1.3581):** a plan's `peer` source may carry `latency_ms`
+(finite, non-negative, at most 2 000 ms; anything else refused by name). Positive means the peer's
+audio is late, so the master subtracts that many frames from every datagram's decoded position
+before it enters the jitter buffer and the source is placed earlier. The tag is verified on the
+original header, `accept` delegates at shift 0, and status reports `latency_ms` and
+`latency_frames` per peer source. A local input's declaration is kept in the plan but not
+compensated on this path. The Sound control that writes a non-zero peer latency is still owed,
+and a declaration larger than the 85 ms placement buffer needs per-source buffering: the 2 000 ms
+bound is a sanity limit, not a placement guarantee.
+
+**Live capture (2026-11-22, v0.1.3583):** `--send-live --device NAME --out take.wav` opens a
+capture input, writes each block to the local WAV first (D14), then offers the same frames to the
+clock loop. A fixed ring separates the capture thread from the send loop; a short capture is
+zero-padded, a frame whose span has already passed is dropped, and both are counted in the
+report (`captured`, `dropped`, `padded`). `--seconds` bounds a run and drains the ring; without it
+a live input runs until stopped. Tested with a synthetic source and a real master/receiver on
+loopback; a hardware run (ALSA input, xruns, long-run drift) is still owed. The phone app's own
+capture half is outside this engine change.
+
+**Still to come:** the P4 gate — guitar through the UM2 and voice on the peer, one take, ten
+minutes — is the next live session, now with `--send-live` for a peer and `latency_ms` in the
+plan. The hardware capture run, the Sound control that writes a peer's `latency_ms`, and
+per-source buffering when a declaration exceeds the 85 ms placement window are this slice's
+follow-ups.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
