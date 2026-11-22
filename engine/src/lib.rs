@@ -27,6 +27,7 @@ pub mod pipewire_guard;
 pub mod playback;
 pub mod proto;
 pub mod reverb;
+pub mod sender;
 pub mod session;
 pub mod uplink;
 pub mod wav;
@@ -72,6 +73,9 @@ pub use peer::{
 pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,
     HEADER_LEN, VERSION,
+};
+pub use sender::{
+    run_send_take, validate_send, SendSpec, SenderReport, TakeBlock, TakeSender, ValidatedSend,
 };
 pub use session::{align, elect, Candidate, ClockOffset, NodeId};
 pub use uplink::{

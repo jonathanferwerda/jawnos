@@ -25,6 +25,7 @@ use jawn_audio::{
     decode, encode_datagram, loopback, mix_mono_into_stereo, monitor_start, peak, to_i16, Channel,
     listen::{self, ListenPlan, ListenReport, ListenStrip},
     peer::{self, Clock, ClockEstimator, ClockReport, InstantClock, ProbeSample},
+    sender,
     Codec, Device, DiskWriter, Header, InsertKind, Mixer, MonitorSpec, NullDevice, PlayTrack,
     Playback, Strip, HEADER_LEN,
 };
@@ -58,6 +59,8 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --serve [options]            arm and place takes over a Unix socket
   jawn-audio --clock-master [options]     answer clock probes over UDP (P3)
   jawn-audio --clock-peer [options]       measure a master's clock over UDP (P3)
+  jawn-audio --send-take FILE.wav [options]
+                                          send a take to a master over UDP (P4)
   jawn-audio --version                    print the version
   jawn-audio --help                       this text
 
@@ -333,6 +336,21 @@ A loopback needs the interface's output patched into its input.
                   of the last second.
   --json            one JSON line instead of prose
 
+--send-take options:
+  --master IP:PORT  the master to send to (required; there is no default)
+  --session-key-hex HEX64
+                  the same 32-byte key as the master (default
+                  $JAWNOS_AUDIO_SESSION_KEY); audio has no unauthenticated
+                  mode
+  --stream N      the master source index this take feeds (default 0); the
+                  wire stream is AUDIO_STREAM_BASE + N
+  --seconds S     how long to send, in seconds (default: the take's length)
+  --rate HZ       the take's sample rate (default 48000); the file must match,
+                  because a take is never silently resampled
+  --pong-timeout-ms MS
+                  how long one ping waits for its pong (default 20)
+  --window N      probes kept in the least-squares fit (default 64)
+
   The peer sends a CLOCK_HELLO carrying a tag before its first ping; the master
   answers a CLOCK_WELCOME with a fresh session id, then a CLOCK_PING every
   10 ms is signed with that session and a 16-byte truncated HMAC-SHA256. The
@@ -348,7 +366,15 @@ A loopback needs the interface's output patched into its input.
   also carries \"session\", \"handshakes\" and \"rejected\". This mode opens no
   audio device and writes no socket under ~/.president; the default master
   bind is loopback, and an address another machine can reach is an explicit
-  --bind.";
+  --bind.
+
+  --send-take reads the take as mono and streams it in real time. It probes the
+  clock on the same authenticated session the P3 audio bearer uses, stamps each
+  datagram with offset.to_master(local) (the local position until the first
+  estimate), and resamples with the fitted drift. A missing file, a take whose
+  rate is not --rate, an empty take or no key is a usage error. The one-line
+  report has role \"sender\" and the same session, sent, handshakes, offset and
+  drift keys as the clock peer.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -363,6 +389,7 @@ enum Mode {
     Serve,
     ClockMaster,
     ClockPeer,
+    SendTake,
     SelfTest,
     Version,
     Help,
@@ -470,6 +497,12 @@ struct Options {
     input: usize,
     input_given: bool,
     seconds_given: bool,
+    /// `--send-take`: the take file to stream to a master.
+    send_take: Option<String>,
+    /// `--stream`: the master source index a take feeds.
+    stream: usize,
+    /// Whether `--stream` was given on the command line.
+    stream_given: bool,
     json: bool,
 }
 
@@ -535,6 +568,9 @@ fn default_options() -> Options {
         input: 0,
         input_given: false,
         seconds_given: false,
+        send_take: None,
+        stream: 0,
+        stream_given: false,
         json: false,
     }
 }
@@ -606,6 +642,17 @@ fn parse_arguments(
             "--serve" => options.mode = Mode::Serve,
             "--clock-master" => options.mode = Mode::ClockMaster,
             "--clock-peer" => options.mode = Mode::ClockPeer,
+            "--send-take" => {
+                options.mode = Mode::SendTake;
+                options.send_take = Some(value(&mut args, "--send-take")?);
+            }
+            "--stream" => {
+                let raw = value(&mut args, "--stream")?;
+                options.stream = raw
+                    .parse()
+                    .map_err(|_| format!("--stream wants a source index, not `{raw}`"))?;
+                options.stream_given = true;
+            }
             "--bind" => options.bind = Some(value(&mut args, "--bind")?),
             "--master" => options.master = Some(value(&mut args, "--master")?),
             "--session-key-hex" => {
@@ -758,31 +805,40 @@ fn parse_arguments(
     Ok(())
 }
 
-/// The clock modes' own rules. `--bind` and `--master` belong to one role
-/// each, a probe loop needs a duration and rate it can act on, and the two
-/// knobs that tune that loop belong to the peer alone.
+/// The clock and send modes' own rules. `--bind` and `--master` belong to one
+/// role each, a run needs a duration and rate it can act on, and the two knobs
+/// that tune the probe loop belong to the probing roles alone.
 fn validate_clock_options(options: &Options) -> Result<(), String> {
     let clock = matches!(options.mode, Mode::ClockMaster | Mode::ClockPeer);
+    let send = options.mode == Mode::SendTake;
+    // The keyed roles: a clock session, a send take, and a serve's uplink.
+    let keyed = clock || send;
     // A serve's uplink is the other keyed transport: it answers a peer's HELLO
     // and authenticates its audio with the same 32-byte key.
     let keyed_serve = options.mode == Mode::Serve && options.uplink.is_some();
-    if options.session_key_given && !clock && !keyed_serve {
+    if options.session_key_given && !keyed && !keyed_serve {
         return Err(
-            "--session-key-hex applies only to --clock-master, --clock-peer and --serve --uplink"
+            "--session-key-hex applies only to --clock-master, --clock-peer, --send-take and --serve --uplink"
                 .to_string(),
         );
     }
     if options.bind.is_some() && options.mode != Mode::ClockMaster {
         return Err("--bind applies only to --clock-master".to_string());
     }
-    if options.master.is_some() && options.mode != Mode::ClockPeer {
-        return Err("--master applies only to --clock-peer".to_string());
+    if options.master.is_some() && !matches!(options.mode, Mode::ClockPeer | Mode::SendTake) {
+        return Err("--master applies only to --clock-peer and --send-take".to_string());
     }
-    if options.mode != Mode::ClockPeer
+    if !matches!(options.mode, Mode::ClockPeer | Mode::SendTake)
         && (options.pong_timeout_ms != peer::PONG_TIMEOUT_MS
             || options.window != peer::ESTIMATOR_CAPACITY)
     {
-        return Err("--pong-timeout-ms and --window apply only to --clock-peer".to_string());
+        return Err(
+            "--pong-timeout-ms and --window apply only to --clock-peer and --send-take"
+                .to_string(),
+        );
+    }
+    if options.stream_given && !send {
+        return Err("--stream applies only to --send-take".to_string());
     }
     if options.mode != Mode::ClockMaster && options.lease_ms != peer::DEFAULT_LEASE_MS {
         return Err("--lease-ms applies only to --clock-master".to_string());
@@ -792,21 +848,31 @@ fn validate_clock_options(options: &Options) -> Result<(), String> {
             "--clock-peer needs --master IP:PORT: the clock master to probe".to_string(),
         );
     }
-    if clock {
+    if send && options.master.is_none() {
+        return Err(
+            "--send-take needs --master IP:PORT: the master to send to".to_string(),
+        );
+    }
+    if keyed {
         let key = options.session_key_hex.as_deref().ok_or_else(|| {
-            "a clock session needs a key: pass --session-key-hex HEX64 \
-             or set $JAWNOS_AUDIO_SESSION_KEY"
-                .to_string()
+            let role = if send { "a send session" } else { "a clock session" };
+            format!(
+                "{role} needs a key: pass --session-key-hex HEX64 \
+                 or set $JAWNOS_AUDIO_SESSION_KEY"
+            )
         })?;
         peer::parse_session_key(key).map_err(|error| format!("--session-key-hex: {error}"))?;
-        if !(options.seconds.is_finite() && options.seconds > 0.0) {
+        // A send take's default duration is the take's own length, known only
+        // after the file is read; an explicit --seconds is still checked here.
+        if (!send || options.seconds_given) && !(options.seconds.is_finite() && options.seconds > 0.0)
+        {
             return Err("--seconds wants a positive, finite duration".to_string());
         }
         if options.rate == 0 {
             return Err("--rate wants a positive sample rate".to_string());
         }
     }
-    if options.mode == Mode::ClockPeer {
+    if matches!(options.mode, Mode::ClockPeer | Mode::SendTake) {
         if options.pong_timeout_ms == 0 {
             return Err("--pong-timeout-ms wants a positive number of milliseconds".to_string());
         }
@@ -1021,6 +1087,7 @@ fn run() -> Result<ExitCode, String> {
         Mode::Serve => run_serve(&options),
         Mode::ClockMaster => run_clock_master(&options),
         Mode::ClockPeer => run_clock_peer(&options),
+        Mode::SendTake => run_send_take(&options),
     }
 }
 
@@ -1279,6 +1346,30 @@ fn quiet_receive(error: &std::io::Error) -> bool {
             | ErrorKind::ConnectionRefused
             | ErrorKind::ConnectionReset
     )
+}
+
+/// `--send-take`: a validated take goes to the sender, which returns the one
+/// JSON line. A usage error is exit 2 (the `?`); a run that could not get a
+/// session or could not reach the master is exit 1 with `ok:false`.
+fn run_send_take(options: &Options) -> Result<ExitCode, String> {
+    let spec = sender::SendSpec {
+        take_path: options.send_take.clone().unwrap_or_default(),
+        master: options.master.clone(),
+        key_hex: options.session_key_hex.clone(),
+        stream: options.stream,
+        rate: options.rate,
+        seconds: options.seconds_given.then_some(options.seconds),
+        pong_timeout_ms: options.pong_timeout_ms,
+        window: options.window,
+    };
+    let validated = sender::validate_send(&spec)?;
+    let report = sender::run_send_take(&validated);
+    println!("{}", report.to_json());
+    Ok(if report.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
 }
 
 fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
