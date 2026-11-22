@@ -1,0 +1,28 @@
+<%# The fuller view of an ended away period: the notices that were held while the
+    person was gone, with the app, title, message and time. The card keeps its
+    one-line digest; this block sits under it and only appears for a recent
+    ended period. `$vacation` may be handed in, otherwise the status is read
+    here so the partial works when included bare. %>
+<% my $vacation = $c->stash('vacation') || &subs::vacation_status(); %>
+<% my $last_away = $vacation->{'last'}; %>
+<% my $digest = $vacation->{'digest'}; %>
+<% if (!($vacation->{'current'}) && defined $last_away && $digest) { %>
+	<% my $held = &subs::vacation_held_notices($last_away->{'from'}, $last_away->{'to'}); %>
+	<details class="away_notices">
+		<summary><%= &subs::ui('What arrived while you were away') %> (<%= $held->{'count'} %>)</summary>
+		<% if ($held->{'count'}) { %>
+			<ul class="away_notices_list">
+				<% foreach my $n (@{ $held->{'notices'} }) { %>
+					<li class="away_notice">
+						<span class="away_notice_app"><%= &subs::format_name($n->{'app'}) %></span>
+						<span class="away_notice_title"><%= $n->{'title'} %></span>
+						<span class="away_notice_message"><%= $n->{'message'} %></span>
+						<span class="away_notice_time"><% if (defined $n->{'timestamp'} && length $n->{'timestamp'}) { %><%= &subs::formatted_time($n->{'timestamp'}) %><% } %></span>
+					</li>
+				<% } %>
+			</ul>
+		<% } else { %>
+			<p class="away_notices_empty"><%= &subs::ui('Nothing was held.') %></p>
+		<% } %>
+	</details>
+<% } %>

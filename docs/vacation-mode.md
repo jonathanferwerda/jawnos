@@ -31,7 +31,9 @@ and routine actions.
 - `evaluation` scheduled runs skip while away; an `each_run` report from real
   activity still runs.
 - A small Away card in Configure -> Me starts, ends or cancels a period, and shows a short return digest (days away and notices that arrived).
-- The card carries the opt-in detector: a checkbox and a quiet length (24 hours by default). A server or computer runs the pass every ten minutes; a quiet gap longer than the setting becomes a proposal on the card. Accepting an ongoing gap opens an away period, accepting a finished one records history, and dismissing it keeps the same gap from being asked again. A proposal never pauses a budget.
+- The card's **Keep running while away** lists the budgets, routines and notices it can keep working: a kept budget keeps counting, a kept scheduled routine still runs, and a kept notice still speaks. It writes `policy.keep_apps` in the same house-wide setting.
+- After a period ends, the card opens a **held-notice review**: the app, title, message and time of each non-urgent notice that arrived while the person was gone.
+- The card carries the opt-in detector: a checkbox and a quiet length (24 hours by default). The pass reads **house-wide synced activity** - `usage_sessions`, `window_events`, appointment writes, plus this machine's own sockets - so a day on the phone and laptop is not a quiet house just because the desk or tablet was closed. A quiet gap longer than the setting becomes a proposal on the card. Accepting an ongoing gap opens an away period, accepting a finished one records history, and dismissing it keeps the same gap from being asked again. A proposal never pauses a budget.
 
 ## Policy
 
@@ -48,15 +50,14 @@ and routine actions.
 
 ## Not yet built
 
-- A per-machine detector setting: the detector is house-wide today, and only a
-  server or computer runs the pass.
-- A fuller "while you were away" review: a list of held notices with one press to open them, and the skipped routines named.
 - A task renewal shift, a Calendar band, an away phone greeting and presence
   simulation.
 
 ## Tests
 
 `t/387-vacation-budget.t` covers the model, the budget modes, the notification
-allowlist, the stock runway, the open-session boundary and the opt-in detector. The existing budget,
-runway, clothesline, notification, route, help and untested-file tests are run
-with it.
+allowlist, the stock runway, the open-session boundary and the opt-in detector.
+`t/388-vacation-activity.t` covers the house-wide activity union and gaps;
+`t/389-vacation-keep.t` the keep lists; `t/390-vacation-notices.t` the held
+notices. The existing budget, runway, clothesline, notification, route, help and
+untested-file tests are run with them.
