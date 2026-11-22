@@ -881,24 +881,31 @@ audio is late, so the master subtracts that many frames from every datagram's de
 before it enters the jitter buffer and the source is placed earlier. The tag is verified on the
 original header, `accept` delegates at shift 0, and status reports `latency_ms` and
 `latency_frames` per peer source. A local input's declaration is kept in the plan but not
-compensated on this path. The Sound control that writes a non-zero peer latency is still owed,
-and a declaration larger than the 85 ms placement buffer needs per-source buffering: the 2 000 ms
-bound is a sanity limit, not a placement guarantee.
+compensated on this path. The Sound control that writes it landed in v0.1.3586 (0–2 000 ms, saved
+through the plan; `Plan.pm` enforces the same bound). A declaration larger than the 85 ms placement
+buffer needs per-source buffering: the 2 000 ms bound is a sanity limit, not a placement guarantee.
 
-**Live capture (2026-11-22, v0.1.3583):** `--send-live --device NAME --out take.wav` opens a
-capture input, writes each block to the local WAV first (D14), then offers the same frames to the
-clock loop. A fixed ring separates the capture thread from the send loop; a short capture is
-zero-padded, a frame whose span has already passed is dropped, and both are counted in the
-report (`captured`, `dropped`, `padded`). `--seconds` bounds a run and drains the ring; without it
-a live input runs until stopped. Tested with a synthetic source and a real master/receiver on
-loopback; a hardware run (ALSA input, xruns, long-run drift) is still owed. The phone app's own
-capture half is outside this engine change.
+**Live capture (2026-11-22, v0.1.3583; fixed v0.1.3587/3590):** `--send-live --device NAME --out
+take.wav` opens a capture input, writes each block to the local WAV first (D14), then offers the
+same frames to the clock loop. The fixed ring overwrites its oldest frame and the window
+resynchronises to the live edge instead of stalling; a short capture is zero-padded and a stale
+span dropped, and `captured`, `dropped`, `padded` and `resynced` are reported. The sender's local
+timeline is the capture sequence, not the wall clock, so a device whose rate differs from the host
+(the laptop's input measured ~500 ppm) is fitted and resampled rather than read ahead and padded.
+`--seconds` bounds a run and drains the ring; without it a live input runs until stopped.
+
+**Hardware live capture (2026-11-22, laptop → table, 600 s):** the take captured 28 785 728 frames
+and sent all of them with `dropped 0`, `padded 0` and `resynced 0`, drift −244 ppm, one handshake.
+The master received 67 085 of 67 208 datagrams, rejected 0, and counted `late 4 088` (6.1%). The
+first minute, before the fit is trusted, is noisier: a separate 60 s run was 28.7% late with 807 952
+concealed frames, so this tailnet path's opening minute is not clean yet. The 600 s concealed total
+was read after the take and includes post-take pulls, so its in-take rate is not recorded. The input
+was the laptop's built-in microphone, clipping at full scale; the phone app's own capture half is
+outside this engine change.
 
 **Still to come:** the P4 gate — guitar through the UM2 and voice on the peer, one take, ten
-minutes — is the next live session, now with `--send-live` for a peer and `latency_ms` in the
-plan. The hardware capture run, the Sound control that writes a peer's `latency_ms`, and
-per-source buffering when a declaration exceeds the 85 ms placement window are this slice's
-follow-ups.
+minutes, on the house LAN — is the next live session. The tailnet's opening minute, and per-source
+buffering when a declaration exceeds the 85 ms placement window, are this slice's follow-ups.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
