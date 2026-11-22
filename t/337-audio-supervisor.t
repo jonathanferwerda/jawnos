@@ -28,11 +28,15 @@
 #            none does, and the choice is logged once. The plan defaults to
 #            the durable audio state dir, not the wiped ~/.president, and the
 #            system-mix state follows the plan beside it. The block the engine
-#            is spawned with follows the saved plan's mode: 64/256 while a
-#            duplex plan is armed, 256/1024 for playback only, and an operator
-#            period or buffer still wins. A plan that flips mode while an engine
-#            runs asks it to restart on the new block, except while a take is
-#            recording, so an armed WAV is never cut.
+#            is spawned with follows the saved plan's mode and backend: 64/256
+#            for an ALSA duplex plan, 256/1024 for a PipeWire one (its block is
+#            the server graph's quantum, not the card's), 256/1024 for playback
+#            only, and an operator period or buffer still wins. A plan that
+#            flips mode while an engine runs asks it to restart on the new
+#            block, except while a take is recording, so an armed WAV is never
+#            cut. A patch that failed keeps answering with `ok:false`, which the
+#            liveness probe ignores: the supervisor now ends that child once so
+#            the loop respawns it.
 
 use strict;
 use warnings;
@@ -255,7 +259,8 @@ close $log;
 sleep 600;
 ENGINE
 	my $sup = start_supervisor(
-		args => [ '--socket', "$dir/audio.sock", '--backend', 'null', '--device', 'hw:9,9' ],
+		args => [ '--socket', "$dir/audio.sock", '--backend', $opt{'backend'} // 'null',
+			'--device', 'hw:9,9' ],
 		log  => "$dir/supervisor.log",
 	);
 	my $args = wait_for( sub { -s $args_log ? read_text($args_log) : 0 }, 10 );
@@ -1596,6 +1601,64 @@ ENGINE
 	like(read_text($pactl_log), qr/unload-module 42/, 'and the sink is unloaded');
 }
 
+# --- a failed patch ends the child so the supervisor can respawn it --------
+# A failed patch answers `ok:false` and the serve stays alive, so `waitpid`
+# never fires. Without this the house stays unrouted until something else
+# restarts the app.
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	local $ENV{AUDIO_TEST_QUIT} = "$dir/quit.log";
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/failed-engine", <<'ENGINE');
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
+use JSON::PP ();
+my %arg;
+for (my $i = 0; $i < @ARGV; $i++) {
+	$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
+}
+my $listener = IO::Socket::UNIX->new(
+	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+) or exit 1;
+while (my $client = $listener->accept) {
+	$client->autoflush(1);
+	my $line = <$client>;
+	my $obj = eval { JSON::PP->new->decode($line) };
+	my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+	if ($cmd eq 'quit') {
+		print {$client} "{\"ok\":true}\n";
+		open(my $q, '>>', $ENV{AUDIO_TEST_QUIT}) or exit 1;
+		print {$q} join(' ', @ARGV), "\n";
+		close $q;
+		close $client;
+		last;
+	}
+	print {$client} "{\"ok\":false,\"state\":\"failed\",\"frames\":1161984,\"xruns\":0,"
+		. "\"backend\":\"pipewire\",\"device\":\"default\",\"pid\":$$,"
+		. "\"error\":\"cannot patch: default: playback: ALSA function 'snd_pcm_writei'"
+		. " failed with error 'I/O error (5)'\"}\n";
+	close $client;
+}
+close $listener;
+unlink $arg{'--socket'};
+ENGINE
+
+	my $sup = start_supervisor(
+		args => ['--backend', 'null', '--device', 'hw:9,9', '--socket', "$dir/audio.sock"],
+		log  => "$dir/supervisor.log",
+	);
+	my $asked = wait_for(sub { -s $ENV{AUDIO_TEST_QUIT} }, 10);
+	ok($asked, 'a failed patch is asked to quit so the supervisor can respawn it')
+		or diag('supervisor: ' . read_text("$dir/supervisor.log"));
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the supervisor stops cleanly after the failed patch');
+	like(read_text("$dir/supervisor.log"),
+		qr/cannot patch:.*ending the engine so it respawns/s,
+		'and the log says why the engine was ended');
+}
+
 # --- a failed duplex PipeWire capture never leaves our sink as default -----
 {
 	my $dir  = tempdir(CLEANUP => 1);
@@ -2828,6 +2891,19 @@ ENGINE
 	my ($duplex_args) = block_for_plan($duplex);
 	like($duplex_args, qr/--period 64 --buffer 256/,
 		'a duplex plan keeps the studio block') or diag("args: $duplex_args");
+
+	# A PipeWire engine writes through pipewire-alsa into the server's graph,
+	# not the card. At 64/256 the graph runs a 64-frame quantum and a server
+	# reconfiguration loses the stream with EIO; the relaxed block is stable.
+	my ($pw_duplex_args) = block_for_plan( $duplex, backend => 'pipewire' );
+	like($pw_duplex_args, qr/--period 256 --buffer 1024/,
+		'a PipeWire duplex plan asks for the relaxed block the server can keep')
+		or diag("args: $pw_duplex_args");
+
+	my ($alsa_duplex_args) = block_for_plan( $duplex, backend => 'alsa' );
+	like($alsa_duplex_args, qr/--period 64 --buffer 256/,
+		'while an ALSA duplex plan still keeps the studio block')
+		or diag("args: $alsa_duplex_args");
 
 	my ($pinned_args) = block_for_plan( $playback, period => 128, buffer => 512 );
 	like($pinned_args, qr/--period 128 --buffer 512/,

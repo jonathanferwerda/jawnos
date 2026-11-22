@@ -8,6 +8,7 @@
 
 use std::f32::consts::TAU;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use alsa::pcm::{Access, Format, HwParams, State, PCM};
 use alsa::{Direction, ValueOr};
@@ -16,7 +17,9 @@ use crate::backends::RunReport;
 use crate::listen::{edge_fade_frames, Edge};
 use crate::loopback::{self, LoopbackReport};
 use crate::monbus::Consumer;
-use crate::pipewire_guard::PlaybackGuard;
+use crate::pipewire_guard::{
+    awaiting_link, reopen_after_link_loss, PlaybackGuard, FEEDBACK_PREFIX,
+};
 
 /// A patch-cable loopback is the interface's stereo pair: the click leaves one
 /// output and comes back on one input, so the measurement is stereo by nature
@@ -113,6 +116,91 @@ fn open(
 
 fn to_i16(sample: f32) -> i16 {
     (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
+}
+
+impl Stream {
+    /// Write one interleaved stereo block, recovering an underrun in place and
+    /// counting it. A failure `snd_pcm_recover` cannot handle is returned as
+    /// the ALSA error, so the caller can tell a lost link (`EIO`) from a fatal
+    /// device error and reopen the PCM without holding this stream's borrow.
+    fn write_stereo(&self, samples: &[i16], xruns: &mut usize) -> Result<(), alsa::Error> {
+        let io = self.pcm.io_i16()?;
+        let mut written = 0usize;
+        while written < samples.len() {
+            match io.writei(&samples[written..]) {
+                Ok(0) => break,
+                Ok(count) => written += count * 2,
+                Err(error) => match self.pcm.try_recover(error, true) {
+                    Ok(()) => *xruns += 1,
+                    // `try_recover` hands back the original error when it is
+                    // not a condition it knows how to repair.
+                    Err(error) => return Err(error),
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Queue one buffer of silence and start the stream, so the blocking writes
+/// below are paced by the device rather than by the loop's own speed. A
+/// reopened stream gets the same lead the first open had.
+fn prime_and_start(playback: &Stream, device: &str) -> Result<(), String> {
+    let frames = playback.period.max(1);
+    let lead = crate::listen::monitor_prefill_frames(playback.buffer, frames);
+    let silence = vec![0i16; lead * 2];
+    let io = playback
+        .pcm
+        .io_i16()
+        .map_err(|error| format!("{device}: playback stream: {error}"))?;
+    let mut primed = 0usize;
+    while primed < lead {
+        match io.writei(&silence[primed * 2..]) {
+            Ok(0) => break,
+            Ok(count) => primed += count,
+            Err(error) => {
+                let message = format!("{error}");
+                match playback.pcm.try_recover(error, true) {
+                    Ok(()) => {}
+                    Err(_) => return Err(format!("{device}: prime playback: {message}")),
+                }
+            }
+        }
+    }
+    match playback.pcm.start() {
+        Ok(()) => {}
+        Err(_) if playback.pcm.state() == State::Running => {}
+        Err(error) => return Err(format!("{device}: start playback: {error}")),
+    }
+    Ok(())
+}
+
+/// Open a fresh playback PCM after a lost PipeWire link and re-arm it. The
+/// target is still `PIPEWIRE_NODE`, so a new stream can be linked to the same
+/// output; a target that has really gone keeps failing and the caller stops
+/// retrying once its window closes. The granted block must match the first
+/// open: the sink and the buffers were prepared against it, so a server that
+/// renegotiates needs a supervisor restart rather than a reshaped patch.
+fn reopen_playback(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    frames: usize,
+    guard: Option<&PlaybackGuard>,
+) -> Result<Stream, String> {
+    let stream = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    let granted = stream.period.max(1);
+    if granted != frames {
+        return Err(format!(
+            "the reopened stream grants a {granted}-frame period, not {frames}"
+        ));
+    }
+    if let Some(guard) = guard {
+        guard.verify()?;
+    }
+    prime_and_start(&stream, device)?;
+    Ok(stream)
 }
 
 /// Play `seconds` of silence or a sine through `device`. Returns the shape ALSA
@@ -725,7 +813,7 @@ pub fn run_playback_with_system<S: crate::listen::ListenSink>(
     if let Some(guard) = guard {
         guard.arm();
     }
-    let playback = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    let mut playback = open(device, Direction::Playback, rate, period, buffer, 2)?;
     if let Some(guard) = guard {
         guard.verify()?;
     }
@@ -735,37 +823,10 @@ pub fn run_playback_with_system<S: crate::listen::ListenSink>(
     // buffers match; the block it renders is silence for every channel.
     sink.prepared(rate, frames, input_channels)?;
 
-    let playback_io = playback
-        .pcm
-        .io_i16()
-        .map_err(|error| format!("{device}: playback stream: {error}"))?;
-
     // The same lead as the duplex loop: queue one buffer of silence and start
     // before the first real block, so the blocking writes below are paced by
     // the device and the loop does not spin ahead of it.
-    let lead = crate::listen::monitor_prefill_frames(playback.buffer, frames);
-    let silence = vec![0i16; lead * 2];
-    let mut primed = 0usize;
-    while primed < lead {
-        match playback_io.writei(&silence[primed * 2..]) {
-            Ok(0) => break,
-            Ok(count) => primed += count,
-            Err(error) => {
-                let message = format!("{error}");
-                match playback.pcm.try_recover(error, true) {
-                    Ok(()) => {}
-                    Err(_) => {
-                        return Err(format!("{device}: prime playback: {message}"))
-                    }
-                }
-            }
-        }
-    }
-    match playback.pcm.start() {
-        Ok(()) => {}
-        Err(_) if playback.pcm.state() == State::Running => {}
-        Err(error) => return Err(format!("{device}: start playback: {error}")),
-    }
+    prime_and_start(&playback, device)?;
 
     // The plan's capture is zero, and this buffer is never written: no card
     // input is opened, which is the whole point of the playback-only patch.
@@ -809,16 +870,48 @@ pub fn run_playback_with_system<S: crate::listen::ListenSink>(
         )?;
         edge.apply(&mut output[..stereo], 2);
 
-        let mut written = 0usize;
-        while written < stereo {
-            match playback_io.writei(&output[written..stereo]) {
-                Ok(0) => break,
-                Ok(count) => written += count * 2,
+        // A lost PipeWire link comes back as EIO, which `snd_pcm_recover`
+        // cannot repair. Reopen the stream (the target is still
+        // `PIPEWIRE_NODE`) and write the same block again, riding out a
+        // WirePlumber re-link or a brief graph reconfiguration instead of
+        // failing the whole patch.
+        let mut lost_at: Option<Instant> = None;
+        let mut last_note: Option<String> = None;
+        'write: loop {
+            match playback.write_stereo(&output[..stereo], &mut xruns) {
+                Ok(()) => break,
                 Err(error) => {
-                    let message = format!("{error}");
-                    match playback.pcm.try_recover(error, true) {
-                        Ok(()) => xruns += 1,
-                        Err(_) => return Err(format!("{device}: playback: {message}")),
+                    let lost_at = *lost_at.get_or_insert_with(Instant::now);
+                    loop {
+                        if !reopen_after_link_loss(
+                            error.errno(),
+                            lost_at.elapsed().as_millis() as u64,
+                        ) {
+                            let suffix = last_note
+                                .map(|note| format!(" (reopen: {note})"))
+                                .unwrap_or_default();
+                            return Err(format!("{device}: playback: {error}{suffix}"));
+                        }
+                        // Let the server settle before making a new stream.
+                        std::thread::sleep(Duration::from_millis(
+                            crate::pipewire_guard::LINK_LOST_RETRY_MS,
+                        ));
+                        match reopen_playback(device, rate, period, buffer, frames, guard) {
+                            Ok(next) => {
+                                playback = next;
+                                continue 'write;
+                            }
+                            // A fresh stream that lands on the captured sink is
+                            // the feedback refusal, not a playback failure. A
+                            // stream that is merely not linked yet is retried.
+                            Err(note)
+                                if note.starts_with(FEEDBACK_PREFIX)
+                                    && !awaiting_link(&note) =>
+                            {
+                                return Err(note)
+                            }
+                            Err(note) => last_note = Some(note),
+                        }
                     }
                 }
             }

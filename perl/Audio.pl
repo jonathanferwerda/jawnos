@@ -314,14 +314,37 @@ my $handset_device = pick($given{'handset-device'}, 'JAWNOS_AUDIO_HANDSET_DEVICE
 # The plan's own mode says which it is: a duplex plan is capturing a routed
 # input, which is the armed state a recorded or monitored take needs, and a
 # playback plan is not.
+#
+# A PipeWire engine is the exception, whatever the mode: it opens the ALSA
+# `default` PCM, which is a stream on the server's graph, not a claim on a
+# card. At 64/256 the graph runs a 64-frame quantum, and a server
+# reconfiguration (WirePlumber re-linking a device, a quantum change) loses the
+# write with EIO - the patch dies with `xruns 0` while the serve keeps
+# answering, so the supervisor never respawns it and the house goes unrouted.
+# The relaxed block is a quantum the server can keep. ALSA owns the card
+# directly and keeps the studio pair.
 my @STUDIO_BLOCK  = ( 64,  256 );
 my @RELAXED_BLOCK = ( 256, 1024 );
 
+# The backend the next spawn will use, without the side effects of
+# `spawn_choice` (which may probe the machine for a fallback). A flag wins, then
+# the saved plan, then the supervisor's own default.
+sub plan_backend {
+	my $chosen = plan_config();
+	return $backend if defined $given{'backend'};
+	return $chosen->{'backend'}
+		if $chosen && defined $chosen->{'backend'} && length $chosen->{'backend'};
+	return $backend;
+}
+
 sub plan_block {
+	my ($engine_backend) = @_;
 	my $chosen = plan_config();
 	# No plan at all is the studio default: without one the engine still
 	# patches nothing, but a take can be armed over the socket at any moment.
 	return @STUDIO_BLOCK unless load_system_mix() && $chosen;
+	$engine_backend = plan_backend() unless defined $engine_backend;
+	return @RELAXED_BLOCK if defined $engine_backend && $engine_backend eq 'pipewire';
 	my $mode = JawnOS::Audio::SystemMix::plan_mode( $chosen->{'plan'}, $machine );
 	return $mode eq 'duplex' ? @STUDIO_BLOCK : @RELAXED_BLOCK;
 }
@@ -460,6 +483,9 @@ my $active_system_mode    = undef;
 # The output a PipeWire engine must play through instead of `default`, which
 # would be our own sink once the mix has moved it.
 my $active_playback_device = undef;
+# The engine pid whose failed patch was already asked to quit, so a status poll
+# between the ask and the exit does not send a second quit every second.
+my $failed_quit_pid;
 # Why the last spawn attempt started no engine, for the status file and the
 # retry below. Never a reason to stop supervising.
 my $spawn_refused;
@@ -1077,6 +1103,24 @@ sub sync_system_mix {
 	# status line.
 	return if $state =~ /\A(?:recording|playing|listening)\z/;
 
+	# A patch that died is not a child exit: the serve keeps answering on the
+	# socket (with `ok:false`), so `waitpid` never fires and the house is left
+	# unrouted. End that child once so the loop respawns it on the saved plan.
+	# The engine's own write path first reopens a stream whose PipeWire link
+	# was lost; this is the net for a failure it could not repair.
+	if ( $state eq 'failed' ) {
+		my $error = $engine && defined $engine->{'error'} ? $engine->{'error'} : '';
+		if ( $error =~ /\Acannot patch:/ ) {
+			my $pid = $engine && defined $engine->{'pid'} ? $engine->{'pid'} : $child_pid;
+			if ( !defined $failed_quit_pid || !defined $pid || $failed_quit_pid ne $pid ) {
+				$failed_quit_pid = $pid;
+				print "audio supervisor: $error; ending the engine so it respawns\n";
+				engine_command( $socket, { cmd => 'quit' } );
+			}
+			return;
+		}
+	}
+
 	my $live   = $state eq 'patching';
 	my $system = $engine ? ( $engine->{'system'} // '' ) : '';
 
@@ -1268,12 +1312,6 @@ sub spawn_engine {
 		return undef;
 	}
 	$spawn_refused = undef;
-	# A plan that moved between playback and duplex since the last spawn needs
-	# the other block; this is the moment to read it. A knob the operator
-	# pinned keeps the studio pair and its own value.
-	my ($plan_period, $plan_buffer) = $pinned ? @STUDIO_BLOCK : plan_block();
-	$period = defined $pinned_period ? $pinned_period : $plan_period;
-	$buffer = defined $pinned_buffer ? $pinned_buffer : $plan_buffer;
 	my $chosen  = plan_config();
 	my $manage  = $chosen ? $chosen->{'manage'} : 0;
 
@@ -1310,6 +1348,12 @@ sub spawn_engine {
 	my $choice  = spawn_choice();
 	$backend = $choice->{'backend'};
 	$device  = $choice->{'device'};
+	# A plan that moved mode or backend since the last spawn needs the right
+	# block; this is the moment to read it, now that the backend is known. A
+	# knob the operator pinned keeps the studio pair and its own value.
+	my ($plan_period, $plan_buffer) = $pinned ? @STUDIO_BLOCK : plan_block($backend);
+	$period = defined $pinned_period ? $pinned_period : $plan_period;
+	$buffer = defined $pinned_buffer ? $pinned_buffer : $plan_buffer;
 	my $mode = load_system_mix() && $chosen
 		? JawnOS::Audio::SystemMix::plan_mode($chosen->{'plan'}, $machine)
 		: 'playback';
@@ -1419,7 +1463,7 @@ sub follow_plan {
 	}
 	else {
 		# The block follows the plan's mode too, and the mode can move while
-		# the engine runs: a plan that turns duplex needs the studio period
+		# the engine runs: a plan that turns duplex needs its mode's block
 		# back, and one that falls back to playback should stop waking 750
 		# times a second. Without this the pair chosen at spawn outlived the
 		# plan that asked for it. A take is never cut for it - an armed WAV
@@ -1432,7 +1476,7 @@ sub follow_plan {
 			# like a mismatch every second.
 			my ($want_period, $want_buffer) = $pinned
 				? ( $period, $buffer )
-				: plan_block();
+				: plan_block( $want->{'backend'} );
 			if ($engine->{'period'} != $want_period || $engine->{'buffer'} != $want_buffer) {
 				$note = "the engine runs $engine->{'period'}/$engine->{'buffer'};"
 					. " the saved plan asks for ${want_period}/${want_buffer}";
@@ -1656,10 +1700,15 @@ while (!$stop) {
 		}
 		if (time >= $next_sync) {
 			$next_sync = time + $ADOPT_POLL;
-			my $engine = engine_answers($socket);
-			if ($engine) {
-				sync_system_mix($engine);
-				follow_plan($engine);
+			my $reply = engine_command($socket, { cmd => 'status' });
+			if ($reply && $reply->{'ok'}) {
+				sync_system_mix($reply);
+				follow_plan($reply);
+			}
+			# A failed patch answers `ok:false` and is not a dead engine:
+			# `engine_answers` would ignore it and leave the house silent.
+			elsif ($reply && defined $reply->{'state'} && $reply->{'state'} eq 'failed') {
+				sync_system_mix($reply);
 			}
 		}
 	}

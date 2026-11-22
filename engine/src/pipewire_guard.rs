@@ -27,6 +27,43 @@ pub const ENGINE_PLAYBACK_PREFIX: &str = "alsa_playback.";
 /// system-mix verdict rather than a generic device failure.
 pub const FEEDBACK_PREFIX: &str = "playback guard: ";
 
+/// `pipewire-alsa` reports a playback stream whose server-side link was lost
+/// as `EIO` from `snd_pcm_writei`. `snd_pcm_recover` does not handle it (it
+/// only knows underrun, suspend and interruption), but the link is not the
+/// device: a fresh PipeWire stream can be linked to the same target again.
+/// This is the one write error a patch reopens its PCM for, rather than
+/// treating the whole pass as failed.
+pub const LINK_LOST_ERRNO: i32 = 5; // EIO
+
+/// How long one block keeps trying to reopen its PCM after a lost link. A
+/// server reconfiguration (WirePlumber re-linking a device, a change of graph
+/// quantum) can take a moment; this rides one out, while a target that has
+/// really gone still ends the pass instead of spinning on it.
+pub const LINK_LOST_RECOVERY_MS: u64 = 2_000;
+
+/// The pause between reopen attempts inside that window.
+pub const LINK_LOST_RETRY_MS: u64 = 200;
+
+/// Whether a write error is the lost-link case, identified by errno alone.
+pub fn link_lost(errno: i32) -> bool {
+    errno == LINK_LOST_ERRNO
+}
+
+/// Whether one more reopen is allowed. `elapsed_ms` is how long the current
+/// block has been trying since its first lost link.
+pub fn reopen_after_link_loss(errno: i32, elapsed_ms: u64) -> bool {
+    link_lost(errno) && elapsed_ms < LINK_LOST_RECOVERY_MS
+}
+
+/// The one guard refusal that is not a verdict: a stream WirePlumber has not
+/// linked yet. A reopen after a lost link creates a new stream, and the target
+/// may be about to come back (or the link may simply not have been published);
+/// the reopen retries that instead of treating it as feedback or a wrong
+/// output. The dangerous verdicts carry "feedback loop" or name another node.
+pub fn awaiting_link(error: &str) -> bool {
+    error.contains("no graph link")
+}
+
 /// The sink a system-mix source belongs to. `jawn_system.monitor` is a source
 /// on the `jawn_system` sink; a name that is not a monitor is left alone.
 pub fn mix_sink(source: &str) -> Option<&str> {
@@ -232,6 +269,39 @@ jawn_system:monitor_FL
 alsa_playback.jawn-audio:output_FL
   |-> alsa_output.real:playback_FL
 ";
+
+    #[test]
+    fn a_lost_pipewire_link_is_the_error_a_reopen_handles() {
+        assert!(link_lost(LINK_LOST_ERRNO));
+        // EPIPE (32) is an underrun `snd_pcm_recover` fixes in place; EINVAL
+        // (22) is a programming or configuration error a reopen cannot fix.
+        assert!(!link_lost(32));
+        assert!(!link_lost(22));
+        assert!(reopen_after_link_loss(LINK_LOST_ERRNO, 0));
+        assert!(reopen_after_link_loss(
+            LINK_LOST_ERRNO,
+            LINK_LOST_RECOVERY_MS - LINK_LOST_RETRY_MS
+        ));
+        assert!(!reopen_after_link_loss(
+            LINK_LOST_ERRNO,
+            LINK_LOST_RECOVERY_MS
+        ));
+        assert!(!reopen_after_link_loss(32, 0));
+    }
+
+    #[test]
+    fn an_unlinked_reopen_is_retried_not_refused() {
+        let guard =
+            PlaybackGuard::new(Some("alsa_output.real"), "jawn_system.monitor").expect("a guard");
+        let waiting = guard.check("").expect_err("no link yet");
+        assert!(awaiting_link(&waiting), "{waiting}");
+        let looped = guard.check(LOOP).expect_err("a link into the mix sink");
+        assert!(!awaiting_link(&looped), "{looped}");
+        let elsewhere = guard
+            .check("alsa_playback.jawn-audio:output_FL\n  |-> alsa_output.usb:playback_FL\n")
+            .expect_err("another output");
+        assert!(!awaiting_link(&elsewhere), "{elsewhere}");
+    }
 
     #[test]
     fn a_monitor_source_names_the_sink_it_belongs_to() {
