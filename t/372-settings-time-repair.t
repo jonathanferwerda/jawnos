@@ -1,7 +1,7 @@
 # tests-for: scripts/settings_time_repair.pl
 # covers:    settings_time_plan - uuid wins, unique-key fallback, ambiguity, the
 #           window, equality, value-changed and no-uuid guards, the summary
-#           counts, and the default window's densest-hour burst
+#           counts, and the default window's largest recent cluster of writes
 
 use strict;
 use warnings;
@@ -135,17 +135,24 @@ sub plan_for {
 	is($plan->{'summary'}{'no_uuid'}, 1, 'and is counted');
 }
 
-# --- the default window is the densest recent hour, not the oldest row -------
+# --- the default window is the largest recent cluster, not the oldest row ----
 {
 	my @burst = map { row(uuid => 'b' . $_, server_time => (10000000 + $_ * 10)) } 1 .. 90;
 	my @old = map { row(uuid => 'o' . $_, server_time => (100 + $_)) } 1 .. 10;
 	is(main::_burst_window_start([ @burst, @old ]), 10000010,
-		'the default window starts at the first row of the densest hour');
+		'the default window starts at the first row of the largest cluster');
 }
 {
 	my @spread = map { row(uuid => 's' . $_, server_time => (1000 + $_ * 100000)) } 1 .. 10;
 	is(main::_burst_window_start(\@spread), undef,
-		'a table with no dense burst asks for --window-start');
+		'a table with no dense cluster asks for --window-start');
+}
+{
+	# A per-row backfill can take hours: sub-hour gaps stay one cluster.
+	my @slow = map { row(uuid => 'm' . $_, server_time => (10000000 + ($_ - 1) * 600000)) } 1 .. 60;
+	my @old = map { row(uuid => 'o2' . $_, server_time => (100 + $_)) } 1 .. 2;
+	is(main::_burst_window_start([ @slow, @old ]), 10000000,
+		'a multi-hour re-stamp is still one cluster');
 }
 
 # --- the summary counts every live row exactly once --------------------------
