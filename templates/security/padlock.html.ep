@@ -44,6 +44,10 @@
 			<button id="padlock_gate_enable" type="button"<% if ($padlock) { %> style="display:none;"<% } %>>Turn the gate on</button>
 			<button id="padlock_gate_disable" type="button"<% unless ($padlock) { %> style="display:none;"<% } %>>Turn the gate off</button>
 			<br>
+			<div id="padlock_house_indicator" style="margin-top:10px;font-size:15px;">
+				<b id="padlock_house_state" data-locked="0"><%= &subs::ui('Checking the house...') %></b>
+				<span id="padlock_screen_state" style="opacity:.75;"></span>
+			</div>
 			<button type="button" id="padlock_key_show"
 				onclick="window.location.href='/manager/security/padlock_key'; return false;"
 				style="display:inline-block;margin-top:10px;font-size:15px;"><%= &subs::ui('Phone unlock page') %></button>
@@ -79,4 +83,29 @@
 			</select>
 		</div>
 	</div>
+<script>
+(function() {
+	function padlockStatePaint(s) {
+		if (!s || !s.ok) { return; }
+		var t = (typeof jawnosT === 'function') ? jawnosT : function (x) { return x; };
+		var house = document.getElementById('padlock_house_state');
+		if (house) {
+			house.textContent = t(s.global_locked ? 'The house is locked.' : 'The house is open.');
+			house.style.color = s.global_locked ? '#b0342e' : '#2e7d32';
+			house.setAttribute('data-locked', s.global_locked ? '1' : '0');
+		}
+		var screen = document.getElementById('padlock_screen_state');
+		if (screen) {
+			screen.textContent = t(s.locked ? 'This screen is locked.' : 'This screen is open.');
+		}
+	}
+	function padlockStateLook() {
+		$.getJSON('/manager/security/padlock_state', { device_uuid: localStorage.getItem('device_uuid') || '' }, padlockStatePaint);
+	}
+	padlockStateLook();
+	if (!window.jawnosPadlockStateTimer) {
+		window.jawnosPadlockStateTimer = setInterval(padlockStateLook, 5000);
+	}
+})();
+</script>
 

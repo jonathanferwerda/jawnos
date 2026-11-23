@@ -408,6 +408,10 @@ unlike($padlock_view, qr/<a[^>]*id="padlock_key_show"/,
 	'and no longer a link');
 like($padlock_view, qr/id="padlock_key_show"[^>]*onclick="[^"]*padlock_key/,
 	'the button navigates from the template, not only the cached app chunk');
+like($padlock_view, qr/id="padlock_house_state"/,
+	'the Padlock view shows the house lock state');
+like($padlock_view, qr#/manager/security/padlock_state#,
+	'and refreshes it from the padlock state route');
 like(read_file("$root/public/js/manager/security.js"), qr/#padlock_key_show[\s\S]{0,300}padlock_key/,
 	'and the button opens the key page');
 like($key_script, qr/Nothing is locked here\. Unlock the whole house/,
