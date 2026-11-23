@@ -28,6 +28,12 @@ isnt(subs::decrypter_strict('other-key', $old), 'legacy payload', 'and not under
 my $part08 = source('lib/JawnOS/Manager/Part08.pm');
 like($part08, qr/&limit=2000&seal=js1/, 'a row batch asks for the AEAD seal, at the route\'s largest batch');
 like($part08, qr/&band=' \. int\(\$band\) \. '&seal=js1/, 'a bucket map asks for it too');
+# A row batch is 2,000 rows and can be ~5 MB (settings carry a few
+# multi-megabyte values). Over a WAN route it takes about half a minute, so a
+# 15s whole-request timeout aborted every batch and a peer's whole-table read
+# never finished (the Table's pull from the hub, 2026-11-23). The inactivity
+# timeout still bounds a dead route; the whole-request one must fit the batch.
+like($part08, qr/request_timeout\(180\)->get\(\$url\)/, 'a row batch allows a slow multi-megabyte transfer');
 
 # --- the donor seals to what the puller names -------------------------------
 my $misc3 = source('lib/JawnOS/Controller/manager_misc3.pm');

@@ -930,12 +930,15 @@ sub sync_rows_batch {
 	}
 	$url .= '&after=' . Mojo::Util::url_escape($after) if defined $after && $after ne '';
 	my $res;
-	# A batch is a small request a live peer answers in well under a second. A
-	# dead route (an offline tailnet node, a peer that left the network) used to
-	# sit here for 60s an attempt, three attempts long, before the pull reported
-	# failure; bound it so the caller can fall back promptly.
+	# A batch is 2,000 rows, not 2,000 bytes: a settings batch carries a few
+	# multi-megabyte values and can be ~5 MB, about half a minute over a WAN
+	# route (the Table's pull from the hub, 2026-11-23). The whole-request
+	# timeout must fit that, or every batch is aborted before the first byte and
+	# the whole-table read never finishes. The inactivity timeout is what bounds
+	# a dead route (an offline tailnet node, a peer that left the network), and
+	# it stays short, so a route that answers nothing still falls back promptly.
 	for my $attempt (1 .. 3) {
-		$res = eval { $remote->{'ua'}->connect_timeout(3)->inactivity_timeout(10)->request_timeout(15)->get($url)->result };
+		$res = eval { $remote->{'ua'}->connect_timeout(3)->inactivity_timeout(10)->request_timeout(180)->get($url)->result };
 		last if $res && $res->is_success;
 		# A 4xx is the peer's answer (auth, an unknown table); retrying it only
 		# delays the fallback. A dropped link or a 5xx is worth another try.
