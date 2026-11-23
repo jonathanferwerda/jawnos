@@ -22,6 +22,7 @@
 #include <WiFiUdp.h>
 #include <mbedtls/md.h>
 #include <esp_random.h>
+#include <freertos/task.h>
 
 static const uint16_t AUDIO_UPLINK_STREAM_BASE = 0x1000;
 static const uint16_t AUDIO_UPLINK_CLOCK_PING = 0xFF00;
@@ -36,6 +37,12 @@ static const uint16_t AUDIO_UPLINK_FRAMES = 160;
 // One second of 16 kHz mono in PSRAM. A stalled Wi-Fi hop spills the oldest
 // frames and counts them; the master conceals the gap on its own timeline.
 static const uint32_t AUDIO_UPLINK_RING = 16000;
+// The sender's stack lives in PSRAM: the voice listener already holds the
+// internal heap the microphone task draws from, and 8 KB of it is not there.
+static const uint32_t AUDIO_UPLINK_STACK_WORDS = 4096;
+// A pong whose echoed ping is older than this is not a measurement of the
+// path: its midpoint would charge seconds of capture to the delay.
+static const uint32_t AUDIO_UPLINK_MAX_RTT = 24000;
 
 static uint8_t audio_uplink_key[32];
 static IPAddress audio_uplink_ip;
@@ -49,6 +56,8 @@ static int16_t *audio_uplink_ring = NULL;
 static volatile uint32_t audio_uplink_head = 0;
 static volatile uint32_t audio_uplink_tail = 0;
 static portMUX_TYPE audio_uplink_mux = portMUX_INITIALIZER_UNLOCKED;
+static StaticTask_t audio_uplink_tcb;
+static StackType_t *audio_uplink_stack = NULL;
 static uint32_t audio_uplink_seq = 1;
 
 static void uplink_put_u16(uint8_t *p, uint16_t value) {
@@ -222,13 +231,18 @@ static bool uplink_ping(WiFiUDP &udp, uint32_t session, uint32_t *best_rtt,
     if (!uplink_tag_ok(incoming, 24)) {
       continue;
     }
+    if (uplink_get_u32(incoming + 8) != session) {
+      continue;
+    }
     uint64_t echo = uplink_get_u64(incoming + AUDIO_UPLINK_HEADER);
     uint64_t master_recv = uplink_get_u64(incoming + AUDIO_UPLINK_HEADER + 8);
     uint64_t master_send = uplink_get_u64(incoming + AUDIO_UPLINK_HEADER + 16);
     uint64_t local_recv = (uint64_t)audio_uplink_captured * AUDIO_UPLINK_RATIO;
     // Before capture has produced anything, the local clock has not moved and
-    // the exchange says nothing about the audio timeline.
-    if (echo == 0 || local_recv == 0 || local_recv < echo) {
+    // the exchange says nothing about the audio timeline. An old echo read at
+    // the current position would skew the midpoint by the whole backlog.
+    if (echo == 0 || local_recv == 0 || local_recv < echo
+        || local_recv - echo > AUDIO_UPLINK_MAX_RTT) {
       continue;
     }
     int64_t master_mid = (int64_t)((master_recv + master_send) / 2);
@@ -461,7 +475,20 @@ static bool audio_uplink_start(void) {
   audio_uplink_stop = false;
   audio_uplink_ready = false;
   audio_uplink_running = true;
-  if (xTaskCreatePinnedToCore(audioUplinkTask, "AudioUp", 8192, NULL, 2, NULL, 0) != pdPASS) {
+  if (!audio_uplink_stack) {
+    audio_uplink_stack = (StackType_t *)ps_malloc(
+        (size_t)AUDIO_UPLINK_STACK_WORDS * sizeof(StackType_t));
+  }
+  if (!audio_uplink_stack) {
+    deckLog("%s", "[uplink] no PSRAM for the task stack; recording locally");
+    audio_uplink_running = false;
+    free(audio_uplink_ring);
+    audio_uplink_ring = NULL;
+    return false;
+  }
+  if (!xTaskCreateStaticPinnedToCore(audioUplinkTask, "AudioUp",
+                                     AUDIO_UPLINK_STACK_WORDS, NULL, 2,
+                                     audio_uplink_stack, &audio_uplink_tcb, 0)) {
     deckLog("%s", "[uplink] no task; recording locally");
     audio_uplink_running = false;
     free(audio_uplink_ring);
