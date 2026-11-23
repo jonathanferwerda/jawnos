@@ -363,6 +363,18 @@ my $ime = read_file("$root/templates/ime.html.ep");
 like($ime, qr/js_script_urls\('public\/js\/manager\/soft_keyboard\.js'\)/,
 	'the IME page expands soft_keyboard parts');
 
+# --- a refresh replaces the app body, not the window -------------------------
+# The Security app's unlock redraw and its share/passkey refreshes used to ask
+# for window_maker=yes and then $('#security').replaceWith(r.html): the reply
+# was a whole .wind, so every unlock or refresh nested another Security window.
+# Only the start-menu toggle opens a window.
+my $house_key = read_file("$root/public/js/manager/security/01_house_key.js");
+unlike($house_key, qr/window_maker\s*:\s*['"]yes['"]/,
+	'a Security view refresh replaces #security and never asks for a window');
+my $security_index = read_file("$root/public/js/manager/security.js");
+like($security_index, qr/window_maker\s*:\s*['"]yes['"].*?windowMaker\(/s,
+	'the start-menu Security toggle still opens a window through windowMaker');
+
 diag("split scripts found: $splits; core entries: " . scalar(@core)
 	. "; lazy apps: " . scalar(keys %apps));
 done_testing();

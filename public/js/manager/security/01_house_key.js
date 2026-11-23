@@ -154,7 +154,7 @@
 		$.ajax({
 			url: '/manager/security',
 			type: 'GET',
-			data: { security_view: 'recovery', window_maker: 'yes' },
+			data: { security_view: 'recovery' },
 			success: function (r) {
 				if (r && r.html) {
 					$('#security').replaceWith(r.html);
@@ -193,7 +193,7 @@
 		$.ajax({
 			url: '/manager/security',
 			type: 'GET',
-			data: { security_view: 'passkeys', window_maker: 'yes', unlock: (window.jawnosSecurityToken || ''), browser_tab_id: (typeof jawnosMediaTab === 'function' ? jawnosMediaTab() : '') },
+			data: { security_view: 'passkeys', unlock: (window.jawnosSecurityToken || ''), browser_tab_id: (typeof jawnosMediaTab === 'function' ? jawnosMediaTab() : '') },
 			success: function (r) {
 				if (r && r.html) {
 					$('#security').replaceWith(r.html);
