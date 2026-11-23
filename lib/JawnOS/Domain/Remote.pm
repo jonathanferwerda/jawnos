@@ -486,6 +486,11 @@ sub peer_secure_url {
 	my %raw;
 	for my $candidate ($rm->{'ip'}, $rm->{'fqdn'}, &peer_resolve_addresses($rm), (&peer_manager_host($rm))[0]) {
 		next unless defined $candidate && length $candidate;
+		# A loopback candidate names this machine, not the peer. A retired
+		# tunnel's 127.0.0.1 left in `ip` must not make us probe our own
+		# port+6 listener and adopt it (it answers 403 to the peer's
+		# signature). A loopback *manager* is a tunnel and stays allowed.
+		next if &subs::peer_host_is_loopback($candidate) && !&subs::peer_host_is_loopback($host);
 		my $original = $candidate;
 		$candidate =~ s/^\[|\]$//g;
 		$known{lc $candidate} = 1;

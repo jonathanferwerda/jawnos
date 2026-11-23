@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Warehouse.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Warehouse.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl
 # covers:    A peer's stored manager can outlive the route it named: a LAN address the machine has since left, a 127.0.0.1 port from a dead tunnel, or a tunnel flag whose active tunnel row is gone; the live route wins and a tunnel's loopback is kept only while its port is an active tunnel.
 
 use strict;
@@ -430,6 +430,37 @@ subs::preload(qw(signature_verify signatorial_designer lan_presence_reply lan_pr
 		'the refreshed address map still carries the peer');
 	is($map->{'eth0'}->{'neigh'}->[0]->{'signatorial'}, 'encode-json-device-peer',
 		'and the signatorial that identifies it');
+}
+
+# A peer's network map carries its own `lo` NIC. That loopback names the peer's
+# machine, never a route to it: adopting it made this machine probe its own
+# port+6 listener and take that as the peer, which answered 403 to the peer's
+# signature (the Table->hub sync, 2026-11-23). A loopback *manager* is a tunnel
+# and stays allowed (t/187 pins that), so the guard is in the secure-url picker,
+# not in the address list.
+my $lo_row = {
+	manager => 'https://hub.example:45545',
+	fqdn    => 'hub.example',
+	ip      => '10.20.0.20',
+	port    => 45545,
+	network => '{"eth0":{"ip":"10.20.0.20"},"lo":{"ip":"127.0.0.1"}}',
+};
+{
+	no warnings qw(redefine once);
+	local *subs::peer_tls_port = sub {
+		my ($rm, $host) = @_;
+		return 45551 if ($host->{'host'} // '') eq '127.0.0.1';
+		return 0;
+	};
+	local *subs::peer_listener_port = sub { return 45545 };
+	# A retired tunnel leaves 127.0.0.1 in `ip` too; the named manager must win,
+	# or the secure url points this machine at its own listener and the peer's
+	# signature is refused.
+	my ($secure, $verified) = subs::peer_secure_url({ %{$lo_row}, ip => '127.0.0.1' },
+		'https://hub.example:45545');
+	is($secure, 'https://hub.example:45545',
+		'a loopback address is never adopted over the named manager');
+	ok(!$verified, 'and the named manager is used unverified, not as our own listener');
 }
 
 done_testing();
