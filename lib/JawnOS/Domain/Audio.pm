@@ -164,6 +164,124 @@ sub _audio_plan_has_local_peer {
 	return 0;
 }
 
+# Any peer source in the plan, on any machine. A deck's handoff is written by
+# whichever machine Now Me runs on, while the source may be mixed on another;
+# the source's `machine` is resolved to that machine's address for the deck.
+sub _audio_plan_has_peer {
+	my ($plan) = @_;
+	return 0 unless ref $plan eq 'HASH' && ref $plan->{sources} eq 'ARRAY';
+	foreach my $source (@{ $plan->{sources} }) {
+		next unless ref $source eq 'HASH';
+		return 1 if (($source->{kind} // '') eq 'peer');
+	}
+	return 0;
+}
+
+# One peer source for this deck, and its index in the plan (the engine's
+# stream is AUDIO_STREAM_BASE + index). A source's id or label naming the deck
+# selects it; with exactly one peer source, that is the deck's even unnamed.
+# The source may run on another machine: its `machine` names the mixer and the
+# caller resolves the address from there. More than one unnamed peer is
+# ambiguous and delivers nothing rather than guessing a stream.
+sub _audio_deck_peer_source {
+	my ($plan, $chip_id, $name) = @_;
+	return undef unless ref $plan eq 'HASH' && ref $plan->{sources} eq 'ARRAY';
+	my %routed = map { ($_->{from} // '') => 1 }
+		grep { ref $_ eq 'HASH' } @{ ref $plan->{routes} eq 'ARRAY' ? $plan->{routes} : [] };
+	my @peers;
+	foreach my $index (0 .. $#{ $plan->{sources} }) {
+		my $source = $plan->{sources}[$index];
+		next unless ref $source eq 'HASH';
+		next unless (($source->{kind} // '') eq 'peer');
+		# An unrouted peer has no ring in the engine, so there is nothing
+		# for the deck's stream to feed.
+		next unless $routed{$source->{id} // ''};
+		push @peers, { index => $index, source => $source };
+	}
+	return undef unless @peers;
+	my @wanted = grep { defined && !ref && length } ($chip_id, $name);
+	foreach my $peer (@peers) {
+		my $haystack = lc(($peer->{source}{id} // '') . ' ' . ($peer->{source}{label} // ''));
+		foreach my $want (@wanted) {
+			return $peer if index($haystack, lc($want)) >= 0;
+		}
+	}
+	return $peers[0] if @peers == 1;
+	return undef;
+}
+
+# Split a saved uplink into (host, port). The address has already passed
+# _audio_uplink_valid, so a bracket is the only IPv6 shape.
+sub _audio_uplink_split {
+	my ($address) = @_;
+	return () unless defined $address && !ref $address;
+	return ($1, $2 + 0) if $address =~ /\A(\[[0-9A-Fa-f:.]+\]):(\d{1,5})\z/;
+	return ($1, $2 + 0) if $address =~ /\A([^:]+):(\d{1,5})\z/;
+	return ();
+}
+
+# The LAN address of the machine a peer source runs on, when the House list
+# names it. The source's `machine` is empty for this machine (the caller's
+# fallback covers that), or a host/computer name the neighbour list carries.
+sub _audio_uplink_machine_ip {
+	my ($machine, $machines) = @_;
+	return undef unless defined $machine && !ref $machine && length $machine;
+	return undef unless ref $machines eq 'ARRAY';
+	my $want = lc $machine;
+	foreach my $node (@$machines) {
+		next unless ref $node eq 'HASH';
+		my $name = lc($node->{name} // '');
+		my $computer = lc($node->{computer} // '');
+		next unless $node->{ip};
+		return $node->{ip} if ($name && $name eq $want) || ($computer && $computer eq $want);
+	}
+	return undef;
+}
+
+# The pure selection: what a deck should dial, which stream to claim and the
+# key to sign with. Empty when the uplink is off, no peer source is on this
+# machine, or the peer is ambiguous. A bind-all saved address is replaced by
+# the address the deck already reaches this machine on.
+sub _audio_uplink_choose {
+	my ($plan, $uplink, $key, $host, $chip_id, $name, $machines) = @_;
+	return {} unless defined $uplink && !ref $uplink && length $uplink;
+	return {} unless _audio_plan_has_peer($plan);
+	my $peer = _audio_deck_peer_source($plan, $chip_id, $name);
+	return {} unless $peer;
+	my ($saved_host, $port) = _audio_uplink_split($uplink);
+	return {} unless defined $port;
+	my $dial = $saved_host;
+	if (!defined $dial || $dial eq '0.0.0.0' || $dial eq '[::]' || $dial eq '::') {
+		# A bind-all uplink is not dialable. The peer's own machine is the
+		# one mixing it; when the source names no machine, the machine the
+		# deck already reaches (the caller's host) is the mixer.
+		$dial = _audio_uplink_machine_ip($peer->{source}{machine}, $machines) // $host;
+	}
+	return {} unless defined $dial && !ref $dial && length $dial;
+	return {
+		address    => "$dial:$port",
+		stream     => $peer->{index},
+		latency_ms => $peer->{source}{latency_ms} // 0,
+		key        => $key // '',
+	};
+}
+
+# The push a deck gets in Now Me. The key is only read when the uplink is on
+# and a peer source on this machine can carry the deck; it is never logged or
+# shown. A device with no uplink gets empty fields, so the deck clears a stale
+# address instead of keeping one that no longer exists.
+sub audio_uplink_for_device {
+	my ($opts) = @_;
+	$opts = {} unless ref $opts eq 'HASH';
+	my $uplink = &audio_uplink_read();
+	my $plan = &audio_plan_read();
+	my $key = '';
+	if (length $uplink && _audio_plan_has_peer($plan)) {
+		$key = &audio_session_key_read();
+	}
+	return _audio_uplink_choose($plan, $uplink, $key, $opts->{host}, $opts->{chip_id}, $opts->{name}, $opts->{machines});
+}
+
 # The backends the engine can open, and the default device for each. The
 # picker's pair is a fact about this machine: it is kept on this device's
 # settings row (the same way the other local facts are), with the supervisor's

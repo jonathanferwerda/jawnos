@@ -27,6 +27,11 @@ static void micCaptureTask(void *pvParameters) {
   }
   deckLog("[mic] buffering up to %u s in psram", (unsigned)(max_frames / MIC_I2S_SAMPLE_RATE));
 
+  // The live uplink opens its session before the microphone is reset: the
+  // handshake takes a moment, and the DMA overflow it causes is dropped by the
+  // disable/enable below. A deck with no uplink configured returns at once.
+  bool uplink = audio_uplink_start();
+
   // the channel has been enabled since boot and nobody read it, so drop what
   // is sitting in the DMA and start from now
   i2s_channel_disable(mic_rx_handle);
@@ -61,6 +66,9 @@ static void micCaptureTask(void *pvParameters) {
     }
     for (int i = 0; i < frames; i++) {
       stage[staged + i] = buf[i * MIC_TDM_SLOTS + mono_slot];
+    }
+    if (uplink) {
+      audio_uplink_push(&stage[staged], (size_t)frames);
     }
     staged += frames;
   }
@@ -107,6 +115,9 @@ static void micCaptureTask(void *pvParameters) {
       for (int i = 0; i < n; i++) {
         stage[staged + i] = buf[i * MIC_TDM_SLOTS + mono_slot];
       }
+      if (uplink) {
+        audio_uplink_push(&stage[staged], (size_t)n);
+      }
       staged += n;
     }
     else {
@@ -127,6 +138,13 @@ static void micCaptureTask(void *pvParameters) {
   // it when it is tapped, and "JAWNREC" would otherwise refuse forever
   isRecording = false;
   record_end_ms = 0;
+
+  // Drain and stop the uplink before the flash write: the task sends the tail
+  // of the take and releases its ring, so the WAV below is the local copy of
+  // exactly what the master received (minus any counted drops).
+  if (uplink) {
+    audio_uplink_finish();
+  }
 
   // now, and only now, the flash: header first, then the whole recording in
   // 32 KB bites

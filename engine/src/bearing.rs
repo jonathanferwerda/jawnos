@@ -85,6 +85,16 @@ pub const MAX_FRAMES_PER_DATAGRAM: usize = 512;
 /// The largest PCM body, stereo at [`MAX_FRAMES_PER_DATAGRAM`].
 pub const MAX_SAMPLES_PER_DATAGRAM: usize = MAX_FRAMES_PER_DATAGRAM * 2;
 
+/// A small device's 16 kHz stream is expanded by this factor to the master's
+/// 48 kHz timeline before it is placed. `Codec::Pcm16k` carries the small-rate
+/// samples, so the device sends no more than it captured and the receiver pays
+/// the conversion once.
+pub const PCM16K_RATIO: usize = 3;
+
+/// The most 16 kHz frames one datagram may carry. Its expanded span must stay
+/// within one master block ([`MAX_FRAMES_PER_DATAGRAM`]).
+pub const MAX_PCM16K_FRAMES_PER_DATAGRAM: usize = MAX_FRAMES_PER_DATAGRAM / PCM16K_RATIO;
+
 /// A whole datagram: header, the largest possible body, and the tag.
 pub const MAX_DATAGRAM_LEN: usize =
     HEADER_LEN + MAX_SAMPLES_PER_DATAGRAM * 2 + AUDIO_MAC_LEN;
@@ -223,13 +233,84 @@ fn validate_stream_shape(channels: u8, sample_count: usize) -> Result<usize, Bea
     Ok(frames)
 }
 
-/// Validate one datagram's shape: whole frames, at most one packet's worth.
-fn validate_shape(channels: u8, sample_count: usize) -> Result<usize, BearerError> {
-    let frames = validate_stream_shape(channels, sample_count)?;
-    if frames > MAX_FRAMES_PER_DATAGRAM {
-        return Err(BearerError::TooManyFrames(frames));
+/// Validate one datagram's shape for `codec`, returning the number of
+/// **captured** frames in its payload. The block limit is applied separately:
+/// a 16 kHz payload is smaller than its master-rate span.
+fn validate_stream_shape_for(
+    codec: Codec,
+    channels: u8,
+    sample_count: usize,
+) -> Result<usize, BearerError> {
+    match codec {
+        Codec::Pcm16 => validate_stream_shape(channels, sample_count),
+        Codec::Pcm16k => {
+            // The small device's microphone is mono; a stereo 16 kHz payload has
+            // no defined shape in this protocol.
+            if channels != 1 || sample_count == 0 {
+                return Err(BearerError::Shape);
+            }
+            Ok(sample_count)
+        }
+        // A codec this build knows but cannot decode is refused here rather
+        // than misread as PCM16.
+        _ => Err(BearerError::Shape),
+    }
+}
+
+/// How many master frames one datagram's `frames` occupy for `codec`.
+fn codec_master_span(codec: Codec, frames: usize) -> usize {
+    match codec {
+        Codec::Pcm16k => frames * PCM16K_RATIO,
+        _ => frames,
+    }
+}
+
+/// How many captured frames of `codec` fit in one datagram.
+fn codec_datagram_frames(codec: Codec) -> usize {
+    match codec {
+        Codec::Pcm16k => MAX_PCM16K_FRAMES_PER_DATAGRAM,
+        _ => MAX_FRAMES_PER_DATAGRAM,
+    }
+}
+
+/// Validate one datagram's shape for `codec`, including the packet limit. The
+/// reported frame count is the captured count; [`codec_master_span`] gives the
+/// master span the receiver checks its window against.
+fn validate_shape_for(
+    codec: Codec,
+    channels: u8,
+    sample_count: usize,
+) -> Result<usize, BearerError> {
+    let frames = validate_stream_shape_for(codec, channels, sample_count)?;
+    if frames > codec_datagram_frames(codec) {
+        return Err(BearerError::TooManyFrames(codec_master_span(codec, frames)));
     }
     Ok(frames)
+}
+
+/// One master-rate sample from a 16 kHz body at output offset `offset`, linearly
+/// interpolated. The last captured frame holds its value for the two outputs
+/// whose right-hand neighbour is in the next datagram; that datagram's first
+/// sample is the true continuation, so the seam is a one-frame hold, never a
+/// jump.
+fn expand_pcm16k(body: &[u8], frames: usize, offset: usize) -> i16 {
+    let index = (offset / PCM16K_RATIO).min(frames.saturating_sub(1));
+    let phase = (offset % PCM16K_RATIO) as i32;
+    let first = i16::from_le_bytes([body[index * 2], body[index * 2 + 1]]);
+    let next = if index + 1 < frames {
+        i16::from_le_bytes([body[(index + 1) * 2], body[(index + 1) * 2 + 1]])
+    } else {
+        first
+    };
+    let delta = (i32::from(next) - i32::from(first)) * phase;
+    // Round half away from zero; a plain integer division would bias every
+    // negative-going edge toward zero.
+    let step = if delta >= 0 {
+        (delta + 1) / PCM16K_RATIO as i32
+    } else {
+        (delta - 1) / PCM16K_RATIO as i32
+    };
+    (i32::from(first) + step).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
 
 /// The sending half: packetize one input's frames into authenticated datagrams.
@@ -272,7 +353,7 @@ impl AudioBearer {
         self.counters
     }
 
-    /// Encode one datagram into `out`, returning its length.
+    /// Encode one datagram into `out`, as 48 kHz PCM16.
     ///
     /// `frames` is interleaved for `channels`; at most
     /// [`MAX_FRAMES_PER_DATAGRAM`] frames. `master_sample` is the master-clock
@@ -286,10 +367,29 @@ impl AudioBearer {
         frames: &[i16],
         master_sample: u64,
     ) -> Result<usize, BearerError> {
+        self.encode_datagram_as(Codec::Pcm16, out, stream, channels, frames, master_sample)
+    }
+
+    /// Encode one datagram into `out` with `codec`.
+    ///
+    /// `frames` is interleaved for `channels`. `Pcm16` is one master frame per
+    /// sample; `Pcm16k` is mono at 16 kHz, and the receiver expands it by
+    /// [`PCM16K_RATIO`] before placement. `master_sample` is the master-clock
+    /// position of the **first captured frame**, so the receiver can place the
+    /// expanded block where the device played it.
+    pub fn encode_datagram_as(
+        &mut self,
+        codec: Codec,
+        out: &mut [u8],
+        stream: u16,
+        channels: u8,
+        frames: &[i16],
+        master_sample: u64,
+    ) -> Result<usize, BearerError> {
         if !is_audio_stream(stream) {
             return Err(BearerError::Stream(stream));
         }
-        validate_shape(channels, frames.len())?;
+        validate_shape_for(codec, channels, frames.len())?;
         let body_len = frames.len() * 2;
         let total = HEADER_LEN + body_len + AUDIO_MAC_LEN;
         if out.len() < total {
@@ -297,7 +397,7 @@ impl AudioBearer {
         }
 
         let header = Header {
-            codec: Codec::Pcm16,
+            codec,
             flags: 0,
             session: self.session,
             stream,
@@ -321,13 +421,32 @@ impl AudioBearer {
         Ok(total)
     }
 
-    /// Split `frames` into datagrams of at most [`MAX_FRAMES_PER_DATAGRAM`] and
-    /// hand each one to `sink`. Returns how many datagrams were produced.
-    ///
-    /// The first datagram starts at `master_sample`; each later one starts
-    /// `frames_in_the_chunk` further along the master timeline.
+    /// Split `frames` into 48 kHz PCM16 datagrams of at most
+    /// [`MAX_FRAMES_PER_DATAGRAM`] and hand each one to `sink`.
     pub fn packetize<F>(
         &mut self,
+        stream: u16,
+        channels: u8,
+        frames: &[i16],
+        master_sample: u64,
+        sink: F,
+    ) -> Result<u64, BearerError>
+    where
+        F: FnMut(&[u8]) -> std::io::Result<()>,
+    {
+        self.packetize_as(Codec::Pcm16, stream, channels, frames, master_sample, sink)
+    }
+
+    /// Split `frames` of `codec` into datagrams and hand each one to `sink`.
+    /// Returns how many datagrams were produced.
+    ///
+    /// The first datagram starts at `master_sample`; each later one starts the
+    /// master span of the captured frames already emitted. A 16 kHz block is
+    /// split into at most [`MAX_PCM16K_FRAMES_PER_DATAGRAM`] captured frames so
+    /// its expanded span still fits one master block.
+    pub fn packetize_as<F>(
+        &mut self,
+        codec: Codec,
         stream: u16,
         channels: u8,
         frames: &[i16],
@@ -340,20 +459,22 @@ impl AudioBearer {
         if !is_audio_stream(stream) {
             return Err(BearerError::Stream(stream));
         }
-        let frame_count = validate_stream_shape(channels, frames.len())?;
+        let frame_count = validate_stream_shape_for(codec, channels, frames.len())?;
+        let chunk = codec_datagram_frames(codec);
         let mut scratch = [0u8; MAX_DATAGRAM_LEN];
         let mut emitted = 0u64;
         let mut start = 0usize;
         while start < frame_count {
-            let end = (start + MAX_FRAMES_PER_DATAGRAM).min(frame_count);
+            let end = (start + chunk).min(frame_count);
             let first_sample = start * channels as usize;
             let last_sample = end * channels as usize;
-            let length = self.encode_datagram(
+            let length = self.encode_datagram_as(
+                codec,
                 &mut scratch,
                 stream,
                 channels,
                 &frames[first_sample..last_sample],
-                master_sample + start as u64,
+                master_sample + codec_master_span(codec, start) as u64,
             )?;
             sink(&scratch[..length]).map_err(|error| BearerError::Io(error.kind()))?;
             emitted += 1;
@@ -390,6 +511,9 @@ pub struct AudioReceiver {
     session: u32,
     stream: u16,
     channels: u8,
+    /// The first authenticated datagram's codec. `None` until audio arrives; a
+    /// session cannot change rates midway without a new receiver.
+    codec: Option<Codec>,
     window_frames: usize,
     samples: Vec<i16>,
     valid: Vec<bool>,
@@ -428,6 +552,7 @@ impl AudioReceiver {
             session,
             stream,
             channels,
+            codec: None,
             window_frames,
             samples: vec![0i16; window_frames * channels as usize],
             valid: vec![false; window_frames],
@@ -443,6 +568,12 @@ impl AudioReceiver {
     /// The session this receiver accepts.
     pub fn session(&self) -> u32 {
         self.session
+    }
+
+    /// The codec this receiver locked to, or `None` before the first
+    /// authenticated datagram.
+    pub fn codec(&self) -> Option<Codec> {
+        self.codec
     }
 
     /// The next master position `pull` will return.
@@ -517,7 +648,17 @@ impl AudioReceiver {
             self.counters.rejected += 1;
             return Err(BearerError::Session(header.session));
         }
-        if header.codec != Codec::Pcm16 || header.channels != self.channels {
+        if header.channels != self.channels {
+            self.counters.rejected += 1;
+            return Err(BearerError::Shape);
+        }
+        if !matches!(header.codec, Codec::Pcm16 | Codec::Pcm16k) {
+            self.counters.rejected += 1;
+            return Err(BearerError::Shape);
+        }
+        // The small device's stream is mono. A master-rate stream may be stereo;
+        // a 16 kHz one cannot, because its samples are expanded into one lane.
+        if header.codec == Codec::Pcm16k && header.channels != 1 {
             self.counters.rejected += 1;
             return Err(BearerError::Shape);
         }
@@ -539,15 +680,27 @@ impl AudioReceiver {
             self.counters.rejected += 1;
             return Err(BearerError::Shape);
         }
-        let frames = match validate_shape(self.channels, body.len() / 2) {
+        // The first datagram fixes the session's codec. A stream cannot switch
+        // between master-rate and small-rate audio without a new receiver.
+        if let Some(codec) = self.codec {
+            if codec != header.codec {
+                self.counters.rejected += 1;
+                return Err(BearerError::Shape);
+            }
+        }
+        let frames = match validate_shape_for(header.codec, self.channels, body.len() / 2) {
             Ok(frames) => frames,
             Err(error) => {
                 self.counters.rejected += 1;
                 return Err(error);
             }
         };
+        if self.codec.is_none() {
+            self.codec = Some(header.codec);
+        }
+        let master_frames = codec_master_span(header.codec, frames);
         let start = header.master_sample.saturating_sub(shift);
-        let end = start.saturating_add(frames as u64);
+        let end = start.saturating_add(master_frames as u64);
 
         if !self.started {
             self.started = true;
@@ -572,24 +725,39 @@ impl AudioReceiver {
         let width = self.channels as usize;
         let mut wrote = false;
         let mut skipped = false;
-        let mut cursor = (from - start) as usize;
-        for position in from..end {
-            let slot = self.slot(position);
-            if self.valid[slot] {
-                skipped = true;
+        if header.codec == Codec::Pcm16k {
+            // Mono (checked above): one expanded sample per master frame.
+            for position in from..end {
+                let slot = self.slot(position);
+                if self.valid[slot] {
+                    skipped = true;
+                    continue;
+                }
+                let offset = (position - start) as usize;
+                self.samples[slot] = expand_pcm16k(body, frames, offset);
+                self.valid[slot] = true;
+                wrote = true;
+            }
+        } else {
+            let mut cursor = (from - start) as usize;
+            for position in from..end {
+                let slot = self.slot(position);
+                if self.valid[slot] {
+                    skipped = true;
+                    cursor += 1;
+                    continue;
+                }
+                let target = slot * width;
+                let source = cursor * width * 2;
+                for channel in 0..width {
+                    let byte = source + channel * 2;
+                    self.samples[target + channel] =
+                        i16::from_le_bytes([body[byte], body[byte + 1]]);
+                }
+                self.valid[slot] = true;
+                wrote = true;
                 cursor += 1;
-                continue;
             }
-            let target = slot * width;
-            let source = cursor * width * 2;
-            for channel in 0..width {
-                let byte = source + channel * 2;
-                self.samples[target + channel] =
-                    i16::from_le_bytes([body[byte], body[byte + 1]]);
-            }
-            self.valid[slot] = true;
-            wrote = true;
-            cursor += 1;
         }
 
         let out_of_order = start >= self.next_master
@@ -986,6 +1154,124 @@ mod tests {
                 0
             ),
             Err(BearerError::TooManyFrames(MAX_FRAMES_PER_DATAGRAM + 1))
+        );
+    }
+
+    #[test]
+    fn a_16k_stream_is_expanded_to_the_master_rate() {
+        let session = 9;
+        let stream = AUDIO_STREAM_BASE;
+        let mut bearer = AudioBearer::new(key(), session);
+        let mut datagram = [0u8; MAX_DATAGRAM_LEN];
+        let length = bearer
+            .encode_datagram_as(
+                Codec::Pcm16k,
+                &mut datagram,
+                stream,
+                1,
+                &[0i16, 300, 600],
+                100,
+            )
+            .expect("encode 16k");
+
+        let mut receiver = AudioReceiver::new(key(), session, stream, 1, DEFAULT_JITTER_FRAMES)
+            .expect("receiver");
+        assert_eq!(receiver.accept(&datagram[..length]), Ok(Accepted::Buffered));
+        assert_eq!(receiver.codec(), Some(Codec::Pcm16k));
+
+        let mut pulled = [0i16; 9];
+        let report = receiver.pull(&mut pulled, 9);
+        assert_eq!(report.master_sample, 100);
+        assert_eq!(report.frames, 9);
+        // Three samples become three master frames each, interpolated. The last
+        // captured frame holds for its two outputs until the next datagram.
+        assert_eq!(pulled, [0, 100, 200, 300, 400, 500, 600, 600, 600]);
+    }
+
+    #[test]
+    fn a_16k_session_cannot_switch_to_pcm16() {
+        let session = 10;
+        let stream = AUDIO_STREAM_BASE;
+        let mut small = AudioBearer::new(key(), session);
+        let mut first = [0u8; MAX_DATAGRAM_LEN];
+        let first_len = small
+            .encode_datagram_as(Codec::Pcm16k, &mut first, stream, 1, &[1i16; 3], 0)
+            .expect("encode 16k");
+
+        let mut receiver = AudioReceiver::new(key(), session, stream, 1, DEFAULT_JITTER_FRAMES)
+            .expect("receiver");
+        assert_eq!(receiver.accept(&first[..first_len]), Ok(Accepted::Buffered));
+
+        let mut master = AudioBearer::new(key(), session);
+        let mut second = [0u8; MAX_DATAGRAM_LEN];
+        let second_len = master
+            .encode_datagram(&mut second, stream, 1, &[2i16; 3], 100)
+            .expect("encode 48k");
+        assert_eq!(receiver.accept(&second[..second_len]), Err(BearerError::Shape));
+        assert_eq!(receiver.counters().rejected, 1);
+        assert_eq!(receiver.codec(), Some(Codec::Pcm16k));
+    }
+
+    #[test]
+    fn a_16k_datagram_is_capped_at_one_master_block() {
+        let mut bearer = AudioBearer::new(key(), 11);
+        let too_many = vec![0i16; MAX_PCM16K_FRAMES_PER_DATAGRAM + 1];
+        assert_eq!(
+            bearer.encode_datagram_as(
+                Codec::Pcm16k,
+                &mut [0u8; MAX_DATAGRAM_LEN],
+                AUDIO_STREAM_BASE,
+                1,
+                &too_many,
+                0,
+            ),
+            Err(BearerError::TooManyFrames(
+                (MAX_PCM16K_FRAMES_PER_DATAGRAM + 1) * PCM16K_RATIO
+            ))
+        );
+
+        // A longer block is split so every expanded datagram still fits.
+        let mut collected = Vec::new();
+        let emitted = bearer
+            .packetize_as(
+                Codec::Pcm16k,
+                AUDIO_STREAM_BASE,
+                1,
+                &vec![7i16; 400],
+                0,
+                |datagram| {
+                    collected.push(datagram.to_vec());
+                    Ok(())
+                },
+            )
+            .expect("packetize 16k");
+        assert_eq!(emitted, 3);
+        let starts: Vec<u64> = collected
+            .iter()
+            .map(|datagram| {
+                let (header, _) = proto::decode(datagram).expect("decode");
+                assert_eq!(header.codec, Codec::Pcm16k);
+                assert_eq!(header.channels, 1);
+                assert!(datagram.len() - HEADER_LEN - AUDIO_MAC_LEN <= MAX_PCM16K_FRAMES_PER_DATAGRAM * 2);
+                header.master_sample
+            })
+            .collect();
+        assert_eq!(starts, vec![0, 510, 1020]);
+    }
+
+    #[test]
+    fn a_stereo_16k_payload_is_refused() {
+        let mut bearer = AudioBearer::new(key(), 12);
+        assert_eq!(
+            bearer.encode_datagram_as(
+                Codec::Pcm16k,
+                &mut [0u8; MAX_DATAGRAM_LEN],
+                AUDIO_STREAM_BASE,
+                2,
+                &[1i16, 2, 3, 4],
+                0,
+            ),
+            Err(BearerError::Shape)
         );
     }
 

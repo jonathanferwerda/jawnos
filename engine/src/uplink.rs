@@ -153,6 +153,10 @@ pub struct UplinkSourceStatus {
     /// The same declaration in master frames: how far earlier this source's
     /// audio is placed than the stamp on the wire.
     pub latency_frames: u64,
+    /// The codec the attached session sends (`pcm16` or `pcm16k`), or empty
+    /// before audio arrives. A deck is `pcm16k`: 16 kHz expanded to the master's
+    /// 48 kHz timeline on receive.
+    pub codec: String,
     /// Authenticated datagrams that arrived, including late ones.
     pub received: u64,
     /// Duplicates and datagrams whose payload was already read.
@@ -178,11 +182,12 @@ pub struct UplinkSourceStatus {
 impl UplinkSourceStatus {
     fn json(&self) -> String {
         format!(
-            "{{\"index\":{},\"id\":\"{}\",\"latency_ms\":{},\"latency_frames\":{},\"received\":{},\"late\":{},\"concealed\":{},\"dropped\":{},\"last_master\":{},\"next_master\":{},\"first_master\":{},\"from_deadline\":{}}}",
+            "{{\"index\":{},\"id\":\"{}\",\"latency_ms\":{},\"latency_frames\":{},\"codec\":\"{}\",\"received\":{},\"late\":{},\"concealed\":{},\"dropped\":{},\"last_master\":{},\"next_master\":{},\"first_master\":{},\"from_deadline\":{}}}",
             self.index,
             crate::loopback::json_escape(&self.id),
             self.latency_ms,
             self.latency_frames,
+            self.codec,
             self.received,
             self.late,
             self.concealed,
@@ -602,11 +607,18 @@ impl UplinkSource {
             Some(receiver) => (receiver.next_master(), receiver.first_master()),
             None => (0, 0),
         };
+        let codec = match self.receiver.as_ref().and_then(AudioReceiver::codec) {
+            Some(proto::Codec::Pcm16) => "pcm16",
+            Some(proto::Codec::Pcm16k) => "pcm16k",
+            Some(_) => "other",
+            None => "",
+        };
         UplinkSourceStatus {
             index: self.index,
             id: self.id.clone(),
             latency_ms: self.latency_ms,
             latency_frames: self.shift_frames,
+            codec: codec.to_string(),
             received: counters.received,
             late: counters.late,
             concealed: counters.concealed_frames,

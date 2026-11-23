@@ -1,4 +1,4 @@
-# tests-for: firmware/house_ca.h perl/President.pl jp/alarmclock/platformio.ini jp/alarmclock/alarmclock.ino jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_04_jobs_clock_config_net.ino jp/alarmclock/alarmclock_05_device_ws.ino jt/platformio.ini jt/jt.ino jt/jt_01_globals_ble_house.ino jt/jt_03_setup.ino jt/jt_07_lorawan_house_net.ino jt/jt_10_remote_auth.ino jt/jt_14_voice_notes_clips.ino jw/platformio.ini jw/jw.ino jw/jw_06_net_face.ino jw/jw_07_house_audio.ino jw/jw_08_voice.ino
+# tests-for: firmware/house_ca.h perl/President.pl jp/alarmclock/platformio.ini jp/alarmclock/alarmclock.ino jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_04_jobs_clock_config_net.ino jp/alarmclock/alarmclock_05_device_ws.ino jt/platformio.ini jt/jt.ino jt/jt_01_globals_ble_house.ino jt/jt_03_setup.ino jt/jt_07_lorawan_house_net.ino jt/jt_10_remote_auth.ino jt/jt_14_voice_notes_clips.ino jt/jt_17_audio_uplink.ino jw/platformio.ini jw/jw.ino jw/jw_06_net_face.ino jw/jw_07_house_audio.ino jw/jw_08_voice.ino
 # covers:    Every board verifies the manager's house-CA peer leaf instead of
 #           accepting any peer: the Pico through BearSSL trust anchors, the two
 #           ESP32s through setCACert, all pinned to the same embedded CA. The
@@ -30,7 +30,7 @@ my @firmware;
 for my $dir (glob("$root/jp/*/"), "$root/jt/", "$root/jw/") {
 	push @firmware, glob("$dir*.ino");
 }
-is(scalar @firmware, 39, 'the three firmware trees were read');
+is(scalar @firmware, 40, 'the three firmware trees were read');
 
 my @insecure = grep {
 	my $text = scalar read_file($_);

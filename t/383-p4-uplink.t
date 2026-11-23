@@ -27,7 +27,9 @@
 #            subtracted from each datagram's master position, so that source is
 #            placed that much earlier and a take played late is recorded in
 #            time. Only a peer is shifted; a local input's declaration is kept
-#            by the plan but not compensated on this path yet.
+#            by the plan but not compensated on this path yet. Status names the
+#            codec a source locked to (`pcm16` or `pcm16k`), so a deck's 16 kHz
+#            stream is visible beside the master-rate ones.
 
 use strict;
 use warnings;
@@ -145,6 +147,7 @@ like( $uplink, qr/\\"first_master\\"/, 'each source reports where the timeline s
 like( $uplink, qr/\\"from_deadline\\"/, 'each source reports deadline concealment' );
 like( $uplink, qr/\\"latency_ms\\"/, 'each source reports its declared latency in ms' );
 like( $uplink, qr/\\"latency_frames\\"/, 'each source reports the same declaration in frames' );
+like( $uplink, qr/\\"codec\\"/, 'each source reports the codec it locked to' );
 
 # --- the server wires it and keeps every existing key -----------------------
 like( $socket, qr/pub uplink:\s*Option<UplinkConfig>/, 'the serve config can name an uplink' );

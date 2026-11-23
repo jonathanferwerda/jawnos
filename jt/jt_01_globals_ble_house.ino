@@ -38,6 +38,11 @@ static void serialDumpFile(String name);
 static void serialRecordStart(uint32_t seconds);
 static void serialRegWrite(String args);
 static void serialSlotSet(String args);
+// the live Studio uplink (jt_17): the capture task starts it before the
+// microphone and hands it the mono frames as they are captured
+static bool audio_uplink_start(void);
+static void audio_uplink_finish(void);
+static void audio_uplink_push(const int16_t *samples, size_t count);
 
 static const uint16_t screenWidth  = 320;
 static const uint16_t screenHeight = 240;
@@ -73,6 +78,14 @@ static volatile bool now_me_requested = false;
 static bool voiceCaptureEnabled = false;
 static String voice_trigger = "off";
 static String voice_floor = "auto";
+// Now Me's live Studio uplink (docs/studio-audio-roadmap.md P4): the master's
+// UDP address, the plan index whose stream this deck claims and the house
+// audio session key. Empty/negative means no uplink and the deck records
+// locally. The key is a house audio key, not the pairing token, and is never
+// printed.
+static String audio_uplink = "";
+static int audio_stream = -1;
+static String audio_key = "";
 // the room's own frame RMS, learned while nothing is captured: what the 'auto'
 // end-of-speech floor stands on
 static uint32_t voice_ambient_rms = 0;

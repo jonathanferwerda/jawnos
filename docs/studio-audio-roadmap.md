@@ -91,7 +91,7 @@ Measured sources and sinks, and what already exists in the tree.
 | **A — the converter** | Behringer UM2 on `table`: 2 in / 2 out, USB class-compliant, **48 kHz / 16-bit**, a mic input and an instrument input | 48 k, 2 ch | **2.7 ms round trip at 64/256, measured** (§2) | guitar, mics, monitors — the one class that gets the near-zero promise |
 | **B — the machine's own mic** | the laptop/table microphone, through PipeWire | 48 k after resampling, 1 ch | 20–60 ms | scratch vocals, room, talking to the house |
 | **C — the phone** | the app's capture (Oboe) or `getUserMedia` | 48 k, Opus 10 ms | 15–40 ms on the LAN or tailnet | a microphone where you are; a monitor in your pocket |
-| **D — the T-Deck** | TDM microphone, 16 kHz, clip-based today (`jt/jt_16_voice_capture.ino`) | 16 k → 48 k | 40–100 ms, and clips only | a room mic, voice notes, a satchel recorder |
+| **D — the T-Deck** | TDM microphone, 16 kHz, clip-based and live (`Pcm16k`, `jt/jt_17_audio_uplink.ino`) | 16 k → 48 k on the receiver | 40–100 ms; clips or a live take | a room mic, voice notes, a satchel recorder |
 | **E — the watch** | 16 kHz mono WAV from FFat, pulled per house node (`jw/jw_10_playback.ino`) | 16 k → 48 k | 100 ms+ | a zone, or dictation — never a tracking source |
 | **F — a future amp node** | ESP32 + I2S amp | 48 k, 1–2 ch out | 30–80 ms by design | house zones |
 
@@ -243,7 +243,7 @@ So the promise is deliberately uneven:
 | A — the interface | **≤ 5 ms** wired, 64 frames | ±1 sample |
 | B — a built-in mic | none; not a monitoring path | ±1 sample |
 | C — the phone | none over Wi-Fi; ≤ 20 ms on a wire/tailnet | ±1 sample, compensated |
-| D, E — T-Deck, watch | none | ±1 sample, for clips |
+| D, E — T-Deck, watch | none | ±1 sample, for clips and the deck's live uplink |
 | F — amp nodes | none, by design (a zone, not a booth) | not applicable |
 
 That is what makes the phone usable as a multitrack microphone even at 30 ms: you hear yourself late
@@ -552,18 +552,24 @@ The app is a Termux fork that already supervises jawnos and already owns call au
 2. 10 ms Opus frames over the same UDP protocol, addressed by a **mic lease** the manager issues.
 3. `getUserMedia` stays the fallback — it is what works today, and what P0 measures against.
 
-### The T-Deck — deferred
+### The T-Deck
 
-**Not on the current plan.** Recording from the deck is set aside for now; its two firmware facts
-are kept here so the work can return to P4 when a deck is set up. It already has a 4-slot TDM
-microphone at 16 kHz (`jt/jt_01_globals_ble_house.ino:45`). Two things matter and both are already
-learned in the firmware:
+It already has a 4-slot TDM microphone at 16 kHz (`jt/jt_01_globals_ble_house.ino:45`). Two things
+matter and both are already learned in the firmware:
 
 - **Never write flash while capturing.** `jt_16_voice_capture.ino:4` records the whole clip into
   PSRAM because a flash program stalls the CPU with the cache off, the I2S DMA overruns, and the
   result is a buzz. A streaming path must keep that rule or repeat the bug.
 - **16 kHz is a clip source.** It is resampled to 48 k and placed by its declared latency; it is a
   room mic and a voice recorder, not a booth.
+
+**The uplink is live.** A manual recording also streams to the master: the deck speaks the engine's
+UDP protocol itself (`jt/jt_17_audio_uplink.ino`), claims the stream Now Me gave it, and sends
+`Pcm16k` datagrams stamped on the fitted master clock. The engine expands 16 kHz to 48 kHz before
+placement, so the deck sends exactly what it captured. The clip is still written to the deck's own
+storage after the capture ends (D14, and no flash write while the microphone runs); the uplink is
+the copy the master places. Now Me delivers the address, the plan index and the house session key;
+an absent uplink clears them and the deck records locally, exactly as before.
 
 ### The watch
 
@@ -769,12 +775,13 @@ longer stalls a block. No device opens in the bearer: wiring capture and the pat
 
 ### P4 — Sources that are late (2 weeks) — **engine code complete; gate unrun (needs a Studio guitar/peer take)**
 
-The uplink proper, with compensation: the phone (C) becomes a channel on the master,
-placed by its declared latency, so a take played 30 ms late is recorded in time. Each peer
+The uplink proper, with compensation: the phone (C) and the T-Deck (D) become channels on the master,
+each placed by its declared latency, so a take played 30 ms late is recorded in time. Each peer
 writes its own take locally first (D14), so the master places it rather than owning it.
 
 **Gate:** guitar through the UM2 and voice on the phone in one session, both in time with the click,
-both on the same take, ten minutes without a lost take.
+both on the same take, ten minutes without a lost take. Then the same from the T-Deck's live
+16 kHz microphone.
 
 **Master uplink (2026-11-21, in the tree):** a plan's `peer` source — a kind the manager already
 accepts — binds on the machine that mixes it. `--serve --uplink ADDR` with the session key starts a
@@ -905,6 +912,27 @@ was read after the take and includes post-take pulls, so its in-take rate is not
 was the laptop's built-in microphone, clipping at full scale; the phone app's own capture half is
 outside this engine change.
 
+**The deck uplink (2026-11-22, in the tree):** the T-Deck is now a live source, not a file handed
+to `--send-take`. The engine accepts `Codec::Pcm16k` (mono, at most 170 captured frames in a
+datagram) and expands each payload threefold with linear interpolation before placement
+(`bearing.rs`); the session locks its codec on the first authenticated datagram, so a stream
+cannot change rate midway. A one-frame hold at a datagram boundary is the only seam. `status`
+reports the codec each peer source locked to, so a deck source is visible beside the master-rate
+ones.
+
+On the house side, Now Me carries `audio_uplink`, `audio_stream` and `audio_key` to a `teletype`
+deck. The address is the saved uplink with a bind-all host replaced by the peer source's machine
+from the House list (or the serving machine when it names none); the stream is the plan index of
+the peer source that names the deck (by chip id or name), or of the only peer; the key is the same
+house session key the engine signs with, sent only on the deck's own authorized link and never
+logged. Empty fields clear a stale uplink. The deck firmware
+(`jt/jt_17_audio_uplink.ino`) speaks HELLO/WELCOME, PING/PONG and `Pcm16k` itself, keeps the
+least-delayed exchange for its offset, feeds a 1 s PSRAM ring from the capture task, and writes
+the local WAV after the capture ends (no flash while the microphone runs). A missing address, key
+or session is not an error: the deck records locally, exactly as before. Flash the deck and
+rebuild/stage (`pio run -j 4`, then `perl scripts/stage_firmware.pl`) before an OTA; the gate
+still needs the hardware take.
+
 **P4 close-out (2026-11-22, engine code complete; gate unrun):** every engine path the gate needs is
 in the tree and measured without a performance: the 10 s file take (1 015/1 015, `late 3`); the 600 s
 live capture (`dropped`/`padded`/`resynced` 0, master `late` 6.1%); and two peers on one master
@@ -912,10 +940,12 @@ live capture (`dropped`/`padded`/`resynced` 0, master `late` 6.1%); and two peer
 that tailnet path). The 30 ms declaration in that run reported `latency_frames 1440` and moved
 `first_master` 1 440 frames earlier. The gate itself is deliberately **unrun**, not passed: it needs
 a person playing the UM2 and a peer voice in one Studio take, with the click, for ten minutes on
-the house LAN. To run it: add the peer source(s) to the plan with their
-`latency_ms`, set the Uplink and save; start `--send-live --device ... --out ... --master ...
---stream N --seconds 600` on the peer; arm the Studio take with the click and perform; then read the
-engine `status` (`late`, `concealed`, `handshakes`) and the take's alignment against the click.
+the house LAN, then a deck recording its own live take. To run it: add the peer source(s) to the
+plan with their `latency_ms` (name the deck's source after the deck, or leave it the only local
+peer), set the Uplink and save; start `--send-live --device ... --out ... --master ... --stream N
+--seconds 600` on the phone's peer; send the deck a Now Me and tap Record; arm the Studio take
+with the click and perform; then read the engine `status` (`codec`, `late`, `concealed`,
+`handshakes`) and the take's alignment against the click.
 
 **Still to come:** the gate above; the tailnet's opening minute (28.7% late before the fit is
 trusted); per-source buffering when a declaration exceeds the 85 ms placement window; and the phone

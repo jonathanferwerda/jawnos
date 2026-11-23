@@ -191,6 +191,20 @@ void jawn_loop() {
             const char *vf = (const char *)params["voice_floor"];
             if (vf) { voice_floor = vf; }
           }
+          // the live Studio uplink: address, stream index and house audio key
+          if (params.hasOwnProperty("audio_uplink")) {
+            const char *au = (const char *)params["audio_uplink"];
+            audio_uplink = au ? au : "";
+            audio_uplink.trim();
+          }
+          if (params.hasOwnProperty("audio_stream")) {
+            audio_stream = (int)params["audio_stream"];
+          }
+          if (params.hasOwnProperty("audio_key")) {
+            const char *ak = (const char *)params["audio_key"];
+            audio_key = ak ? ak : "";
+            audio_key.trim();
+          }
           voice_trigger_apply();
           buttoned_before = false;   // ask the bridge for fresh buttons
           deckLog("[bt] now_me applied");
@@ -350,6 +364,12 @@ void jawn_loop() {
     ws_connected = 0;
     tauth_connect();
     voice_trigger_apply();
+    // Persist the uplink now, unless the microphone is busy: a flash write
+    // during a capture is the buzz the PSRAM buffer exists to avoid. An idle
+    // deck writes its config; a busy one keeps the choice until the next save.
+    if (!isRecording && !voiceRecording && !voiceTaskAlive) {
+      configSave();
+    }
   }
 
   // the panel's voice setting: keep a listener armed for a model we have, and

@@ -4,8 +4,10 @@
 #            session, a bounded jitter buffer places them by master position and
 #            conceals a gap without shifting the timeline, and a linear converter
 #            resamples the peer's stream to the master rate using the fitted
-#            offset and drift. No device is opened here; wiring capture and the
-#            patchbay is P4.
+#            offset and drift. A 16 kHz mono datagram (`Pcm16k`) is expanded
+#            threefold to the master rate before placement, so a deck's capture
+#            lands on the 48 kHz timeline without the device upsampling it.
+#            No device is opened here; wiring capture and the patchbay is P4.
 
 use strict;
 use warnings;
@@ -70,6 +72,13 @@ like( $bear, qr/from_deadline/, 'concealment by deadline is observable' );
 like( $bear, qr/DEFAULT_JITTER_FRAMES/, 'the jitter window has one bound' );
 like( $bear, qr/FLAG_DISCONTINUITY/, 'a concealed gap is marked, not hidden' );
 like( $bear, qr/concealed_frames/, 'concealed frames are counted' );
+
+# --- the small device's 16 kHz stream ----------------------------------------
+like( $bear, qr/pub const PCM16K_RATIO/, 'the 16 kHz expansion ratio is named' );
+like( $bear, qr/Codec::Pcm16k/, 'the small-device codec is accepted by the bearer' );
+like( $bear, qr/fn expand_pcm16k/, 'the expansion is a named converter' );
+like( $bear, qr/pub fn packetize_as/, 'a 16 kHz block splits by its expanded span' );
+like( $bear, qr/fn a_16k_stream_is_expanded_to_the_master_rate/, 'the 16 kHz expansion is tested' );
 
 # --- the converter ----------------------------------------------------------
 like( $bear, qr/pub struct LinearResampler/, 'the converter is a named type' );

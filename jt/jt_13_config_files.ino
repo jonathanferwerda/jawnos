@@ -83,6 +83,10 @@ void configSave() {
   // a restart even before the next Now Me.
   conf["voice_trigger"] = voice_trigger;
   conf["voice_floor"] = voice_floor;
+  // the live Studio uplink Now Me delivered (address, stream index, key)
+  conf["audio_uplink"] = audio_uplink;
+  conf["audio_stream"] = audio_stream;
+  conf["audio_key"] = audio_key;
   conf["volume"] = volumeLevel;
   conf["fontSize"] = fontSize;
   conf["fontSelect"] = fontSelect;
@@ -177,6 +181,9 @@ void configDefaults() {
   tauth_remote_enabled = "off";
   voice_trigger = "off";
   voice_floor = "auto";
+  audio_uplink = "";
+  audio_stream = -1;
+  audio_key = "";
   voiceCaptureEnabled = false;
   account_room, community_room, club_room, team_room, contact_room, project_room = "";
 }
@@ -266,6 +273,10 @@ void configRestore() {
     mouse_move_relative = (const char *)conf["mouse_move_relative"];
     { String vt = (const char *)conf["voice_trigger"]; if (vt.length()) { voice_trigger = vt; } }
     { String vf = (const char *)conf["voice_floor"]; if (vf.length()) { voice_floor = vf; } }
+    // A config from before the uplink has no key here; the defaults above stand.
+    if (conf.hasOwnProperty("audio_uplink")) { audio_uplink = (const char *)conf["audio_uplink"]; }
+    if (conf.hasOwnProperty("audio_stream")) { audio_stream = (int)conf["audio_stream"]; }
+    if (conf.hasOwnProperty("audio_key")) { audio_key = (const char *)conf["audio_key"]; }
 
     String bb = (const char *)conf["buttoned_before"];
     if (bb == "on") {

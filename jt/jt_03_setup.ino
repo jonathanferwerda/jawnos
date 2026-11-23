@@ -545,6 +545,12 @@ void jawn_setup() {
     // of the Now Me work, away from this handler.
     { String vt = server.arg("voice_trigger"); if (vt.length()) { voice_trigger = vt; } }
     { String vf = server.arg("voice_floor"); if (vf.length()) { voice_floor = vf; } }
+    // The live Studio uplink: an absent parameter leaves the current choice,
+    // while an empty one clears it (Now Me pushes empty fields when Sound has
+    // the uplink off, so a stale address does not survive).
+    if (server.hasArg("audio_uplink")) { audio_uplink = server.arg("audio_uplink"); audio_uplink.trim(); }
+    if (server.hasArg("audio_stream")) { audio_stream = server.arg("audio_stream").toInt(); }
+    if (server.hasArg("audio_key")) { audio_key = server.arg("audio_key"); audio_key.trim(); }
 
     pmuIrq = false;
     buttoned_before = false;

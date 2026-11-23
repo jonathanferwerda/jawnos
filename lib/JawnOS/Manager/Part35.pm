@@ -204,6 +204,19 @@ sub now_me($data) {
 	# browse mDNS (and a device whose last Now Me predates the House) recover.
 	my $house_nodes = &subs::house_nodes_list($watch->{'homebase'} || $watch->{'ip'});
 
+	# A T-Deck records into a Studio take as a peer source: it dials this
+	# machine's uplink and signs every datagram with the audio session key. The
+	# key is sent only on the deck's own authorized link, never logged or shown,
+	# and cleared when the uplink is off or no peer source names it.
+	my $deck_uplink = $edt eq 'teletype'
+		? eval { &subs::audio_uplink_for_device({
+			chip_id => $chip_id,
+			name    => $name,
+			host    => $watch->{'homebase'} || $watch->{'ip'},
+			machines => $house_nodes,
+		}) } || {}
+		: {};
+
 	my $params = {
 		name           => $name,
 		ip             => $watch->{ip},
@@ -235,6 +248,11 @@ sub now_me($data) {
 		# encoded JSON, so it travels as one query value or one BLE field
 		houses         => encode_json($house_nodes),
 	};
+	if ($edt eq 'teletype') {
+		$params->{audio_uplink} = $deck_uplink->{address} // '';
+		$params->{audio_stream} = defined $deck_uplink->{stream} ? $deck_uplink->{stream} : -1;
+		$params->{audio_key}    = $deck_uplink->{key} // '';
+	}
 
 	my $watch_home = Mojo::URL->new("http://$watch->{ip}:$config->{port}/now_me")
 		->query($params)

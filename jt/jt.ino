@@ -4,6 +4,10 @@
 #include <TFT_eSPI.h>
 #include <lvgl.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
+// HMAC-SHA256 for the engine's authenticated clock and audio datagrams.
+#include <mbedtls/md.h>
+#include <esp_random.h>
 // The house CA. Every house TLS client pins it as a trust anchor.
 #include <house_ca.h>
 // ESPmDNS: advertise this deck on _jawnos._tcp so the Dev panel names it at once
@@ -89,6 +93,7 @@ using namespace websockets;
 //   jt_14_voice_notes_clips.ino
 //   jt_15_voice_activation.ino
 //   jt_16_voice_capture.ino
+//   jt_17_audio_uplink.ino
 //
 // The original void setup()/void loop() bodies live in the parts as
 // jawn_setup()/jawn_loop(). These wrappers keep main-file detection and the
