@@ -399,6 +399,18 @@ my $key_markup = read_file("$root/templates/padlock_key/markup.html.ep");
 like($key_markup, qr/id="padlock_key_back"/,
 	'the phone key page has a way back to the house');
 
+# The Padlock view's phone page is a button now, and the key page offers the
+# house open even when its own manager says open: a peer can hold the lock.
+my $padlock_view = read_file("$root/templates/security/padlock.html.ep");
+like($padlock_view, qr/<button[^>]*id="padlock_key_show"/,
+	'the phone unlock page is a button');
+unlike($padlock_view, qr/<a[^>]*id="padlock_key_show"/,
+	'and no longer a link');
+like(read_file("$root/public/js/manager/security.js"), qr/#padlock_key_show[\s\S]{0,300}padlock_key/,
+	'and the button opens the key page');
+like($key_script, qr/Nothing is locked here\. Unlock the whole house/,
+	'the key page offers the house open when its own state is open');
+
 diag("split scripts found: $splits; core entries: " . scalar(@core)
 	. "; lazy apps: " . scalar(keys %apps));
 done_testing();

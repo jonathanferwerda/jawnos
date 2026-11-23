@@ -145,9 +145,13 @@
 					$('#padlock_key_unlock').show();
 				}
 				else {
-					padlockKeyHouse = false;
-					$('#padlock_key_note').text('Nothing is locked.');
-					$('#padlock_key_unlock').hide();
+					// This manager's own state is open, but another machine in the
+					// house can still hold the lock. Offer the signed house open: the
+					// server relays it to the peers that hold it.
+					padlockKeyHouse = true;
+					padlockKeyTarget = '';
+					$('#padlock_key_note').text('Nothing is locked here. Unlock the whole house to reach another machine.');
+					$('#padlock_key_unlock').show();
 				}
 				$('#padlock_key_targets').hide();
 				return;

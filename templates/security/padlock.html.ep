@@ -44,8 +44,8 @@
 			<button id="padlock_gate_enable" type="button"<% if ($padlock) { %> style="display:none;"<% } %>>Turn the gate on</button>
 			<button id="padlock_gate_disable" type="button"<% unless ($padlock) { %> style="display:none;"<% } %>>Turn the gate off</button>
 			<br>
-			<a href="/manager/security/padlock_key" target="_blank" id="padlock_key_show"
-				style="display:inline-block;margin-top:10px;font-size:15px;">Phone unlock page</a>
+			<button type="button" id="padlock_key_show"
+				style="display:inline-block;margin-top:10px;font-size:15px;"><%= &subs::ui('Phone unlock page') %></button>
 			<% if (&subs::device_setter() eq 'mobile') { %>
 				<div id="padlock_biometric_enroll" style="margin-top:14px;">
 					<button id="padlock_biometric_enroll_button" type="button" data-enrolled="<%= $biometric_enrolled ? 1 : 0 %>"><%= $biometric_enrolled ? "Replace this phone's fingerprint" : "Enroll this phone's fingerprint" %></button>
