@@ -11,7 +11,7 @@
 	<select id="embedded_device_chip_id" value="<%= $chip_id %>" hint="<%= &subs::ui('Choose the device to control') %>">
 		<option value=""><%= &subs::ui('Choose a device') %></option>
 		<% foreach my $chip ( @{$chip_ids} ) { %>
-			<option value="<%= $chip->{'id'} %>" <% if ($chip_id eq $chip->{'id'}) { %>selected<% } %>><%= $chip->{'name'} || $chip->{'id'} %></option>
+			<option value="<%= $chip->{'id'} %>" data-purpose="<%= $chip->{'purpose'} // '' %>" <% if ($chip_id eq $chip->{'id'}) { %>selected<% } %>><%= $chip->{'name'} || $chip->{'id'} %></option>
 		<% } %>
 	</select>
 	<% if (eval {$embedded->{'ip'} || $embedded->{'ble'}}) { %>

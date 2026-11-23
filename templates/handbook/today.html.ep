@@ -81,7 +81,7 @@
 					<% foreach my $device ( @{$devices} ) { %>
 						<% my $is_on = $device->{'state'} eq 'on'; %>
 						<li class="handbook_today_row handbook_today_device" app="<%= $device->{'app'} %>">
-							<span class="handbook_today_row_name"><%= $device->{'name'} %></span>
+							<span class="handbook_today_row_name handbook_today_open_app hover" app="<%= $device->{'app'} %>" title="<%= &subs::ui('Open this device') %>"><%= $device->{'name'} %></span>
 							<span class="handbook_today_row_note"><%= $device->{'component'} eq 'led' ? &subs::ui('LED') : &subs::ui('Relay') %> <%= $device->{'pin'} %></span>
 							<button class="handbook_today_device_toggle<% if ($is_on) { %> on<% } %>" app="<%= $device->{'app'} %>" state="<%= $is_on ? 'on' : 'off' %>" aria-pressed="<%= $is_on ? 'true' : 'false' %>" hint="<%= &subs::ui('Turn this device on or off') %>"><%= $is_on ? &subs::ui('On') : &subs::ui('Off') %></button>
 						</li>

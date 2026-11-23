@@ -109,6 +109,11 @@ subtest 'the Today page, its route and its script are wired together' => sub {
 		'the switch has a fixed, translatable hint');
 	like($template, qr/\$t->\{'is_today'\}/, 'the card is drawn for today only');
 
+	like($template, qr/handbook_today_row_name handbook_today_open_app hover/,
+		'the device name is a click-through');
+	like($template, qr/handbook_today_open_app hover" app="<%= \$device->/,
+		'and carries the device app');
+
 	my @cards = qw(handbook_today_money handbook_today_devices handbook_today_projects handbook_today_life handbook_today_people);
 	my @at = map { index($template, $_) } @cards;
 	is_deeply(\@at, [ sort { $a <=> $b } @at ],

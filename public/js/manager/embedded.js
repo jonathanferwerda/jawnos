@@ -10,19 +10,42 @@ var edt_diagrams = { components: [], file: {} };
 $(document).ready(function() {
 	edt = localStorage.getItem('embedded_device_type') || 'watch';
 });
+// The type and the device pickers follow each other: a type selects the first
+// known device of that type, and a device selects its own type from the purpose
+// the device reports. The chip option carries that purpose as data-purpose.
 $(document).on('change', '#embedded_device_picker', function() {
 	var timestamp = Date.now();
 	edt = $(this).val();
-	var chip_id = $('#embedded_device_chip_id').val();
+	var chip = $('#embedded_device_chip_id');
+	if (chip.length) {
+		var current = chip.find('option:selected');
+		// Keep a device that already belongs to the chosen type; otherwise take
+		// the first one the fleet lists for it, or fall back to the blank choice.
+		if ((current.attr('data-purpose') || '') !== edt) {
+			var match = chip.find('option').filter(function() {
+				return ($(this).attr('data-purpose') || '') === edt;
+			}).first();
+			chip.val(match.length ? match.val() : '');
+		}
+		localStorage.setItem('embedded_chip_id', chip.val() || '');
+	}
 	localStorage.setItem('embedded_device_type', edt);
-	localStorage.setItem('embedded_chip_id', chip_id);
 	embeddedDevicesOpener();
 });
 
 $(document).on('change', '#embedded_device_chip_id', function() {
-	var chip_id = $(this).val();
+	var chip = $(this);
+	var chip_id = chip.val();
+	var purpose = chip.find('option:selected').attr('data-purpose') || '';
 	localStorage.setItem('embedded_chip_id', chip_id);
 	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
+	var picker = jQuery('#embedded_device_picker');
+	// Only a purpose the type picker can show becomes the type; a computer or
+	// printer sighting leaves the panel on the type it was reading.
+	if (purpose && picker.find('option').filter(function() { return jQuery(this).val() === purpose; }).length) {
+		picker.val(purpose);
+		edt = purpose;
+	}
 	localStorage.setItem('embedded_device_type', edt);
 	embeddedDevicesOpener();
 });
