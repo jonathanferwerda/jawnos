@@ -7,27 +7,63 @@
    [[/js-split]] */
 var edt = 'watch';
 var edt_diagrams = { components: [], file: {} };
+// The device chosen most recently for each type. Switching type should return
+// to the device the person used last, not the top of the fleet list; the map is
+// small enough to keep in localStorage beside the two picker values.
+function embeddedChipMemory() {
+	try {
+		var map = JSON.parse(localStorage.getItem('embedded_chip_by_type') || '{}');
+		return (map && typeof map === 'object') ? map : {};
+	}
+	catch (e) { return {}; }
+}
+function embeddedRememberChip(edt, chip_id) {
+	if (!edt || !chip_id) { return; }
+	var map = embeddedChipMemory();
+	map[edt] = chip_id;
+	localStorage.setItem('embedded_chip_by_type', JSON.stringify(map));
+}
+function embeddedRememberRenderedChip() {
+	var chip = $('#embedded_device_chip_id');
+	if (!chip.length) { return; }
+	embeddedRememberChip(chip.find('option:selected').attr('data-purpose') || '', chip.val() || '');
+}
+
 $(document).ready(function() {
 	edt = localStorage.getItem('embedded_device_type') || 'watch';
+	embeddedRememberRenderedChip();
 });
-// The type and the device pickers follow each other: a type selects the first
-// known device of that type, and a device selects its own type from the purpose
-// the device reports. The chip option carries that purpose as data-purpose.
+
+// The type and the device pickers follow each other: a type selects the device
+// most recently chosen for that type, and a device selects its own type from the
+// purpose the device reports. The chip option carries that purpose as data-purpose.
 $(document).on('change', '#embedded_device_picker', function() {
 	var timestamp = Date.now();
 	edt = $(this).val();
 	var chip = $('#embedded_device_chip_id');
 	if (chip.length) {
 		var current = chip.find('option:selected');
-		// Keep a device that already belongs to the chosen type; otherwise take
-		// the first one the fleet lists for it, or fall back to the blank choice.
-		if ((current.attr('data-purpose') || '') !== edt) {
-			var match = chip.find('option').filter(function() {
+		var current_id = chip.val() || '';
+		var current_purpose = current.attr('data-purpose') || '';
+		// Leaving a type keeps the device it was showing as that type's most
+		// recent, however the person changed it.
+		embeddedRememberChip(current_purpose, current_id);
+		var remembered = embeddedChipMemory()[edt] || '';
+		var chosen = '';
+		var match = chip.find('option').filter(function() {
+			return $(this).val() === remembered && ($(this).attr('data-purpose') || '') === edt;
+		}).first();
+		if (match.length) { chosen = remembered; }
+		else if (current_purpose === edt && current_id) { chosen = current_id; }
+		else {
+			match = chip.find('option').filter(function() {
 				return ($(this).attr('data-purpose') || '') === edt;
 			}).first();
-			chip.val(match.length ? match.val() : '');
+			if (match.length) { chosen = match.val(); }
 		}
-		localStorage.setItem('embedded_chip_id', chip.val() || '');
+		chip.val(chosen);
+		embeddedRememberChip(edt, chosen);
+		localStorage.setItem('embedded_chip_id', chosen);
 	}
 	localStorage.setItem('embedded_device_type', edt);
 	embeddedDevicesOpener();
@@ -38,6 +74,7 @@ $(document).on('change', '#embedded_device_chip_id', function() {
 	var chip_id = chip.val();
 	var purpose = chip.find('option:selected').attr('data-purpose') || '';
 	localStorage.setItem('embedded_chip_id', chip_id);
+	embeddedRememberChip(purpose, chip_id);
 	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	var picker = jQuery('#embedded_device_picker');
 	// Only a purpose the type picker can show becomes the type; a computer or
@@ -74,6 +111,7 @@ function embeddedDevicesOpener() {
 			localStorage.setItem('embedded_device_type', response.edt);
 			// the panel is in the page now, so the scan has somewhere to write
 			embeddedWifiScan();
+			embeddedRememberRenderedChip();
 		}
 	});
 }
