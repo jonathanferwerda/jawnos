@@ -29,7 +29,7 @@
 			<%# the film's chapters: music.js builds this strip and shows it in the
 			    theatre or a fullscreen, just above this bar - and above the tools
 			    panel while that is open. It scrolls sideways when they do not all fit. %>
-			<div id="<%= $miss %>_chapters" class="music_chapters" style="display:none;"></div>
+			<div id="<%= $miss %>_chapters" class="music_chapters"></div>
 			<span id="<%= $id %>_full_title"></span>
 			<%# the fullscreen toggle sits right of the title rather than inside the
 			    tools panel: it is used far more often than the panel's speed,

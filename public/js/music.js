@@ -4169,6 +4169,7 @@ $(document).on('fullscreenchange webkitfullscreenchange', function() {
 	}
 	// a fullscreen is the other time the picture is big enough for chapters
 	musicChaptersRefresh();
+	musicChromeArm();
 });
 
 // The theatre's two bars slide instead of fading. The class is the state,
@@ -4188,6 +4189,13 @@ function musicChromeShow(el) {
 function musicChromeHide(el) {
 	el = $(el);
 	if (el.length && el.is(':visible')) { el.addClass('music_chrome_hidden'); }
+}
+// A reload restores the theatre or a fullscreen with no pointer movement to arm
+// the include's auto-hide, so the bars would stay over the picture for ever.
+// The include owns the pointer and touch cadence; music.js only asks it to
+// start counting again after entering the big picture.
+function musicChromeArm() {
+	if (typeof window.jawnosMusicChromeArm == 'function') { window.jawnosMusicChromeArm(); }
 }
 
 function theatreModeOn() {
@@ -4219,6 +4227,9 @@ function theatreModeOn() {
 		$('#music_album_cover').hide()
 	}
 	musicChaptersRefresh();
+	// the restored theatre arms the include's idle timer, so the bars can leave
+	// the picture without waiting for the pointer to move
+	musicChromeArm();
 }
 
 function theatreModeOff() {

@@ -151,6 +151,56 @@
 			var <%= $miss %>Tools = { toolbarTimeout: 0, toolbarReset: 0, lastX: 0, lastY: 0 };
 			window.jawnos_vid_tools = window.jawnos_vid_tools || {};
 			window.jawnos_vid_tools['<%= $id %>'] = <%= $miss %>Tools;
+			// A pointer hides the bars quickly once it leaves them; a touch screen has
+			// no hover to tell us the finger has gone, so it keeps the old, gentler
+			// cadence. The check is a function of its own so a reload (which restores
+			// the theatre with no pointer movement to arm it) can start it from
+			// music.js as well as from a mouse move.
+			var <%= $miss %>HideAfter = (window.matchMedia && window.matchMedia('(hover: hover)').matches) ? 1200 : 3000;
+			function <%= $miss %>ChromeIdle() {
+				if ($('#<%= $id %>').attr('theatre_mode') == 'on' || document.fullscreenElement || '<%= $id %>' != 'video') {
+					var mouse = mouse_position();
+					var el = document.elementsFromPoint(mouse.x,mouse.y);	
+					var seen = 0;
+					$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'none'});
+					$.each(el, function(i,v) {
+						if (<% if ($id eq 'video') { %> $(v).attr('id') == 'interface' || <% } %> $(v).attr('id') == '<%= $miss %>_controls' || $(v).attr('id') == '<%= $miss %>_tools_panel') {
+							seen = 1;
+						}
+						else if ($(v).attr('id') == '<%= $id %>' && seen == 0) {
+							if (mouse.lastX == mouse.x && mouse.lastY == mouse.y &&  $(v).attr('id') != '<%= $miss %>_controls') {
+								seen = 0;
+								$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'none'});
+							}
+							else {
+								seen = 1;
+							}
+						}
+					});
+					if (seen == 0) {
+						<% if ($source eq 'music') { %>
+							musicChromeHide($('#<%= $miss %>_controls'));
+							musicChromeHide($('#interface'));
+						<% } else { %>
+							$('#<%= $miss %>_controls').fadeOut();
+							<% if ($id == 'video') { %>
+								$('#interface').fadeOut('slow'); 
+							<% } %>
+						<% } %>
+						clearInterval(<%= $miss %>Tools['toolbarTimeout']);
+					}
+				}
+				else {
+					clearInterval(<%= $miss %>Tools['toolbarTimeout']);
+				}
+			}
+			function <%= $miss %>ChromeArm() {
+				clearInterval(<%= $miss %>Tools['toolbarTimeout']);
+				<%= $miss %>Tools['toolbarTimeout'] = setInterval(<%= $miss %>ChromeIdle, <%= $miss %>HideAfter);
+			}
+			<% if ($source eq 'music') { %>
+				window.jawnosMusicChromeArm = <%= $miss %>ChromeArm;
+			<% } %>
 			vidOn('mousemove mouseenter', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_container, #<%= $miss %>_controls', function() {
 
 				var controls = $('#<%= $miss %>_controls');
@@ -177,49 +227,8 @@
 				// on every mousemove event.
 				var jawnos_now = Date.now();
 				if (!<%= $miss %>Tools['toolbarReset'] || (jawnos_now - <%= $miss %>Tools['toolbarReset']) > 250) {
-				<%= $miss %>Tools['toolbarReset'] = jawnos_now;
-				clearInterval(<%= $miss %>Tools['toolbarTimeout']);
-				// A pointer hides the bars quickly once it leaves them; a touch
-				// screen has no hover to tell us the finger has gone, so it keeps
-				// the old, gentler cadence.
-				var hide_after = (window.matchMedia && window.matchMedia('(hover: hover)').matches) ? 1200 : 3000;
-				<%= $miss %>Tools['toolbarTimeout'] = setInterval(function() {
-					if ($('#<%= $id %>').attr('theatre_mode') == 'on' || document.fullscreenElement || '<%= $id %>' != 'video') {
-						var mouse = mouse_position();
-						var el = document.elementsFromPoint(mouse.x,mouse.y);	
-						var seen = 0;
-						$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'none'});
-						$.each(el, function(i,v) {
-							if (<% if ($id eq 'video') { %> $(v).attr('id') == 'interface' || <% } %> $(v).attr('id') == '<%= $miss %>_controls' || $(v).attr('id') == '<%= $miss %>_tools_panel') {
-								seen = 1;
-							}
-							else if ($(v).attr('id') == '<%= $id %>' && seen == 0) {
-								if (mouse.lastX == mouse.x && mouse.lastY == mouse.y &&  $(v).attr('id') != '<%= $miss %>_controls') {
-									seen = 0;
-									$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'none'});
-								}
-								else {
-									seen = 1;
-								}
-							}
-						});
-						if (seen == 0) {
-							<% if ($source eq 'music') { %>
-								musicChromeHide($('#<%= $miss %>_controls'));
-								musicChromeHide($('#interface'));
-							<% } else { %>
-								$('#<%= $miss %>_controls').fadeOut();
-								<% if ($id == 'video') { %>
-									$('#interface').fadeOut('slow'); 
-								<% } %>
-							<% } %>
-							clearInterval(<%= $miss %>Tools['toolbarTimeout']);
-						}
-					}
-					else {
-						clearInterval(<%= $miss %>Tools['toolbarTimeout']);
-					}
-					}, hide_after);
+					<%= $miss %>Tools['toolbarReset'] = jawnos_now;
+					<%= $miss %>ChromeArm();
 				}
 			});
 

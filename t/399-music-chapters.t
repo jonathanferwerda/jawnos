@@ -19,8 +19,10 @@ my $style = read_file("$root/templates/apps/video/style.html.ep");
 my $script = read_file("$root/templates/apps/video/script.html.ep");
 
 # --- the strip exists only in the music player's own branch -----------------
-like($markup, qr!<div id="<%= \$miss %>_chapters" class="music_chapters" style="display:none;"></div>!,
+like($markup, qr!<div id="<%= \$miss %>_chapters" class="music_chapters"></div>!,
 	'the music markup carries an empty chapter strip');
+unlike($markup, qr!id="<%= \$miss %>_chapters"[^>]*style=!,
+	'no inline display on it: a .shown class could not beat one');
 
 # --- it sits above the bar, on a translucent band, and scrolls sideways ------
 like($style, qr!\.music_chapters \{[^}]*position:\s*absolute;[^}]*bottom:\s*112px;!,
@@ -58,6 +60,14 @@ my $calls = () = $js =~ /musicChaptersRefresh\(\);/g;
 cmp_ok($calls, '>=', 4, 'the theatre, fullscreen, repaint and cache paths all refresh it');
 like($js, qr!shell\.find\('\.music_chapters'\)\.removeClass\('shown'\)\.empty\(\)\.removeAttr\('data-sig'\)!,
 	'the cached shell stores no stale chapter row');
+
+# --- a reload arms the bar's idle hide --------------------------------------
+like($script, qr!function <%= \$miss %>ChromeArm\(\)!, 'the include has an armable idle timer');
+like($script, qr!window\.jawnosMusicChromeArm = <%= \$miss %>ChromeArm;!,
+	'and hands it to the music player');
+like($js, qr!function musicChromeArm\(\)!, 'music.js has the caller');
+my $arm = () = $js =~ /musicChromeArm\(\);/g;
+cmp_ok($arm, '>=', 2, 'the theatre and fullscreen both arm it');
 
 # --- a card is a seek -------------------------------------------------------
 like($js, qr!\$\(document\)\.on\('click', '\.music_chapter_tile'!, 'a card is clickable');
