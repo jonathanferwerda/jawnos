@@ -298,7 +298,14 @@ sub firmware_push($data) {
 		my $image = read_file($file, binmode => ':raw');
 		my $url = 'http://' . $ip . ':' . firmware_board_port() . '/upload/alarmclock.bin?total_size=' . length($image)
 			. '&authorization=' . url_escape($auth);
-		$res = $ua->post($url => { authorization => $auth } => $image)->result;
+		# A board that reboots at the end of the upload closes the socket before
+		# answering. Report that as a failed push, not an exception the route
+		# turns into a 500 with no reason.
+		$res = eval { $ua->post($url => { authorization => $auth } => $image)->result };
+		if ((my $why = $@)) {
+			$why =~ s/\s+/ /g;
+			return { success => 0, code => 0, result => 'the board closed the connection: ' . substr($why, 0, 160) };
+		}
 	}
 	else {
 		my $image = read_file($file, binmode => ':raw');

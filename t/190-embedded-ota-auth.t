@@ -38,11 +38,17 @@ unlike($push, qr/add_generator/,
 	'no streaming generator can change shape on a failed-connect retry');
 like($push, qr/total_size='\s*\.\s*length\(\s*\$image\s*\)/,
 	'the query names the body length');
+like($push, qr/eval \{ \$ua->post\(/,
+	'a board that closes the connection is caught instead of a 500');
+like($push, qr/closed the connection/,
+	'and the push says the board closed it');
 
 # --- the board reads that header --------------------------------------------
 
 my ($upload) = $loop =~ /(void handleCreateProcess\(\)\s*\{.*?\n\})/s;
 ok($upload, 'handleCreateProcess is still one function');
+my $feeds = () = $upload =~ /rp2040\.wdt_reset\(\)/g;
+ok($feeds >= 3, "the upload feeds the 45 s watchdog through a long image ($feeds feeds)");
 like($upload, qr/server\.header\(\s*"authorization"\s*\)/,
 	'the board reads the authorization from a collected header');
 like($upload, qr/server\.arg\(\s*"authorization"\s*\)/,

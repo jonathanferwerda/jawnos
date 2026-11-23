@@ -58,6 +58,7 @@ void handleCreateProcess() {
     HTTPRaw& raw = server.raw();
     
     if (raw.status == RAW_START) {
+      rp2040.wdt_reset();
       ota_received = 0;
       ota_failed = false;
       if (LittleFS.exists((char *)path.c_str())) {
@@ -86,6 +87,9 @@ void handleCreateProcess() {
         return;
       }
     } else if (raw.status == RAW_WRITE) {
+      // The upload can outlast the 45 s watchdog: keep it fed or the board
+      // reboots mid-image and the manager sees a closed connection.
+      rp2040.wdt_reset();
       if (rawFile && !ota_failed) {
         size_t wrote = rawFile.write(raw.buf, raw.currentSize);
         if (wrote != raw.currentSize) {
@@ -113,6 +117,7 @@ void handleCreateProcess() {
         ota_status_send(ota_received, "uploading");
       }
     } else if (raw.status == RAW_END) {
+      rp2040.wdt_reset();
       if (ota_failed) {
         if (rawFile) { rawFile.close(); }
         return;
@@ -163,6 +168,7 @@ void handleCreateProcess() {
       // stay until then. The next boot removes it once the shim has run.
       ota_status_send(ota_received, "complete");
       delay(1000);
+      rp2040.wdt_reset();
       rebooting = 1;
     }
   }
