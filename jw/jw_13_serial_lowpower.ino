@@ -423,12 +423,31 @@ void lowPowerEnergyHandler()
   // the watch never entered the real sleep at home at all: the doze runs at
   // 80 MHz with the radio up, which is the battery drain, not the saving.
   const bool want_sleep = lightSleep && !watch.isUsbIn();
+  // A bridge push that asked for the house Wi-Fi must not be slept through: the
+  // join lives in jawn_loop(), which this handler owns until it returns, so get
+  // out now and let it run with the panel dark.
+  if (wifi_join_requested) {
+    Serial.println("[sleep] wifi push: staying up to join");
+    // the wake tail below is skipped so the panel stays dark, but the loop
+    // still needs its full clock and its "awake" state for the join
+    dozing = false;
+    setCpuFrequencyMhz(240);
+    return;
+  }
   if (want_sleep && ble_link_ready()) {
     Serial.println("[sleep] bridge held for a tap burst");
     doze_until_crown(millis() + BLE_LINGER_MS);
     if (pmuIrq) {
       Serial.println("[sleep] wake inside the bridge window");
     }
+  }
+  // the linger keeps the radio up, so a push may land after the check above:
+  // same reason, and a crown caught inside the window still gets its screen
+  if (wifi_join_requested && !pmuIrq) {
+    Serial.println("[sleep] wifi push in the bridge window: staying up to join");
+    dozing = false;
+    setCpuFrequencyMhz(240);   // the wake tail is skipped; the join needs the clock
+    return;
   }
   if (want_sleep && !pmuIrq) {
     // a bridge linger ends with dozing cleared; the real sleep is still "asleep"
@@ -660,6 +679,14 @@ void lowPowerEnergyHandler()
       Serial.println("[sleep] USB is attached, dozing instead of light sleeping");
     }
     doze_until_crown(0, lightSleep);
+    if (wifi_join_requested && !pmuIrq) {
+      // the doze ended on a bridge push, not on the crown: return before the
+      // wake tail so the join runs with the display still dark
+      Serial.println("[sleep] wifi push: staying up to join");
+      dozing = false;
+      setCpuFrequencyMhz(240);   // the tail is where 240 comes back; skip the screen only
+      return;
+    }
     if (lightSleep && !watch.isUsbIn() && !sleep_handler_reentering) {
       // the cable was pulled while we dozed: run the decision again so the real
       // light sleep (and the notification fetch) starts now

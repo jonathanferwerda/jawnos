@@ -508,6 +508,13 @@ static void doze_until_crown(uint32_t until_ms = 0, bool recheck_usb = false) {
       Serial.println("[doze] cable pulled: back to the sleep path");
       break;
     }
+    if (wifi_join_requested) {
+      // the house pushed network credentials over the BLE link, which is still
+      // up: hand control back so jawn_loop() runs the join instead of keeping
+      // it waiting for a tap the person may not make until morning
+      Serial.println("[doze] wifi push: waking to join");
+      break;
+    }
     sportsIrq = false;      // movement must not light the screen back up either
     if (jw_room == "message") {
       if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && count > 58) {
