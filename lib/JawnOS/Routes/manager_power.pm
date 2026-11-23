@@ -14,6 +14,7 @@ sub routes {
 		[53016, 'post', '/manager/power/sleep_now', 'action_53016'],
 		[53017, 'post', '/manager/power/charge',   'action_53017'],
 		[53018, 'post', '/manager/power/manage',   'action_53018'],
+		[53019, 'post', '/manager/power/guard',    'action_53019'],
 	);
 }
 

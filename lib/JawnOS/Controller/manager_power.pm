@@ -109,4 +109,16 @@ sub action_53018 {
 	$c->render(json => $result || { ok => 0, error => 'the setting could not be saved' });
 }
 
+# POST /manager/power/guard
+#
+# The low-battery guard's switch. A controller and a computer draw it; a phone
+# keeps Android's own handling and does not show it, though the stored value is
+# harmless if the setting is carried there.
+sub action_53019 {
+	my $c = shift;
+	my $on = ($c->param('enabled') || '') =~ /^(?:1|yes|on|true)$/i ? 1 : 0;
+	my $result = eval { &subs::power_guard_set($on) };
+	$c->render(json => $result || { ok => 0, error => 'the guard setting could not be saved' });
+}
+
 1;

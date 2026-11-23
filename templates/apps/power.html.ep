@@ -1,4 +1,6 @@
 <% my $controller_device = (&subs::device_setter() || '') eq 'controller'; %>
+<% my $guard_shown = ref $status eq 'HASH' && ref $status->{'battery'} eq 'HASH'
+	&& $status->{'battery'}{'present'} && ($status->{'machine'} || '') ne 'mobile'; %>
 <style>
 #power { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow: auto; font-size: 16px; }
 #power .power_muted { opacity: .68; }
@@ -34,6 +36,9 @@
 #power .power_charge_row { margin-top: 8px; }
 #power .power_charge_row label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 #power .power_charge_row input[type=range] { width: 130px; }
+#power .power_guard_row { margin-top: 8px; }
+#power .power_guard_row label { display: flex; align-items: center; gap: 8px; }
+#power .power_guard_row .power_muted { margin-top: 4px; font-size: 12px; }
 #power #power_sleep_plan_row { margin-bottom: 8px; }
 </style>
 <div id="power" app="power">
@@ -49,6 +54,12 @@
 						<span id="power_charge_value">—</span>
 					</label>
 				</div>
+<% if ($guard_shown) { %>
+				<div id="power_guard_row" class="power_guard_row">
+					<label><input type="checkbox" id="power_guard"> <%= &subs::ui('Shut down before the battery dies') %></label>
+					<div class="power_muted"><%= &subs::ui('Warn at 10% and shut down cleanly at 5%. On a computer or a controller; a phone keeps its own battery handling.') %></div>
+				</div>
+<% } %>
 			</div>
 		</div>
 		<div class="power_cpu_summary">

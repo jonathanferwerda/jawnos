@@ -667,10 +667,11 @@ SH
 	is($memo{'last_discharge'}, 37, 'an unplugged reading is stored for the next charge');
 }
 
-# --- the controller's low-battery guard -------------------------------------
-# A controller has no daemon to catch a pack that is about to be cut off. Warn
-# once at ten percent and ask for a clean shutdown at five, after a second tick
-# confirms it; another machine keeps its own policy.
+# --- the low-battery guard ---------------------------------------------------
+# A computer or a controller has no guaranteed daemon to catch a pack that is
+# about to be cut off. Warn once at ten percent and ask for a clean shutdown at
+# five, after a second tick confirms it; a phone keeps Android's own handling,
+# and the Power page's switch can turn the guard off.
 {
 	my (%state, @notes, @actions);
 	no warnings 'redefine';
@@ -710,9 +711,63 @@ SH
 	subs::power_battery_guard($battery);
 	is(scalar @actions, 1, 'the shutdown is not repeated');
 
+	local *subs::device_setter = sub { 'mobile' };
+	is(subs::power_battery_guard($battery)->{'skipped'}, 'not a battery machine',
+		'a phone keeps Android\'s own handling');
+
+	local *subs::power_config = sub { { guard => { enabled => 0 } } };
+	local *subs::device_setter = sub { 'controller' };
+	is(subs::power_battery_guard($battery)->{'skipped'}, 'guard off',
+		'the Power page switch can turn the guard off');
+}
+
+# --- the guard runs on a computer too ---------------------------------------
+{
+	my (%state, @notes, @actions);
+	no warnings 'redefine';
 	local *subs::device_setter = sub { 'computer' };
-	is(subs::power_battery_guard($battery)->{'skipped'}, 'not a controller',
-		'another machine keeps its own policy');
+	local *subs::cache_get = sub {
+		my ($p) = @_;
+		return { %{ $state{ $p->{'context'} } || {} } } if $p->{'context'};
+		return undef;
+	};
+	local *subs::cache_set = sub {
+		my ($p, $d) = @_;
+		$state{ $p->{'context'} } = { %{ $d || {} } };
+	};
+	local *subs::notification_sender = sub { push @notes, $_[0]; };
+	local *subs::power_action = sub { push @actions, $_[0]; return { ok => 1 }; };
+	my $battery = { present => 1, ac => 0, percentage => 8, status => 'discharging' };
+	my $first = subs::power_battery_guard($battery);
+	is($first->{'warned'}, 1, 'a computer at eight percent warns too');
+	is(scalar @notes, 1, 'with its own notification');
+	is(scalar @actions, 0, 'and no shutdown yet');
+}
+
+# --- the guard switch -------------------------------------------------------
+{
+	is(subs::power_default_config()->{'guard'}{'enabled'}, 1, 'the guard defaults on');
+	my $off = subs::power_guard_set(0);
+	ok($off->{'ok'}, 'the guard can be turned off');
+	is($off->{'config'}{'guard'}{'enabled'}, 0, 'and the switch is stored');
+	is(subs::power_config()->{'guard'}{'enabled'}, 0, 'the saved switch is read back');
+	my $on = subs::power_guard_set(1);
+	is($on->{'config'}{'guard'}{'enabled'}, 1, 'and back on');
+
+	my $routes = read_file("$root/lib/JawnOS/Routes/manager_power.pm");
+	like($routes, qr/\[\s*53019\s*,\s*'post'\s*,\s*'\/manager\/power\/guard'\s*,\s*'action_53019'\s*\]/,
+		'the guard route is registered');
+	my $power_controller = read_file("$root/lib/JawnOS/Controller/manager_power.pm");
+	like($power_controller, qr/sub action_53019\b/, 'the guard action exists');
+	like($power_controller, qr/power_guard_set\(\$on\)/, 'and saves the switch');
+	my $template = read_file("$root/templates/apps/power.html.ep");
+	like($template, qr/id="power_guard"/, 'the Power page draws the guard switch');
+	like($template, qr/\$status->\{'machine'\}.*ne 'mobile'/, 'but not on a phone');
+	my $js = read_file("$root/public/js/manager/power.js");
+	like($js, qr/'#power_guard'/, 'the chunk binds the switch');
+	like($js, qr{/manager/power/guard}, 'and saves through its route');
+	like(read_file("$root/lib/JawnOS/Domain/Loader.pm"), qr/\bpower_guard_set\b/,
+		'the switch is reachable by name');
 }
 
 # --- the labels and the help topic -----------------------------------------
@@ -733,6 +788,8 @@ SH
 	like($body, qr/last reading before charging/, 'the help describes the held charging reading');
 	like($body, qr/ten percent/, 'the help names the warning threshold');
 	like($body, qr/five percent/, 'and the clean-shutdown threshold');
+	like($body, qr/computer or a controller/, 'the help names the machines the guard covers');
+	like($body, qr/Shut down before the battery dies switch/, 'and the Power page switch');
 
 	my $power_src = read_file("$root/lib/JawnOS/Domain/Power.pm");
 	like($power_src, qr/sub power_plan_tick \{.*?&power_battery_guard/s,

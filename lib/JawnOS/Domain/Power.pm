@@ -529,6 +529,10 @@ sub power_default_config {
 		manage => 1,
 		ac => { plan => 'balanced', limit => 100 },
 		battery => { plan => 'saver', limit => 70 },
+		# On a computer or a controller the low-battery guard warns at ten percent
+		# and shuts down cleanly at five. A phone keeps Android's own handling, so
+		# the toggle is not drawn there; the stored switch is harmless either way.
+		guard => { enabled => 1 },
 		sleep => {
 			screen_timeout => 0,
 			sleep_timeout => 0,
@@ -547,6 +551,9 @@ sub power_config_clean {
 	return $clean unless ref $config eq 'HASH';
 	$clean->{'auto'} = $config->{'auto'} ? 1 : 0 if exists $config->{'auto'};
 	$clean->{'manage'} = $config->{'manage'} ? 1 : 0 if exists $config->{'manage'};
+	my $guard = $config->{'guard'};
+	$clean->{'guard'}->{'enabled'} = $guard->{'enabled'} ? 1 : 0
+		if ref $guard eq 'HASH' && exists $guard->{'enabled'};
 	for my $source (qw(ac battery)) {
 		my $entry = $config->{$source};
 		next unless ref $entry eq 'HASH';
@@ -853,6 +860,18 @@ sub power_auto_set {
 	return { ok => 1, config => $config };
 }
 
+# The low-battery guard's switch. It is stored even on a phone (where the
+# toggle is not drawn) or a desktop with no pack, so a setting carried to
+# another machine is not lost; the guard itself only runs on a computer or a
+# controller with a battery.
+sub power_guard_set {
+	my ($on) = @_;
+	my $config = &power_config();
+	$config->{'guard'} = { enabled => $on ? 1 : 0 };
+	$config = &power_config_save($config);
+	return { ok => 1, config => $config };
+}
+
 # The checkbox beside the management line: JawnOS writes the power knobs, or
 # the system keeps them. Turning it on applies the saved plan now; turning it
 # off stops every automatic write, including the boot restore, and puts back the
@@ -989,16 +1008,20 @@ sub power_sleep_now {
 	return { %{ &power_helper('sleep', $type) }, type => $type };
 }
 
-# A controller has no low-battery daemon of its own, and the rk818's protection
-# is a hard rail cut: the screen goes dark and the board needs the charger
-# before it will start. Warn once at ten percent, then ask for a clean poweroff
-# at five after a second ten-second tick confirms the reading. Only a controller:
-# a laptop's own daemon may already guard it, and a server on a UPS must not be
-# shut down by a pack it may not even have.
+# A computer or a controller has no guaranteed low-battery action, and a
+# handheld's rk818 protection is a hard rail cut: the screen goes dark and the
+# board needs the charger before it will start. Warn once at ten percent, then
+# ask for a clean poweroff at five after a second ten-second tick confirms the
+# reading. The Power page's guard switch turns this off; a phone keeps Android's
+# own handling and is skipped.
 sub power_battery_guard {
-	my ($battery) = @_;
-	return { ok => 1, skipped => 'not a controller' }
-		unless (&subs::device_setter() || '') eq 'controller';
+	my ($battery, $config) = @_;
+	$config = &power_config() unless ref $config eq 'HASH';
+	my $guard_on = ref $config->{'guard'} eq 'HASH' ? $config->{'guard'}{'enabled'} : 1;
+	return { ok => 1, skipped => 'guard off' } unless $guard_on;
+	my $machine = &subs::device_setter() || '';
+	return { ok => 1, skipped => 'not a battery machine' }
+		unless $machine eq 'controller' || $machine eq 'computer';
 	$battery = &power_battery_read() unless ref $battery eq 'HASH';
 	return { ok => 1, skipped => 'no battery' } unless $battery->{'present'};
 	return { ok => 1, skipped => 'on mains' } if $battery->{'ac'};
@@ -1020,7 +1043,7 @@ sub power_battery_guard {
 		eval {
 			&subs::notification_sender({
 				app => 'power', role => 'citizen', title => 'Battery low',
-				message => "The controller has about $percentage% left. Plug it in.",
+				message => "The battery has about $percentage% left. Plug it in.",
 				image => '/images/decipherable/information.png', urgent => 1,
 			});
 		};
@@ -1038,8 +1061,8 @@ sub power_battery_guard {
 				&subs::notification_sender({
 					app => 'power', role => 'citizen', title => 'Battery almost empty',
 					message => $ok
-						? 'The controller is shutting down to protect the battery.'
-						: 'The controller could not shut down. Plug it in now.',
+						? 'The machine is shutting down to protect the battery.'
+						: 'The machine could not shut down. Plug it in now.',
 					image => '/images/decipherable/information.png', urgent => 1, silent => $ok ? 1 : 0,
 				});
 			};
@@ -1075,10 +1098,11 @@ sub power_battery_guard {
 # The probe costs a helper run, so it rides a minute clock while the battery is
 # read every ten seconds.
 sub power_plan_tick {
-	my $controller = (&subs::device_setter() || '') eq 'controller';
-	my $battery = $controller ? &power_battery_read() : undef;
-	my $guard = &power_battery_guard($battery);
 	my $config = &power_config();
+	my $machine = &subs::device_setter() || '';
+	my $guarded = $machine eq 'controller' || $machine eq 'computer';
+	my $battery = $guarded ? &power_battery_read() : undef;
+	my $guard = &power_battery_guard($battery, $config);
 	return { ok => 1, skipped => 'system managed', guard => $guard } unless $config->{'manage'};
 	# The ceiling is a choice the kernel does not remember either. Put it back
 	# when a boot, the firmware or a restored daemon has moved it.

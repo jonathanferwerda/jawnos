@@ -49,6 +49,9 @@ function powerBind() {
 	window_box.on('change', '#power_manage', function() {
 		powerManage($(this).prop('checked'));
 	});
+	window_box.on('change', '#power_guard', function() {
+		powerGuard($(this).prop('checked'));
+	});
 	window_box.on('change', '#power_charge', function() {
 		powerCharge($(this).val());
 	});
@@ -158,6 +161,8 @@ function powerRender(status) {
 	$('#power_auto').prop('checked', status.config && status.config.auto ? true : false);
 	var managing = !!(status.config && status.config.manage);
 	$('#power_manage').prop('checked', managing);
+	var guard = (status.config && status.config.guard) || {};
+	$('#power_guard').prop('checked', guard.enabled === undefined ? true : !!guard.enabled);
 	// With the master switch off a saved plan is only stored, not applied, so
 	// the plan controls wait instead of offering a write that would go nowhere.
 	$('#power_source_ac, #power_source_battery').find('select, input, button').prop('disabled', !managing);
@@ -409,6 +414,15 @@ function powerAuto(on) {
 
 function powerManage(on) {
 	$.post('/manager/power/manage', { manage: on ? 1 : 0 }, function(result) {
+		if (!result || !result.ok) { $('#power_status').text(jawnosT('The setting could not be saved.')); }
+		powerLoad();
+	}, 'json');
+}
+
+// The low-battery guard is a computer/controller setting. A phone does not draw
+// the row, so this route is never reached there.
+function powerGuard(on) {
+	$.post('/manager/power/guard', { enabled: on ? 1 : 0 }, function(result) {
 		if (!result || !result.ok) { $('#power_status').text(jawnosT('The setting could not be saved.')); }
 		powerLoad();
 	}, 'json');
