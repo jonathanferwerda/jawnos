@@ -30,8 +30,9 @@ my ($known_src) = $network =~ /(sub ble_homebase_known \{.*?\n\})/s;
 my ($alive_src) = $network =~ /(sub ble_homebase_alive \{.*?\n\})/s;
 my ($wifi_src)  = $network =~ /(sub embedded_wifi_current \{.*?\n\})/s;
 my ($row_src)   = $network =~ /(sub embedded_wifi_row \{.*?\n\})/s;
-ok($match_src && $known_src && $alive_src && $wifi_src && $row_src,
-	'the five helpers are still one function each');
+my ($home_src)  = $network =~ /(sub embedded_homebase_ip \{.*?\n\})/s;
+ok($match_src && $known_src && $alive_src && $wifi_src && $row_src && $home_src,
+	'the six helpers are still one function each');
 
 {
 	no warnings 'redefine';
@@ -40,6 +41,7 @@ ok($match_src && $known_src && $alive_src && $wifi_src && $row_src,
 	eval $alive_src; is($@, '', 'ble_homebase_alive compiles');
 	eval $wifi_src;  is($@, '', 'embedded_wifi_current compiles');
 	eval $row_src;   is($@, '', 'embedded_wifi_row compiles');
+	eval $home_src;  is($@, '', 'embedded_homebase_ip compiles');
 }
 
 # The dependencies the lifted subs ask for: one device spec, this machine's id,
@@ -59,6 +61,23 @@ sub ble_fallback_stop_grace { return 180_000 }
 sub subs::rightNow { return $NOW }
 sub decode_json { return JSON::PP::decode_json($_[0]) }
 sub Manager::network_helper { return $NETWORK_ANSWER }
+sub lan_address_ok {
+	my ($ip) = @_;
+	return 0 unless defined $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	return 0 if $ip =~ /^(?:0|127)\./;
+	return 0 if $ip =~ /^169\.254\./;
+	return 0 if $ip =~ /^192\.0\.0\./;
+	return 0 if $ip =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+	return 0 if $ip eq '255.255.255.255';
+	return 1;
+}
+sub subs::same_net_test {
+	my ($a, $b) = @_;
+	return 'no' unless defined $a && defined $b && $a =~ /^\d+\.\d+\.\d+\.\d+$/ && $b =~ /^\d+\.\d+\.\d+\.\d+$/;
+	my @a = split /\./, $a;
+	my @b = split /\./, $b;
+	return ($a[0] == $b[0] && $a[1] == $b[1] && $a[2] == $b[2]) ? 'yes' : 'no';
+}
 { package MockRows; sub hashes { return $_[0] } }
 sub subs::db_select { return bless \@REMOTE, 'MockRows' }
 our @WIFI_ROWS = ();
@@ -125,6 +144,22 @@ is($stored_json, '{"ssid":"jawn","password":"new","ap_ssid":"Pico"}',
 is_deeply((embedded_wifi_row('watch', '4929592'))[0], {}, 'no row is an empty hash');
 is((embedded_wifi_row('watch', '4929592'))[1], '{}', 'and a JSON empty object');
 
+# --- an embedded homebase is a LAN address ------------------------------
+my $nics = {
+	wlo1 => { ip => '192.168.1.123' },
+	tailscale0 => { ip => '100.64.0.3' },
+	lo => { ip => '127.0.0.1' },
+};
+is(embedded_homebase_ip('', $nics), '192.168.1.123',
+	'a Tailscale-first machine still hands out its LAN address');
+is(embedded_homebase_ip('192.168.1.55', $nics), '192.168.1.123',
+	'the NIC on the device\'s subnet wins');
+my $multi = { eth0 => { ip => '10.20.0.10' }, wlo1 => { ip => '192.168.1.123' } };
+is(embedded_homebase_ip('192.168.1.55', $multi), '192.168.1.123',
+	'not merely the first LAN when the device named its subnet');
+is(embedded_homebase_ip('', { tailscale0 => { ip => '100.64.0.3' }, lo => { ip => '127.0.0.1' } }),
+	undef, 'a machine with no LAN address has none to hand over');
+
 # --- the wiring ----------------------------------------------------------
 like($network, qr/return 0 unless &ble_homebase_known\(\$edt, \$chip_id\)/,
 	'ble_homebase_alive refuses a stale machine id');
@@ -135,6 +170,12 @@ like($ble, qr/return unless &ble_owns\(\$edt, \$chip_id\) \|\| \$stale_homebase/
 like($ble, qr/return if !\$stale_homebase && defined \$stored_host/,
 	'the matching-address shortcut does not stop a stale-id repair');
 
+like($part35, qr/my \$lan_home = &subs::embedded_homebase_ip\(\$ip, \$address\)/,
+	'now_me chooses a LAN homebase for the device');
+like($part35, qr/!\&subs::lan_address_ok\(\$watch->\{'homebase'\}\)/,
+	'and replaces a Tailscale or p2p homebase');
+unlike($part35, qr/foreach my \$nic \( keys %\{\$address\} \)/,
+	'the old first-interface loop is gone');
 like($part35, qr/my \$wifi_push;.*?unless \(\$keep_pairing\).*?&subs::embedded_wifi_current\(\)/s,
 	'Now Me reads this machine\'s Wi-Fi only for an explicit pairing');
 like($part35, qr/setting => 'wifi', value => encode_json\(\$wifi_push\),\s*subsetting => \$chip_id/s,
@@ -160,5 +201,7 @@ like($loader, qr/'JawnOS::Domain::Network' for qw\([^)]*\bembedded_wifi_row\b/,
 	'Loader.pm maps embedded_wifi_row to Network.pm');
 like($loader, qr/'JawnOS::Domain::Network' for qw\([^)]*\bble_homebase_known\b/,
 	'Loader.pm maps ble_homebase_known to Network.pm');
+like($loader, qr/'JawnOS::Domain::Network' for qw\([^)]*\bembedded_homebase_ip\b/,
+	'Loader.pm maps embedded_homebase_ip to Network.pm');
 
 done_testing();

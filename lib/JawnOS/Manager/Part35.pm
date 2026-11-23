@@ -124,14 +124,18 @@ sub now_me($data) {
 	my $op_d = eval { decode_json $od } || {};
 	$name = $op_d->{'__specs'}->{'name'} unless $data->{'name'};
 	my $address = &subs::network_interface_reporter();
-	unless (&subs::same_net_test($watch->{'homebase'},$ip,'127.0.0.1') eq 'yes') {
-		foreach my $nic ( keys %{$address} ) {
-			if (&subs::same_net_test($address->{$nic}->{'ip'},$ip,'override') eq 'yes') {
-				$watch->{'homebase'} = $address->{$nic}->{'ip'};
-			}
-		}
+	# An embedded device can only reach the house LAN. The first interface on a
+	# machine may be Tailscale, link-local or a p2p/tun address; handing a board
+	# one of those leaves it unable to reach its own homebase (the BT Now Me panel
+	# wrote 100.64.0.3 this way). Prefer a LAN address, on the device's own subnet
+	# when it reported one.
+	my $lan_home = &subs::embedded_homebase_ip($ip, $address);
+	if ($lan_home && (!defined $watch->{'homebase'}
+		|| !&subs::lan_address_ok($watch->{'homebase'})
+		|| ($ip && &subs::same_net_test($watch->{'homebase'}, $ip, '127.0.0.1') ne 'yes'))) {
+		$watch->{'homebase'} = $lan_home;
 	}
-	$ip = $watch->{'homebase'};# unless $ip;
+	$ip = $watch->{'homebase'};
 
 	$op_d->{'__specs'}->{'room_count'} = $op_d->{'__specs'}->{'room_count'} || &subs::setting_grabber({'app' => 'me', setting => 'room_count'}) || $op_d->{'__specs'}->{'room_count'} || 2;
 	$op_d->{'__specs'}->{'homebase'} = ($forced_home || $watch->{'homebase'}) . ':' . $watch_port;

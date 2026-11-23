@@ -436,6 +436,25 @@ sub lan_address_ok {
 	return 1;
 }
 
+sub embedded_homebase_ip {
+	# The address an embedded device can actually reach. A machine's first
+	# interface may be Tailscale (100.64/10), link-local or a p2p/tun address, and
+	# a board can route none of them; handing it one leaves it unable to reach its
+	# own homebase. Prefer a LAN address, and when the device reported an address,
+	# the NIC on that device's subnet.
+	my ($preferred, $address) = @_;
+	$address ||= &subs::network_interface_reporter();
+	return undef unless ref $address eq 'HASH';
+	my @lan = grep { &lan_address_ok($_) }
+		map { $address->{$_}->{'ip'} } keys %{$address};
+	return undef unless @lan;
+	my ($on_net) = grep {
+		defined $preferred && length $preferred
+			&& &subs::same_net_test($_, $preferred, '127.0.0.1') eq 'yes'
+	} @lan;
+	return $on_net || $lan[0];
+}
+
 sub house_nodes_list {
 	# The House machines an embedded device may fall back to: this machine and
 	# every peer with a LAN address, each with the manager ports a device dials.
