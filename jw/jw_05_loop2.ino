@@ -134,11 +134,17 @@ void loop2(void * pvParameters) {
         Serial.printf("[ble] rx %u bytes free=%u max=%u\n",
                       (unsigned)btmsg.length(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
         Serial.printf("[stack] loop2 headroom %u\n", (unsigned)uxTaskGetStackHighWaterMark(NULL));
-        Serial.print("Safely processing incoming Tasker JSON on loop2 stack: ");
-        // the whole message can be several KB and the usb serial drops what it
-        // cannot buffer while the host is slow, taking the markers after it down
-        // with it; a prefix is enough to follow what arrived
-        Serial.println(btmsg.substring(0, 120));
+        // Credentials must never reach the console, and a wifi push is the one
+        // message whose body carries a password: it skips the raw prefix print
+        // and names only its ssid in the handler below.
+        bool wifi_push = (btmsg.indexOf("\"type\":\"wifi\"") >= 0);
+        if (!wifi_push) {
+          Serial.print("Safely processing incoming Tasker JSON on loop2 stack: ");
+          // the whole message can be several KB and the usb serial drops what it
+          // cannot buffer while the host is slow, taking the markers after it down
+          // with it; a prefix is enough to follow what arrived
+          Serial.println(btmsg.substring(0, 120));
+        }
         crumb("l2 printed");
 
         // A room push is ~25 KB of JSON: the payload is cut out of the raw text
@@ -300,8 +306,10 @@ void loop2(void * pvParameters) {
           else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "wifi") {
             // the panel sent our network credentials over BLE (the watch cannot
             // reach a LAN it is not on yet). Store them and let loop() join;
-            // wifi_server() blocks, so it must not run here on loop2.
+            // wifi_server() blocks, so it must not run here on loop2. The join
+            // is saved once it connects (wifi_save_pending).
             JSONVar w = btMsg["data"];
+            String pushed_ssid;   // the ssid may be logged; the password never is
             if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
               if (w.hasOwnProperty("ssid")) { ssid = (const char *)w["ssid"]; }
               if (w.hasOwnProperty("password")) { password = (const char *)w["password"]; }
@@ -309,8 +317,10 @@ void loop2(void * pvParameters) {
               if (w.hasOwnProperty("ap_password")) { ap_password = (const char *)w["ap_password"]; }
               wifi_enabled = true;
               wifi_join_requested = true;
+              wifi_save_pending = true;   // wifi_server() saves once it connects
+              pushed_ssid = ssid;
               xSemaphoreGive(taskMutex);
-              Serial.println("[ble] wifi credentials received");
+              Serial.println("[ble] wifi push for " + pushed_ssid);
               Serial.flush();
             }
           }

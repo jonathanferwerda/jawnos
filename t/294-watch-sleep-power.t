@@ -1,4 +1,4 @@
-# tests-for: jw/jw_01_globals.ino jw/jw_03_setup.ino jw/jw_04_loop.ino jw/jw_06_net_face.ino jw/jw_11_configure.ino jw/jw_13_serial_lowpower.ino jw/jw_14_settings.ino jw/jw_15_config_files.ino
+# tests-for: jw/jw_01_globals.ino jw/jw_03_setup.ino jw/jw_04_loop.ino jw/jw_05_loop2.ino jw/jw_06_net_face.ino jw/jw_11_configure.ino jw/jw_13_serial_lowpower.ino jw/jw_14_settings.ino jw/jw_15_config_files.ino
 # covers:    The watch actually sleeps when Sleep is on, and the awake screen
 #            stops polling what does not change. A connected BLE bridge used to
 #            keep the watch out of the real light sleep for as long as the bridge
@@ -10,7 +10,9 @@
 #            face's fuel gauge, step counter and labels are read at 1 Hz with
 #            writes only when the text changes, instead of once per ~5 ms pass.
 #            A BLE WiFi push ends the doze (and skips the sleep) so jawn_loop()
-#            runs the join at once, with the panel still dark.
+#            runs the join at once, with the panel still dark. That push also
+#            joins from cold (mode set, old link dropped), survives a reboot
+#            (saved on success) and never prints its password.
 
 use strict;
 use warnings;
@@ -25,6 +27,7 @@ my $root      = repo_root();
 my $jw_globals = read_file("$root/jw/jw_01_globals.ino");
 my $jw_setup   = read_file("$root/jw/jw_03_setup.ino");
 my $jw_loop    = read_file("$root/jw/jw_04_loop.ino");
+my $jw_loop2   = read_file("$root/jw/jw_05_loop2.ino");
 my $jw_net     = read_file("$root/jw/jw_06_net_face.ino");
 my $jw_doze    = read_file("$root/jw/jw_11_configure.ino");
 my $jw_sleep   = read_file("$root/jw/jw_13_serial_lowpower.ino");
@@ -81,6 +84,30 @@ like( $jw_sleep, qr/if \(wifi_join_requested && !pmuIrq\) \{\s*Serial\.println\(
 # must not start a microphone listener on a dark watch.
 unlike( $jw_sleep, qr/wifi_join_requested && !pmuIrq\) \{[\s\S]{0,260}?dozing = false;/,
 	'the early join returns never claim the screen is awake' );
+
+# --- a pushed network joins from cold, saves, and keeps its password ---------
+# From the watch's own console: after boot the first push failed (status 254)
+# because begin() ran with no mode set, and a push naming another network was
+# ignored while the old link was still up. Both are what the deck works around,
+# and the push used to print the whole message, password included.
+like( $jw_net, qr/bool rejoin = \(WiFi\.status\(\) != WL_CONNECTED\) \|\| \(WiFi\.SSID\(\) != ssid\);/,
+	'a push that names another network is not skipped as already connected' );
+like( $jw_net, qr/WiFi\.mode\(wifi_ap_enabled \? WIFI_AP_STA : WIFI_STA\);\s*if \(WiFi\.status\(\) == WL_CONNECTED\) \{\s*WiFi\.disconnect\(\);\s*delay\(200\);\s*\}\s*WiFi\.begin\(ssid, password\);/,
+	'a cold or changed join sets the mode and drops the live link before begin' );
+like( $jw_net, qr/if \(wifi_save_pending\) \{\s*wifi_save_pending = false;\s*configSave\(\);/,
+	'a bridge-pushed join is saved once it connects' );
+like( $jw_loop2, qr/bool wifi_push = \(btmsg\.indexOf/,
+	'the wifi push is recognised before the raw message is printed' );
+like( $jw_loop2, qr/if \(!wifi_push\) \{\s*Serial\.print\("Safely processing incoming Tasker JSON on loop2 stack: "\);/,
+	'and the raw prefix print is skipped for it' );
+like( $jw_loop2, qr/Serial\.println\("\[ble\] wifi push for " \+ pushed_ssid\);/,
+	'it logs the ssid alone' );
+unlike( $jw_loop2, qr/Serial\.println\("\[ble\] wifi credentials received"\);/,
+	'not the old generic line' );
+unlike( $jw_loop2, qr/Serial\.(?:print|printf|println)\([^\n;]*\b(?:ap_)?password\b/,
+	'and no console line in the BLE handler carries a password' );
+unlike( $jw_net, qr/Serial\.(?:print|printf|println)\([^\n;]*\bpassword\b/,
+	'nor does the join path' );
 
 # A wrist raise or crown inside the window still gets the screen, instead of
 # falling through into the sleep path.

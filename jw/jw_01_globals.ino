@@ -89,6 +89,9 @@ static bool wifi_enabled = false;
 // Set when the panel hands us network credentials over BLE: the watch cannot
 // fetch them from a LAN it is not yet on, so loop() does the (blocking) join.
 static volatile bool wifi_join_requested = false;
+// Set with that push: the join it triggers is saved once wifi_server() reaches
+// WL_CONNECTED. The BLE handler must not touch flash, and the UI core may.
+static volatile bool wifi_save_pending = false;
 static bool bt_enabled = false;
 // Voice capture: loop() arms a VAD listener while this is on (Configure >
 // System). Declared up here because loop() reads it; the listener itself lives

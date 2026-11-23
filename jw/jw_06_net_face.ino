@@ -191,7 +191,19 @@ void wifi_server() {
     return;
   }
   if (wifi_enabled == true) {
-    if (WiFi.status() != WL_CONNECTED) {
+    // A cold start needs the mode set before begin(): on a watch that had never
+    // joined, WiFi.begin() alone left the radio off (status 254) with correct
+    // credentials. The deck's wifi_start_async() does the same. A push that
+    // names another network must also drop the live link, or begin() is skipped
+    // and the new credentials never take over (the deck's /wifi_update
+    // disconnects first).
+    bool rejoin = (WiFi.status() != WL_CONNECTED) || (WiFi.SSID() != ssid);
+    if (rejoin) {
+      WiFi.mode(wifi_ap_enabled ? WIFI_AP_STA : WIFI_STA);
+      if (WiFi.status() == WL_CONNECTED) {
+        WiFi.disconnect();
+        delay(200);
+      }
       WiFi.begin(ssid, password);
     }
     int tryDelay = 420;
@@ -223,6 +235,13 @@ void wifi_server() {
           webserver_enabled = true;
           wifi_enabled = true;
           jawnos_mdns_start();
+          // this join was asked for by a bridge push: make it durable now that
+          // it works (the BLE handler never touches flash, and this is the UI
+          // core, where configSave() is safe)
+          if (wifi_save_pending) {
+            wifi_save_pending = false;
+            configSave();
+          }
           return;
           break;
         default:
@@ -232,8 +251,8 @@ void wifi_server() {
       }
       delay(tryDelay);
       if (numberOfTries <= 0) {
-        Serial.print("Wifi failed to connect");
-        Serial.print(ssid + " " + password);
+        // the ssid only: this line used to print the password too
+        Serial.println("Wifi failed to connect " + ssid);
         WiFi.disconnect();
         wifi_enabled = false;
         return;
