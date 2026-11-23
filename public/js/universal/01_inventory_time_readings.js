@@ -6,17 +6,23 @@ $(document).on('mousemove', function(e) {
 	mouse = e;
 });
 function mouse_position() {
-  var e = window.event;
-	var data = { 'lastX': mLastX, 'lastY': mLastY, lastTs: mLastTs }; 
-	if(e) {
- 		mLastX = e.clientX;
-  	mLastY = e.clientY;
+	var e = window.event;
+	var data = { 'lastX': mLastX, 'lastY': mLastY, lastTs: mLastTs };
+	// A timer or an init handler can ask while some other event is the last one
+	// dispatched (a resize, a load), and only a pointer event carries a usable
+	// clientX/clientY. Copying the undefined pair into mLastX/mLastY corrupted
+	// every later read: the theatre's idle check then threw in elementsFromPoint
+	// and never slid the player bar away after a reload. Keep the last real
+	// pointer instead.
+	if (e && isFinite(e.clientX) && isFinite(e.clientY)) {
+		mLastX = e.clientX;
+		mLastY = e.clientY;
 		mLastTs = Date.now();
 	}
 	data['x'] = mLastX;
 	data['y'] = mLastY;
 	data['ts'] = Date.now();
-  return data;
+	return data;
 }
 
 function say_it(words) {
