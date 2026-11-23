@@ -106,6 +106,11 @@ struct Source {
     /// a `peer` on this machine: a local input's declaration is the plan's to
     /// keep, but the engine does not compensate it yet.
     latency_ms: f64,
+    /// The peer's declared placement buffer, in milliseconds: how far behind
+    /// the master clock the uplink reads this source. `None` means the engine's
+    /// default, one jitter window. Only a `peer` declares one; the read path
+    /// raises anything shorter than the default to it.
+    buffer_ms: Option<f64>,
     input: Option<Consumer>,
     routes: Vec<SourceRoute>,
 }
@@ -373,6 +378,14 @@ impl Patchbay {
             } else {
                 0.0
             };
+            // How far behind the master clock this peer is read. Only a peer's
+            // declaration is honoured: the buffer is the uplink's read head,
+            // and no other kind is fed by the uplink.
+            let buffer_ms = if kind == "peer" {
+                peer_buffer_ms(entry, &id)?
+            } else {
+                None
+            };
             let mut reachable = kind == "input" && on_this_machine && channel < config_channels;
             // A named node this machine does not offer is silent, like a
             // channel the interface does not have. Falling back to the default
@@ -395,6 +408,7 @@ impl Patchbay {
                 handset,
                 peer,
                 latency_ms,
+                buffer_ms,
                 input: None,
                 routes: Vec::new(),
             });
@@ -656,16 +670,25 @@ impl Patchbay {
     }
 
     /// Every routed `peer` source on this machine, as (index, id, declared
-    /// latency in ms). The caller makes one ring per entry and the uplink feeds
-    /// it, placing that source earlier by its declaration; the block pops it
-    /// into that source's own stereo block, so a peer that is not routed costs
-    /// no thread, no ring and no UDP stream.
-    pub fn wants_peer(&self) -> Vec<(usize, String, f64)> {
+    /// latency in ms, declared read buffer in ms). The caller makes one ring per
+    /// entry and the uplink feeds it, placing that source earlier by its
+    /// latency and reading it that far behind the clock by its buffer; the
+    /// block pops it into that source's own stereo block, so a peer that is not
+    /// routed costs no thread, no ring and no UDP stream. A buffer of `None`
+    /// takes the uplink's default.
+    pub fn wants_peer(&self) -> Vec<(usize, String, f64, Option<f64>)> {
         self.sources
             .iter()
             .enumerate()
             .filter(|(_index, source)| source.peer && !source.routes.is_empty())
-            .map(|(index, source)| (index, source.id.clone(), source.latency_ms))
+            .map(|(index, source)| {
+                (
+                    index,
+                    source.id.clone(),
+                    source.latency_ms,
+                    source.buffer_ms,
+                )
+            })
             .collect()
     }
 
@@ -1526,6 +1549,36 @@ fn peer_latency_ms(object: &Object, id: &str) -> Result<Option<f64>, String> {
     }
 }
 
+/// The longest declared peer buffer the engine will read with: two seconds,
+/// the same bound as the declared latency. A larger number is a mistake in the
+/// plan rather than a value to clamp silently.
+const PEER_BUFFER_MAX_MS: f64 = 2_000.0;
+
+/// A `peer` source's optional `"buffer_ms"`: how far behind the master clock
+/// the uplink reads this source's audio. A late path (a deck on Wi-Fi) needs
+/// more slack than the engine's one-window default; a plan may say so per
+/// source instead of every peer paying for the slowest one. A finite,
+/// non-negative number no larger than [`PEER_BUFFER_MAX_MS`] is accepted;
+/// anything else is refused by name, like the latency.
+fn peer_buffer_ms(object: &Object, id: &str) -> Result<Option<f64>, String> {
+    match get(object, "buffer_ms") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Num(value)) if !value.is_finite() => Err(format!(
+            "the peer source {id} has a \"buffer_ms\" that is not finite; a buffer is a finite number of milliseconds"
+        )),
+        Some(Value::Num(value)) if *value < 0.0 => Err(format!(
+            "the peer source {id} has \"buffer_ms\": {value}; a buffer cannot be negative"
+        )),
+        Some(Value::Num(value)) if *value > PEER_BUFFER_MAX_MS => Err(format!(
+            "the peer source {id} has \"buffer_ms\": {value}; the engine reads at most {PEER_BUFFER_MAX_MS} ms behind the clock"
+        )),
+        Some(Value::Num(value)) => Ok(Some(*value)),
+        Some(_) => Err(format!(
+            "the peer source {id} has a \"buffer_ms\" that is not a number; a buffer is milliseconds"
+        )),
+    }
+}
+
 fn number(object: &Object, key: &str) -> Result<Option<f32>, String> {
     match get(object, key) {
         None | Some(Value::Null) => Ok(None),
@@ -1774,7 +1827,7 @@ mod tests {
         assert_eq!(summary.peer, "pending");
         assert_eq!(
             patchbay.wants_peer(),
-            vec![(0, "phone".to_string(), 0.0)],
+            vec![(0, "phone".to_string(), 0.0, None)],
             "a routed peer needs one ring"
         );
         assert!(!patchbay.wants_input(), "a peer is not a card capture");
@@ -1800,10 +1853,66 @@ mod tests {
         assert_eq!(
             patchbay.wants_peer(),
             vec![
-                (0, "phone".to_string(), 30.0),
-                (1, "deck".to_string(), 12.5)
+                (0, "phone".to_string(), 30.0, None),
+                (1, "deck".to_string(), 12.5, None)
             ],
             "each peer carries its own declaration"
+        );
+    }
+
+    #[test]
+    fn a_peer_buffer_is_declared_per_source() {
+        let patchbay = bay(
+            r#"{
+                "sources":[
+                    {"id":"phone","kind":"peer","latency_ms":30},
+                    {"id":"deck","kind":"peer","latency_ms":40,"buffer_ms":200}
+                ],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[
+                    {"from":"phone","to":"house"},
+                    {"from":"deck","to":"house"},
+                    {"from":"house","to":"out"}
+                ]
+            }"#,
+        );
+        assert_eq!(
+            patchbay.wants_peer(),
+            vec![
+                (0, "phone".to_string(), 30.0, None),
+                (1, "deck".to_string(), 40.0, Some(200.0))
+            ],
+            "the deck carries its own read buffer; the peer that declares none keeps the default"
+        );
+    }
+
+    #[test]
+    fn a_peer_buffer_outside_the_bounds_is_refused() {
+        for declaration in ["-1", "2001", "\"200\""] {
+            let object = parse_object(&format!(
+                r#"{{
+                    "sources":[{{"id":"deck","kind":"peer","buffer_ms":{declaration}}}],
+                    "buses":[], "sinks":[{{"id":"out","kind":"interface"}}],
+                    "routes":[{{"from":"deck","to":"out"}}]
+                }}"#
+            ))
+            .expect("parse");
+            let error = Patchbay::from_object(&object, 2, "local").expect_err("refused");
+            assert!(error.contains("buffer_ms"), "{error}");
+            assert!(error.contains("deck"), "the refusal names the source: {error}");
+        }
+
+        let at_the_bound = bay(
+            r#"{
+                "sources":[{"id":"deck","kind":"peer","buffer_ms":2000}],
+                "buses":[], "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"deck","to":"out"}]
+            }"#,
+        );
+        assert_eq!(
+            at_the_bound.wants_peer(),
+            vec![(0, "deck".to_string(), 0.0, Some(2000.0))]
         );
     }
 
@@ -1830,7 +1939,10 @@ mod tests {
                 "routes":[{"from":"phone","to":"out"}]
             }"#,
         );
-        assert_eq!(at_the_bound.wants_peer(), vec![(0, "phone".to_string(), 2000.0)]);
+        assert_eq!(
+            at_the_bound.wants_peer(),
+            vec![(0, "phone".to_string(), 2000.0, None)]
+        );
     }
 
     #[test]
@@ -1901,7 +2013,7 @@ mod tests {
         );
         assert_eq!(
             patchbay.wants_peer(),
-            vec![(2, "phone".to_string(), 0.0)],
+            vec![(2, "phone".to_string(), 0.0, None)],
             "the peer is the third source, after both interface inputs"
         );
         assert_eq!(patchbay.summary().peer, "pending");

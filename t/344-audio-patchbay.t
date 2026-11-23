@@ -472,6 +472,7 @@ require JawnOS::Domain::Audio;
 	like($template, qr/id="sound_uplink_save"/, 'and a save button for it');
 	like($template, qr/<option value="peer">/, 'the source picker offers peer');
 	like($template, qr/#sound \.sound_patch_node_latency/, 'a peer row has a place for its latency');
+	like($template, qr/#sound \.sound_patch_node_buffer/, 'and for its read buffer');
 
 	my $js = RepoSource::js_source('public/js/manager/sound.js');
 	like($js, qr#url: '/manager/sound/plan'#, 'the page reads and saves the plan route');
@@ -487,15 +488,21 @@ require JawnOS::Domain::Audio;
 	like($js, qr/class="sound_peer_latency"/, 'a peer source row carries a latency input');
 	like($js, qr/min="0" max="2000"/, 'which offers 0 to 2000 milliseconds');
 	like($js, qr/node\.latency_ms = value/, 'and writes the plan node rather than a second save path');
+	like($js, qr/class="sound_peer_buffer"/, 'a peer source row carries a buffer input');
+	like($js, qr/min="85" max="2000"/, 'which offers the engine floor to two seconds');
+	like($js, qr/node\.buffer_ms = value/, 'and writes it into the same plan node');
+	like($js, qr/from 85 to 2000/, 'and judges a value outside that range');
 	like($js, qr/Held in the plan; it applies when the plan is saved/, 'the page says when the value takes effect');
 	like($js, qr/a number of milliseconds from 0 to 2000/, 'and judges a value outside that range');
 
 	my $help = read_file("$root/perl/help/topics_apps.pl");
 	like($help, qr/Peer latency, a number of milliseconds from 0 to 2000/,
 		'the Sound topic explains the peer latency control');
-	like($help, qr/engine reads it when it patches the peer source/,
+	like($help, qr/engine reads them when it patches the peer source/,
 		'and says when the value takes effect');
 	like($help, qr/set Peer latency on its source row/, 'the steps name the control');
+	like($help, qr/Peer buffer is how far behind the clock/, 'the Sound topic explains the peer buffer');
+	like($help, qr/raise Peer buffer on the same row/, 'and the steps say when to raise it');
 
 	my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 	like($loader, qr/JawnOS::Domain::Audio' for qw\([^)]*\baudio_plan_read\b/,

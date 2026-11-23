@@ -933,6 +933,30 @@ or session is not an error: the deck records locally, exactly as before. Flash t
 rebuild/stage (`pio run -j 4`, then `perl scripts/stage_firmware.pl`) before an OTA; the gate
 still needs the hardware take.
 
+**A buffer per peer (2026-11-23):** the placement buffer is no longer one process-wide value. A
+plan's `peer` source may declare `buffer_ms` (finite, 0-2 000; above the bound refused by name,
+absent or short raised to the engine floor) and each source's read cursor trails the master clock
+by its own buffer: `wants_peer` carries the declaration, `UplinkSource` converts it to frames once,
+`run_uplink` computes one head per source, and the receiver window is at least twice the buffer so a
+burst still fits. `status` reports `buffer_ms` and `buffer_frames` per source, so a plan that asked
+for less than the floor says what it actually ran. The default is unchanged (one jitter window,
+85 ms), so a local peer keeps its latency; a path with more floor declares more instead of every
+peer paying for the slowest one. Sound gained a Peer buffer field beside Peer latency (85-2 000
+ms, saved through the plan), and `Plan.pm` normalises and bounds it (`t/334`, `t/344`, `t/383`).
+
+**The deck's buffer, measured (2026-11-23, laptop to T-Deck on Wi-Fi):** twelve-second deck takes,
+each after a fresh master clock (the child replaced, then the plan patched with one `buffer_ms`).
+At 85 ms the earlier take placed 1 228 datagrams with 504 late. 200 ms: 707 received, late 317,
+34 113 ring drops. 250 ms: 598 received, late 202, 63 746 drops, and two sends stopped after the
+deck saw no pong for 2 s. 300 ms: 1 304 received, late 26 (2%), 0 drops. 400 ms: about 1 200
+received, late 12-21 (1-2%), 0 drops, one send completing the whole take. 800 ms: 1 126 received,
+late 3, 0 drops. So the Wi-Fi path's floor is between 250 and 300 ms and 400 ms is the house's
+choice for the deck, with room for a slower minute; the engine default stays 85 ms. Every take's
+`concealed` total read after the take is mostly post-take pulls, so it is not a per-take rate. Two
+takes failed before audio: one `no session` (8 HELLOs unanswered) and the two 250 ms quiet-stops -
+the handshake's opening seconds are still the deck's weak point, and a retried handshake that
+reuses the session is the next firmware task, not a buffer question.
+
 **P4 close-out (2026-11-22, engine code complete; gate unrun):** every engine path the gate needs is
 in the tree and measured without a performance: the 10 s file take (1 015/1 015, `late 3`); the 600 s
 live capture (`dropped`/`padded`/`resynced` 0, master `late` 6.1%); and two peers on one master
@@ -948,8 +972,8 @@ with the click and perform; then read the engine `status` (`codec`, `late`, `con
 `handshakes`) and the take's alignment against the click.
 
 **Still to come:** the gate above; the tailnet's opening minute (28.7% late before the fit is
-trusted); per-source buffering when a declaration exceeds the 85 ms placement window; and the phone
-app's own capture half.
+trusted); the deck's handshake retry (a take can open with `no session` before the first WELCOME
+lands); and the phone app's own capture half.
 
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 

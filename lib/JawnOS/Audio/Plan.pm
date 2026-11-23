@@ -55,6 +55,13 @@ our $audio_plan_pan_max  = 1;
 # clamp and the write path's refusal on this one number.
 our $audio_plan_max_peer_latency = 2_000;
 
+# A peer's read buffer: how far behind the clock the master reads its audio. It
+# has the same sanity bound as the latency, and the engine's floor is one jitter
+# window, 85 ms at 48 kHz. The default is written into the plan so the Sound
+# page shows what the engine will do instead of an empty field.
+our $audio_plan_peer_buffer_default = 85;
+our $audio_plan_max_peer_buffer = 2_000;
+
 # An empty plan is valid and means "nothing routed", which is not the same as
 # "no plan": the engine sees four empty lists and leaves the interface alone
 # until a person draws something. A missing plan is the caller's problem.
@@ -178,6 +185,16 @@ sub _audio_plan_node {
 	$latency = $audio_plan_max_peer_latency
 		if $type eq 'source' && $kind eq 'peer'
 			&& $latency > $audio_plan_max_peer_latency;
+	# How far behind the clock the uplink reads a peer. Only a peer is read by
+	# the uplink, so only a peer carries the field; anything shorter than one
+	# jitter window is raised to it by the engine, whose report says which
+	# buffer it actually ran.
+	my $buffer;
+	if ($type eq 'source' && $kind eq 'peer') {
+		$buffer = _audio_plan_nonnegative($entry->{buffer_ms}, $audio_plan_peer_buffer_default);
+		$buffer = $audio_plan_max_peer_buffer
+			if $buffer > $audio_plan_max_peer_buffer;
+	}
 	return {
 		id         => $id,
 		label      => $label,
@@ -188,6 +205,7 @@ sub _audio_plan_node {
 		channel    => $channel,
 		node       => defined $node ? $node : '',
 		latency_ms => $latency,
+		(defined $buffer ? (buffer_ms => $buffer) : ()),
 	};
 }
 
@@ -379,6 +397,12 @@ sub _audio_plan_valid_node {
 		return 0 unless defined $number && $number >= 0;
 		return 0 if $type eq 'source' && $kind eq 'peer'
 			&& $number > $audio_plan_max_peer_latency;
+	}
+	if (exists $entry->{buffer_ms}) {
+		my $number = _audio_plan_number($entry->{buffer_ms});
+		return 0 unless defined $number && $number >= 0;
+		return 0 if $type eq 'source' && $kind eq 'peer'
+			&& $number > $audio_plan_max_peer_buffer;
 	}
 	if (exists $entry->{node}) {
 		# Only an `input` captures from a node; a node on any other kind is a

@@ -66,11 +66,11 @@
 //!
 //! # Pacing
 //!
-//! The thread reads a playback head that trails the master clock by
-//! [`PULL_BUFFER_FRAMES`], a real jitter buffer. It wakes every
-//! [`PULL_INTERVAL_MS`] and pulls, per source, the frames the cursor is behind
-//! that head by, never past it, with [`AudioReceiver::pull_to`]. One process-wide
-//! [`InstantClock`] is shared with the [`ClockMaster`], so the fitted
+//! The thread reads a playback head that trails the master clock by each
+//! source's buffer ([`PULL_BUFFER_FRAMES`] unless the plan declares more). It
+//! wakes every [`PULL_INTERVAL_MS`] and pulls, per source, the frames the cursor
+//! is behind that head by, never past it, with [`AudioReceiver::pull_to`]. One
+//! process-wide [`InstantClock`] is shared with the [`ClockMaster`], so the fitted
 //! `master_sample` a peer stamps its datagrams with and the head are the same
 //! domain. Because the head never reaches a position until a datagram stamped
 //! there has had the buffer's frames to arrive, a delayed or reordered datagram
@@ -105,26 +105,34 @@ pub const PULL_MAX_FRAMES: usize = 4 * PULL_FRAMES;
 /// How long the uplink thread sleeps between drains and pulls.
 pub const PULL_INTERVAL_MS: u64 = 10;
 
-/// How far behind the master clock the read cursor runs: a real jitter buffer.
+/// The default read buffer, and the shortest one: a real jitter buffer.
 ///
-/// The cursor never reads a position newer than `now - PULL_BUFFER_FRAMES`, so
-/// a datagram delayed or reordered by up to this much slack is placed when it
+/// A source's cursor never reads a position newer than `now - buffer`, so a
+/// datagram delayed or reordered by up to this much slack is placed when it
 /// arrives rather than lost because the cursor already read past it.
 ///
-/// It is one jitter window ([`DEFAULT_JITTER_FRAMES`], about 85 ms at 48 kHz).
-/// The sender now keeps the least-delayed exchange for five seconds, so a
-/// block's stamp no longer swings with the path's queue depth; the pipeline it
-/// still pays is one block plus the path's floor, and a window leaves an
-/// ordinary reorder room after that. Two windows cost 171 ms of placement
-/// latency for slack the stable stamp no longer needs. Half a window (43 ms)
-/// measured below the pipeline on the live laptop → table path: a 10 s take at
-/// 2048 was late on nearly every datagram, so one window is the floor.
+/// It is one jitter window ([`DEFAULT_JITTER_FRAMES`], about 85 ms at 48 kHz),
+/// and it is what a source that declares no `buffer_ms` reads with. The sender
+/// keeps the least-delayed exchange for five seconds, so a block's stamp no
+/// longer swings with the path's queue depth; the pipeline it still pays is one
+/// block plus the path's floor, and a window leaves an ordinary reorder room
+/// after that. Half a window (43 ms) measured below the pipeline on the live
+/// laptop → table path: a 10 s take at 2048 was late on nearly every datagram,
+/// so one window is the floor. A path with more floor than that (a deck on
+/// Wi-Fi) declares its own, longer buffer in the plan.
 pub const PULL_BUFFER_FRAMES: usize = DEFAULT_JITTER_FRAMES;
 
-/// The receiver window the uplink allocates: four jitter windows, independent
-/// of the read buffer so a datagram ahead of the cursor still fits when a burst
-/// drains (a stalled wake may hand the sender a burst of up to
-/// [`PULL_MAX_FRAMES`]).
+/// The longest read buffer the uplink will run, in milliseconds: the same
+/// two-second bound the plan parser puts on a peer's `buffer_ms`, checked again
+/// here so a caller that builds a source directly cannot allocate an unbounded
+/// receiver window.
+pub const PULL_BUFFER_MAX_MS: f64 = 2_000.0;
+
+/// The receiver window a source allocates: four jitter windows, or twice its
+/// read buffer when that is longer, so a datagram ahead of the cursor still
+/// fits when a burst drains (a stalled wake may hand the sender a burst of up
+/// to [`PULL_MAX_FRAMES`]). A longer buffer is why this is no longer a
+/// constant: the window must cover the buffer the source actually reads.
 pub const PULL_WINDOW_FRAMES: usize = 4 * DEFAULT_JITTER_FRAMES;
 
 /// Where the uplink listens and the key every datagram is authenticated with.
@@ -153,6 +161,13 @@ pub struct UplinkSourceStatus {
     /// The same declaration in master frames: how far earlier this source's
     /// audio is placed than the stamp on the wire.
     pub latency_frames: u64,
+    /// The read buffer this source actually runs, in milliseconds: its
+    /// `buffer_ms` declaration, or the engine floor ([`PULL_BUFFER_FRAMES`])
+    /// when it declares none or too little.
+    pub buffer_ms: f64,
+    /// The same buffer in master frames: how far behind the clock this
+    /// source's read cursor trails.
+    pub buffer_frames: u64,
     /// The codec the attached session sends (`pcm16` or `pcm16k`), or empty
     /// before audio arrives. A deck is `pcm16k`: 16 kHz expanded to the master's
     /// 48 kHz timeline on receive.
@@ -182,11 +197,13 @@ pub struct UplinkSourceStatus {
 impl UplinkSourceStatus {
     fn json(&self) -> String {
         format!(
-            "{{\"index\":{},\"id\":\"{}\",\"latency_ms\":{},\"latency_frames\":{},\"codec\":\"{}\",\"received\":{},\"late\":{},\"concealed\":{},\"dropped\":{},\"last_master\":{},\"next_master\":{},\"first_master\":{},\"from_deadline\":{}}}",
+            "{{\"index\":{},\"id\":\"{}\",\"latency_ms\":{},\"latency_frames\":{},\"buffer_ms\":{},\"buffer_frames\":{},\"codec\":\"{}\",\"received\":{},\"late\":{},\"concealed\":{},\"dropped\":{},\"last_master\":{},\"next_master\":{},\"first_master\":{},\"from_deadline\":{}}}",
             self.index,
             crate::loopback::json_escape(&self.id),
             self.latency_ms,
             self.latency_frames,
+            self.buffer_ms,
+            self.buffer_frames,
             self.codec,
             self.received,
             self.late,
@@ -308,6 +325,15 @@ pub struct UplinkSource {
     /// The same declaration in master frames, computed once from the engine's
     /// rate: the number every datagram's placement is shifted by.
     shift_frames: u64,
+    /// How far behind the master clock this source's read cursor trails, in
+    /// master frames. The plan's `buffer_ms`, raised to at least one jitter
+    /// window, so a path that delivers late datagrams still has them placed
+    /// instead of concealed.
+    buffer_frames: usize,
+    /// The same buffer in milliseconds, after the floor and ceiling are
+    /// applied: what `status` reports, so a plan that asked for less than the
+    /// floor says what it actually got.
+    buffer_ms: f64,
     /// `None` until the first authenticated audio datagram claims the stream
     /// with a session the master issued. A WELCOME does not attach a receiver.
     receiver: Option<AudioReceiver>,
@@ -345,16 +371,33 @@ fn latency_frames(latency_ms: f64, rate: u32) -> u64 {
     ((latency_ms / 1_000.0) * f64::from(rate)).round() as u64
 }
 
+/// Convert a declared read buffer in milliseconds to whole master frames. No
+/// declaration (zero, negative or non-finite) means [`PULL_BUFFER_FRAMES`], the
+/// engine floor, and a declaration shorter than the floor is raised to it: the
+/// pipeline below that is already known to be late on every datagram. A longer
+/// one is honoured up to [`PULL_BUFFER_MAX_MS`], the same bound the plan parser
+/// puts on `buffer_ms`.
+fn buffer_frames(buffer_ms: f64, rate: u32) -> usize {
+    let frames = if !buffer_ms.is_finite() || buffer_ms <= 0.0 {
+        PULL_BUFFER_FRAMES
+    } else {
+        ((buffer_ms / 1_000.0) * f64::from(rate)).round() as usize
+    };
+    let ceiling = ((PULL_BUFFER_MAX_MS / 1_000.0) * f64::from(rate)).round() as usize;
+    frames.clamp(PULL_BUFFER_FRAMES, ceiling.max(PULL_BUFFER_FRAMES))
+}
+
 impl UplinkSource {
     /// A source for plan index `index`, fed to `producer`. Its stream id is
     /// [`audio_stream(index)`], which is exactly `AUDIO_STREAM_BASE + index`.
     pub fn new(index: usize, id: String, producer: Producer) -> Result<Self, String> {
-        Self::build(index, id, producer, 0.0, 0)
+        Self::build(index, id, producer, 0.0, 0, PULL_BUFFER_FRAMES, 0.0)
     }
 
     /// A source that is `latency_ms` late, placed `latency_ms` earlier on the
     /// master timeline. `rate` is the master's sample rate, so the declaration
-    /// is converted to frames once here instead of on every datagram.
+    /// is converted to frames once here instead of on every datagram. The read
+    /// buffer is the engine default.
     pub fn with_latency(
         index: usize,
         id: String,
@@ -362,8 +405,24 @@ impl UplinkSource {
         latency_ms: f64,
         rate: u32,
     ) -> Result<Self, String> {
+        Self::with_latency_and_buffer(index, id, producer, latency_ms, None, rate)
+    }
+
+    /// A source that is `latency_ms` late and whose read cursor trails the
+    /// clock by `buffer_ms` (`None`, non-positive or non-finite takes the
+    /// engine floor; a declaration beyond two seconds is clamped to it).
+    pub fn with_latency_and_buffer(
+        index: usize,
+        id: String,
+        producer: Producer,
+        latency_ms: f64,
+        buffer_ms: Option<f64>,
+        rate: u32,
+    ) -> Result<Self, String> {
         let shift = latency_frames(latency_ms, rate);
-        Self::build(index, id, producer, latency_ms, shift)
+        let frames = buffer_frames(buffer_ms.unwrap_or(0.0), rate);
+        let effective_ms = frames as f64 * 1_000.0 / f64::from(rate);
+        Self::build(index, id, producer, latency_ms, shift, frames, effective_ms)
     }
 
     fn build(
@@ -372,6 +431,8 @@ impl UplinkSource {
         producer: Producer,
         latency_ms: f64,
         shift_frames: u64,
+        buffer_frames: usize,
+        buffer_ms: f64,
     ) -> Result<Self, String> {
         let stream = audio_stream(index)
             .ok_or_else(|| format!("peer source {id} at index {index} has no audio stream id"))?;
@@ -382,6 +443,8 @@ impl UplinkSource {
             producer,
             latency_ms,
             shift_frames,
+            buffer_frames,
+            buffer_ms,
             receiver: None,
             session: None,
             origin: None,
@@ -412,6 +475,23 @@ impl UplinkSource {
     /// datagram's stamp this source is placed.
     pub fn shift_frames(&self) -> u64 {
         self.shift_frames
+    }
+
+    /// The read buffer this source runs, in master frames.
+    pub fn buffer_frames(&self) -> usize {
+        self.buffer_frames
+    }
+
+    /// The read buffer this source runs, in milliseconds.
+    pub fn buffer_ms(&self) -> f64 {
+        self.buffer_ms
+    }
+
+    /// The receiver window this source allocates. It covers the read buffer
+    /// twice over, so a datagram that arrives ahead of the cursor always fits
+    /// even when a stalled wake hands the sender a burst.
+    fn window_frames(&self) -> usize {
+        PULL_WINDOW_FRAMES.max(2 * self.buffer_frames)
     }
 
     /// The session that owns this stream, if any.
@@ -487,7 +567,7 @@ impl UplinkSource {
             session,
             self.stream,
             1,
-            PULL_WINDOW_FRAMES,
+            self.window_frames(),
         ) {
             Ok(receiver) => receiver,
             Err(error) => return Offer::Refused(error),
@@ -548,12 +628,12 @@ impl UplinkSource {
 
     /// Pull up to the playback head `head_master`, never past it.
     ///
-    /// The head trails the master clock by [`PULL_BUFFER_FRAMES`], so this is
-    /// the paced read the uplink thread runs: it asks for exactly the frames the
-    /// cursor is behind the head by (at most [`PULL_MAX_FRAMES`]), and
-    /// [`AudioReceiver::pull_to`] conceals only what is genuinely due at the
-    /// head. `None` means no session exists, audio has not started, or the head
-    /// has not advanced past the cursor.
+    /// The head trails the master clock by this source's buffer
+    /// ([`Self::buffer_frames`]), so this is the paced read the uplink thread
+    /// runs: it asks for exactly the frames the cursor is behind the head by
+    /// (at most [`PULL_MAX_FRAMES`]), and [`AudioReceiver::pull_to`] conceals
+    /// only what is genuinely due at the head. `None` means no session exists,
+    /// audio has not started, or the head has not advanced past the cursor.
     pub fn pump_to(&mut self, head_master: u64) -> Option<PullReport> {
         let report = {
             let receiver = self.receiver.as_mut()?;
@@ -618,6 +698,8 @@ impl UplinkSource {
             id: self.id.clone(),
             latency_ms: self.latency_ms,
             latency_frames: self.shift_frames,
+            buffer_ms: self.buffer_ms,
+            buffer_frames: self.buffer_frames as u64,
             codec: codec.to_string(),
             received: counters.received,
             late: counters.late,
@@ -656,6 +738,9 @@ pub struct UplinkSourceSpec {
     /// source is placed this much earlier on the master timeline; zero for a
     /// source that declares none.
     pub latency_ms: f64,
+    /// The plan's declared read buffer, in milliseconds: how far behind the
+    /// clock this source is read. `None` takes the engine floor.
+    pub buffer_ms: Option<f64>,
 }
 
 /// The running uplink thread and the status it publishes.
@@ -681,11 +766,12 @@ impl Uplink {
     ) -> Result<Uplink, String> {
         let mut sources = Vec::with_capacity(specs.len());
         for spec in specs {
-            sources.push(UplinkSource::with_latency(
+            sources.push(UplinkSource::with_latency_and_buffer(
                 spec.index,
                 spec.id,
                 spec.producer,
                 spec.latency_ms,
+                spec.buffer_ms,
                 rate,
             )?);
         }
@@ -817,13 +903,15 @@ fn run_uplink(
         }
 
         let now = clock.now();
-        // Read behind the clock by the jitter buffer. Each source pulls exactly
-        // the frames its cursor is behind this head by, so a wake that could not
+        // Read behind the clock by each source's own buffer: a path with more
+        // floor than the default (a deck on Wi-Fi) declares a longer one, and
+        // pays for it only on its own channel. Each source pulls exactly the
+        // frames its cursor is behind its head by, so a wake that could not
         // fill its block carries the remainder into the next wake instead of
-        // discarding it, and no datagram is read before it has had the buffer's
-        // time to arrive.
-        let head = now.saturating_sub(PULL_BUFFER_FRAMES as u64);
+        // discarding it, and no datagram is read before it has had the
+        // buffer's time to arrive.
         for source in &mut sources {
+            let head = now.saturating_sub(source.buffer_frames() as u64);
             source.pump_to(head);
         }
 

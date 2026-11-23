@@ -383,6 +383,31 @@ sub route {
 		'the read path clamps a peer declaration to the engine bound' );
 	is( normalize($peer_plan->('input', 5_000))->{sources}[0]{latency_ms}, 5_000,
 		'while a local input declaration is not clamped' );
+
+	# A peer's read buffer has the same bound and its own default: one jitter
+	# window, which is what the engine reads with when nothing is declared.
+	my $buffer_plan = sub {
+		my ($kind, $buffer) = @_;
+		my %source = (kind => $kind);
+		$source{buffer_ms} = $buffer if defined $buffer;
+		return {
+			sources => [ source('deck', %source) ],
+			buses   => [],
+			sinks   => [],
+			routes  => [],
+		};
+	};
+	ok( valid($buffer_plan->('peer', 2_000)), 'a peer buffer at the 2000 ms bound is valid' );
+	ok( !valid($buffer_plan->('peer', 2_001)), 'a peer buffer above the bound is refused on save' );
+	ok( !valid($buffer_plan->('peer', -1)), 'and a negative buffer is refused' );
+	is( normalize($buffer_plan->('peer', undef))->{sources}[0]{buffer_ms}, 85,
+		'a peer that declares no buffer is written with the one-window default' );
+	is( normalize($buffer_plan->('peer', 5_000))->{sources}[0]{buffer_ms}, 2_000,
+		'the read path clamps a declared buffer to the engine bound' );
+	is( normalize($buffer_plan->('peer', 200))->{sources}[0]{buffer_ms}, 200,
+		'a declared buffer inside the bound is kept as written' );
+	ok( !exists normalize($buffer_plan->('input', 200))->{sources}[0]{buffer_ms},
+		'only a peer source carries a read buffer' );
 }
 
 # --- which machine a node belongs to -----------------------------------------

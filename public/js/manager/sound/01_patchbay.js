@@ -199,6 +199,29 @@ function soundPatchNodeRow(kind, node, index, latency) {
 		field.append(peer_latency);
 		field.append($('<span class="sound_patch_node_unit"></span>').text('ms'));
 		row.append(field);
+		// The read buffer is the other half of the same fact: how much slack the
+		// master's read path holds for this peer. A deck on Wi-Fi needs more than
+		// a local interface; the engine never reads with less than one window.
+		var peer_buffer = $('<input type="number" class="sound_peer_buffer" min="85" max="2000" step="1">')
+			.val(node.buffer_ms == null ? 85 : node.buffer_ms)
+			.attr('aria-label', jawnosT('Peer buffer in milliseconds'))
+			.attr('hint', jawnosT('How long the master holds this peer\'s audio before reading it, 85 to 2000 milliseconds; raise it when the path delivers late'));
+		peer_buffer.on('change', function() {
+			var raw = $.trim(peer_buffer.val());
+			var value = Number(raw);
+			if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw) || value < 85 || value > 2000) {
+				peer_buffer.val(node.buffer_ms == null ? 85 : node.buffer_ms);
+				soundPatchNote(jawnosT('A peer\'s buffer is a number of milliseconds from 85 to 2000'));
+				return;
+			}
+			node.buffer_ms = value;
+			soundPatchNote(jawnosT('Held in the plan; it applies when the plan is saved and the engine patches the peer source'));
+		});
+		var buffer_field = $('<label class="sound_patch_node_buffer"></label>');
+		buffer_field.append($('<span></span>').text(jawnosT('Peer buffer')));
+		buffer_field.append(peer_buffer);
+		buffer_field.append($('<span class="sound_patch_node_unit"></span>').text('ms'));
+		row.append(buffer_field);
 	}
 	var remove = $('<button type="button"></button>').text(jawnosT('Remove'));
 	remove.on('click', function() {

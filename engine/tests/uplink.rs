@@ -16,7 +16,8 @@ use jawn_audio::monbus;
 use jawn_audio::{
     audio_stream, decode_welcome, encode_hello, Accepted, AudioBearer, BearerError,
     ClockMaster, ControlReply, ManualClock, Offer, Uplink, UplinkConfig, UplinkSource,
-    UplinkSourceSpec, UplinkStatus, DEADLINE_GUARD_FRAMES, MAX_DATAGRAM_LEN, PULL_FRAMES,
+    UplinkSourceSpec, UplinkStatus, DEADLINE_GUARD_FRAMES, MAX_DATAGRAM_LEN, PULL_BUFFER_FRAMES,
+    PULL_FRAMES,
 };
 
 fn key(seed: u8) -> [u8; 32] {
@@ -341,6 +342,133 @@ fn a_datagram_delayed_inside_the_buffer_is_placed_not_late() {
 }
 
 #[test]
+fn a_source_may_read_further_behind_the_clock_than_another() {
+    let session_key = key(0x9C);
+    let (plain_producer, _plain_consumer) = monbus::new(monbus::MIN_FRAMES);
+    let (slow_producer, _slow_consumer) = monbus::new(monbus::MIN_FRAMES);
+    let mut plain =
+        UplinkSource::with_latency(0, "phone".to_string(), plain_producer, 0.0, 48_000)
+            .expect("source");
+    let mut slow = UplinkSource::with_latency_and_buffer(
+        1,
+        "deck".to_string(),
+        slow_producer,
+        0.0,
+        Some(200.0),
+        48_000,
+    )
+    .expect("source");
+
+    // The default is one jitter window; the deck's 200 ms is what it declares.
+    assert_eq!(plain.buffer_frames(), PULL_BUFFER_FRAMES);
+    assert_eq!(slow.buffer_frames(), 9_600, "200 ms at 48 kHz");
+    assert!((slow.buffer_ms() - 200.0).abs() < 0.01);
+
+    let base = 200_000u64;
+    let first = signal(480);
+    let mut bearer = AudioBearer::new(session_key, 11);
+    let sent = datagrams(&mut bearer, plain.stream(), &first, base);
+    assert_eq!(
+        plain.offer(session_key, 11, loopback_origin(9101), false, true, None, &sent[0]),
+        Offer::Taken(Accepted::Buffered)
+    );
+    let mut slow_bearer = AudioBearer::new(session_key, 11);
+    let sent_slow = datagrams(&mut slow_bearer, slow.stream(), &first, base);
+    assert_eq!(
+        slow.offer(session_key, 11, loopback_origin(9102), false, true, None, &sent_slow[0]),
+        Offer::Taken(Accepted::Buffered)
+    );
+
+    // The thread reads each source behind its own buffer. At this instant the
+    // default source's head has passed base + 6 000, and the slow source's head
+    // is still short of it: the deck holds 200 ms of slack, the phone holds 85.
+    let now = base + 7_000 + PULL_BUFFER_FRAMES as u64;
+    let plain_head = now - plain.buffer_frames() as u64;
+    let slow_head = now - slow.buffer_frames() as u64;
+    assert_eq!(plain_head, base + 7_000);
+    assert_eq!(slow_head, base + 1_496);
+    // A wake pulls at most PULL_MAX_FRAMES, so a head this far ahead takes
+    // several wakes; the cursor still stops exactly at the head.
+    while plain.status().next_master < plain_head {
+        assert!(plain.pump_to(plain_head).expect("a session pulls").frames > 0);
+    }
+    while slow.status().next_master < slow_head {
+        assert!(slow.pump_to(slow_head).expect("a session pulls").frames > 0);
+    }
+    assert_eq!(plain.status().next_master, base + 7_000);
+    assert_eq!(slow.status().next_master, base + 1_496);
+
+    // A block stamped 6 000 frames behind the clock (125 ms late) is already
+    // read by the default source but still ahead of the deck's cursor.
+    let delayed = other_signal(480);
+    let sent_delayed = datagrams(&mut bearer, plain.stream(), &delayed, base + 6_000);
+    assert_eq!(
+        plain.offer(
+            session_key,
+            11,
+            loopback_origin(9101),
+            true,
+            true,
+            None,
+            &sent_delayed[0]
+        ),
+        Offer::Placed(Accepted::Late),
+        "the default buffer already read that span"
+    );
+    let sent_slow_delayed = datagrams(&mut slow_bearer, slow.stream(), &delayed, base + 6_000);
+    assert_eq!(
+        slow.offer(
+            session_key,
+            11,
+            loopback_origin(9102),
+            true,
+            true,
+            None,
+            &sent_slow_delayed[0]
+        ),
+        Offer::Placed(Accepted::Buffered),
+        "the source that declared the longer buffer places it"
+    );
+    assert_eq!(slow.status().late, 0);
+}
+
+#[test]
+fn a_short_buffer_reads_no_newer_than_one_window() {
+    let (producer, _consumer) = monbus::new(monbus::MIN_FRAMES);
+    let short = UplinkSource::with_latency_and_buffer(
+        0,
+        "phone".to_string(),
+        producer,
+        0.0,
+        Some(10.0),
+        48_000,
+    )
+    .expect("source");
+    assert_eq!(
+        short.buffer_frames(),
+        PULL_BUFFER_FRAMES,
+        "below the pipeline floor the engine keeps one window"
+    );
+
+    let (producer, _consumer) = monbus::new(monbus::MIN_FRAMES);
+    let too_long = UplinkSource::with_latency_and_buffer(
+        0,
+        "phone".to_string(),
+        producer,
+        0.0,
+        Some(5_000.0),
+        48_000,
+    )
+    .expect("source");
+    assert_eq!(
+        too_long.buffer_frames(),
+        96_000,
+        "a buffer beyond two seconds is clamped to it"
+    );
+    assert!((too_long.buffer_ms() - 2_000.0).abs() < 0.01);
+}
+
+#[test]
 fn a_declared_latency_places_a_peer_earlier_than_an_undeclared_one() {
     let session_key = key(0x9A);
     let start = 48_000u64;
@@ -488,6 +616,7 @@ fn two_real_sockets_carry_a_peer_block() {
             id: "phone".to_string(),
             producer,
             latency_ms: 0.0,
+            buffer_ms: None,
         }],
     )
     .expect("the uplink binds loopback");
@@ -537,12 +666,14 @@ fn two_peers_share_the_uplink_and_a_third_cannot_take_a_busy_stream() {
                 id: "phone".to_string(),
                 producer: phone_producer,
                 latency_ms: 0.0,
+                buffer_ms: None,
             },
             UplinkSourceSpec {
                 index: 1,
                 id: "deck".to_string(),
                 producer: deck_producer,
                 latency_ms: 0.0,
+                buffer_ms: None,
             },
         ],
     )
@@ -714,6 +845,7 @@ fn a_repeat_take_from_a_new_port_takes_its_claimed_stream_back() {
             id: "phone".to_string(),
             producer,
             latency_ms: 0.0,
+            buffer_ms: None,
         }],
     )
     .expect("the uplink binds loopback");
@@ -825,6 +957,7 @@ fn an_audio_stream_with_no_peer_source_is_counted_not_mixed() {
             id: "phone".to_string(),
             producer,
             latency_ms: 0.0,
+            buffer_ms: None,
         }],
     )
     .expect("the uplink binds loopback");

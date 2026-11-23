@@ -86,7 +86,7 @@ pub use sender::{
 pub use session::{align, elect, Candidate, ClockOffset, NodeId};
 pub use uplink::{
     Offer, Uplink, UplinkConfig, UplinkSource, UplinkSourceSpec, UplinkSourceStatus, UplinkStatus,
-    PULL_FRAMES, PULL_INTERVAL_MS,
+    PULL_BUFFER_FRAMES, PULL_BUFFER_MAX_MS, PULL_FRAMES, PULL_INTERVAL_MS,
 };
 pub use wav::{to_i16, WavError, WavWriter, HEADER_LEN as WAV_HEADER_LEN};
 pub use wav_read::{read_wav, WavAudio, WavReadError};
