@@ -244,7 +244,7 @@
 	border-color: var(--gold);
 	color: var(--gold);
 }
-#cards .cards_deal {
+#cards .cards_info {
 	appearance: none;
 	margin-left: auto;
 	background: var(--gold);
@@ -256,7 +256,7 @@
 	border-radius: 999px;
 	cursor: var(--jawnos-cursor-pointer, pointer);
 }
-#cards .cards_deal:hover { background: #f3d98a; }
+#cards .cards_info:hover { background: #f3d98a; }
 #cards .tarot_stage {
 	flex: 1 1 auto;
 	min-height: 0;
@@ -783,7 +783,7 @@ body.cards_dragging { cursor: var(--jawnos-cursor-grabbing, grabbing); user-sele
 	}
 	#cards .cards_modes::-webkit-scrollbar { display: none; }
 	#cards .cards_mode { flex: 0 0 auto; padding: 6px 9px; }
-	#cards .cards_deal { flex: 0 0 auto; margin-left: 0; padding: 7px 12px; }
+	#cards .cards_info { flex: 0 0 auto; margin-left: 0; padding: 7px 12px; }
 	#cards .tarot_stage { padding: 4px 10px 8px; gap: 6px; }
 	#cards #deck_spread img { max-width: 32%; }
 	#cards #deck_card { max-width: 88%; }

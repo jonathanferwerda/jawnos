@@ -73,6 +73,33 @@ function cardsCardUrl(name) {
 	return '/images/cards/' + encodeURIComponent(String(name || ''));
 }
 
+// The info button reads out the deck's own text for the card or cards on the
+// table. A spread has one entry per card, so each name heads its own meaning.
+function cardsDescriptionHtml(descriptions) {
+	var html = '';
+	var shown = 0;
+	for (var i = 0; i < (descriptions || []).length; i++) {
+		var d = descriptions[i] || {};
+		if (!d.text) { continue; }
+		if (shown) { html += '<br><br>'; }
+		if (descriptions.length > 1 && d.name) { html += '<strong>' + cardsEscape(d.name) + '</strong><br>'; }
+		html += cardsEscape(d.text).replace(/\n/g, '<br>');
+		shown++;
+	}
+	return html;
+}
+
+function cardsShowTitle() {
+	$('#card_description').hide();
+	$('#card_title').show();
+}
+
+function cardsShowCardDescription() {
+	if (!$('#card_description').text().length) { return; }
+	$('#card_description').show();
+	$('#card_title').hide();
+}
+
 function cardsShowSpread(names) {
 	if (!names || !names.length) { return; }
 	var html = '';
@@ -2236,6 +2263,20 @@ function tarotEnsure() {
 
 var cardsInterval = null;
 
+// Cycle keeps turning the card over while the person is looking at it. It only
+// starts once the card has been pressed: choosing the mode alone never deals.
+function cardsStartCycle() {
+	clearInterval(cardsInterval);
+	cardsInterval = setInterval(function() {
+		if ($('#cards .cards_mode[mode="cycle"]').attr('status') === 'enabled' && $('#deck_card').is(':visible')) {
+			cardPicker('new');
+		}
+		else {
+			clearInterval(cardsInterval);
+		}
+	}, 180000);
+}
+
 function cardPicker(newCard) {
 	if (!$('#deck_card').length) { return; }
 	$('.card_description_icon').hide();
@@ -2244,6 +2285,10 @@ function cardPicker(newCard) {
 		type: 'GET',
 		data: { timestamp: timestamp, new_card: newCard, mode: cardsMode },
 		success: function(response) {
+			var descriptions = response.descriptions;
+			if ((!descriptions || !descriptions.length) && response.description) {
+				descriptions = [ { name: response.title, text: response.description } ];
+			}
 			if (response.cards && response.cards.length) {
 				cardsShowSpread(response.cards);
 			}
@@ -2255,7 +2300,7 @@ function cardPicker(newCard) {
 			}
 			if (response.title) { $('#card_title').html(cardsEscape(response.title)).show(); }
 			else { $('#card_title').text(window.jawnosT ? jawnosT('Deck of cards') : 'Deck of cards').show(); }
-			$('#card_description').text(response.description || '').hide();
+			$('#card_description').html(cardsDescriptionHtml(descriptions || [])).hide();
 			$('#deck_history').html($(response.html).find('#deck_history').html());
 			if (typeof appointment_chron === 'function') { appointment_chron(); }
 		}
@@ -2307,31 +2352,19 @@ if (typeof jQuery !== 'undefined') {
 			settingSetter({ app: 'cards', setting: 'mode', value: mode });
 		}
 		clearInterval(cardsInterval);
-		// Draw in the mode just chosen, so one press shows the day's card (or a
-		// free/cycle draw) instead of waiting for a second press.
-		if (mode === 'cycle') {
-			cardPicker('new');
-			cardsInterval = setInterval(function() {
-				if ($('#cards .cards_mode[mode="cycle"]').attr('status') === 'enabled' && $('#deck_card').is(':visible')) {
-					cardPicker('new');
-				}
-				else {
-					clearInterval(cardsInterval);
-				}
-			}, 180000);
-		}
-		else {
-			// The whole deck is a browsing rail, not a draw.
-			cardPicker(mode === 'all' ? undefined : 'new');
-		}
+		// Choosing a mode only shows the card that mode already holds. The card is
+		// drawn when it is pressed, so looking at a mode never deals.
+		cardPicker();
 	});
 
 	$(document).on('click', '#deck_card', function() {
 		cardPicker('new');
+		if (cardsMode === 'cycle') { cardsStartCycle(); }
 	});
 
-	$(document).on('click', '#cards_deal', function() {
-		cardPicker('new');
+	$(document).on('click', '#cards_info', function() {
+		if ($('#card_description').is(':visible')) { cardsShowTitle(); }
+		else { cardsShowCardDescription(); }
 	});
 
 	$(document).on('click', '#cards #deck_spread img', function() {
@@ -2346,21 +2379,19 @@ if (typeof jQuery !== 'undefined') {
 		if (names) {
 			cardsShowSpread(names.split('|'));
 			$('#card_title').html(cardsEscape(title)).show();
-			$('#card_description').hide();
 		}
 		else {
 			cardsShowSingle(draw.attr('data-src'), title);
 		}
+		$('#card_description').html($('.card_history_description', draw).html() || '').hide();
 	});
 
 	$(document).on('click', '#cards #card_title', function() {
-		$('#card_description').show();
-		$('#card_title').hide();
+		cardsShowCardDescription();
 	});
 
 	$(document).on('click', '#cards #card_description', function() {
-		$('#card_title').show();
-		$('#card_description').hide();
+		cardsShowTitle();
 	});
 
 	$(document).on('click', '#cards .card_description_icon', function(e) {
@@ -2368,8 +2399,8 @@ if (typeof jQuery !== 'undefined') {
 		var rn = $(this).closest('.history_draw').attr('rn');
 		var description = $('.card_history_description[rn="' + rn + '"]').html();
 		if (description) {
-			$('#card_description').html(description).show();
-			$('#card_title').hide();
+			$('#card_description').html(description);
+			cardsShowCardDescription();
 		}
 	});
 

@@ -18,7 +18,7 @@ my $lead_title = $lead ? &subs::format_name($lead->{'title'}) : '';
 			<% foreach my $m ( @modes ) { %>
 				<button type="button" class="cards_mode" mode="<%= $m->[0] %>"<% if (($mode // '') eq $m->[0]) { %> status="enabled"<% } %>><%= $m->[1] %></button>
 			<% } %>
-			<button type="button" class="cards_deal" id="cards_deal"><%= &subs::ui('Deal') %></button>
+			<button type="button" class="cards_info" id="cards_info" hint="<%= &subs::ui('About the card') %>"><%= &subs::ui('Info') %></button>
 		</div>
 		<div class="tarot_stage">
 			<div class="tarot_art">
@@ -44,6 +44,7 @@ my $lead_title = $lead ? &subs::format_name($lead->{'title'}) : '';
 				<% my $rn = &subs::random_string_creator(10); %>
 				<% my $title = &subs::format_name($his->{'title'}); %>
 				<% my $name_list = (ref $his->{'cards'} eq 'ARRAY') ? join('|', @{ $his->{'cards'} }) : ''; %>
+				<% my $has_text = ($his->{'description'} || (ref $his->{'descriptions'} eq 'ARRAY' && @{ $his->{'descriptions'} })) ? 1 : 0; %>
 				<div class="history_draw" rn="<%= $rn %>" data-title="<%= $title %>"<% if (length $name_list) { %> data-cards="<%= &subs::html_text($name_list) %>"<% } elsif ($his->{'stream'}) { %> data-src="<%= &subs::html_text($his->{'stream'}) %>"<% } else { %> data-src="/images/cards/<%= &subs::url_escape_utf8($his->{'title'}) %>.png"<% } %>>
 					<% if (ref $his->{'cards'} eq 'ARRAY') { %>
 						<span class="history_spread">
@@ -59,9 +60,17 @@ my $lead_title = $lead ? &subs::format_name($lead->{'title'}) : '';
 					<% } %>
 					<div class="history_meta">
 						<span class="time" timestamp="<%= $his->{'timestamp'} %>"></span>
-						<% if ($his->{'description'}) { %>
+						<% if ($has_text) { %>
 							<img class="tiny_thumb card_description_icon" src="<%= &subs::icon_for('/images/make believe/Pillow.png') %>" hint="<%= &subs::ui('About this card') %>" alt="">
-							<span class="card_history_description" rn="<%= $rn %>" style="display:none;"><%= $his->{'description'} %></span>
+							<span class="card_history_description" rn="<%= $rn %>" style="display:none;">
+								<% if (ref $his->{'descriptions'} eq 'ARRAY' && @{ $his->{'descriptions'} }) { %>
+									<% foreach my $d ( @{ $his->{'descriptions'} } ) { %>
+										<strong><%= $d->{'name'} %></strong><br><%= $d->{'text'} %><br><br>
+									<% } %>
+								<% } else { %>
+									<%= $his->{'description'} %>
+								<% } %>
+							</span>
 						<% } %>
 					</div>
 				</div>

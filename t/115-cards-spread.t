@@ -67,8 +67,13 @@ like($tarot, qr/id="deck_spread"/, 'the spread has a row of its own');
 like($js, qr/function cardsShowSpread/, 'the browser draws the three pictures side by side');
 like($js, qr/response\.cards/, 'from the names the reply carries');
 like($template, qr/cards\/tarot/, 'the page includes the tarot pane');
+like($tarot, qr/id="cards_info"/, 'the tarot pane carries an info button');
+unlike($tarot, qr/id="cards_deal"/, 'the deal button is gone');
+like($js, qr/function cardsDescriptionHtml/, 'the info panel reads the cards\' text');
 
 my $controller = read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_misc9.pm");
+like($controller, qr/\$title = join\(' - ', \@labels\)/, 'a spread title separates the names with a dash');
+like($controller, qr/descriptions\s*=>/, 'the reply carries the card descriptions');
 like($controller, qr/if \(ref \$spread_cards eq 'ARRAY'\) \{ \$entry\{'cards'\} = \$spread_cards \}/,
 	'a new spread stores names, not a montage');
 like($controller, qr/cards => \$spread_cards/, 'and the reply carries the three names');
@@ -76,15 +81,16 @@ unlike($controller, qr/card_spread_stream/, 'no montage is built for the spread'
 unlike($controller, qr/&subs::terminal_name/, 'a deck file name is not shell-escaped on the way into a URL');
 like($controller, qr/&subs::cards_list\(/, 'a draw list comes from the house list');
 like($controller, qr/&subs::cards_list_write\(/, 'and a draw writes it back to the house row');
-# Choosing a mode draws it on the first press: the bar sends the mode it just
-# picked instead of relying on that choice's setting write having landed.
+# Choosing a mode only shows the card that mode already holds. The card is
+# drawn when it is pressed, so looking at a mode never deals.
 like($controller, qr/my \$mode = \$c->param\('mode'\);/, 'the deal route reads the chosen mode');
 like($js, qr/cardsMode = mode;/, 'the mode bar remembers the chosen mode');
-like($js, qr/new_card: newCard, mode: cardsMode/, 'and the deal asks for it');
-like($js, qr/cardPicker\(mode === 'all' \? undefined : 'new'\)/,
-	'a mode change draws that mode at once');
-like($js, qr/cardPicker\('new'\);\n\t\t\tcardsInterval = setInterval/,
-	'Cycle draws as soon as it is chosen');
+like($js, qr/new_card: newCard, mode: cardsMode/, 'and a press asks for it');
+unlike($js, qr/cardPicker\(mode === 'all' \? undefined : 'new'\)/,
+	'a mode change does not draw');
+like($js, qr/\$\(document\)\.on\('click', '#deck_card'/, 'the card itself draws a new card');
+like($js, qr/cardsMode === 'cycle'\) \{ cardsStartCycle\(\); \}/,
+	'Cycle starts turning only after the card is pressed');
 
 # A template is compiled strictly with the stash keys it is given, so a render
 # that leaves one out is a 500 on that route, not a missing value. The deal
@@ -123,9 +129,14 @@ my $rendered = eval {
 	my $src = $read_template->('cards');
 	$mt->render($src, {
 		history => [ {
-			title => 'The Fool \x{b7} The Star \x{b7} The Moon',
+			title => 'The Fool - The Star - The Moon',
 			timestamp => 1,
 			cards => [ 'the fool.png', 'the star.png', 'the moon.png' ],
+			descriptions => [
+				{ name => 'The Fool', text => 'Now begin' },
+				{ name => 'The Star', text => 'Hope' },
+				{ name => 'The Moon', text => 'A dream' },
+			],
 		} ],
 		mode => 'spread',
 		variant => 'solitaire',
@@ -137,6 +148,8 @@ is($@, '', 'the cards page renders with the stash its routes pass');
 like($rendered // '', qr/id="cards_blackjack"/, 'and the blackjack pane is on the page');
 like($rendered // '', qr{src="/images/cards/the%20fool\.png"}, 'a card name with a space is percent-encoded');
 like($rendered // '', qr{data-cards="the fool\.png\|the star\.png\|the moon\.png"}, 'the history keeps the names for the browser');
+like($rendered // '', qr/Now begin/, 'a spread history keeps each card\'s meaning for the info panel');
+like($rendered // '', qr{<strong>The Star</strong>}, 'and names the card the meaning belongs to');
 
 # ---------------------------------------------------------- one list per house
 # The draw lists live on the settings row every machine reads (device 'all'). A
@@ -310,5 +323,49 @@ ok(ref $reply eq 'HASH', 'the deal answered with a JSON reply');
 is($reply->{'history'}->[0]->{'title'}, 'The Star',
 	'the deal reply carries the draw it just stored, in the same click');
 is($reply->{'history'}->[1]->{'title'}, 'The Moon', 'with the older draws behind it');
+
+# ------------------------------------------------- a spread carries each meaning
+# The info button reads the deck's own text. A spread reply must name all three
+# cards and keep each meaning, and its title separates them with a plain dash.
+{
+	package CardsSpreadTestController;
+	sub new { bless {}, shift }
+	sub param {
+		my ($self, $key) = @_;
+		return 'spread' if $key eq 'mode';
+		return 'new' if $key eq 'new_card';
+		return '';
+	}
+	sub render_to_string { return '<div id="deck_history"></div>'; }
+	sub render {
+		my ($self, @args) = @_;
+		$captured = { @args };
+		return 1;
+	}
+}
+{
+	my @deck = ( 'the fool.png', 'the star.png', 'the moon.png' );
+	my $tree = {
+		'the fool.png' => 'Now begin',
+		'the star.png' => 'Hope',
+		'the moon.png' => 'A dream',
+	};
+	no warnings 'redefine';
+	local *Manager::random_card_picker = sub { return shift @deck; };
+	local *subs::inventory_grabber = sub { return $tree; };
+	Manager::action_28170(CardsSpreadTestController->new());
+}
+my $spread_reply = $captured->{'json'};
+is_deeply($spread_reply->{'cards'}, [ 'the fool.png', 'the star.png', 'the moon.png' ],
+	'a spread reply carries three deck files');
+is($spread_reply->{'title'}, 'The Fool - The Star - The Moon',
+	'and the names are separated by a dash');
+is_deeply($spread_reply->{'descriptions'}, [
+	{ name => 'The Fool', text => 'Now begin' },
+	{ name => 'The Star', text => 'Hope' },
+	{ name => 'The Moon', text => 'A dream' },
+], 'each card keeps its own meaning');
+is($spread_reply->{'history'}->[0]->{'descriptions'}->[1]->{'text'}, 'Hope',
+	'and the history rail entry carries the same meanings');
 
 done_testing();

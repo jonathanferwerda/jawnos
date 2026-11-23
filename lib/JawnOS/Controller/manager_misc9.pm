@@ -367,8 +367,8 @@ sub action_28170 {
 	my $tree = &subs::inventory_grabber();
 
 	# The mode bar sends the mode it just chose, so the reply does not depend on
-	# that choice's setting write having landed first; the Deal button and a
-	# touch on the card pass no mode and read the stored one.
+	# that choice's setting write having landed first; a touch on the card passes
+	# no mode and reads the stored one.
 	my $mode = $c->param('mode');
 	$mode = &subs::setting_grabber({ app => 'cards', setting => 'mode' })
 		unless defined $mode && length $mode;
@@ -434,7 +434,7 @@ sub action_28170 {
 			# The spread is three deck files side by side. The reply carries the
 			# names and the browser draws three pictures; the old montage needed
 			# an image tool and silently lost cards when it was missing.
-			$title = join(' \x{b7} ', @labels);
+			$title = join(' - ', @labels);
 			splice @{$history}, 10;
 			$spread_cards = \@names;
 		}
@@ -477,9 +477,27 @@ sub action_28170 {
 		&subs::cards_list_write($mode, $history);
 	}
 
+	# The info button reads the deck's own text for the card(s) on the table. A
+	# spread carries one entry per card so each name keeps its meaning.
+	my @descriptions;
+	if (ref $spread_cards eq 'ARRAY') {
+		foreach my $name ( @{$spread_cards} ) {
+			(my $label = $name) =~ s/\.png$//i;
+			push @descriptions, { name => &subs::format_name($label), text => ($tree->{$name} // '') };
+		}
+	}
+	elsif (defined $card && defined $tree->{$card} && length $tree->{$card}) {
+		push @descriptions, { name => &subs::format_name($title), text => $tree->{$card} };
+	}
+
 	foreach my $h ( @{$history} ) {
 		$h->{'description'} = $tree->{$h->{'title'} . '.png'};
-
+		if (ref $h->{'cards'} eq 'ARRAY') {
+			$h->{'descriptions'} = [ map {
+				(my $label = $_) =~ s/\.png$//i;
+				{ name => &subs::format_name($label), text => ($tree->{$_} // '') }
+			} @{$h->{'cards'}} ];
+		}
 	}
 	my $html = $c->render_to_string(
 		template => 'cards',
@@ -497,7 +515,8 @@ sub action_28170 {
 		history => $history,
 		mode => $mode,
 		stream => $stream,
-		cards => $spread_cards
+		cards => $spread_cards,
+		descriptions => \@descriptions
 	});
 }
 
