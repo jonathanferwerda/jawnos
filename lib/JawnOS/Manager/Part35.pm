@@ -316,6 +316,7 @@ sub now_me($data) {
 				%{$existing_wifi},
 				ssid => $wifi_now->{'ssid'},
 				password => $wifi_now->{'password'},
+				band => $wifi_now->{'band'} // '2.4ghz',
 			};
 			# 'all' is the house-wide key: every machine reads this row by chip,
 			# so a phone and a desktop never keep two copies that disagree.

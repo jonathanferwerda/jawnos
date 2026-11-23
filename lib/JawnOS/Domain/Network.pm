@@ -225,11 +225,29 @@ sub embedded_wifi_current {
 	return undef unless ref $network eq 'HASH' && $network->{'ok'};
 	my $ssid = $network->{'ssid'} // '';
 	my $key  = $network->{'passphrase'} // '';
+	my $band = $network->{'band'} // '';
 	return undef unless length $ssid && length($ssid) <= 32 && $ssid !~ /[\x00-\x1f\x7f]/;
 	return undef if $ssid =~ /[\r\n]/ || $key =~ /[\r\n]/;
 	# An open network has no key; a protected one must be a real passphrase.
 	return undef unless $key eq '' || $key =~ /^[\x20-\x7e]{8,63}$/ || $key =~ /^[0-9A-Fa-f]{64}$/;
-	return { ssid => $ssid, password => $key };
+	# The watch, deck and Pico are 2.4 GHz only. Never overwrite a good stored
+	# row or push a 5 GHz network; the helper supplies the saved 2.4 GHz twin as
+	# ssid/band when it can.
+	return undef if $band eq '5ghz';
+	return undef if $band eq '' && $ssid =~ /(?:^|[\s_-])5g(?:hz)?(?:$|[\s_-])/i;
+	return { ssid => $ssid, password => $key, band => ($band || '2.4ghz') };
+}
+
+sub embedded_wifi_usable {
+	# A stored row may be pushed to an embedded device only when it is 2.4 GHz.
+	# A row written before the band was recorded has no band, so a 5G marker in
+	# the name is the fallback.
+	my ($wifi) = @_;
+	return 0 unless ref $wifi eq 'HASH' && defined $wifi->{'ssid'} && length $wifi->{'ssid'};
+	my $band = defined $wifi->{'band'} ? $wifi->{'band'} : '';
+	return 0 if $band eq '5ghz';
+	return 0 if $band eq '' && $wifi->{'ssid'} =~ /(?:^|[\s_-])5g(?:hz)?(?:$|[\s_-])/i;
+	return 1;
 }
 
 # ---- multi-link bridge state (protocol v2) --------------------------------

@@ -104,7 +104,8 @@ get '/teletype/wifi_update' => sub($c) {
 	my $edt = $c->param('edt');
 	my $timestamp = $c->param('timestamp');
 	my $chip_id = $c->param('chip_id');
-	my (undef, $json_wifi) = &subs::embedded_wifi_row($edt, $chip_id);
+	my ($wifi, $json_wifi) = &subs::embedded_wifi_row($edt, $chip_id);
+	$json_wifi = '{}' unless &subs::embedded_wifi_usable($wifi);
 	$c->render(text => $json_wifi || '{}');
 };
 

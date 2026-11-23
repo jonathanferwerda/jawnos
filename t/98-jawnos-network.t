@@ -337,6 +337,7 @@ case "$*" in
 	*"--fields NAME,TYPE,DEVICE connection show --active"*) printf 'jawn-house:802-11-wireless:wlan0\n' ;;
 	*"--get-values 802-11-wireless.ssid"*) printf 'jawn-house\n' ;;
 	*"--get-values 802-11-wireless-security.key-mgmt"*) printf 'wpa-psk\n' ;;
+	*"--fields IN-USE,SSID,CHAN,FREQ device wifi list"*) printf '*:jawn-house:6:2437 MHz\n' ;;
 	*) exit 1 ;;
 esac
 FAKE_NMCLI
@@ -346,6 +347,8 @@ FAKE_NMCLI
 	is($data->{'ssid'}, 'jawn-house', 'with its name');
 	is($data->{'passphrase'}, 'correcthorsebattery', 'and the key the board needs');
 	is($data->{'secure'}, 1, 'a WPA network is marked secure');
+	is($data->{'band'}, '2.4ghz', 'the band is read from the active AP');
+	is($data->{'frequency'}, 2437, 'with the frequency the active AP reports');
 }
 {
 	# iwd keeps the key in one file per network; the directory is overridable so
@@ -368,7 +371,7 @@ FAKE_IP
 	write_exe("$iwd/iw", <<'FAKE_IW');
 case "$*" in
 	"dev wlan0 info") printf 'Interface wlan0\n\ttype managed\n' ;;
-	"dev wlan0 link") printf 'Connected to aa:bb:cc:dd:ee:ff\n\tSSID: jawn-house\n' ;;
+	"dev wlan0 link") printf 'Connected to aa:bb:cc:dd:ee:ff\n\tSSID: jawn-house\n\tfreq: 2412.0\n' ;;
 	*) exit 1 ;;
 esac
 FAKE_IW
@@ -385,6 +388,57 @@ FAKE_IWCTL
 		is($data->{'ok'}, 1, 'iwd reports the current network');
 		is($data->{'ssid'}, 'jawn-house', 'with its name');
 		is($data->{'passphrase'}, 'correcthorsebattery', 'and the key from its own store');
+		is($data->{'band'}, '2.4ghz', 'the band is read from iw link');
+		is($data->{'current_band'}, '2.4ghz', 'and marked as the current band');
+		is($data->{'frequency'}, 2412, 'with the frequency iw reports');
+	}
+}
+{
+	# A 5 GHz link falls back to the saved 2.4 GHz twin of the same name, with
+	# that twin's own key: the embedded radios cannot hear the 5 GHz band.
+	my $iwd5 = "$scratch/iwd5";
+	my $keys5 = "$scratch/iwd5_keys";
+	mkdir $iwd5 or die "cannot make $iwd5: $!";
+	mkdir $keys5 or die "cannot make $keys5: $!";
+	for my $pair ( [ 'jawn-house 5Ghz', 'fivesecret' ], [ 'jawn-house', 'twosecret' ] ) {
+		open(my $kf, '>', "$keys5/$pair->[0].psk") or die "cannot write $pair->[0]: $!";
+		print $kf "[Security]\nPreSharedKey=$pair->[1]\n";
+		close $kf;
+	}
+	write_exe("$iwd5/cat", 'exec /bin/cat "$@"');
+	write_exe("$iwd5/ip", <<'FAKE_IP');
+if [ "$*" = "-j address show" ]; then
+	printf '[{"ifname":"wlan0","address":"00:11:22:33:44:55","operstate":"up","addr_info":[{"family":"inet","local":"192.0.2.10","prefixlen":24}]}]'
+	exit 0
+fi
+exit 0
+FAKE_IP
+	write_exe("$iwd5/iw", <<'FAKE_IW');
+case "$*" in
+	"dev wlan0 info") printf 'Interface wlan0\n\ttype managed\n' ;;
+	"dev wlan0 link") printf 'Connected to aa:bb:cc:dd:ee:ff\n\tSSID: jawn-house 5Ghz\n\tfreq: 5180.0\n' ;;
+	*) exit 1 ;;
+esac
+FAKE_IW
+	write_exe("$iwd5/iwctl", <<'FAKE_IWCTL');
+case "$*" in
+	"station wlan0 show") printf 'Station: wlan0\n  State                     connected\n  Connected network         jawn-house 5Ghz\n' ;;
+	"known-networks list") printf '  jawn-house\n' ;;
+	"station wlan0 scan") exit 0 ;;
+	*) exit 1 ;;
+esac
+FAKE_IWCTL
+	{
+		local $ENV{'JAWNOS_IWD_DIR'} = $keys5;
+		my ($rc, $out) = run_net(path => $iwd5, args => ['wifi_current']);
+		my $data = answer($rc, $out, '', 'wifi_current on a 5 GHz link');
+		is($data->{'ok'}, 1, 'the 5 GHz link is reported');
+		is($data->{'ssid'}, 'jawn-house', 'the 2.4 GHz twin is chosen');
+		is($data->{'band'}, '2.4ghz', 'as a 2.4 GHz network');
+		is($data->{'current_ssid'}, 'jawn-house 5Ghz', 'the current 5 GHz name is kept beside it');
+		is($data->{'current_band'}, '5ghz', 'the current band is named');
+		is($data->{'fallback'}, 1, 'the answer is marked a fallback');
+		is($data->{'passphrase'}, 'twosecret', 'with the twin profile key');
 	}
 }
 {

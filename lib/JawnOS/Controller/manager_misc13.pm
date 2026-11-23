@@ -153,6 +153,10 @@ sub action_43067 {
 	# it does not have yet, so it usually cannot be reached over the network it is
 	# trying to join. Read the stored wifi setting back and push it over BLE.
 	my ($wifi) = &subs::embedded_wifi_row($edt, $chip_id);
+	if ($wifi->{'ssid'} && !&subs::embedded_wifi_usable($wifi)) {
+		$c->render(text => &subs::ui('5 GHz only; this device needs a 2.4 GHz network'));
+		return;
+	}
 	if ($wifi->{'ssid'} && &subs::ble_push_available($edt, $chip_id)) {
 		# Off the request: the client waits for the radio to acknowledge the write,
 		# and a watch that has gone to sleep never does (see bluetooth_sender_async).

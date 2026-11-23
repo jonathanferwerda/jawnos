@@ -906,6 +906,115 @@ sub saved_networks {
 	return \@saved;
 }
 
+# The band a Wi-Fi link is on. `iw dev <if> link` names the frequency;
+# NetworkManager's active-AP list is the fallback for a stack without iw. A
+# frequency of 0 means the answer was not readable.
+sub wifi_link_frequency {
+	my ($interface) = @_;
+	if (valid_interface($interface) && find_command('iw')) {
+		my ($out, $err, $status) = run_read('iw', 'dev', $interface, 'link');
+		return $1 + 0
+			if $status == 0 && defined $out && $out =~ /^\s*freq:\s*([0-9.]+)/m;
+	}
+	if (valid_interface($interface)) {
+		my $station = station_report($interface);
+		return $station->{'frequency'} + 0
+			if defined $station->{'frequency'} && $station->{'frequency'} =~ /^[0-9.]+$/;
+	}
+	if (find_command('nmcli')) {
+		my @args = ('nmcli', '--terse', '--escape', 'yes', '--fields', 'IN-USE,SSID,CHAN,FREQ',
+			'device', 'wifi', 'list');
+		push @args, ('ifname', $interface) if valid_interface($interface);
+		push @args, ('--rescan', 'no');
+		my ($out, $err, $status) = run_privileged_read(@args);
+		if ($status == 0 && defined $out) {
+			foreach my $line ( split /\n/, $out ) {
+				next unless $line =~ /^\*:/;
+				my @fields = split /(?<!\\):/, $line;
+				my $freq = $fields[-1] // '';
+				return $1 + 0 if $freq =~ /([0-9]{3,5})/ && $1 >= 2000;
+				my $channel = $fields[-2] // '';
+				if ($channel =~ /^\d+$/) {
+					return $channel <= 14 ? 2407 + 5 * $channel : 5000 + 5 * $channel;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+sub wifi_base_ssid {
+	# The name a 5 GHz SSID shares with its 2.4 GHz twin: 'Digby Digs 5Ghz'
+	# becomes 'Digby Digs'. A name with no marker is returned unchanged.
+	my ($ssid) = @_;
+	return '' unless defined $ssid;
+	my $base = $ssid;
+	$base =~ s/[\s_-]*(?:5g(?:hz)?|5\.0g(?:hz)?)$//i;
+	$base =~ s/^(?:5g(?:hz)?|5\.0g(?:hz)?)[\s_-]*//i;
+	$base =~ s/[\s_-]+$//;
+	return $base;
+}
+
+sub wifi_24_alternative {
+	# The 2.4 GHz SSID to hand to an embedded device when this machine is on a
+	# 5 GHz link: the saved twin when it has one, else the base name with the
+	# key we hold (the two bands of one network usually share it). A candidate
+	# with no readable key is not offered.
+	my ($interface, $ssid, $secret) = @_;
+	my $base = wifi_base_ssid($ssid);
+	return () unless length $base;
+	my @saved = @{ saved_networks() };
+	my @candidates = grep {
+		$_ ne $ssid
+			&& ($_ eq $base || $_ =~ /^\Q$base\E[\s_-]*(?:2g(?:hz)?|2\.4g(?:hz)?)$/i)
+	} @saved;
+	foreach my $candidate ( @candidates ) {
+		my $alt = wifi_current_secret($interface, $candidate);
+		next unless $alt->{'secret_source'} && $alt->{'secret_source'} ne 'none';
+		next unless length($alt->{'passphrase'} // '') || !$alt->{'secure'};
+		return ($candidate, $alt);
+	}
+	if ($base ne $ssid && length($secret->{'passphrase'} // '')) {
+		return ($base, { %{$secret}, ssid => $base, secret_source => 'current',
+			secret_stored => 0, guessed => 1 });
+	}
+	return ();
+}
+
+sub nmcli_secret_for_ssid {
+	# A saved NetworkManager profile that is not the active one. nmcli_current
+	# only reads the active profile, so a 2.4 GHz twin's key needs its own
+	# profile lookup.
+	my ($ssid) = @_;
+	return {} unless find_command('nmcli') && defined $ssid && length $ssid;
+	my ($profiles, $err, $status) = run_privileged_read(
+		'nmcli', '--terse', '--fields', 'NAME,TYPE', 'connection', 'show');
+	return {} unless $status == 0;
+	foreach my $line ( split /\n/, (defined $profiles ? $profiles : '') ) {
+		my @fields = split /(?<!\\):/, $line, 2;
+		next unless @fields >= 2 && $fields[1] =~ /(?:802-11-wireless|wifi)/i;
+		my $name = nmcli_unescape($fields[0]);
+		my ($ssid_out, $ssid_err, $ssid_status) = run_privileged_read(
+			'nmcli', '--terse', '--get-values', '802-11-wireless.ssid', 'connection', 'show', $name);
+		next unless $ssid_status == 0;
+		my $profile_ssid = trim(nmcli_unescape($ssid_out));
+		next unless $profile_ssid eq $ssid;
+		my ($mgmt_out, $mgmt_err, $mgmt_status) = run_privileged_read(
+			'nmcli', '--terse', '--get-values', '802-11-wireless-security.key-mgmt', 'connection', 'show', $name);
+		my $key_mgmt = $mgmt_status == 0 ? lc(trim(nmcli_unescape($mgmt_out))) : '';
+		my $secure = $key_mgmt =~ /^(?:wpa-psk|sae|wpa-eap|wpa-eap-suite-b-192)$/ ? 1 : 0;
+		my $passphrase = '';
+		if ($secure) {
+			my ($psk_out, $psk_err, $psk_status) = run_privileged_read(
+				'nmcli', '--show-secrets', '--terse', '--get-values',
+				'802-11-wireless-security.psk', 'connection', 'show', $name);
+			$passphrase = trim(nmcli_unescape($psk_out)) if $psk_status == 0;
+		}
+		return { found => 1, ssid => $ssid, passphrase => $passphrase, secure => $secure };
+	}
+	return {};
+}
+
 # The network this computer is on, with the key another machine needs for the
 # same profile. A read: it never changes the connection. New on the Controllers
 # page asks for it so the board is flashed with this house's Wi-Fi instead of a
@@ -931,14 +1040,33 @@ sub wifi_current {
 	}
 	return { ok => 0, error => 'This computer is not on Wi-Fi.' } unless defined $ssid;
 	my $secret = wifi_current_secret($interface, $ssid);
+	my $frequency = wifi_link_frequency($interface);
+	my $current_ssid = $secret->{'ssid'} || $ssid;
+	my $current_band = $frequency >= 5000 ? '5ghz' : ($frequency >= 2400 ? '2.4ghz' : '');
+	$current_band = '5ghz'
+		if !length $current_band && $current_ssid =~ /(?:^|[\s_-])5g(?:hz)?(?:$|[\s_-])/i;
+	my ($chosen_ssid, $chosen_secret, $chosen_band, $fallback)
+		= ($current_ssid, $secret, $current_band, 0);
+	if ($current_band eq '5ghz') {
+		my ($alt_ssid, $alt_secret) = wifi_24_alternative($interface, $current_ssid, $secret);
+		if ($alt_ssid) {
+			($chosen_ssid, $chosen_secret, $chosen_band, $fallback)
+				= ($alt_ssid, $alt_secret, '2.4ghz', 1);
+		}
+	}
 	return {
 		ok => 1,
 		interface => $interface,
-		ssid => $secret->{'ssid'} || $ssid,
-		passphrase => $secret->{'passphrase'} // '',
-		secure => $secret->{'secure'} ? 1 : 0,
-		secret_source => $secret->{'secret_source'} || 'none',
-		secret_stored => $secret->{'secret_stored'} ? 1 : 0,
+		ssid => $chosen_ssid,
+		passphrase => $chosen_secret->{'passphrase'} // '',
+		secure => $chosen_secret->{'secure'} ? 1 : 0,
+		secret_source => $chosen_secret->{'secret_source'} || 'none',
+		secret_stored => $chosen_secret->{'secret_stored'} ? 1 : 0,
+		current_ssid => $current_ssid,
+		current_band => $current_band,
+		band => $chosen_band,
+		frequency => $frequency,
+		fallback => $fallback,
 	};
 }
 
@@ -977,6 +1105,12 @@ sub wifi_current_secret {
 		$nm->{'secret_stored'} = 0;
 		return $nm;
 	}
+	my $saved_nm = nmcli_secret_for_ssid($ssid);
+	if ($saved_nm->{'found'}) {
+		$saved_nm->{'secret_source'} = 'nm-saved';
+		$saved_nm->{'secret_stored'} = 0;
+		return $saved_nm;
+	}
 	my $iwd = iwd_current($ssid);
 	if ($iwd->{'found'}) {
 		$iwd->{'secret_source'} = 'iwd';
@@ -1011,6 +1145,9 @@ sub nmcli_current {
 		'nmcli', '--terse', '--get-values', '802-11-wireless.ssid', 'connection', 'show', $connection);
 	$profile_ssid = trim(nmcli_unescape($ssid_out)) if $ssid_status == 0;
 	$profile_ssid = $ssid unless length $profile_ssid;
+	# A caller asking for a saved twin must not be handed the active profile's
+	# key just because it shares the interface.
+	return {} if length $ssid && length $profile_ssid && $profile_ssid ne $ssid;
 	my ($mgmt_out, $mgmt_err, $mgmt_status) = run_privileged_read(
 		'nmcli', '--terse', '--get-values', '802-11-wireless-security.key-mgmt', 'connection', 'show', $connection);
 	my $key_mgmt = $mgmt_status == 0 ? lc(trim(nmcli_unescape($mgmt_out))) : '';

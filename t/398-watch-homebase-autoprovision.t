@@ -31,8 +31,9 @@ my ($alive_src) = $network =~ /(sub ble_homebase_alive \{.*?\n\})/s;
 my ($wifi_src)  = $network =~ /(sub embedded_wifi_current \{.*?\n\})/s;
 my ($row_src)   = $network =~ /(sub embedded_wifi_row \{.*?\n\})/s;
 my ($home_src)  = $network =~ /(sub embedded_homebase_ip \{.*?\n\})/s;
-ok($match_src && $known_src && $alive_src && $wifi_src && $row_src && $home_src,
-	'the six helpers are still one function each');
+my ($usable_src) = $network =~ /(sub embedded_wifi_usable \{.*?\n\})/s;
+ok($match_src && $known_src && $alive_src && $wifi_src && $row_src && $home_src && $usable_src,
+	'the seven helpers are still one function each');
 
 {
 	no warnings 'redefine';
@@ -42,6 +43,7 @@ ok($match_src && $known_src && $alive_src && $wifi_src && $row_src && $home_src,
 	eval $wifi_src;  is($@, '', 'embedded_wifi_current compiles');
 	eval $row_src;   is($@, '', 'embedded_wifi_row compiles');
 	eval $home_src;  is($@, '', 'embedded_homebase_ip compiles');
+	eval $usable_src; is($@, '', 'embedded_wifi_usable compiles');
 }
 
 # The dependencies the lifted subs ask for: one device spec, this machine's id,
@@ -115,10 +117,10 @@ ok(!ble_machine_match('Jon@jawnos.Table', 'Jon@jawnos.Laptop'),
 
 # --- this machine's current Wi-Fi ---------------------------------------
 $NETWORK_ANSWER = { ok => 1, ssid => 'jawn', passphrase => 'F1r3w00d' };
-is_deeply(embedded_wifi_current(), { ssid => 'jawn', password => 'F1r3w00d' },
+is_deeply(embedded_wifi_current(), { ssid => 'jawn', password => 'F1r3w00d', band => '2.4ghz' },
 	'a protected network is carried as the password the watch joins with');
 $NETWORK_ANSWER = { ok => 1, ssid => 'open', passphrase => '' };
-is_deeply(embedded_wifi_current(), { ssid => 'open', password => '' },
+is_deeply(embedded_wifi_current(), { ssid => 'open', password => '', band => '2.4ghz' },
 	'an open network is usable too');
 $NETWORK_ANSWER = { ok => 1, ssid => 'jawn', passphrase => 'short' };
 ok(!defined embedded_wifi_current(), 'a malformed key is refused');
@@ -126,10 +128,18 @@ $NETWORK_ANSWER = { ok => 1, ssid => "bad\nssid", passphrase => 'F1r3w00d' };
 ok(!defined embedded_wifi_current(), 'a newline in the name is refused');
 my $hex = 'A' x 64;
 $NETWORK_ANSWER = { ok => 1, ssid => 'jawn', passphrase => $hex };
-is_deeply(embedded_wifi_current(), { ssid => 'jawn', password => $hex },
+is_deeply(embedded_wifi_current(), { ssid => 'jawn', password => $hex, band => '2.4ghz' },
 	'a 64-digit hex key is accepted');
 $NETWORK_ANSWER = { ok => 0, error => 'This computer is not on Wi-Fi.' };
 ok(!defined embedded_wifi_current(), 'a machine off Wi-Fi hands nothing over');
+$NETWORK_ANSWER = { ok => 1, ssid => 'Digby Digs 5Ghz', passphrase => 'F1r3w00d2', band => '5ghz' };
+ok(!defined embedded_wifi_current(), 'a 5 GHz-only network is refused');
+$NETWORK_ANSWER = { ok => 1, ssid => 'Digby Digs', passphrase => 'F1r3w00d2', band => '2.4ghz',
+	fallback => 1, current_ssid => 'Digby Digs 5Ghz', current_band => '5ghz' };
+is_deeply(embedded_wifi_current(), { ssid => 'Digby Digs', password => 'F1r3w00d2', band => '2.4ghz' },
+	'the saved 2.4 GHz twin of a 5 GHz network is carried');
+$NETWORK_ANSWER = { ok => 1, ssid => '5G House', passphrase => 'F1r3w00d2', band => '' };
+ok(!defined embedded_wifi_current(), 'a 5G name with an unreadable band is refused');
 
 # --- the stored row is read by chip, not by this machine's device class ---
 @WIFI_ROWS = (
@@ -143,6 +153,16 @@ is($stored_json, '{"ssid":"jawn","password":"new","ap_ssid":"Pico"}',
 @WIFI_ROWS = ();
 is_deeply((embedded_wifi_row('watch', '4929592'))[0], {}, 'no row is an empty hash');
 is((embedded_wifi_row('watch', '4929592'))[1], '{}', 'and a JSON empty object');
+
+ok(embedded_wifi_usable({ ssid => 'Digby Digs', band => '2.4ghz' }),
+	'a stored 2.4 GHz row is usable');
+ok(!embedded_wifi_usable({ ssid => 'Digby Digs 5Ghz', band => '5ghz' }),
+	'a stored 5 GHz row is refused');
+ok(!embedded_wifi_usable({ ssid => 'Digby Digs 5Ghz' }),
+	'an old row with a 5G name is refused');
+ok(embedded_wifi_usable({ ssid => 'jawn' }),
+	'an old row with no 5G marker is usable');
+ok(!embedded_wifi_usable({}), 'an empty row is refused');
 
 # --- an embedded homebase is a LAN address ------------------------------
 my $nics = {
@@ -176,6 +196,8 @@ like($part35, qr/!\&subs::lan_address_ok\(\$watch->\{'homebase'\}\)/,
 	'and replaces a Tailscale or p2p homebase');
 unlike($part35, qr/foreach my \$nic \( keys %\{\$address\} \)/,
 	'the old first-interface loop is gone');
+like($part35, qr/band => \$wifi_now->\{'band'\}/,
+	'the pushed row records its band');
 like($part35, qr/my \$wifi_push;.*?unless \(\$keep_pairing\).*?&subs::embedded_wifi_current\(\)/s,
 	'Now Me reads this machine\'s Wi-Fi only for an explicit pairing');
 like($part35, qr/setting => 'wifi', value => encode_json\(\$wifi_push\),\s*subsetting => \$chip_id/s,
@@ -183,8 +205,10 @@ like($part35, qr/setting => 'wifi', value => encode_json\(\$wifi_push\),\s*subse
 like($part35, qr/message => \{ type => 'wifi', data => \{/,
 	'and carries it over the Bluetooth link beside Now Me');
 
-like($watch, qr/my \(undef, \$json_wifi\) = &subs::embedded_wifi_row\(\$edt, \$chip_id\)/,
+like($watch, qr/my \(\$wifi, \$json_wifi\) = &subs::embedded_wifi_row\(\$edt, \$chip_id\)/,
 	'the device\'s wifi_update reads the row keyed by its chip');
+like($watch, qr/&subs::embedded_wifi_usable\(\$wifi\)/,
+	'the device pull refuses a 5 GHz row');
 like(read_file("$root/lib/JawnOS/Manager/Part34.pm"),
 	qr/my \(\$wifi\) = &subs::embedded_wifi_row\(\$edt, \$chip_id\)/,
 	'the Embedded panel reads the same keyed row');
@@ -194,6 +218,12 @@ like(read_file("$root/lib/JawnOS/Controller/manager_embedded.pm"),
 like(read_file("$root/lib/JawnOS/Controller/manager_misc13.pm"),
 	qr/setting => 'wifi', value => \$json_wifi, subsetting => \$chip_id, device => 'all'/,
 	'the panel stores wifi under the house-wide key');
+like(read_file("$root/lib/JawnOS/Controller/manager_misc13.pm"),
+	qr/&subs::embedded_wifi_usable\(\$wifi\)/,
+	'the panel refuses a 5 GHz row');
+like(read_file("$root/lib/JawnOS/Controller/manager_embedded.pm"),
+	qr/&subs::embedded_wifi_usable\(\$wifi\)/,
+	'the USB provision refuses a 5 GHz row');
 
 like($loader, qr/'JawnOS::Domain::Network' for qw\([^)]*\bembedded_wifi_current\b/,
 	'Loader.pm maps embedded_wifi_current to Network.pm');
@@ -203,5 +233,7 @@ like($loader, qr/'JawnOS::Domain::Network' for qw\([^)]*\bble_homebase_known\b/,
 	'Loader.pm maps ble_homebase_known to Network.pm');
 like($loader, qr/'JawnOS::Domain::Network' for qw\([^)]*\bembedded_homebase_ip\b/,
 	'Loader.pm maps embedded_homebase_ip to Network.pm');
+like($loader, qr/'JawnOS::Domain::Network' for qw\([^)]*\bembedded_wifi_usable\b/,
+	'Loader.pm maps embedded_wifi_usable to Network.pm');
 
 done_testing();

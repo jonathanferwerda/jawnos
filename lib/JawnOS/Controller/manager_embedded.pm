@@ -453,7 +453,8 @@ sub action_43737 {
 	return $c->render(json => { ok => 0, error => 'that port does not look right' }) unless JawnOS::Platform::Serial::valid_port($port);
 
 	my ($wifi) = &subs::embedded_wifi_row($edt, $chip_id);
-	return $c->render(json => { ok => 0, error => 'this chip has no stored WiFi' }) unless $wifi->{'ssid'} && $wifi->{'password'};
+	return $c->render(json => { ok => 0, error => &subs::ui('this device needs a stored 2.4 GHz WiFi network') })
+		unless $wifi->{'ssid'} && $wifi->{'password'} && &subs::embedded_wifi_usable($wifi);
 	my $op = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) } || {};
 
 	# The homebase a board calls is this machine, at the port /watch listens on.
