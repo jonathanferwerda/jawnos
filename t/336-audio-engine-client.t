@@ -212,6 +212,16 @@ my %reply = (
 	is_deeply([sort keys %{ $seen[2] }], [qw(cmd out seconds start_at)],
 		'a plain record sends only its three fields');
 
+	# A bus take names one bus of the running patch. It is one extra key, and
+	# it replaces the capture plan rather than joining it.
+	my $bus = JawnOS::Audio::Engine::audio_engine_record(
+		'/tmp/bus.wav', 10, 0, { bus => 'house' },
+	);
+	ok($bus->{'ok'}, 'a record with a bus is answered');
+	my $seen_bus = (logged_requests($log))[-1];
+	is($seen_bus->{'bus'}, 'house', 'the bus id reaches the engine');
+	ok(!exists $seen_bus->{'tracks'}, 'a bus take carries no track plan');
+
 	JawnOS::Audio::Engine::audio_engine_quit();
 	waitpid($pid, 0);
 	$server_pids[-1] = undef;
@@ -419,6 +429,62 @@ sub run_take {
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
 	unlike($controller, qr/param\(\s*['"]path['"]\s*\)/, 'the controller never reads a path parameter');
+}
+
+# --- a bus take records a running patch's bus -------------------------------
+{
+	my $rec_dir = tempdir(CLEANUP => 1);
+	&subs::setting_setter({
+		app => 'misc', setting => 'rec_location', value => $rec_dir,
+		device => &subs::device_setter(),
+	});
+
+	my @calls;
+	local *JawnOS::Audio::Engine::audio_engine_available = sub { return 1 };
+	local *JawnOS::Audio::Engine::audio_engine_record = sub {
+		push @calls, [@_];
+		return { ok => 1, take => 2, state => 'recording' };
+	};
+
+	my $bus = run_take(
+		seconds => '5',
+		bus => 'house',
+		click_json => encode_json({ bpm => 120, beats_per_bar => 4 }),
+	);
+	is($bus->{'status'}, 200, 'a bus take is accepted');
+	is($calls[-1][3]{'bus'}, 'house', 'the bus id reaches audio_engine_record');
+	ok(!exists $calls[-1][3]{'tracks'}, 'a bus take arms no track plan');
+	is_deeply($calls[-1][3]{'click'}, { bpm => 120, beats_per_bar => 4, gain => 0.5 },
+		'the click still travels; the engine puts it on the patch output');
+
+	# A blank bus is an ordinary take, exactly as absent.
+	my $blank = run_take(seconds => '5', bus => '  ');
+	is($blank->{'status'}, 200, 'a blank bus is a normal take');
+	ok(!exists $calls[-1][3]{'bus'}, 'and sends no bus');
+
+	my $before = scalar @calls;
+	for my $bad ('../house', 'a house', '/tmp/x', 'x' x 250) {
+		my $refused = run_take(seconds => '5', bus => $bad);
+		is($refused->{'status'}, 400, 'a bad bus is a 400');
+		like($refused->{'json'}{'error'}, qr/plan node name/,
+			'and names the rule it broke');
+	}
+	is(scalar @calls, $before, 'a bad bus never reaches the engine');
+
+	for my $case (
+		[ 'tracks', '2' ],
+		[ 'inputs', '0,1' ],
+		[ 'inserts', 'tone' ],
+		[ 'tracks_json', encode_json([{ input => 0, inserts => [] }]) ],
+		[ 'master_json', encode_json([qw(master_comp)]) ],
+		[ 'monitor_input', 'true' ],
+	) {
+		my ($key, $value) = @$case;
+		my $refused = run_take(seconds => '5', bus => 'house', $key => $value);
+		is($refused->{'status'}, 400, "$key belongs to a normal take");
+		like($refused->{'json'}{'error'}, qr/a bus take records/, 'and says so');
+	}
+	is(scalar @calls, $before, 'a mixed request never reaches the engine');
 }
 
 # --- no recording folder is a clear refusal ---------------------------------

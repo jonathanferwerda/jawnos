@@ -98,7 +98,7 @@ use jawn_audio::uplink::{Uplink, UplinkConfig, UplinkSourceSpec, UplinkStatus};
 
 use crate::patchbay::{PatchSummary, Patchbay};
 use jawn_audio::pipewire_guard::{PlaybackGuard, FEEDBACK_PREFIX};
-use jawn_audio::playback::RenderSource;
+use jawn_audio::playback::{RenderSource, StandaloneClick};
 
 use crate::{alignment_json, take_frames, Alignment, MAX_CHANNELS, MAX_TRACKS, TAKE_CHANNELS};
 
@@ -1132,8 +1132,13 @@ struct Server {
     /// of `current` and `listen` can be live.
     listen: Option<ListenSession>,
     /// The house patchbay. It owns both the capture and the outputs, so it
-    /// cannot share a machine with a take, a playback or a listen.
+    /// cannot share a machine with a take, a playback or a listen. The one
+    /// exception is a bus take: it records a running patch's bus through the
+    /// patchbay's tap, so it needs the patch and adds no device.
     patch: Option<PatchSession>,
+    /// The most recent bus take, kept after it ends so `status` can report the
+    /// final WAV. At most one runs, and only beside a patch.
+    bus_take: Option<BusTakeSession>,
     /// The most recent transport, kept after it stops so `transport status`
     /// and `seek` can describe a resting position. A transport owns an output
     /// like a playback, so it cannot start beside one; a take that captures
@@ -1218,6 +1223,7 @@ impl Server {
             playback: None,
             listen: None,
             patch: None,
+            bus_take: None,
             transport: None,
             take_cache: TakeCache::default(),
             stop,
@@ -1368,6 +1374,8 @@ impl Server {
 
         let summary = patchbay.summary().clone();
         let params = patchbay.params();
+        let bus_ids = patchbay.bus_ids().to_vec();
+        let tap = patchbay.tap();
         let executable = (0..patchbay.route_count())
             .map(|route| patchbay.route_live(route))
             .collect();
@@ -1386,13 +1394,15 @@ impl Server {
             error: String::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
+        let alive = Arc::new(AtomicBool::new(true));
         let spawned = {
             let status = Arc::clone(&status);
             let stop = Arc::clone(&stop);
+            let alive = Arc::clone(&alive);
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-patch".to_string())
-                .spawn(move || run_patch_worker(config, patchbay, status, stop, system_device))
+                .spawn(move || run_patch_worker(config, patchbay, status, stop, alive, system_device))
         };
         match spawned {
             Ok(handle) => {
@@ -1404,6 +1414,9 @@ impl Server {
                     executable,
                     handset,
                     uplink,
+                    bus_ids,
+                    tap,
+                    alive,
                 });
                 Ok(summary)
             }
@@ -1454,6 +1467,9 @@ impl Server {
         if let Some(running) = &self.current {
             running.stop.store(true, Ordering::SeqCst);
         }
+        if let Some(session) = &self.bus_take {
+            session.stop.store(true, Ordering::SeqCst);
+        }
         if let Some(session) = &self.playback {
             session.stop.store(true, Ordering::SeqCst);
         }
@@ -1465,6 +1481,9 @@ impl Server {
         }
         if let Some(running) = &mut self.current {
             running.finish();
+        }
+        if let Some(session) = &mut self.bus_take {
+            session.finish();
         }
         if let Some(session) = &mut self.playback {
             session.finish();
@@ -2422,6 +2441,13 @@ impl Server {
                 );
             }
         }
+        if let Some(session) = &self.bus_take {
+            if session.is_recording() {
+                return error_line(
+                    "a bus take is recording the running patch; stop the take before replacing the patch",
+                );
+            }
+        }
         if let Some(session) = &self.listen {
             if session.is_listening() {
                 return error_line(
@@ -2472,11 +2498,218 @@ impl Server {
             Ok(summary) => summary,
             Err(error) => return error_line(&error),
         };
+        // A finished bus take belonged to the patch that just ended; a running
+        // one was refused above.
+        if let Some(mut previous) = self.bus_take.take() {
+            previous.finish();
+        }
         format!(
             "{{\"ok\":true,\"state\":\"patching\",{},{}}}",
             summary.json(),
             self.gateway.fragment()
         )
+    }
+
+    /// `{"cmd":"record","out":...,"bus":"<bus-id>","seconds":N}`: record
+    /// one bus of the running patch to a WAV.
+    ///
+    /// The patchbay keeps the device and the capture; this attaches a ring to
+    /// the named bus and a writer thread to the ring, so the same patch can
+    /// feed the Studio take (guitar, voice and a peer in one file) while it is
+    /// playing. A click travels to the patch's output only: it is rendered
+    /// after the bus has been tapped, so the performer hears it and the WAV
+    /// cannot. Everything a normal take owns — tracks, monitor files, the live
+    /// input, the mastering rack — is refused here by name; a request without
+    /// `bus` still takes the path it always did.
+    fn record_bus(&mut self, object: &Object, bus: &str) -> String {
+        if bus.trim().is_empty() {
+            return error_line("\"bus\" must name one bus from the running patch");
+        }
+        if let Some(running) = &self.current {
+            if running.is_recording() {
+                return error_line("a take is already running");
+            }
+        }
+        if let Some(session) = &self.bus_take {
+            if session.is_recording() {
+                return error_line("a bus take is already running");
+            }
+        }
+        // Fields that only a normal take has. `click` is deliberately not one:
+        // it is monitoring, and a bus take puts it on the patch's output.
+        for key in ["tracks", "inputs", "master", "align_samples", "calibrate"] {
+            if matches!(get(object, key), Some(value) if !matches!(value, Value::Null)) {
+                return error_line(&format!(
+                    "\"{key}\" belongs to a normal take; a bus take records the running patch's bus"
+                ));
+            }
+        }
+        match get(object, "monitor") {
+            None | Some(Value::Null) => {}
+            Some(Value::Arr(files)) if files.is_empty() => {}
+            Some(_) => {
+                return error_line(
+                    "a bus take records the patch's bus; monitor files belong to a normal take",
+                )
+            }
+        }
+        match get(object, "monitor_input") {
+            None | Some(Value::Null) => {}
+            Some(Value::Bool(false)) => {}
+            Some(Value::Bool(true)) => {
+                return error_line(
+                    "a bus take records the patch's bus; the live input belongs to a normal take",
+                )
+            }
+            Some(_) => return error_line("\"monitor_input\" must be true or false"),
+        }
+
+        let path = match get(object, "out") {
+            Some(Value::Str(path)) => path.clone(),
+            _ => return error_line("record needs \"out\": an absolute path"),
+        };
+        if !Path::new(&path).is_absolute() {
+            return error_line("record needs \"out\" to be an absolute path");
+        }
+        let seconds = match get(object, "seconds") {
+            None | Some(Value::Null) => DEFAULT_SECONDS,
+            Some(Value::Num(value)) if value.is_finite() && *value >= 0.0 => *value,
+            _ => return error_line("\"seconds\" must be a number of seconds, not negative"),
+        };
+        let start_at = match get(object, "start_at") {
+            None | Some(Value::Null) => 0,
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && *value >= 0.0
+                    && value.fract() == 0.0
+                    && *value <= u64::MAX as f64 =>
+            {
+                *value as u64
+            }
+            _ => return error_line("\"start_at\" must be a whole, non-negative sample count"),
+        };
+        // The click is parsed before a file or thread exists, exactly as a
+        // normal take parses it.
+        let click = match parse_click(get(object, "click")) {
+            Ok(click) => click,
+            Err(error) => return error_line(&error),
+        };
+
+        // The patch and the bus it names, resolved before any file exists. A
+        // name the compiled plan does not have is refused by name.
+        let (index, tap, alive, bus_name) = {
+            let Some(session) = self.patch.as_ref().filter(|session| session.is_patching())
+            else {
+                return error_line(
+                    "no patch is running; a bus take records a running patch's bus. Start the patch, or record a normal take",
+                );
+            };
+            let Some(index) = session.bus_ids.iter().position(|id| id == bus) else {
+                let known = if session.bus_ids.is_empty() {
+                    "none".to_string()
+                } else {
+                    session.bus_ids.join(", ")
+                };
+                return error_line(&format!(
+                    "the patch has no bus \"{bus}\"; its buses are: {known}"
+                ));
+            };
+            (
+                index,
+                Arc::clone(&session.tap),
+                Arc::clone(&session.alive),
+                session.bus_ids[index].clone(),
+            )
+        };
+
+        let frames = take_frames(seconds, self.config.rate);
+        let queue = crate::queue_blocks(
+            self.config.backend,
+            frames,
+            self.config.period,
+            TAKE_CHANNELS,
+        );
+        let disk = match DiskWriter::spawn(
+            Path::new(&path),
+            self.config.rate,
+            TAKE_CHANNELS as u16,
+            self.config.period,
+            queue,
+        ) {
+            Ok(disk) => disk,
+            Err(error) => return error_line(&format!("cannot write {path}: {error}")),
+        };
+
+        let (producer, consumer) = MonitorBus::new(MONITOR_RING_FRAMES);
+        let ring_dropped = producer.dropped_handle();
+        let click = click.map(|spec| {
+            StandaloneClick::new(spec, self.config.rate, self.config.period)
+        });
+        if !tap.attach(index, producer, click) {
+            let _ = disk.finish();
+            let _ = fs::remove_file(&path);
+            return error_line(&format!("the patch has no bus \"{bus}\""));
+        }
+
+        // A finished bus take is only a status line now; a recording one was
+        // refused above.
+        if let Some(mut previous) = self.bus_take.take() {
+            previous.finish();
+        }
+        let take = self.next_take;
+        self.next_take += 1;
+        let status = Arc::new(Mutex::new(BusTakeStatus {
+            take,
+            state: State::Recording,
+            path: path.clone(),
+            bus: bus_name,
+            frames: 0,
+            dropped: 0,
+            total_frames: frames,
+            start_sample: start_at,
+            error: String::new(),
+        }));
+        let stop = Arc::new(AtomicBool::new(false));
+        let spawn = {
+            let status = Arc::clone(&status);
+            let stop = Arc::clone(&stop);
+            let tap = Arc::clone(&tap);
+            let period = self.config.period;
+            thread::Builder::new()
+                .name("jawn-audio-bus-take".to_string())
+                .spawn(move || {
+                    run_bus_take(
+                        period,
+                        frames,
+                        disk,
+                        consumer,
+                        ring_dropped,
+                        status,
+                        stop,
+                        alive,
+                        tap,
+                    )
+                })
+        };
+        let handle = match spawn {
+            Ok(handle) => handle,
+            Err(error) => {
+                // No worker, no take: stop the copy and remove the header-only
+                // WAV rather than leave a file nobody will finish.
+                tap.detach();
+                let _ = fs::remove_file(&path);
+                return error_line(&format!("cannot start the bus take thread: {error}"));
+            }
+        };
+        self.bus_take = Some(BusTakeSession {
+            status,
+            stop,
+            handle: Some(handle),
+        });
+        match &self.bus_take {
+            Some(session) => session.line(),
+            None => idle_line(),
+        }
     }
 
     fn record(&mut self, object: &Object) -> String {
@@ -2486,6 +2719,14 @@ impl Server {
         // stop the transport with it.
         if matches!(get(object, "action"), Some(Value::Str(action)) if action == "stop") {
             return self.record_stop();
+        }
+        // A `bus` makes this a bus take: it records one bus of the running
+        // patch through the patchbay's tap instead of the card's capture. A
+        // request without `bus` keeps every refusal and every path below.
+        match get(object, "bus") {
+            None | Some(Value::Null) => {}
+            Some(Value::Str(bus)) => return self.record_bus(object, bus),
+            Some(_) => return error_line("\"bus\" must be one bus id from the running patch"),
         }
         // One capture stream, one owner: a take cannot also feed the monitor
         // yet. Sharing one capture between listen and record is the next step.
@@ -3033,6 +3274,11 @@ impl Server {
         if let Some(session) = monitor_session {
             self.playback = Some(session);
         }
+        // A finished bus take is only a status line; a normal take now owns the
+        // status. A recording one cannot be here: a patch is not running.
+        if let Some(mut previous) = self.bus_take.take() {
+            previous.finish();
+        }
         self.current = Some(Running {
             status: shared,
             stop,
@@ -3075,8 +3321,29 @@ impl Server {
             .as_ref()
             .map(Running::is_recording)
             .unwrap_or(false);
-        if !was_recording {
+        let bus_recording = self
+            .bus_take
+            .as_ref()
+            .map(BusTakeSession::is_recording)
+            .unwrap_or(false);
+        if !was_recording && !bus_recording {
             return error_line("no take is recording");
+        }
+        // A bus take owns no device: stopping it detaches the tap and closes
+        // the WAV, and the patch keeps playing.
+        if bus_recording {
+            if let Some(session) = &self.bus_take {
+                session.stop.store(true, Ordering::SeqCst);
+            }
+            if let Some(session) = &mut self.bus_take {
+                session.finish();
+            }
+            if !was_recording {
+                return match &self.bus_take {
+                    Some(session) => session.line(),
+                    None => idle_line(),
+                };
+            }
         }
         // Signal the take and its monitor before joining either, exactly as
         // `stop` does, so neither waits on the other's block.
@@ -3659,7 +3926,13 @@ impl Server {
             .as_ref()
             .filter(|session| session.is_playing())
             .map(|session| (session, self.config.rate));
-        let line = if let Some(running) = self
+        let line = if let Some(session) = self
+            .bus_take
+            .as_ref()
+            .filter(|session| session.is_recording())
+        {
+            session.line()
+        } else if let Some(running) = self
             .current
             .as_ref()
             .filter(|running| running.is_recording())
@@ -3681,6 +3954,8 @@ impl Server {
             session.line()
         } else if let Some(running) = &self.current {
             running.line()
+        } else if let Some(session) = &self.bus_take {
+            session.line()
         } else if let Some(session) = &self.patch {
             session.line()
         } else if let Some(session) = &self.listen {
@@ -3706,6 +3981,15 @@ impl Server {
             .as_ref()
             .map(PatchSession::is_patching)
             .unwrap_or(false);
+        // A bus take records the patch that is about to end, so it is stopped
+        // first and its WAV is finished. A normal take is someone else's work
+        // and is left alone, exactly as before.
+        if let Some(session) = &self.bus_take {
+            session.stop.store(true, Ordering::SeqCst);
+        }
+        if let Some(session) = &mut self.bus_take {
+            session.finish();
+        }
         if let Some(session) = &self.patch {
             session.stop.store(true, Ordering::SeqCst);
         }
@@ -3736,6 +4020,11 @@ impl Server {
             .as_ref()
             .map(PatchSession::is_patching)
             .unwrap_or(false);
+        let was_bus_take = self
+            .bus_take
+            .as_ref()
+            .map(BusTakeSession::is_recording)
+            .unwrap_or(false);
         let was_transport = self
             .transport
             .as_ref()
@@ -3746,6 +4035,9 @@ impl Server {
         // past its block.
         if let Some(running) = &self.current {
             running.stop.store(true, Ordering::SeqCst);
+        }
+        if let Some(session) = &self.bus_take {
+            session.stop.store(true, Ordering::SeqCst);
         }
         if let Some(session) = &self.playback {
             session.stop.store(true, Ordering::SeqCst);
@@ -3764,6 +4056,11 @@ impl Server {
         if let Some(running) = &mut self.current {
             running.finish();
         }
+        // A bus take is joined before the patch: its writer closes the file
+        // with the frames the patch has already produced.
+        if let Some(session) = &mut self.bus_take {
+            session.finish();
+        }
         if let Some(session) = &mut self.playback {
             session.finish();
         }
@@ -3778,6 +4075,11 @@ impl Server {
             // transport never claims a monitor it can no longer carry.
             session.detach_live();
             session.finish();
+        }
+        if was_bus_take {
+            if let Some(session) = &self.bus_take {
+                return session.line();
+            }
         }
         if was_patching {
             if let Some(session) = &self.patch {
@@ -4851,6 +5153,152 @@ impl Running {
     }
 }
 
+/// What `status` reads for a bus take: a take that records one bus of a
+/// running patch instead of the card's capture.
+#[derive(Clone)]
+struct BusTakeStatus {
+    take: u64,
+    state: State,
+    path: String,
+    /// The plan's bus id this take records.
+    bus: String,
+    frames: u64,
+    dropped: u64,
+    total_frames: u64,
+    start_sample: u64,
+    error: String,
+}
+
+/// The server's handle to one bus take's writer thread.
+struct BusTakeSession {
+    status: Arc<Mutex<BusTakeStatus>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl BusTakeSession {
+    fn snapshot(&self) -> BusTakeStatus {
+        self.status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn is_recording(&self) -> bool {
+        self.snapshot().state == State::Recording
+    }
+
+    /// Signal the writer and wait for it. When this returns the WAV is closed.
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let joined = match self.handle.take() {
+            Some(handle) => handle.join(),
+            None => Ok(()),
+        };
+        if joined.is_err() {
+            let mut status = self
+                .status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if status.state == State::Recording {
+                status.state = State::Failed;
+                status.error = "the bus take thread panicked".to_string();
+            }
+        }
+    }
+
+    /// The take's line. It keeps the take shape Studio already reads (`take`,
+    /// `state`, `path`, `frames`, `dropped`, `start_sample`, `error`) and adds
+    /// the bus it recorded.
+    fn line(&self) -> String {
+        let status = self.snapshot();
+        format!(
+            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"bus\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"total_frames\":{},\"monitor_input\":false,\"error\":\"{}\"}}",
+            status.take,
+            status.state.name(),
+            jawn_audio::loopback::json_escape(&status.path),
+            jawn_audio::loopback::json_escape(&status.bus),
+            status.frames,
+            status.dropped,
+            TAKE_CHANNELS,
+            status.start_sample,
+            status.total_frames,
+            jawn_audio::loopback::json_escape(&status.error)
+        )
+    }
+}
+
+/// The bus take's writer: pop the tapped bus from its ring, convert to the
+/// on-disk i16 shape and hand it to the WAV writer. It ends on `stop`, at
+/// `total_frames`, or when the patch that feeds it ends (the ring drains and
+/// `patch_alive` is false). Every ending closes the WAV; a patch that stops
+/// while the take runs therefore leaves a finished file, not a lost one.
+fn run_bus_take(
+    period: usize,
+    total_frames: u64,
+    mut disk: DiskWriter,
+    consumer: Consumer,
+    ring_dropped: Arc<AtomicU64>,
+    status: Arc<Mutex<BusTakeStatus>>,
+    stop: Arc<AtomicBool>,
+    patch_alive: Arc<AtomicBool>,
+    tap: Arc<crate::patchbay::BusTap>,
+) {
+    let period = period.max(1);
+    let mut block = vec![0.0f32; period * 2];
+    let mut pcm = vec![0i16; period * 2];
+    let mut frames = 0u64;
+    let mut disk_dropped = 0u64;
+    while !stop.load(Ordering::SeqCst) {
+        let left = total_frames.saturating_sub(frames);
+        if left == 0 {
+            break;
+        }
+        let want = left.min(period as u64) as usize;
+        let got = consumer.pop(&mut block[..want * 2]);
+        if got == 0 {
+            // The patch is the producer. Once it is gone, an empty ring is the
+            // end of the take rather than a dropout, and the file is finished
+            // below with everything the patch rendered.
+            if !patch_alive.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+        for (sample, out) in block[..got * 2].iter().zip(pcm[..got * 2].iter_mut()) {
+            *out = to_i16(*sample);
+        }
+        disk_dropped += disk.push(&pcm[..got * 2]) as u64;
+        frames += got as u64;
+        let mut current = status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        current.frames = frames;
+        current.dropped = disk_dropped + ring_dropped.load(Ordering::Relaxed);
+    }
+    // The patch copies only while a take is attached; detaching stops the copy
+    // at its next block, so this writer can close the file once.
+    tap.detach();
+    let written = match disk.finish() {
+        Ok(written) => written,
+        Err(error) => {
+            let mut current = status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            current.state = State::Failed;
+            current.error = format!("the bus take could not finish its WAV: {error}");
+            return;
+        }
+    };
+    let mut current = status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    current.frames = written;
+    current.dropped = disk_dropped + ring_dropped.load(Ordering::Relaxed);
+    current.state = State::Done;
+}
+
 /// What `status` reads for a playback: its state and the frames rendered.
 #[derive(Clone)]
 struct PlayStatus {
@@ -5343,6 +5791,16 @@ struct PatchSession {
     /// The peer uplink thread, when `--uplink` is configured and the plan has
     /// a routed peer source. Stopped and joined with the patch.
     uplink: Option<Uplink>,
+    /// The plan's bus ids, in compile order: a bus take may name only one of
+    /// these.
+    bus_ids: Vec<String>,
+    /// The bus take's control side. It lives as long as the patch and lets a
+    /// take attach mid-patch.
+    tap: Arc<crate::patchbay::BusTap>,
+    /// False once the patch worker's block loop has ended, so a bus take can
+    /// close its file with the frames that already exist instead of waiting
+    /// for a producer that is gone.
+    alive: Arc<AtomicBool>,
 }
 
 impl PatchSession {
@@ -5412,6 +5870,7 @@ fn run_patch_worker(
     mut patchbay: Patchbay,
     status: Arc<Mutex<PatchStatus>>,
     stop: Arc<AtomicBool>,
+    alive: Arc<AtomicBool>,
     system_device: Option<String>,
 ) {
     let outcome: Result<(u64, usize), String> = match config.backend {
@@ -5421,6 +5880,9 @@ fn run_patch_worker(
         }
         BackendKind::Jack => Err(crate::listen_support_message()),
     };
+    // The block loop is over, so the tap's producer will push nothing more.
+    // A bus take reads this and closes its WAV with the frames that exist.
+    alive.store(false, Ordering::Release);
     let was_stopped = stop.load(Ordering::SeqCst);
     let mut current = status
         .lock()
@@ -8704,6 +9166,185 @@ break"}"#).is_err());
             assert!(written, "track {track} wrote no WAV body: {path}");
             let _ = std::fs::remove_file(path);
         }
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// The P4 gate's patch: one input into the `house` bus and on to the
+    /// interface. The null backend feeds it silence, which is enough to prove
+    /// the take's state, length and file; the mix itself is proven in
+    /// `patchbay`'s own tap tests.
+    const HOUSE_PATCH: &str = r#"{"sources":[{"id":"in0","kind":"input","channel":0}],"buses":[{"id":"house"}],"sinks":[{"id":"out","kind":"interface"}],"routes":[{"from":"in0","to":"house","gain":1,"pan":0},{"from":"house","to":"out","gain":1,"pan":0}]}"#;
+
+    fn start_house_patch(server: &mut Server) -> String {
+        let request = format!("{{\"cmd\":\"patch\",\"plan\":{HOUSE_PATCH}}}");
+        reply(server.handle(&request))
+    }
+
+    /// Poll until the bus take has written its first block, so the test never
+    /// joins a take that has not started rather than one that is recording.
+    fn wait_for_bus_frames(server: &mut Server) -> String {
+        let mut status = reply(server.handle(r#"{"cmd":"status"}"#));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            let recording = status.contains("\"state\":\"recording\"")
+                && status.contains("\"bus\":\"house\"")
+                && match parse_object(&status) {
+                    Ok(object) => {
+                        matches!(get(&object, "frames"), Some(Value::Num(frames)) if *frames > 0.0)
+                    }
+                    Err(_) => false,
+                };
+            if recording {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+            status = reply(server.handle(r#"{"cmd":"status"}"#));
+        }
+        status
+    }
+
+    #[test]
+    fn a_bus_take_records_a_running_patch() {
+        let mut server = socket_server();
+        let started = start_house_patch(&mut server);
+        assert!(started.contains("\"state\":\"patching\""), "{started}");
+
+        let out = temp_take("bus-take");
+        let line = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","bus":"house","seconds":3600}}"#
+        )));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"recording\""), "{line}");
+        assert!(line.contains("\"bus\":\"house\""), "{line}");
+
+        let status = wait_for_bus_frames(&mut server);
+        assert!(status.contains("\"state\":\"recording\""), "{status}");
+        assert!(status.contains("\"bus\":\"house\""), "{status}");
+
+        let stopped = reply(server.handle(r#"{"cmd":"record","action":"stop"}"#));
+        assert!(stopped.contains("\"state\":\"done\""), "{stopped}");
+        assert!(stopped.contains("\"bus\":\"house\""), "{stopped}");
+        let written = std::fs::metadata(&out)
+            .map(|meta| meta.len() > 44)
+            .unwrap_or(false);
+        assert!(written, "the bus take wrote no WAV body: {out}");
+
+        // The patch kept playing: stopping the take only detached it.
+        let status = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(status.contains("\"state\":\"patching\""), "{status}");
+
+        let _ = server.handle(r#"{"cmd":"unpatch"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_normal_take_is_still_refused_while_the_patch_runs() {
+        let mut server = socket_server();
+        let started = start_house_patch(&mut server);
+        assert!(started.contains("\"state\":\"patching\""), "{started}");
+
+        let out = temp_take("not-bus");
+        let refused = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":1}}"#
+        )));
+        assert!(refused.contains("stop the patch before recording"), "{refused}");
+        assert!(!std::path::Path::new(&out).exists(), "a refused take left a file");
+
+        let _ = server.handle(r#"{"cmd":"unpatch"}"#);
+    }
+
+    #[test]
+    fn a_patch_is_still_refused_while_a_normal_take_records() {
+        let mut server = socket_server();
+        let out = temp_take("normal-first");
+        let started = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":3600}}"#
+        )));
+        assert!(started.contains("\"state\":\"recording\""), "{started}");
+
+        let refused = start_house_patch(&mut server);
+        assert!(refused.contains("a take is recording"), "{refused}");
+        assert!(refused.contains("Stop the take before patching"), "{refused}");
+
+        let _ = server.handle(r#"{"cmd":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn an_unknown_bus_is_refused_by_name() {
+        let mut server = socket_server();
+        let started = start_house_patch(&mut server);
+        assert!(started.contains("\"state\":\"patching\""), "{started}");
+
+        let out = temp_take("no-such-bus");
+        let refused = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","bus":"booth","seconds":1}}"#
+        )));
+        assert!(refused.contains("the patch has no bus"), "{refused}");
+        assert!(refused.contains("booth"), "{refused}");
+        assert!(refused.contains("its buses are: house"), "{refused}");
+        assert!(!std::path::Path::new(&out).exists(), "a refused take left a file");
+
+        let _ = server.handle(r#"{"cmd":"unpatch"}"#);
+    }
+
+    #[test]
+    fn a_bus_take_closes_its_file_when_the_patch_ends() {
+        let mut server = socket_server();
+        let started = start_house_patch(&mut server);
+        assert!(started.contains("\"state\":\"patching\""), "{started}");
+
+        let out = temp_take("patch-ends");
+        let line = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","bus":"house","seconds":3600}}"#
+        )));
+        assert!(line.contains("\"state\":\"recording\""), "{line}");
+        let status = wait_for_bus_frames(&mut server);
+        assert!(status.contains("\"state\":\"recording\""), "{status}");
+
+        // The patch ends under the take. The writer must notice and close the
+        // WAV, not wait for a producer that is gone.
+        let _ = server.handle(r#"{"cmd":"unpatch"}"#);
+        let mut status = reply(server.handle(r#"{"cmd":"status"}"#));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !status.contains("\"state\":\"done\"") && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+            status = reply(server.handle(r#"{"cmd":"status"}"#));
+        }
+        assert!(status.contains("\"state\":\"done\""), "{status}");
+        assert!(status.contains("\"bus\":\"house\""), "{status}");
+        let written = std::fs::metadata(&out)
+            .map(|meta| meta.len() > 44)
+            .unwrap_or(false);
+        assert!(written, "the ended patch lost the bus take's file: {out}");
+        assert!(
+            reply(server.handle(r#"{"cmd":"record","action":"stop"}"#))
+                .contains("no take is recording"),
+            "the bus take was still recording after the patch ended"
+        );
+
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_patch_is_refused_while_a_bus_take_records() {
+        let mut server = socket_server();
+        let started = start_house_patch(&mut server);
+        assert!(started.contains("\"state\":\"patching\""), "{started}");
+
+        let out = temp_take("bus-before-patch");
+        let line = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","bus":"house","seconds":3600}}"#
+        )));
+        assert!(line.contains("\"state\":\"recording\""), "{line}");
+        let status = wait_for_bus_frames(&mut server);
+        assert!(status.contains("\"state\":\"recording\""), "{status}");
+
+        let refused = start_house_patch(&mut server);
+        assert!(refused.contains("a bus take is recording"), "{refused}");
+
+        let _ = server.handle(r#"{"cmd":"record","action":"stop"}"#);
+        let _ = server.handle(r#"{"cmd":"unpatch"}"#);
         let _ = std::fs::remove_file(&out);
     }
 }

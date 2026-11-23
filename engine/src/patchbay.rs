@@ -6,7 +6,9 @@
 //! the playback channels, and a route is an edge with a gain and a pan. The
 //! graph is compiled once, before the device loop starts, and every buffer it
 //! needs is allocated then: the audio callback only reads and writes memory it
-//! already owns.
+//! already owns. A bus take is the one control that may arrive mid-run: the
+//! socket raises an attach or detach request, a block applies it by taking one
+//! lock for one move, and every other block reads one atomic and takes none.
 //!
 //! Three rules keep the compile honest:
 //!
@@ -42,12 +44,14 @@
 //! `Value` the control socket parses and because both callers are the binary.
 //! Its unit tests still run in `cargo test`.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use jawn_audio::graph::{mix_mono_into_stereo, Strip};
 use jawn_audio::listen::ListenSink;
 use jawn_audio::mixer::{ParamName, ParamQueue};
-use jawn_audio::monbus::Consumer;
+use jawn_audio::monbus::{Consumer, Producer};
+use jawn_audio::playback::StandaloneClick;
 use jawn_audio::{to_i16, Device, NullDevice};
 
 use crate::backends::BackendKind;
@@ -244,6 +248,10 @@ pub struct Patchbay {
     channels: usize,
     period: usize,
     sources: Vec<Source>,
+    /// The plan's bus ids, in compile order. A bus take names one of these and
+    /// the engine refuses any other name, so a WAV can only ever tap a bus the
+    /// running plan actually has.
+    bus_ids: Vec<String>,
     /// Incoming sends per destination bus.
     bus_routes: Vec<Vec<BusSend>>,
     /// Incoming sends per sink.
@@ -287,6 +295,98 @@ pub struct Patchbay {
     sink_buffers: Vec<Vec<f32>>,
     /// The summed stereo block written to the device.
     mix: Vec<f32>,
+    /// The control side a bus take attaches a WAV writer through.
+    tap: Arc<BusTap>,
+    /// The tap this block is feeding, once the control side attached one. The
+    /// producer and click are moved here by [`Patchbay::apply_tap`].
+    tap_active: Option<ActiveTap>,
+}
+
+/// One WAV writer's attachment to one compiled bus.
+///
+/// The audio path touches this only when the control side raised a request
+/// between blocks: attaching or detaching takes the slot's lock once, for one
+/// move. In the steady state a block reads one atomic and takes no lock, so the
+/// patch's block deadline is unchanged while a take records.
+#[derive(Debug)]
+pub struct BusTap {
+    /// 0: nothing to do, 1: take the slot, 2: detach.
+    request: AtomicUsize,
+    /// The compile index of the bus the slot's producer was validated against.
+    bus: AtomicUsize,
+    /// The producer and optional click, written before `request` is raised.
+    slot: Mutex<Option<TapRequest>>,
+    /// How many buses the compiled plan has, so an out-of-range index is
+    /// refused here as well as by name on the socket.
+    buses: usize,
+}
+
+#[derive(Debug)]
+struct TapRequest {
+    producer: Producer,
+    click: Option<StandaloneClick>,
+}
+
+#[derive(Debug)]
+struct ActiveTap {
+    bus: usize,
+    producer: Producer,
+    click: Option<StandaloneClick>,
+}
+
+impl BusTap {
+    fn new(buses: usize) -> Self {
+        BusTap {
+            request: AtomicUsize::new(0),
+            bus: AtomicUsize::new(0),
+            slot: Mutex::new(None),
+            buses,
+        }
+    }
+
+    /// Attach `producer` (and an optional click for the patch's output) to the
+    /// bus at `index`. False when the index is not in the compiled plan: the
+    /// socket has already checked the name, and this is the same rule at the
+    /// index it resolved.
+    pub fn attach(
+        &self,
+        index: usize,
+        producer: Producer,
+        click: Option<StandaloneClick>,
+    ) -> bool {
+        if index >= self.buses {
+            return false;
+        }
+        let mut slot = self
+            .slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *slot = Some(TapRequest { producer, click });
+        self.bus.store(index, Ordering::Relaxed);
+        // The slot is written first: the block that swaps `1` can take it.
+        self.request.store(1, Ordering::Release);
+        true
+    }
+
+    /// Ask the patchbay to stop feeding the tap. A take that ends detaches, so
+    /// a finished file never grows and the patch stops copying its bus.
+    pub fn detach(&self) {
+        self.request.store(2, Ordering::Release);
+    }
+}
+
+impl Patchbay {
+    /// The control side of a bus take. One patch owns one, whether or not a
+    /// take ever attaches; the socket keeps this handle so a take can start
+    /// mid-patch.
+    pub fn tap(&self) -> Arc<BusTap> {
+        Arc::clone(&self.tap)
+    }
+
+    /// The plan's bus ids in compile order. A bus take names one of these.
+    pub fn bus_ids(&self) -> &[String] {
+        &self.bus_ids
+    }
 }
 
 impl Patchbay {
@@ -638,6 +738,7 @@ impl Patchbay {
             channels: config_channels,
             period: 0,
             sources,
+            bus_ids: buses,
             bus_routes,
             sink_bus_routes,
             order,
@@ -655,6 +756,8 @@ impl Patchbay {
             buses: (0..bus_count).map(|_| Vec::new()).collect(),
             sink_buffers: (0..sink_count).map(|_| Vec::new()).collect(),
             mix: Vec::new(),
+            tap: Arc::new(BusTap::new(bus_count)),
+            tap_active: None,
         })
     }
 
@@ -872,6 +975,30 @@ impl Patchbay {
         }
     }
 
+    /// Apply a bus take's attach or detach. A block only reaches the slot's
+    /// lock when the control side asked for a change since the last one, so a
+    /// recording patch still takes no lock per block in the steady state.
+    fn apply_tap(&mut self) {
+        match self.tap.request.swap(0, Ordering::AcqRel) {
+            1 => {
+                let request = self
+                    .tap
+                    .slot
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take();
+                let bus = self.tap.bus.load(Ordering::Relaxed);
+                self.tap_active = request.map(|request| ActiveTap {
+                    bus,
+                    producer: request.producer,
+                    click: request.click,
+                });
+            }
+            2 => self.tap_active = None,
+            _ => {}
+        }
+    }
+
     /// Size every buffer. This is the only allocation in the patchbay; the
     /// device loop then only reads and writes what this owns.
     pub fn prepared(&mut self, _rate: u32, period: usize, channels: usize) -> Result<(), String> {
@@ -1079,6 +1206,7 @@ impl Patchbay {
     /// Add the mix's own sums into the stereo block the device plays.
     fn render(&mut self, frames: usize) -> Result<(), String> {
         self.apply_pending();
+        self.apply_tap();
         let stereo = frames * 2;
         for bus in &mut self.buses {
             bus[..stereo].fill(0.0);
@@ -1263,6 +1391,16 @@ impl Patchbay {
             }
         }
 
+        // A bus take reads the bus here: after its own sends, before it is
+        // balanced into a sink. The WAV is the bus's mix, not the machine's
+        // output, so the click and the fallback system mix below cannot reach
+        // it.
+        if let Some(tap) = self.tap_active.as_mut() {
+            if let Some(bus) = self.buses.get(tap.bus) {
+                tap.producer.push(&bus[..stereo]);
+            }
+        }
+
         // Buses into sinks, after every bus is final.
         for (sink, sends) in self.sink_bus_routes.iter().enumerate() {
             for send in sends {
@@ -1292,6 +1430,15 @@ impl Patchbay {
         if !self.system_routed {
             for (target, sample) in self.mix[..stereo].iter_mut().zip(&self.system[..stereo]) {
                 *target += sample;
+            }
+        }
+
+        // A bus take's click is monitoring only: it joins the output here,
+        // after the tap has read the bus, so the performer hears it and the
+        // WAV cannot. `render_into` adds pre-built samples.
+        if let Some(tap) = self.tap_active.as_mut() {
+            if let Some(click) = tap.click.as_mut() {
+                click.render_into(&mut self.mix[..stereo]);
             }
         }
         Ok(())
@@ -1730,6 +1877,70 @@ mod tests {
             assert!((frame[0] - expected).abs() < 1e-5, "{frame:?}");
             assert!((frame[1] - expected).abs() < 1e-5, "{frame:?}");
         }
+    }
+
+    #[test]
+    fn a_bus_tap_records_the_bus_it_names() {
+        let mut patchbay = prepared(TWO_INTO_ONE);
+        assert_eq!(patchbay.bus_ids(), ["house"]);
+        let tap = patchbay.tap();
+        let (producer, consumer) = jawn_audio::monbus::new(4096);
+        assert!(tap.attach(0, producer, None), "the plan has bus 0");
+        assert!(
+            !tap.attach(1, jawn_audio::monbus::new(4096).0, None),
+            "an index outside the plan is refused"
+        );
+
+        let input = [0.5f32, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+
+        let mut recorded = [0.0f32; 8];
+        assert_eq!(consumer.pop(&mut recorded), 4, "the tap received the block");
+        let expected = 0.75f32 / std::f32::consts::SQRT_2;
+        for frame in recorded.chunks(2) {
+            assert!((frame[0] - expected).abs() < 1e-5, "{frame:?}");
+            assert!((frame[1] - expected).abs() < 1e-5, "{frame:?}");
+        }
+
+        // A detached tap stops receiving: the patch keeps playing, the WAV
+        // does not grow.
+        tap.detach();
+        patchbay.block_f32(&input, &mut output).expect("run");
+        let mut after = [7.0f32; 8];
+        assert_eq!(consumer.pop(&mut after), 0, "a detached tap receives nothing");
+    }
+
+    #[test]
+    fn a_bus_take_click_plays_on_the_output_and_never_in_the_bus() {
+        let mut patchbay = bay(TWO_INTO_ONE);
+        patchbay.prepared(48_000, 1024, 2).expect("prepare");
+        let tap = patchbay.tap();
+        let (producer, consumer) = jawn_audio::monbus::new(4096);
+        let click = StandaloneClick::new(
+            jawn_audio::playback::ClickSpec::new(120.0, 4, 1.0).expect("click"),
+            48_000,
+            1024,
+        );
+        assert!(tap.attach(0, producer, Some(click)));
+
+        let input: Vec<f32> = (0..1024).flat_map(|_| [0.5f32, 0.25]).collect();
+        let mut output = vec![0.0f32; 1024 * 2];
+        patchbay.block_f32(&input, &mut output).expect("run");
+
+        let mut recorded = vec![0.0f32; 1024 * 2];
+        assert_eq!(consumer.pop(&mut recorded), 1024);
+        let bus = 0.75f32 / std::f32::consts::SQRT_2;
+        for frame in recorded.chunks(2) {
+            assert!((frame[0] - bus).abs() < 1e-5, "the click reached the bus: {frame:?}");
+            assert!((frame[1] - bus).abs() < 1e-5, "the click reached the bus: {frame:?}");
+        }
+        assert!(
+            output
+                .chunks(2)
+                .any(|frame| (frame[0] - bus).abs() > 1e-3),
+            "the click never reached the patch output"
+        );
     }
 
     #[test]

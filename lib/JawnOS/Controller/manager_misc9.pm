@@ -1453,6 +1453,7 @@ sub action_44023 {
 		$c->param('monitor_input'),
 		$c->param('monitor_gain'),
 		$c->param('click_json'),
+		$c->param('bus'),
 	);
 	$c->render(json => $answer, status => $status);
 	return;
@@ -2220,14 +2221,52 @@ sub studio_click_start {
 	return (undef, { bpm => $bpm, beats_per_bar => $beats, gain => $gain });
 }
 
+# A bus take's bus id: one plan node name (Plan.pm's charset), or nothing.
+# An absent or blank value is a normal take; a name is passed through and the
+# engine checks it against the running plan, refusing an unknown bus by name.
+sub studio_take_bus {
+	my ($bus) = @_;
+	return (undef, undef) unless defined $bus;
+	return ('bus must be one plan node name, not a path or a sentence', undef)
+		if ref $bus;
+	(my $name = $bus) =~ s/\A\s+|\s+\z//g;
+	return (undef, undef) unless length $name;
+	require JawnOS::Audio::Plan;
+	return ('bus must be one plan node name, not a path or a sentence', undef)
+		unless JawnOS::Audio::Plan::audio_plan_node_valid($name);
+	return (undef, $name);
+}
+
 # Resolve, arm and send one take. The folder is made server-side because the
 # disk writer does not create parents; the engine is checked first so a machine
 # without one does not leave an empty directory behind.
 sub studio_take_start {
 	my ($seconds, $start_at, $tracks, $inputs, $inserts, $tracks_json, $master_json,
-		$monitor_input, $monitor_gain, $click_json) = @_;
+		$monitor_input, $monitor_gain, $click_json, $bus) = @_;
 	$seconds  = &studio_take_seconds($seconds);
 	$start_at = &studio_take_start_at($start_at);
+
+	# A bus take records one bus of the running patch. It owns no tracks, no
+	# monitor files and no mastering rack: those are a normal take's, and the
+	# engine refuses them by name. The click is allowed: the engine puts it on
+	# the patch's output, never in the bus WAV.
+	my ($bus_error, $bus_name) = &studio_take_bus($bus);
+	return (400, { ok => 0, error => $bus_error }) if defined $bus_error;
+	if (defined $bus_name) {
+		my $forbidden =
+			(defined $tracks && length $tracks)
+			|| (defined $inputs && length $inputs)
+			|| (defined $inserts && length $inserts)
+			|| (defined $tracks_json && length $tracks_json)
+			|| (defined $master_json && length $master_json);
+		if (defined $monitor_input && !ref $monitor_input) {
+			(my $word = lc $monitor_input) =~ s/\A\s+|\s+\z//g;
+			$forbidden = 1
+				if $word ne '' && $word ne 'false' && $word ne 'no' && $word ne '0';
+		}
+		return (400, { ok => 0, error => "a bus take records the running patch's bus; tracks, inserts, monitor files, the live input and the mastering rack belong to a normal take" })
+			if $forbidden;
+	}
 
 	my ($plan_error, $plan) = &studio_take_plan($tracks, $inputs, $inserts, $tracks_json);
 	return (400, { ok => 0, error => $plan_error }) if defined $plan_error;
@@ -2261,6 +2300,7 @@ sub studio_take_start {
 		$extra->{'monitor_gain'} = $monitor_level;
 	}
 	$extra->{'click'} = $click if $click;
+	$extra->{'bus'} = $bus_name if defined $bus_name;
 	my $answer = &JawnOS::Audio::Engine::audio_engine_record(
 		$path, $seconds, $start_at, $extra,
 	);

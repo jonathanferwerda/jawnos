@@ -452,6 +452,33 @@ Rules that keep it honest:
    never quietly replaced by the default. A card input on the ALSA duplex path keeps its
    interface/channel and has no `node`; the field is a PipeWire-backend fact.
 
+**A bus take (2026-11-23, in the tree).** Rule 4's missing piece is now the engine's own wire:
+`{"cmd":"record","out":"/abs/take.wav","bus":"house","seconds":120,"start_at":0}` records
+one bus of a **running** patch, and `{"cmd":"record","action":"stop"}` detaches it and closes the
+WAV. The patchbay keeps the device and the capture; the take only attaches a ring to the named bus
+and a writer thread to the ring. The tap copies the bus after its sends and before it is balanced
+into a sink, so the file is the bus's own mix (guitar, voice, a peer's uplink, the deck), not the
+machine's output. The id is checked against the compiled plan and an unknown one is refused by
+name, with the buses the plan actually has. `seconds` bounds the file exactly as on a normal take
+(the writer finishes at that frame count); `start_at` is validated and reported as the take's start
+sample but, like a normal take, does not delay the capture — the patch is already running. A normal
+take is still refused while a patch runs, and
+`patch` is still refused while a normal take records; only a bus take may run beside a patch, at
+most one at a time, and replacing the patch while it runs is refused. `unpatch` and `stop` stop the
+bus take first and finish its WAV, then the patch; if the patch ends on its own, its worker sets an
+aliveness flag, the writer drains what the patch rendered and finalises the same file, so an ended
+patch never loses the take.
+
+The bus take's **click is monitor-only**: `click` is accepted on the same request, and the engine
+renders it into the patch's **output**, after the bus has been tapped, so the performer hears it and
+it cannot enter the WAV. (A normal take's click already worked this way on its monitor output; the
+browser click is suppressed while an engine take owns the clock.) Everything else a normal take
+owns — `tracks`, `inputs`, `master`, monitor files, `monitor_input`, `align_samples`, `calibrate` —
+is refused by name on a bus take, because the patch owns the output and the capture. The Studio
+route (`POST /manager/studio/take`, action `start`) accepts `bus` as one plan node name (Plan.pm's
+charset), validates it before dialling the engine and refuses those combinations there too; the
+page has no control for it yet, so the gate sends the one form field itself.
+
 This is the answer to item 5: one table, on any device, for every input and output in the house.
 
 ---
@@ -773,7 +800,7 @@ converter can replace. The tag now lives in one module (`auth.rs`), and `pull_at
 whose whole span ended a datagram before the caller's master position, so a sender that stops no
 longer stalls a block. No device opens in the bearer: wiring capture and the patchbay is P4.
 
-### P4 — Sources that are late (2 weeks) — **engine code complete; gate unrun (needs a Studio guitar/peer take)**
+### P4 — Sources that are late (2 weeks) — **engine code complete; bus take landed; gate runnable, needs a person and the hardware**
 
 The uplink proper, with compensation: the phone (C) and the T-Deck (D) become channels on the master,
 each placed by its declared latency, so a take played 30 ms late is recorded in time. Each peer
@@ -970,6 +997,27 @@ peer), set the Uplink and save; start `--send-live --device ... --out ... --mast
 --seconds 600` on the phone's peer; send the deck a Now Me and tap Record; arm the Studio take
 with the click and perform; then read the engine `status` (`codec`, `late`, `concealed`,
 `handshakes`) and the take's alignment against the click.
+
+**A bus take (2026-11-23, engine and route in the tree; the gate is now runnable):** the gate's last
+engine gap was §8 rule 4's take. `record` refused while a patch ran because the patch owned the
+capture and the outputs, so there was no way to write the one WAV the gate asks for (UM2 guitar plus
+the phone's peer voice, in time with the click). The engine now accepts `{"cmd":"record",
+"out":...,"bus":"<bus-id>"}` beside a running patch: the compiled plan is checked by name, a ring
+is attached to that bus's post-send mix, and a writer thread closes the WAV on `record action=stop`,
+on the take's `seconds`, or when the patch ends (aliveness flag, drain, finish). The click rides the
+patch's output after the tap, so it is heard and never recorded. `cargo test` covers the mixed-bus
+tap, the click staying out of the tap, a normal take still refused while patching, `patch` still
+refused while a normal take records, stop finalising, the patch ending under the take, and an
+unknown bus refused by name; `t/336` covers the client key and the route's validation.
+
+**What remains for the gate:** the run itself — ten minutes on the house LAN with a person on the
+UM2 and the phone's peer, plus the deck's own live take. Start the patch (the plan's `house` bus
+carrying the UM2 input and the peer), then send the take as
+`POST /manager/studio/take` with `action=start&bus=house&seconds=600` and the `click_json` the page
+builds (the page has no button for `bus` yet, so this one request is sent by hand or from the
+console); stop it with the Studio stop or `record action=stop`. What is deliberately not in this
+step: a bus take has no monitor files or mastering rack of its own (the patch owns the output), no
+per-bus trim on the take, and no UI control; those are Studio features, not the gate's.
 
 **Still to come:** the gate above; the tailnet's opening minute (28.7% late before the fit is
 trusted); the deck's handshake retry (a take can open with `no session` before the first WELCOME

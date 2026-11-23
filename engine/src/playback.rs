@@ -207,6 +207,7 @@ const CLICK_LEVEL: f32 = 0.72;
 
 /// The click, ready for the block loop. Every buffer is built in `prepare`, so
 /// `render` only adds samples.
+#[derive(Debug)]
 struct ClickState {
     /// One click tone per buffer, mono, zero at both ends.
     beat: Vec<f32>,
@@ -397,6 +398,34 @@ impl ClickState {
                 self.tone_offset += 1;
             }
         }
+    }
+}
+
+/// A click a caller outside a playback can render itself: the patchbay's bus
+/// take puts it on the patch's output, never on the bus it records. It is built
+/// off the audio path and its `render_into` only adds pre-built samples, the
+/// same way [`ClickState`] does for a take's monitor. Its clock starts at the
+/// first block it renders, which is when the bus take attached.
+#[derive(Debug)]
+pub struct StandaloneClick {
+    state: ClickState,
+    /// Frames rendered since the clock started.
+    start: u64,
+}
+
+impl StandaloneClick {
+    pub fn new(spec: ClickSpec, rate: u32, period: usize) -> Self {
+        StandaloneClick {
+            state: ClickState::build(spec, rate, period),
+            start: 0,
+        }
+    }
+
+    /// Add this block's clicks to the stereo block `out`.
+    pub fn render_into(&mut self, out: &mut [f32]) {
+        let start = self.start;
+        self.state.render_into(out, start);
+        self.start = start.wrapping_add((out.len() / 2) as u64);
     }
 }
 

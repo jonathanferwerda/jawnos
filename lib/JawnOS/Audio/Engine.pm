@@ -204,12 +204,13 @@ sub audio_engine_command {
 # or the engine's per-track array of objects, `inputs` is the parallel channel
 # list, `master` is the enabled mastering inserts the take arms, `click` is the
 # metronome `{bpm,beats_per_bar,gain}` the engine generates on the monitor
-# output (never in the take's WAV), and `monitor_input`/`monitor_gain` arm the
-# live input on the monitor bus. Only those keys are forwarded, so a caller
-# cannot turn this into a way to smuggle a field the engine never promised; an
-# empty or absent hash keeps the old three-argument call exactly as it was. The
-# switch is a JSON boolean and goes out only when it is on; the gain goes out
-# only when it has a number.
+# output (never in the take's WAV), `bus` names one bus of the running patch so
+# the take records that mix instead of the capture, and
+# `monitor_input`/`monitor_gain` arm the live input on the monitor bus. Only
+# those keys are forwarded, so a caller cannot turn this into a way to smuggle a
+# field the engine never promised; an empty or absent hash keeps the old
+# three-argument call exactly as it was. The switch is a JSON boolean and goes
+# out only when it is on; the gain goes out only when it has a number.
 sub audio_engine_record {
 	my ($out_abs, $seconds, $start_at, $extra) = @_;
 	my $request = { cmd => 'record' };
@@ -217,7 +218,7 @@ sub audio_engine_record {
 	$request->{'seconds'} = $seconds if defined $seconds;
 	$request->{'start_at'} = $start_at if defined $start_at;
 	if (ref $extra eq 'HASH') {
-		for my $key (qw(tracks inputs master click)) {
+		for my $key (qw(tracks inputs master click bus)) {
 			next unless exists $extra->{$key};
 			$request->{$key} = $extra->{$key};
 		}
