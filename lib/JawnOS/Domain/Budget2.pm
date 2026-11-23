@@ -166,7 +166,9 @@ sub evaluation_house_categories {
 # apps name their readings differently, so the list is by measure name.
 my %HOUSE_CONDITION_MEASURE = map { $_ => 1 } qw(
 	illumination moon_phase temperature humidity pressure wind_speed dew_point uv precipitation
-	kp kp_max_24h bz bt solar_wind_speed solar_wind_density
+	kp kp_max_24h dst dst_min ap bz bt solar_wind_speed solar_wind_density
+	g_scale s_scale r_scale f107 sunspot_number aurora_probability
+	magnetic_f magnetic_d magnetic_i
 );
 
 sub evaluation_house_conditions {
@@ -209,12 +211,14 @@ sub evaluation_house_conditions {
 	# A weather source can log ten measures; three families are what the person
 	# asked about. Keep at most four readings from any one app, so the moon and
 	# the geomagnetic field are not crowded out by the weather.
+	my %cap = (space_weather => 6, magnetometer => 3);
 	my (%per_app, @picked);
 	foreach my $entry ( @out ) {
-		next if ($per_app{ $entry->{'app'} } || 0) >= 4;
+		my $limit = $cap{ $entry->{'app'} } || 4;
+		next if ($per_app{ $entry->{'app'} } || 0) >= $limit;
 		push @picked, $entry;
 		$per_app{ $entry->{'app'} }++;
-		last if scalar @picked >= 12;
+		last if scalar @picked >= 14;
 	}
 	return \@picked;
 }
@@ -407,7 +411,7 @@ sub evaluation_digest_fit {
 		# the busiest kinds per app are the first luxury
 		sub { foreach my $c ( @{ $d->{'categories'} || [] } ) { foreach my $a ( @{ $c->{'top_apps'} || [] } ) { delete $a->{'kinds'}; } } },
 		# keep only the strongest environmental associations
-		sub { splice(@{ $d->{'conditions'} || [] }, 6) if scalar @{ $d->{'conditions'} || [] } > 6; },
+		sub { splice(@{ $d->{'conditions'} || [] }, 8) if scalar @{ $d->{'conditions'} || [] } > 8; },
 		# the tail of the money apps
 		sub { my $a = $d->{'money'}->{'apps'} || []; splice(@{$a}, 3) if scalar @{$a} > 3; },
 		# projects are the most optional section

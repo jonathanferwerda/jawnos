@@ -323,11 +323,19 @@ sub action_52325 {
 }
 
 # GET /manager/weather/space_weather
-# The planetary K index and the solar wind, from NOAA. A separate request so a
-# slow or unreachable space-weather service never holds the weather page shut.
+# The planetary K index, Dst, storm scales, forecast and the local sky. A
+# separate request so a slow NOAA or USGS never holds the weather page shut.
 sub action_52331 {
 	my $c = shift;
-	my $space = eval { &subs::space_weather_fetch({ force => ($c->param('force') ? 1 : 0) }) };
+	my $lat = $c->param('lat');
+	my $lon = $c->param('lon');
+	my $space = eval {
+		&subs::space_weather_fetch({
+			force => ($c->param('force') ? 1 : 0),
+			(defined $lat && length $lat ? (lat => $lat) : ()),
+			(defined $lon && length $lon ? (lon => $lon) : ()),
+		})
+	};
 	$c->render(json => { space_weather => $space || { error => &subs::ui('Space weather is unavailable right now.') } });
 }
 

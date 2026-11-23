@@ -442,10 +442,20 @@ function weatherSpaceLoad(force) {
 	var now = Date.now();
 	if (!force && weatherSpaceAt && now - weatherSpaceAt < 10 * 60 * 1000) { return; }
 	weatherSpaceAt = now;
+	var $w = $('.wind[app="weather"]').last();
+	var data = force ? { force: 1 } : {};
+	var lat = $w.find('#weather_lat').val();
+	var lon = $w.find('#weather_lon').val();
+	if (!lat || !lon) {
+		var $opt = $w.find('#weather_device option:selected');
+		lat = $opt.attr('data-lat') || '';
+		lon = $opt.attr('data-lon') || '';
+	}
+	if (lat && lon) { data.lat = lat; data.lon = lon; }
 	$.ajax({
 		url: '/manager/weather/space_weather',
 		type: 'GET',
-		data: force ? { force: 1 } : {},
+		data: data,
 		dataType: 'json',
 		timeout: 15000,
 		success: function(response) { weatherSpaceRender((response && response.space_weather) || {}); },
@@ -466,18 +476,42 @@ function weatherSpaceRender(space) {
 		if (value === undefined || value === null || value === '') { return; }
 		stats.push('<div class="weather_space_stat"><b>' + weatherEsc(jawnosT(label)) + '</b>' + weatherEsc(value) + '</div>');
 	}
+	function scale(letter, n) {
+		return (n === undefined || n === null || n === '') ? '' : letter + n;
+	}
 	stat('Kp', space.kp !== undefined && space.kp !== null ? space.kp : '');
 	stat('Peak Kp (24 h)', space.kp_max_24h !== undefined && space.kp_max_24h !== null ? space.kp_max_24h : '');
+	stat('Dst', space.dst !== undefined && space.dst !== null ? space.dst + ' nT' : '');
+	stat('Kp forecast', space.kp_forecast_max !== undefined && space.kp_forecast_max !== null ? space.kp_forecast_max + ' in 3 days' : '');
 	stat('Bz', space.bz !== undefined && space.bz !== null ? space.bz + ' nT' : '');
 	stat('Solar wind', space.solar_wind_speed !== undefined && space.solar_wind_speed !== null ? space.solar_wind_speed + ' km/s' : '');
-	stat('Density', space.solar_wind_density !== undefined && space.solar_wind_density !== null ? space.solar_wind_density + ' p/cm³' : '');
+	stat('Storms', [ scale('G', space.g_scale), scale('S', space.s_scale), scale('R', space.r_scale) ].filter(Boolean).join(' '));
+	stat('F10.7', space.f107 !== undefined && space.f107 !== null ? space.f107 + ' sfu' : '');
+	stat('Sunspots', space.sunspot_number !== undefined && space.sunspot_number !== null ? space.sunspot_number : '');
+	stat('Aurora here', space.aurora_probability !== undefined && space.aurora_probability !== null ? space.aurora_probability + '%' : '');
 	stat('Observed', space.observed_at ? weatherTime(space.observed_at) : '');
 	var bar = '';
 	if (space.kp !== undefined && space.kp !== null) {
 		var pct = Math.max(0, Math.min(100, (Number(space.kp) / 9) * 100));
 		bar = '<div class="weather_space_bar" title="Kp ' + weatherEsc(space.kp) + '"><span style="width:' + pct.toFixed(1) + '%"></span></div>';
 	}
-	$w.find('#weather_space_body').html(stats.join('') + bar);
+	var local = '';
+	var m = space.magnetometer || {};
+	if (m.f !== undefined && m.f !== null) {
+		var bits = [ 'F ' + weatherNum(m.f) + ' nT' ];
+		if (m.d !== undefined && m.d !== null) { bits.push('D ' + m.d + '°'); }
+		if (m.i !== undefined && m.i !== null) { bits.push('I ' + m.i + '°'); }
+		if (m.observatory) { bits.push(m.observatory + (m.distance_km !== undefined ? ' · ' + weatherNum(m.distance_km) + ' km' : '')); }
+		local = '<div class="weather_space_local"><b>' + jawnosT('Local magnetic field') + '</b> ' + weatherEsc(bits.join(' · ')) + '</div>';
+	}
+	var alerts = space.alerts || [];
+	var alertHtml = '';
+	if (alerts.length) {
+		alertHtml = '<div class="weather_space_alerts">' + alerts.map(function(a) {
+			return '<div class="weather_space_alert"><b>' + weatherEsc(a.id || '') + '</b> ' + weatherEsc(String(a.text || '').slice(0, 240)) + '</div>';
+		}).join('') + '</div>';
+	}
+	$w.find('#weather_space_body').html(stats.join('') + bar + local + alertHtml);
 	$card.show();
 }
 

@@ -18,7 +18,7 @@ use feature 'signatures';
 no warnings 'experimental::signatures';
 no warnings 'experimental::args_array_with_signatures';
 
-use Math::Trig qw(deg2rad pi);
+use Math::Trig qw(deg2rad pi great_circle_distance);
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::UserAgent;
 use Mojo::Util qw(md5_sum);
@@ -144,8 +144,22 @@ sub moon_current ($opts = {}) {
 # ---- space weather ---------------------------------------------------------
 
 my $Kp_URL = 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json';
-my $MAG_URL = 'https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json';
-my $WIND_URL = 'https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json';
+# The summary files are tens of bytes, not the multi-megabyte one-minute
+# streams: the card and the daily row only need the latest reading.
+my $MAG_URL = 'https://services.swpc.noaa.gov/products/summary/solar-wind-mag-field.json';
+my $WIND_URL = 'https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json';
+my $DST_URL = 'https://services.swpc.noaa.gov/products/kyoto-dst.json';
+my $SCALES_URL = 'https://services.swpc.noaa.gov/products/noaa-scales.json';
+my $KP_FC_URL = 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json';
+my $F107_URL = 'https://services.swpc.noaa.gov/products/summary/10cm-flux.json';
+my $SSN_URL = 'https://services.swpc.noaa.gov/json/solar-cycle/sunspots.json';
+my $ALERTS_URL = 'https://services.swpc.noaa.gov/products/alerts.json';
+my $AURORA_URL = 'https://services.swpc.noaa.gov/json/ovation_aurora_latest.json';
+my $USGS_OBS_URL = 'https://geomag.usgs.gov/ws/observatories/?format=json';
+my $USGS_DATA_URL = 'https://geomag.usgs.gov/ws/data/';
+my $GFZ_URL = 'https://www-app3.gfz-potsdam.de/kp_index/Kp_ap_Ap_SN_F107_since_1932.txt';
+my $KYOTO_DST_URL = 'https://wdc.kugi.kyoto-u.ac.jp/dst_provisional/%s/dst%s.for.request';
+my $KYOTO_DST_RT_URL = 'https://wdc.kugi.kyoto-u.ac.jp/dst_realtime/%s/dst%s.for.request';
 
 # NOAA sends two shapes: a product table ([header, row, row...]) and an array
 # of objects. Read the last row of either, and map the names we ask for.
@@ -255,21 +269,312 @@ sub space_weather_parse ($kp_json, $mag_json, $wind_json) {
 	};
 }
 
+sub space_weather_dst ($json) {
+	return &_noaa_number( &_noaa_row($json, [ 'dst' ])->{'dst'} );
+}
+
+# The current R/S/G storm scales. R is a radio blackout, S a radiation storm,
+# G a geomagnetic storm; each is 0 to 5.
+sub space_weather_scales ($json) {
+	return {} unless ref $json eq 'HASH';
+	my $today = $json->{'0'} || {};
+	my %out;
+	foreach my $key ( qw/R S G/ ) {
+		my $entry = $today->{$key} || {};
+		my $scale = &_noaa_number($entry->{'Scale'});
+		my $lower = lc $key;
+		$out{$lower . '_scale'} = $scale if defined $scale;
+		$out{$lower . '_text'} = $entry->{'Text'} if defined $entry->{'Text'} && length $entry->{'Text'};
+	}
+	return \%out;
+}
+
+# The strongest predicted Kp in the next three days. The file also carries the
+# observed past; those rows are skipped.
+sub space_weather_forecast ($json, $now = undef) {
+	return {} unless ref $json eq 'ARRAY';
+	$now = &rightNow() unless defined $now;
+	my ($best, $best_at);
+	foreach my $row ( @{$json} ) {
+		next unless ref $row eq 'HASH';
+		next if (($row->{'observed'} // '') eq 'observed');
+		my $when = &_noaa_time($row->{'time_tag'});
+		next unless $when && $when >= $now - 3600 * 1000 && $when <= $now + 3 * 86400000;
+		my $kp = &_noaa_number($row->{'kp'});
+		next unless defined $kp;
+		if (!defined $best || $kp > $best) { $best = $kp; $best_at = $when; }
+	}
+	return {} unless defined $best;
+	return { kp_forecast_max => $best, kp_forecast_at => $best_at };
+}
+
+sub space_weather_f107 ($json) {
+	my $row = &_noaa_row($json, [ 'flux' ]);
+	my $flux = &_noaa_number($row->{'flux'});
+	return defined $flux ? $flux : undef;
+}
+
+# The monthly catalogue is small and gives the latest month's sunspot number.
+sub space_weather_sunspots ($json) {
+	return {} unless ref $json eq 'ARRAY';
+	my ($value, $month);
+	foreach my $row ( @{$json} ) {
+		next unless ref $row eq 'HASH';
+		my $ssn = &_noaa_number($row->{'ssn'});
+		next unless defined $ssn && $ssn >= 0;
+		$value = $ssn;
+		$month = $row->{'time-tag'} if defined $row->{'time-tag'};
+	}
+	return {} unless defined $value;
+	return { sunspot_number => $value, ($month ? (sunspot_month => $month) : ()) };
+}
+
+# Only the bulletins a person would act on: geomagnetic, radiation, radio
+# blackout and aurora. The full alert file is text, so the card keeps three and
+# the full text is not stored in a measure.
+sub space_weather_alerts ($json) {
+	return [] unless ref $json eq 'ARRAY';
+	my @out;
+	foreach my $alert ( @{$json} ) {
+		next unless ref $alert eq 'HASH';
+		my $msg = $alert->{'message'} // '';
+		next unless $msg =~ /GEOMAGNETIC|K-INDEX|K INDEX|SOLAR RADIATION|RADIO BLACKOUT|AURORA/i;
+		my $text = $msg;
+		$text =~ s/\r//g;
+		$text =~ s/\s+/ /g;
+		push @out, {
+			id => $alert->{'product_id'} // '',
+			issue => $alert->{'issue_datetime'} // '',
+			text => substr($text, 0, 600),
+		};
+	}
+	@out = sort { $b->{'issue'} cmp $a->{'issue'} } @out;
+	splice(@out, 3) if scalar @out > 3;
+	return \@out;
+}
+
+# OVATION is a 1-degree world grid, ordered longitude 0..359 then latitude
+# -90..90. Read the one cell over the house; the 900 KB map is discarded and
+# only the percentage is cached or stored.
+sub space_weather_aurora_at ($json, $lat, $lon) {
+	return {} unless ref $json eq 'HASH' && ref $json->{'coordinates'} eq 'ARRAY';
+	return {} unless defined $lat && $lat =~ /^-?[0-9.]+$/ && defined $lon && $lon =~ /^-?[0-9.]+$/;
+	$lat = 90 if $lat > 90;
+	$lat = -90 if $lat < -90;
+	my $coords = $json->{'coordinates'};
+	my $lat_i = int($lat + 90 + 0.5);
+	my $lon_i = int($lon + 360 + 0.5) % 360;
+	my $idx = $lon_i * 181 + $lat_i;
+	my $value;
+	if ($idx >= 0 && $idx < scalar @{$coords} && ref $coords->[$idx] eq 'ARRAY') {
+		$value = $coords->[$idx][2];
+	}
+	unless (defined $value) {
+		my $best_d;
+		foreach my $point ( @{$coords} ) {
+			next unless ref $point eq 'ARRAY' && scalar @{$point} >= 3;
+			my $dlat = abs($point->[1] - $lat);
+			my $dlon = abs($point->[0] - $lon);
+			$dlon = 360 - $dlon if $dlon > 180;
+			my $d = $dlat + $dlon;
+			if (!defined $best_d || $d < $best_d) { $best_d = $d; $value = $point->[2]; }
+		}
+	}
+	return {} unless defined $value && $value =~ /^-?[0-9.]+$/;
+	return {
+		aurora_probability => 0 + $value,
+		($json->{'Observation Time'} ? (aurora_observed_at => &_noaa_time($json->{'Observation Time'})) : ()),
+		($json->{'Forecast Time'} ? (aurora_forecast_at => &_noaa_time($json->{'Forecast Time'})) : ()),
+	};
+}
+
+# USGS sends four series, X (north), Y (east), Z (down) and F (total field).
+# The last value of each is the current reading; declination and inclination
+# are derived from them.
+sub space_weather_magnetometer_parse ($json) {
+	return {} unless ref $json eq 'HASH' && ref $json->{'values'} eq 'ARRAY';
+	my %series;
+	foreach my $set ( @{ $json->{'values'} } ) {
+		next unless ref $set eq 'HASH' && defined $set->{'id'} && ref $set->{'values'} eq 'ARRAY';
+		my $id = uc $set->{'id'};
+		next unless $id =~ /^(X|Y|Z|F)$/;
+		my $last;
+		foreach my $v ( @{ $set->{'values'} } ) {
+			$last = $v if defined $v && $v =~ /^-?[0-9.]+$/;
+		}
+		$series{$id} = 0 + $last if defined $last;
+	}
+	return {} unless defined $series{'F'} || (defined $series{'X'} && defined $series{'Y'});
+	my $d;
+	if (defined $series{'X'} && defined $series{'Y'} && ($series{'X'} || $series{'Y'})) {
+		$d = atan2($series{'Y'}, $series{'X'}) * 180 / pi;
+	}
+	my $i;
+	if (defined $series{'Z'} && defined $series{'X'} && defined $series{'Y'}) {
+		$i = atan2($series{'Z'}, sqrt($series{'X'} ** 2 + $series{'Y'} ** 2)) * 180 / pi;
+	}
+	my $imo = $json->{'metadata'}->{'intermagnet'}->{'imo'} || {};
+	my $times = $json->{'times'};
+	my $observed = ref $times eq 'ARRAY' ? &_noaa_time($times->[-1]) : 0;
+	return {
+		(defined $series{'F'} ? (f => $series{'F'}) : ()),
+		(defined $series{'X'} ? (x => $series{'X'}) : ()),
+		(defined $series{'Y'} ? (y => $series{'Y'}) : ()),
+		(defined $series{'Z'} ? (z => $series{'Z'}) : ()),
+		(defined $d ? (d => 0 + sprintf('%.2f', $d)) : ()),
+		(defined $i ? (i => 0 + sprintf('%.2f', $i)) : ()),
+		(($imo->{'iaga_code'} // '') ne '' ? (observatory => $imo->{'iaga_code'}) : ()),
+		(($imo->{'name'} // '') ne '' ? (name => $imo->{'name'}) : ()),
+		($observed ? (observed_at => $observed) : ()),
+	};
+}
+
+sub _usgs_observatories ($ua) {
+	my $cached = eval { &cache_get({ app => 'space_weather', context => 'usgs_observatories' }) };
+	my $list = ref $cached eq 'HASH' && ref $cached->{'list'} eq 'ARRAY' ? $cached->{'list'} : undef;
+	return $list if $list && scalar @{$list};
+	my ($json) = &weather_http_get($USGS_OBS_URL, $ua);
+	return [] unless ref $json eq 'HASH' && ref $json->{'features'} eq 'ARRAY';
+	my @out;
+	foreach my $feature ( @{ $json->{'features'} } ) {
+		next unless ref $feature eq 'HASH';
+		my $id = $feature->{'id'} // '';
+		next unless $id =~ /^[A-Z0-9]{3,5}$/;
+		my $name = $feature->{'properties'}->{'name'} // $id;
+		next if $id =~ /T$/ || $name =~ /test|development/i;
+		my $coords = $feature->{'geometry'}->{'coordinates'};
+		next unless ref $coords eq 'ARRAY' && scalar @{$coords} >= 2;
+		push @out, {
+			id => $id,
+			name => $name,
+			lat => 0 + $coords->[1],
+			lon => 0 + $coords->[0],
+		};
+	}
+	eval { &cache_set({ app => 'space_weather', context => 'usgs_observatories', warranty => '-30d' }, { list => \@out }) } if @out;
+	return \@out;
+}
+
+sub space_weather_magnetometer ($ua, $lat, $lon) {
+	return {} unless defined $lat && $lat =~ /^-?[0-9.]+$/ && defined $lon && $lon =~ /^-?[0-9.]+$/;
+	my $stations = &_usgs_observatories($ua);
+	return {} unless $stations && scalar @{$stations};
+	my @sorted = sort { $a->{'km'} <=> $b->{'km'} } map {
+		{
+			%{$_},
+			km => great_circle_distance(deg2rad($lat), deg2rad($lon), deg2rad($_->{'lat'}), deg2rad($_->{'lon'}), 6371),
+		}
+	} @{$stations};
+	# The nearest station can be offline or null at the end of its file, so try
+	# the next few. The card names the station and its distance either way.
+	my $tries = 0;
+	foreach my $station ( @sorted ) {
+		last if ++$tries > 6;
+		my $url = $USGS_DATA_URL . '?id=' . $station->{'id'} . '&sampling_period=60&format=json';
+		my ($json) = &weather_http_get($url, $ua);
+		my $reading = &space_weather_magnetometer_parse($json);
+		next unless scalar keys %{$reading};
+		$reading->{'observatory'} = $station->{'id'} unless defined $reading->{'observatory'};
+		$reading->{'name'} = $station->{'name'} unless defined $reading->{'name'};
+		$reading->{'distance_km'} = int($station->{'km'} + 0.5);
+		return $reading;
+	}
+	return {};
+}
+
+# GFZ's daily file carries the eight three-hour Kp values, Ap, the international
+# sunspot number and F10.7. Read the last days into one row a day.
+sub space_weather_history_parse ($text, $from = undef, $to = undef) {
+	return {} unless defined $text && length $text;
+	my %out;
+	foreach my $line ( split /\n/, $text ) {
+		next unless $line =~ /\S/ && $line !~ /^\s*#/;
+		my @f = split ' ', $line;
+		next unless scalar @f >= 26 && $f[0] =~ /^\d{4}$/ && $f[1] =~ /^\d{1,2}$/ && $f[2] =~ /^\d{1,2}$/;
+		my $when = timegm(0, 0, 12, $f[2], $f[1] - 1, $f[0]) * 1000;
+		next if defined $from && $when < $from;
+		next if defined $to && $when > $to;
+		my $max;
+		foreach my $raw ( @f[7 .. 14] ) {
+			my $kp = &_noaa_number($raw);
+			next unless defined $kp && $kp >= 0;
+			$max = $kp if !defined $max || $kp > $max;
+		}
+		my %entry;
+		if (defined $max) { $entry{'kp'} = $max; $entry{'kp_max_24h'} = $max; }
+		my $ap = &_noaa_number($f[23]); $entry{'ap'} = $ap if defined $ap && $ap >= 0;
+		my $sn = &_noaa_number($f[24]); $entry{'sunspot_number'} = $sn if defined $sn && $sn >= 0;
+		my $f107 = &_noaa_number($f[25]); $entry{'f107'} = $f107 if defined $f107 && $f107 > 0;
+		next unless scalar keys %entry;
+		$out{ sprintf('%04d-%02d-%02d', $f[0], $f[1], $f[2]) } = \%entry;
+	}
+	return \%out;
+}
+
+# Kyoto's provisional monthly Dst file: one line a day, then the hourly values.
+# The lowest value is the storm's strength; the average is the day's level.
+sub space_weather_dst_month_parse ($text, $year, $month) {
+	return {} unless defined $text && defined $year && defined $month;
+	my %out;
+	foreach my $line ( split /\n/, $text ) {
+		next unless $line =~ /^DST\d{4}\*(\d{2})[A-Z]{2}X\d+\s+(.*)$/;
+		my ($day, $rest) = ($1, $2);
+		next unless $day >= 1 && $day <= 31;
+		my @vals = grep { abs($_) < 1000 } map { &_noaa_number($_) } ($rest =~ /([-+]?\d+)/g);
+		next unless scalar @vals;
+		my $min = $vals[0];
+		my $sum = 0;
+		foreach my $v ( @vals ) { $min = $v if $v < $min; $sum += $v; }
+		my $when = timegm(0, 0, 12, $day, $month - 1, $year) * 1000;
+		$out{ sprintf('%04d-%02d-%02d', $year, $month, $day) } = {
+			dst_min => $min,
+			dst => 0 + sprintf('%.1f', $sum / scalar @vals),
+			_when => $when,
+		};
+	}
+	return \%out;
+}
+
 sub space_weather_fetch ($opts = {}) {
 	$opts ||= {};
-	my $cached = eval { &cache_get({ app => 'space_weather', context => 'current' }) };
+	my $lat = $opts->{'lat'};
+	my $lon = $opts->{'lon'};
+	# The local parts (aurora, magnetometer) belong to a place, so the cache is
+	# keyed by it; the planetary parts are the same and cost almost nothing.
+	my $cache_key = (defined $lat && $lat =~ /^-?[0-9.]+$/ && defined $lon && $lon =~ /^-?[0-9.]+$/)
+		? sprintf('%.1f_%.1f', $lat, $lon)
+		: 'house';
+	my $cached = eval { &cache_get({ app => 'space_weather', context => 'current', subcontext => $cache_key }) };
 	return $cached if !$opts->{'force'} && ref $cached eq 'HASH' && ($cached->{'server_time'} || 0) > &rightNow() - 10 * 60 * 1000;
 	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 7, request_timeout => 12);
 	my ($kp_json) = &weather_http_get($Kp_URL, $ua);
 	my ($mag_json) = &weather_http_get($MAG_URL, $ua);
 	my ($wind_json) = &weather_http_get($WIND_URL, $ua);
 	my $reading = &space_weather_parse($kp_json, $mag_json, $wind_json);
-	my $got = grep { defined $reading->{$_} } qw(kp bz solar_wind_speed solar_wind_density);
+	my $dst = &space_weather_dst( (&weather_http_get($DST_URL, $ua))[0] );
+	$reading->{'dst'} = $dst if defined $dst;
+	my $scales = &space_weather_scales( (&weather_http_get($SCALES_URL, $ua))[0] );
+	$reading->{$_} = $scales->{$_} for keys %{$scales};
+	my $forecast = &space_weather_forecast( (&weather_http_get($KP_FC_URL, $ua))[0] );
+	$reading->{$_} = $forecast->{$_} for keys %{$forecast};
+	my $f107 = &space_weather_f107( (&weather_http_get($F107_URL, $ua))[0] );
+	$reading->{'f107'} = $f107 if defined $f107;
+	my $spots = &space_weather_sunspots( (&weather_http_get($SSN_URL, $ua))[0] );
+	$reading->{$_} = $spots->{$_} for keys %{$spots};
+	my $alerts = &space_weather_alerts( (&weather_http_get($ALERTS_URL, $ua))[0] );
+	$reading->{'alerts'} = $alerts if ref $alerts eq 'ARRAY' && scalar @{$alerts};
+	if (defined $lat && $lat =~ /^-?[0-9.]+$/ && defined $lon && $lon =~ /^-?[0-9.]+$/) {
+		my $aurora = &space_weather_aurora_at( (&weather_http_get($AURORA_URL, $ua))[0], $lat, $lon );
+		$reading->{$_} = $aurora->{$_} for keys %{$aurora};
+		my $magnetometer = &space_weather_magnetometer($ua, $lat, $lon);
+		$reading->{'magnetometer'} = $magnetometer if scalar keys %{$magnetometer};
+	}
+	my $got = grep { defined $reading->{$_} } qw(kp bz dst solar_wind_speed);
 	unless ($got) {
 		return { %{ ref $cached eq 'HASH' ? $cached : {} }, error => 'Space weather is unavailable right now.' };
 	}
 	$reading->{'server_time'} = &rightNow();
-	eval { &cache_set({ app => 'space_weather', context => 'current', warranty => '-10m' }, $reading) };
+	eval { &cache_set({ app => 'space_weather', context => 'current', subcontext => $cache_key, warranty => '-10m' }, $reading) };
 	return $reading;
 }
 
@@ -284,17 +589,38 @@ my %MOON_MEASURES = (
 my %SPACE_MEASURES = (
 	kp => { type => 'number', min => 0, max => 9, unit => 'Kp' },
 	kp_max_24h => { type => 'number', min => 0, max => 9, unit => 'Kp' },
+	kp_forecast_max => { type => 'number', min => 0, max => 9, unit => 'Kp' },
+	dst => { type => 'number', min => -500, max => 100, unit => 'nT' },
+	dst_min => { type => 'number', min => -500, max => 100, unit => 'nT' },
+	ap => { type => 'number', min => 0, max => 400, unit => '' },
 	bz => { type => 'number', min => -30, max => 30, unit => 'nT' },
 	bt => { type => 'number', min => 0, max => 100, unit => 'nT' },
 	solar_wind_speed => { type => 'number', min => 0, max => 2000, unit => 'km/s' },
 	solar_wind_density => { type => 'number', min => 0, max => 100, unit => 'p/cm³' },
+	g_scale => { type => 'number', min => 0, max => 5, unit => 'G' },
+	s_scale => { type => 'number', min => 0, max => 5, unit => 'S' },
+	r_scale => { type => 'number', min => 0, max => 5, unit => 'R' },
+	f107 => { type => 'number', min => 0, max => 500, unit => 'sfu' },
+	sunspot_number => { type => 'number', min => 0, max => 500, unit => '' },
+	aurora_probability => { type => 'number', min => 0, max => 100, unit => '%' },
+);
+my %MAGNETOMETER_MEASURES = (
+	magnetic_f => { type => 'number', min => 0, max => 100000, unit => 'nT' },
+	magnetic_x => { type => 'number', min => -100000, max => 100000, unit => 'nT' },
+	magnetic_y => { type => 'number', min => -100000, max => 100000, unit => 'nT' },
+	magnetic_z => { type => 'number', min => -100000, max => 100000, unit => 'nT' },
+	magnetic_d => { type => 'number', min => -180, max => 180, unit => '°' },
+	magnetic_i => { type => 'number', min => -90, max => 90, unit => '°' },
 );
 
 # Teach an app its measures and, once, what kind of thing it is. Values already
 # chosen are left alone; this only fills what is missing.
 sub astronomy_measure_defaults ($app) {
 	return 0 unless defined $app && length $app;
-	my $defs = $app eq 'space_weather' ? \%SPACE_MEASURES : $app eq 'moon' ? \%MOON_MEASURES : {};
+	my $defs = $app eq 'space_weather' ? \%SPACE_MEASURES
+		: $app eq 'magnetometer' ? \%MAGNETOMETER_MEASURES
+		: $app eq 'moon' ? \%MOON_MEASURES
+		: {};
 	return 0 unless scalar keys %{$defs};
 	my $own = eval { decode_json(&setting_grabber({ app => $app, setting => 'app_measures' }) || '') } || {};
 	my $changed = 0;
@@ -312,6 +638,8 @@ sub astronomy_measure_defaults ($app) {
 	}
 	my %facts = $app eq 'space_weather'
 		? (category => 'nature', subcategory => 'space', colour => '#7b68ee')
+		: $app eq 'magnetometer'
+		? (category => 'nature', subcategory => 'magnetic', colour => '#b48ead')
 		: (category => 'nature', subcategory => 'sky', colour => '#40bfbf');
 	foreach my $key ( sort keys %facts ) {
 		my $have = &setting_grabber({ app => $app, setting => $key });
@@ -413,23 +741,122 @@ sub astronomy_tick ($opts = {}) {
 		moon_age_days => $moon->{'age_days'},
 		lunar_phase => $moon->{'phase_name'},
 	}, $now);
-	my $space = &space_weather_fetch({ force => $opts->{'force'} });
+	# The local readings belong to the house's own ground, not the box's.
+	my $home = eval { &weather_home_plate() } || {};
+	my $space = &space_weather_fetch({
+		force => $opts->{'force'},
+		(defined $home->{'lat'} ? (lat => $home->{'lat'}) : ()),
+		(defined $home->{'lon'} ? (lon => $home->{'lon'}) : ()),
+	});
 	my $space_written = 0;
+	my $magnetometer_written = 0;
 	if ($space && !$space->{'error'}) {
 		&astronomy_measure_write('space_weather', {
 			kp => $space->{'kp'},
 			kp_max_24h => $space->{'kp_max_24h'},
+			kp_forecast_max => $space->{'kp_forecast_max'},
+			dst => $space->{'dst'},
 			bz => $space->{'bz'},
 			bt => $space->{'bt'},
 			solar_wind_speed => $space->{'solar_wind_speed'},
 			solar_wind_density => $space->{'solar_wind_density'},
+			g_scale => $space->{'g_scale'},
+			s_scale => $space->{'s_scale'},
+			r_scale => $space->{'r_scale'},
+			f107 => $space->{'f107'},
+			sunspot_number => $space->{'sunspot_number'},
+			aurora_probability => $space->{'aurora_probability'},
 		}, $now);
 		$space_written = 1;
+		my $mag = $space->{'magnetometer'};
+		if (ref $mag eq 'HASH' && scalar keys %{$mag}) {
+			&astronomy_measure_write('magnetometer', {
+				magnetic_f => $mag->{'f'},
+				magnetic_x => $mag->{'x'},
+				magnetic_y => $mag->{'y'},
+				magnetic_z => $mag->{'z'},
+				magnetic_d => $mag->{'d'},
+				magnetic_i => $mag->{'i'},
+			}, $now);
+			$magnetometer_written = 1;
+		}
 	}
 	return {
 		moon => $moon,
 		space_weather => $space,
 		space_written => $space_written,
+		magnetometer_written => $magnetometer_written,
+	};
+}
+
+# Historical Kp, Ap, F10.7, sunspot number and Dst, one row a day. GFZ's file
+# carries the solar and Kp indices; Kyoto's provisional monthly files carry Dst.
+# The two are merged before the write, so a day gets one row.
+sub space_weather_backfill ($opts = {}) {
+	$opts ||= {};
+	my $now = $opts->{'to'} || &rightNow();
+	my $days = $opts->{'days'};
+	my $from = $opts->{'from'};
+	unless (defined $from) {
+		$days = 365 unless defined $days && $days =~ /^-?[0-9]+$/ && $days > 0;
+		$from = $now - $days * 86400000;
+	}
+	my $dry = $opts->{'dry_run'} ? 1 : 0;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 6, inactivity_timeout => 15, request_timeout => 30);
+	my %history;
+	my ($gfz) = &weather_http_get_text($GFZ_URL, $ua);
+	if ($gfz) {
+		my $rows = &space_weather_history_parse($gfz, $from, $now);
+		foreach my $day ( keys %{$rows} ) {
+			$history{$day} = { %{ $history{$day} || {} }, %{ $rows->{$day} } };
+		}
+	}
+	# Kyoto's provisional archive is monthly, from 2021. Walk the months the
+	# window touches; a missing month is simply no Dst for those days.
+	my @a = localtime(int($from / 1000));
+	my @b = localtime(int($now / 1000));
+	my ($y, $m) = ($a[5] + 1900, $a[4] + 1);
+	my $last_y = $b[5] + 1900;
+	my $last_m = $b[4] + 1;
+	my $months = 0;
+	while ($y < $last_y || ($y == $last_y && $m <= $last_m)) {
+		my $stamp = sprintf('%04d%02d', $y, $m);
+		my $short = sprintf('%02d%02d', $y % 100, $m);
+		my $url = sprintf($KYOTO_DST_URL, $stamp, $short);
+		my ($text) = &weather_http_get_text($url, $ua);
+		# The current month is published in realtime (RRX) before it is
+		# provisional (PPX); try that when the provisional file is not there.
+		unless ($text) {
+			my $rt = sprintf($KYOTO_DST_RT_URL, $stamp, $short);
+			($text) = &weather_http_get_text($rt, $ua);
+		}
+		if ($text) {
+			my $rows = &space_weather_dst_month_parse($text, $y, $m);
+			foreach my $day ( keys %{$rows} ) {
+				my $row = { %{ $rows->{$day} } };
+				delete $row->{'_when'};
+				$history{$day} = { %{ $history{$day} || {} }, %{ $row } };
+			}
+			$months++;
+		}
+		$m++;
+		if ($m > 12) { $m = 1; $y++; }
+	}
+	my ($count, $written) = (0, 0);
+	foreach my $day ( sort keys %history ) {
+		my ($yy, $mm, $dd) = split /-/, $day;
+		my $when = timegm(0, 0, 12, $dd, $mm - 1, $yy) * 1000;
+		next if $when < $from || $when > $now;
+		$count++;
+		next if $dry;
+		my $uuid = &astronomy_measure_write('space_weather', $history{$day}, $when, { seed => 'backfill' });
+		$written++ if $uuid;
+	}
+	return {
+		days => $count,
+		written => ($dry ? 0 : $written),
+		dry_run => $dry,
+		months => $months,
 	};
 }
 

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Astronomy.pm lib/JawnOS/Domain/Budget2.pm lib/JawnOS/Domain/Evaluation.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Domain/Web.pm templates/apps/weather/now.html.ep templates/apps/weather/style.html.ep templates/handbook/evaluation.html.ep templates/apps/evaluation_wide_controls.html.ep public/js/manager/weather.js perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl scripts/moon_backfill.pl
+# tests-for: lib/JawnOS/Domain/Astronomy.pm lib/JawnOS/Domain/Budget2.pm lib/JawnOS/Domain/Evaluation.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Domain/Web.pm templates/apps/weather/now.html.ep templates/apps/weather/style.html.ep templates/handbook/evaluation.html.ep templates/apps/evaluation_wide_controls.html.ep public/js/manager/weather.js perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl scripts/moon_backfill.pl scripts/space_weather_backfill.pl
 # covers:    the moon computed locally (no scraper), NOAA's space-weather products
 #            parsed into one reading, the measure writer/backfill, the whole-house
 #            digest and its automatic fit, the manual-only guard, and the weather
@@ -101,6 +101,106 @@ sub utc_ms {
 	my $partial = &subs::space_weather_parse([], $mag, []);
 	is($partial->{'bz'}, -2.1, 'a partial answer keeps what arrived');
 	ok(!defined $partial->{'kp'}, 'and leaves the missing reading missing');
+}
+
+# --- the wider NOAA set reads as one picture --------------------------------
+{
+	is(&subs::space_weather_dst([ { time_tag => '2026-11-22T21:00:00', dst => -42 } ]), -42,
+		'Dst keeps its sign');
+
+	my $scales = &subs::space_weather_scales({
+		'0' => {
+			R => { Scale => '1', Text => 'minor' },
+			S => { Scale => '0', Text => 'none' },
+			G => { Scale => '2', Text => 'moderate' },
+		},
+	});
+	is($scales->{'r_scale'}, 1, 'R is read');
+	is($scales->{'g_scale'}, 2, 'G is read');
+	is($scales->{'g_text'}, 'moderate', 'and its word');
+
+	my $now = utc_ms(2026, 11, 22, 21, 0, 0);
+	my $forecast = &subs::space_weather_forecast([
+		{ time_tag => '2026-11-22T18:00:00', kp => 2, observed => 'observed' },
+		{ time_tag => '2026-11-23T03:00:00', kp => 4, observed => 'predicted' },
+		{ time_tag => '2026-11-24T03:00:00', kp => 6, observed => 'predicted' },
+	], $now);
+	is($forecast->{'kp_forecast_max'}, 6, 'the strongest forecast Kp is kept');
+
+	is(&subs::space_weather_f107([ { flux => 94, time_tag => '2026-11-22T20:00:00' } ]), 94,
+		'F10.7 is read');
+	my $spots = &subs::space_weather_sunspots([
+		{ 'time-tag' => '2026-09', ssn => 40 },
+		{ 'time-tag' => '2026-10', ssn => 45.7 },
+	]);
+	is($spots->{'sunspot_number'}, 45.7, 'the latest monthly sunspot number wins');
+
+	my $alerts = &subs::space_weather_alerts([
+		{ product_id => 'K05A', issue_datetime => '2026-11-19 01:08:54', message => "ALERT: Geomagnetic K-index of 5\r\nThreshold Reached" },
+		{ product_id => 'X1', issue_datetime => '2026-11-20 01:00:00', message => 'Nothing to act on' },
+	]);
+	is(scalar @{$alerts}, 1, 'only the actionable bulletin is kept');
+	like($alerts->[0]{'text'}, qr/Geomagnetic K-index/, 'and its text is readable');
+
+	# A tiny aurora grid: the real one is longitude-major, but the nearest-point
+	# fallback must work when the index assumption does not.
+	my @coords;
+	for my $lon (0 .. 3) {
+		for my $lat (-2 .. 2) { push @coords, [ $lon, $lat, ($lon == 2 && $lat == 1) ? 7 : 0 ]; }
+	}
+	my $aurora = &subs::space_weather_aurora_at({ coordinates => \@coords }, 1, 2);
+	is($aurora->{'aurora_probability'}, 7, 'the aurora over the house is extracted from the grid');
+
+	my $magnetometer = &subs::space_weather_magnetometer_parse({
+		metadata => { intermagnet => { imo => { iaga_code => 'FRD', name => 'Fredericksburg' } } },
+		times => [ '2026-11-22T23:59:00.000Z' ],
+		values => [
+			{ id => 'X', values => [ 20000, 20468 ] },
+			{ id => 'Y', values => [ -700, -759 ] },
+			{ id => 'Z', values => [ 39000, 39753 ] },
+			{ id => 'F', values => [ 46000, 46325 ] },
+		],
+	});
+	is($magnetometer->{'f'}, 46325, 'the total field is read');
+	cmp_ok($magnetometer->{'d'}, '<', 0, 'declination keeps its sign');
+	is($magnetometer->{'observatory'}, 'FRD', 'and the station is named');
+
+	my @gfz = ( 2026, 11, 21, 0, 0, 0, 0, 2, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 5, 37, 99.0, 96.6, 0 );
+	my $history = &subs::space_weather_history_parse("# header\n" . join(' ', @gfz) . "\n", utc_ms(2026, 11, 1, 0, 0, 0), utc_ms(2026, 11, 30, 0, 0, 0));
+	is($history->{'2026-11-21'}{'kp'}, 2, 'the day\'s highest Kp is kept');
+	is($history->{'2026-11-21'}{'ap'}, 5, 'Ap is read');
+	is($history->{'2026-11-21'}{'sunspot_number'}, 37, 'the sunspot number is read');
+	is($history->{'2026-11-21'}{'f107'}, 99, 'and F10.7');
+
+	my $dst_text = "DST2610*01RRX020   0  -3  -5   3   7   7   8  11   7  -1  -6  -2   3   6   5   0  -1  -1  -1   0   3   5   7  11  12   3\n";
+	my $dst = &subs::space_weather_dst_month_parse($dst_text, 2026, 10);
+	is($dst->{'2026-10-01'}{'dst_min'}, -6, 'the lowest Dst is kept');
+}
+
+# --- the historical fetch merges GFZ and Kyoto into one row -----------------
+{
+	my @written;
+	local *subs::weather_http_get_text = sub {
+		my ($url) = @_;
+		if ($url =~ /gfz-potsdam/) {
+			my @f = ( 2026, 11, 21, 0, 0, 0, 0, 2, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 5, 37, 99.0, 96.6, 0 );
+			return ("# header\n" . join(' ', @f) . "\n", undef);
+		}
+		return ("DST2611*21RRX020   0  -3  -5   3   7\n", undef);
+	};
+	local *subs::astronomy_measure_write = sub {
+		my ($app, $values, $when) = @_;
+		push @written, [ $app, $values, $when ];
+		return 'uuid';
+	};
+	my $got = &subs::space_weather_backfill({
+		from => utc_ms(2026, 11, 21, 0, 0, 0),
+		to => utc_ms(2026, 11, 21, 23, 0, 0),
+	});
+	is($got->{'written'}, 1, 'one day written');
+	is($written[0][0], 'space_weather', 'into the space weather app');
+	is($written[0][1]{'kp'}, 2, 'the GFZ Kp is there');
+	is($written[0][1]{'dst_min'}, -5, 'and the Kyoto Dst is merged in');
 }
 
 # --- a measure row is merged by day, or inserted once ------------------------
@@ -334,7 +434,11 @@ sub utc_ms {
 	like(read_file("$root/perl/utility_jobs.pl"), qr/astronomy_tick/,
 		'and its subroutine is attached');
 	like(read_file("$root/scripts/moon_backfill.pl"), qr/astronomy_backfill/,
-		'the backfill script exists');
+		'the moon backfill script exists');
+	like(read_file("$root/scripts/space_weather_backfill.pl"), qr/space_weather_backfill/,
+		'the space weather backfill script exists');
+	like(read_file("$root/public/js/manager/weather.js"), qr/weather_space_local/,
+		'the card has a local magnetic field section');
 }
 
 done_testing();
