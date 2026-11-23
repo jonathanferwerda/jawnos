@@ -268,6 +268,28 @@ fn a_fast_peer_clock_emits_fewer_master_frames_for_the_same_take_span() {
 }
 
 #[test]
+fn a_negative_offset_shifts_the_take_to_zero_instead_of_dropping_frames() {
+    // The datagram's `master_sample` is unsigned, so a take whose first probe
+    // maps it before the master's zero cannot be stamped there. On a loaded box
+    // that first probe is noisy enough to come out behind; the take must start
+    // at zero and keep every frame, not clamp the stamp and skip the samples
+    // that fell before it.
+    let take: Vec<i16> = (0..4_000).map(|index| index as i16).collect();
+    let mut sender = TakeSender::new(take.clone());
+    sender.set_estimate(Some(ClockOffset::new(-13, 0.0)));
+
+    let mut sent = 0usize;
+    while let Some(block) = sender.block(256) {
+        assert_eq!(
+            block.master_sample as usize, sent,
+            "blocks meet on the master timeline"
+        );
+        sent += block.frames.len();
+    }
+    assert_eq!(sent, take.len(), "no take frame is lost before master zero");
+}
+
+#[test]
 fn a_block_never_reads_past_the_end_of_the_take() {
     let mut sender = TakeSender::new(vec![7i16; 500]);
     assert_eq!(sender.block(480).expect("a full block").frames.len(), 480);

@@ -410,8 +410,17 @@ impl TakeSender {
 
     /// Adopt the probe's latest fit. `None` means the prefix is passed through
     /// with the local position as the stamp.
+    ///
+    /// The header's `master_sample` is unsigned, so the take can never start
+    /// before the master's zero. A provisional offset whose midpoint lands
+    /// behind it (a jittery first pong, or a master that started later) used to
+    /// clamp the stamped start to zero while still advancing the take, which
+    /// silently dropped the first samples. Raise the intercept instead: the
+    /// take starts at zero and keeps every frame.
     pub fn set_estimate(&mut self, estimate: Option<ClockOffset>) {
-        self.estimate = estimate;
+        self.estimate = estimate.map(|offset| {
+            ClockOffset::new(offset.sample_offset.max(0), offset.drift_ppm)
+        });
     }
 
     /// How many take samples have not been sent yet.

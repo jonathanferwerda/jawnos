@@ -755,6 +755,10 @@ fn a_param_moves_a_running_strip_and_the_take_still_finishes() {
         take.text()
     ));
     assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    // The strip is only running once the engine has clocked a block; on a
+    // loaded box the first `stop` can otherwise arrive before any frame is
+    // recorded, and this test is about moving a running strip, not a race.
+    client.wait_for_frames();
 
     let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"gain\",\"value\":0.5}");
     assert_eq!(reply, "{\"ok\":true,\"track\":0,\"name\":\"gain\"}");

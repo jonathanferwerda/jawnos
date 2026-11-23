@@ -259,6 +259,15 @@ Until then: a lone failure is a flake only after that file passes alone. Re-run
 the gate deliberately rather than editing a test that is not broken (the landing
 rule allows one deliberate re-run; `--jobs 1` is the softer setting).
 
+`t/332-engine-build.t` was the exception: it failed in every parallel suite and
+passed alone. It runs the crate's own `cargo test`, and two of those tests
+assumed an unloaded box. A noisy first clock probe could map a take before the
+master's zero; the stamp was clamped but the take still advanced, so the frames
+before zero were silently dropped. The take now raises its intercept and starts
+at zero, keeping every frame. And one socket test stopped a take before the
+engine had clocked a block; it now waits for `frames > 0`, as its siblings do.
+Both are fixed where they raced, not by serialising the suite.
+
 `table` is not a lab for this: six of its seven failures reproduce alone, because
 it is not provisioned like a dev checkout - no `.githooks` installed (`t/136`),
 and the tools `t/172`, `t/190`, `t/239`, `t/249` and `t/298` need are absent.
