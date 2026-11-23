@@ -29,7 +29,7 @@ ok(defined $view_align,   'musicViewAlign is found');
 # --- the saver writes the view ---------------------------------------------
 my ($saver) = $music =~ /(function playerCacheSaver\(type, force\)\s*\{.*?\n\})/s;
 ok(defined $saver, 'playerCacheSaver is found');
-like($saver // '', qr/\bview: musicViewOf\(\)/,
+like($saver // '', qr/\bview: \(musicViewOf\(\) \|\| musicViewLast\)/,
 	'the player cache carries the list view beside the resizes');
 like($saver // '', qr/if \(musicUnlocked\(\)\) \{/,
 	'and the unlocked window still refuses the write');

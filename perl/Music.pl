@@ -202,7 +202,19 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 			$log->info('music queue: no replayable queue, searching');
 		}
 	}
-	my $crate = &music_search({ settings => $settings, c => $c, search => $search, now_playing => {}, port => $port, misc_settings => $misc_settings, files => $music_files, same_order => $same_order, permissive => $unlocked });
+	# The player cache names the track that is playing. A rebuild after a refresh
+	# (the shell cache missed, or a new build) has no list yet, and a list built
+	# from a filter or a saved search can leave the track that is playing without
+	# a row. song_maker adds it (and marks it) when the rebuild dropped it, so the
+	# player always has a row for what it is playing. A relayed render is the
+	# host's own player, not the viewer's, so it is left alone.
+	my $player = &subs::cache_get({ app => 'music', context => 'player' });
+	my $now_playing = {};
+	if (!$remote_render && (($settings->{'library'} || 'local') eq 'local')
+		&& ref $player eq 'HASH' && ($player->{'file'} // '') =~ /\S/) {
+		$now_playing = $player;
+	}
+	my $crate = &music_search({ settings => $settings, c => $c, search => $search, now_playing => $now_playing, port => $port, misc_settings => $misc_settings, files => $music_files, same_order => $same_order, permissive => $unlocked });
 	$crate->{'unlock'} = $unlock;
 	$crate->{'unlocked'} = $unlocked;
 	# whatever this render put on screen is the queue a reopen should replay, and
@@ -210,7 +222,6 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 	my $queue_key = &music_queue_remember($crate, $settings, $unlocked);
 	my $timestamp = &subs::rightNow();
 	my $jmao = &subs::setting_grabber({ app => 'music', setting => 'mao' });
-	my $player = &subs::cache_get({ app => 'music', context => 'player' });
 	my $resizes = eval { return decode_json $settings->{'resizes'} } || {};
 	my $contents;
 	if ($c->param('window_maker')) {

@@ -2506,6 +2506,29 @@ async function musicInit(method) {
 			//
 			// The queue is the manifest, so the restored track does not need its row
 			// to be mounted: a track beyond the first window still resolves here.
+			//
+			// A rebuild can come back with no rows at all (a stale shelf selection,
+			// a folder that is not reachable yet, a search that matched nothing).
+			// The player cache still names the track that is playing, so describe
+			// that one row instead of restoring a track the tree cannot hold:
+			// mediaMaker reads tree.songs[0], and an empty queue used to throw
+			// before the window was initialized, leaving the list blank until the
+			// next reload.
+			if (typeof tree == 'object' && tree && Array.isArray(tree.all_songs)
+				&& !tree.all_songs.length && pd.file) {
+				var stub = {
+					key: pd.key || pd.file, file: pd.file, filename: pd.file,
+					type: pd.type || 'video', song: pd.file,
+					display_track: '', display_artist: '', display_album: '',
+					info: {}, chapters: [], thumbs: []
+				};
+				tree.all_songs.push(stub);
+				tree.songs.push(stub);
+				if (tree.songs_by_key) {
+					tree.songs_by_key[stub.key] = stub;
+					tree.songs_by_key[pd.file] = stub;
+				}
+			}
 			var saved_entry = pd.key ? musicEntryByKey(pd.key) : null;
 			if (!saved_entry && pd.file) { saved_entry = musicEntryByFile(pd.file); }
 			if (saved_entry) {
@@ -2567,6 +2590,8 @@ async function musicInit(method) {
 		}
 		// the view the list was left at; it is applied once the window is up, below
 		saved_view = (pd.view && typeof pd.view == 'object') ? pd.view : null;
+		// carry it while a hidden list cannot measure one of its own
+		musicViewLast = saved_view;
 		playerCacheSaver();
 		musicVisualApply();
 	}
@@ -2685,8 +2710,10 @@ function playerCacheSaver(type, force) {
 				music_files: { top: $('#music_files').css('top'), height: $('#music_files').height() }
 			},
 			// the slice and top row the person was looking at; applied on the next
-			// open so the same rows come back without mounting the whole queue
-			view: musicViewOf(),
+			// open so the same rows come back without mounting the whole queue. A
+			// save taken through a hidden list reuses the last honest view, since
+			// the hidden rows have no heights and would name the wrong one.
+			view: (musicViewOf() || musicViewLast),
 			type: $('#video').attr('type'),
 			visualization: musicVisual.mode,
 			normalize: music_normalize,
@@ -2911,8 +2938,22 @@ treeMaker();
 var musicWindowState = {
 	el: null, scroller: null, layout: 'list', offset: 0, total: 0, limit: 60,
 	baseTop: 0, baseBottom: 0, pitch: 0, gap: 0, columns: 1, measuredFor: '',
-	seq: 0, busy: false, frame: 0, ro: null
+	seq: 0, busy: false, frame: 0, ro: null, restoreView: null
 };
+// The last list view measured while the list was really on screen. The theatre
+// hides #music_library, and a hidden list has no rows to measure: every rect is
+// zero, so the "top row" reads as the last mounted row and a save taken there
+// would point the next open at the bottom of a slice. Keep the last honest view
+// instead, and never let a hidden save overwrite it.
+var musicViewLast = null;
+// Is there a list on screen to measure? A display:none ancestor (the theatre,
+// a minimised window) gives the scroller no height, so its rows cannot be
+// measured and a sync would request a slice around a row that is not the one at
+// the top. The ResizeObserver fires again when the list is shown.
+function musicWindowShown() {
+	var s = musicWindowState;
+	return !!(s && s.scroller && s.scroller.clientHeight > 0);
+}
 
 // --- the window's arithmetic --------------------------------------------------
 // [[music-window-math]]
@@ -2987,6 +3028,9 @@ function musicWindowInit(restore) {
 	s.total = parseInt(el.getAttribute('data-total') || '0', 10) || 0;
 	s.limit = parseInt(el.getAttribute('data-limit') || '60', 10) || 60;
 	s.busy = false;
+	// a fresh init (an open, a search, a ready handler) owns the window now; a
+	// view deferred by an earlier init must not be applied to this list
+	s.restoreView = null;
 	s.seq++;
 	// the base padding belongs to the stylesheet; the window adds scroll height
 	// to it, so put the stylesheet's own value back before measuring it
@@ -3000,12 +3044,17 @@ function musicWindowInit(restore) {
 	// A saved view is clamped through musicViewWindow and dropped when its queue
 	// token names a different list, so only this window's own rows come back. It
 	// is applied before the empty-slice fallback, which would otherwise ask for
-	// the top of the list and lose the place the person left.
+	// the top of the list and lose the place the person left. A restore while the
+	// list is hidden (the theatre) cannot measure or align its rows, so the view
+	// waits for the sync that runs when the library is shown.
 	var restored = false;
 	if (restore) {
 		var view = musicViewPending(restore);
 		if (view) {
-			if (s.offset === view.offset && el.querySelector('.music_track')) {
+			if (!musicWindowShown()) {
+				s.restoreView = view;
+			}
+			else if (s.offset === view.offset && el.querySelector('.music_track')) {
 				musicViewAlign(view);
 			}
 			else {
@@ -3145,7 +3194,30 @@ function musicWindowAnchorCovered(anchor, start, end) {
 
 function musicWindowSync() {
 	var s = musicWindowState;
-	if (!s.el || !s.scroller || s.busy || s.total <= 0) { return; }
+	// a hidden list (the theatre, a minimised window) has no heights to read, so
+	// its rows cannot say which one is at the top. A sync there used to name the
+	// last mounted row, shrink the slice to a few rows, and then fetch a real
+	// window the moment the theatre was left - the slow list the person saw.
+	if (!s.el || !s.scroller || !musicWindowShown() || s.busy || s.total <= 0) { return; }
+	// A saved view that could not be measured while hidden is applied here, now
+	// that the rows have real heights. The mounted slice is already on screen, so
+	// the fetch (if one is needed) lands behind it rather than leaving it blank.
+	if (s.restoreView) {
+		var pending = s.restoreView;
+		s.restoreView = null;
+		if (s.offset === pending.offset && s.el.querySelector('.music_track')) {
+			musicViewAlign(pending);
+		}
+		else {
+			musicWindowFetch(pending.offset, Math.min(s.total, pending.offset + s.limit), true, function () {
+				if (musicWindowState.offset === pending.offset) {
+					musicViewAlign(pending);
+					playerCacheSaver(undefined, true);
+				}
+			});
+		}
+		return;
+	}
 	var cards = s.el.querySelectorAll('.music_track');
 	if (!cards.length) {
 		musicWindowFetch(0, Math.min(s.total, s.limit), true);
@@ -3196,7 +3268,7 @@ function musicWindowSync() {
 // wrapped title or an opened panel above the viewport lands as a jump.
 function musicWindowAnchor() {
 	var s = musicWindowState;
-	if (!s.el || !s.scroller) { return null; }
+	if (!s.el || !s.scroller || !musicWindowShown()) { return null; }
 	var cards = s.el.querySelectorAll('.music_track');
 	if (!cards.length) { return null; }
 	var scRect = s.scroller.getBoundingClientRect();
@@ -3231,7 +3303,9 @@ function musicWindowRestoreAnchor(anchor, start) {
 // list to describe, so a window that never mounted one stores nothing.
 function musicViewOf() {
 	var s = musicWindowState;
-	if (!s.el || !s.scroller || !(s.total > 0)) { return null; }
+	// a view measured through a hidden list names the wrong row, so it is not a
+	// view at all. Null tells the saver to keep the last honest one.
+	if (!s.el || !s.scroller || !(s.total > 0) || !musicWindowShown()) { return null; }
 	var data = document.getElementById('music_queue_data');
 	if (!data) { return null; }
 	var token = data.getAttribute('token') || '';
@@ -3241,7 +3315,9 @@ function musicViewOf() {
 	var top = (anchor && typeof anchor == 'object') ? anchor.top : 0;
 	var scrollTop = Number(s.scroller.scrollTop);
 	if (!isFinite(scrollTop)) { scrollTop = 0; }
-	return { token: token, total: s.total, offset: s.offset, index: index, top: top, scrollTop: scrollTop };
+	var view = { token: token, total: s.total, offset: s.offset, index: index, top: top, scrollTop: scrollTop };
+	musicViewLast = view;
+	return view;
 }
 
 // A saved view is only worth restoring onto the list it was taken from. A view
@@ -3465,7 +3541,8 @@ function mediaMaker(data) {
 					if (native_element) { tree.sound = native_element; }
 				}
 
-				if (tree.songs[0].type == 'audio') {
+				var playing_row = tree.songs[0] || {};
+				if (playing_row.type == 'audio') {
 					$('#music_library').show();
 					$('#video').hide();
 					$('#video').attr('type', 'audio');
@@ -3508,8 +3585,8 @@ function mediaMaker(data) {
 				musicPicture.ct = 0;
 				musicPicture.pending = 0;
 
-				if (tree.songs[0].remote_uuid) {
-					url += '&remote_uuid=' + tree.songs[0].remote_uuid;
+				if (playing_row.remote_uuid) {
+					url += '&remote_uuid=' + playing_row.remote_uuid;
 				}
 
 				tree.sound.src = url

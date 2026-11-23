@@ -1,4 +1,4 @@
-# tests-for: templates/apps/music/files.html.ep templates/apps/music/track_rows.html.ep templates/apps/music/track_description.html.ep public/js/music.js public/css/music.css perl/Music/05_library_and_queue.pl perl/Music/07_song_maker.pl perl/Music/08_music_routes.pl lib/JawnOS/Manager/Part28.pm public/js/manager/help/01_music_speech.js
+# tests-for: templates/apps/music/files.html.ep templates/apps/music/track_rows.html.ep templates/apps/music/track_description.html.ep public/js/music.js public/css/music.css perl/Music/05_library_and_queue.pl perl/Music/07_song_maker.pl perl/Music/08_music_routes.pl perl/Music.pl lib/JawnOS/Manager/Part28.pm public/js/manager/help/01_music_speech.js
 # covers:    The Music list is a window over a manifest queue: the server draws
 #            only a slice, the player reads the whole queue from the manifest,
 #            and the details panel is fetched on first press instead of being
@@ -28,6 +28,7 @@ my $files_tpl = read_file("$root/templates/apps/music/files.html.ep");
 my $rows_tpl  = read_file("$root/templates/apps/music/track_rows.html.ep");
 my $desc_tpl  = read_file("$root/templates/apps/music/track_description.html.ep");
 my $routes    = read_file("$root/perl/Music/08_music_routes.pl");
+my $musicpl   = read_file("$root/perl/Music.pl");
 my $library   = read_file("$root/perl/Music/05_library_and_queue.pl");
 my $part28    = read_file("$root/lib/JawnOS/Manager/Part28.pm");
 my $help_js   = read_file("$root/public/js/manager/help/01_music_speech.js");
@@ -117,6 +118,46 @@ my $help_js   = read_file("$root/public/js/manager/help/01_music_speech.js");
 	($off, $lim) = &Manager::music_window_window({ window => { offset => '12', limit => '3' } });
 	is($off, 12, 'an offset is taken as given');
 	is($lim, 3, 'and so is a limit');
+}
+
+# ---------------------------------------------- the playing track comes back
+# A refresh can rebuild the list from a queue or a saved search that does not
+# hold the track that is playing. The open route hands that rebuild the live
+# player cache, so song_maker adds the track (and marks its row) instead of
+# leaving the player without a row for what it is playing.
+{
+	my @files = map { "Videos/Show/Episode $_ .mp4" } (0 .. 9);
+	my $playing = 'Videos/Show/Bonus.mp4';
+	my %archive = map { $_ => {
+		type => 'video', info => { duration => '60', tags => {} },
+		remote_uuid => '', remote_hostname => '',
+	} } (@files, $playing);
+	my $crate = do {
+		no warnings 'redefine';
+		local *subs::config_reader = sub { { manager => { background_colour => 'white' }, name => 'Test', folders => [] } };
+		local *subs::setting_grabber = sub {
+			my $q = shift;
+			return 'Test' if ($q->{'setting'} // '') eq 'computer_name';
+			return '';
+		};
+		local *subs::dark_colour_for = sub { return 'black' };
+		local *subs::inventory_grabber = sub { return {} };
+		local *subs::cache_get = sub { return undef };
+		local *subs::cache_set = sub { return 1 };
+		local *subs::file_media_information = sub { die 'a manifest must not probe' };
+		&Manager::song_maker({
+			c => bless({}, 'MusicWindowFakeC'), config => {}, port => 443,
+			files => \@files, archive => \%archive,
+			settings => { shuffle => 'off', all_albums => 'no', all_artists => 'no',
+				artist => [], album => [], library => 'local', normalize => 'off' },
+			now_playing => { file => $playing }, same_order => 1,
+			window => { offset => 0, limit => 60 },
+		});
+	};
+	is($crate->{'queue'}->[0], $playing, 'a queue that did not hold the playing track gains it first');
+	is($crate->{'queue_total'}, scalar(@files) + 1, 'and the rest of the queue is kept');
+	is($crate->{'songs'}->[0]->{'filename'}, $playing, 'its row is drawn in the first window');
+	is($crate->{'songs'}->[0]->{'playing'}, 'yes', 'and marked as playing');
 }
 
 # Only the drawn window is probed. 200 local tracks, one window: ffprobe runs
@@ -336,6 +377,51 @@ like($sync // '', qr/var start = Math\.max\(0, topIndex - visible \* 2 \* s\.col
 	'and the request can reach rows above the mounted slice');
 like($sync // '', qr/var visible = musicWindowVisible\(\);/,
 	'the sync and a re-fetch share the visible-row count');
+
+# ------------------------------------------------ a list hidden by the theatre
+# The theatre hides #music_library. A hidden list has no heights, so every rect
+# read zero and the "top row" came out as the last mounted row: the sync shrank
+# the slice to a handful of rows, and the saved view pointed the next open at the
+# bottom of it. Leaving the theatre then fetched and probed a whole new window -
+# the list that took 20-30s - while the track being watched sat outside it. All
+# of that work now waits for a list that is really on screen.
+like($js, qr/function musicWindowShown\(\)/, 'the window has one "list on screen" test');
+like($sync // '', qr/!musicWindowShown\(\)/, 'a sync does no work on a hidden list');
+my ($hidden_anchor) = $js =~ /(function musicWindowAnchor\(\)\s*\{.*?\n\})/s;
+ok(defined $hidden_anchor, 'musicWindowAnchor is found');
+like($hidden_anchor // '', qr/!musicWindowShown\(\)/, 'a hidden list has no top row to name');
+my ($hidden_view) = $js =~ /(function musicViewOf\(\)\s*\{.*?\n\})/s;
+ok(defined $hidden_view, 'musicViewOf is found');
+like($hidden_view // '', qr/!musicWindowShown\(\)/, 'a hidden list saves no view');
+like($hidden_view // '', qr/musicViewLast = view;/, 'a measured view is remembered');
+my ($hidden_saver) = $js =~ /(function playerCacheSaver\(type, force\)\s*\{.*?\n\})/s;
+ok(defined $hidden_saver, 'playerCacheSaver is found');
+like($hidden_saver // '', qr/view: \(musicViewOf\(\) \|\| musicViewLast\)/,
+	'a save through a hidden list keeps the last honest view');
+my ($hidden_winit) = $js =~ /(function musicWindowInit\(restore\)\s*\{.*?\n\})/s;
+ok(defined $hidden_winit, 'musicWindowInit is found');
+like($hidden_winit // '', qr/s\.restoreView = view;/,
+	'a saved view waits for a list that can measure it');
+like($sync // '', qr/if \(s\.restoreView\)/,
+	'and the sync applies it once the list is shown');
+
+# An empty rebuild must not abort the rest of the window's init
+my ($hidden_init) = $js =~ /(async function musicInit\(method\)\s*\{.*?\n\})/s;
+ok(defined $hidden_init, 'musicInit is found');
+like($hidden_init // '', qr/!tree\.all_songs\.length && pd\.file/,
+	'an empty queue is described from the player cache');
+like($js, qr/var playing_row = tree\.songs\[0\] \|\| \{\};/,
+	'and mediaMaker no longer dereferences a missing row');
+
+# The open route rebuilds from the live player cache -------------------------
+# A refresh that misses the shell has no list yet, and the track being watched
+# must not lose its row (or its mark) to the rebuild. A relayed render is the
+# host's own player, not the viewer's, so it is not passed.
+like($musicpl, qr/my \$player = &subs::cache_get\(\{ app => 'music', context => 'player' \}\);/,
+	'the open reads the live player cache');
+like($musicpl, qr/now_playing => \$now_playing/, 'and hands it to the rebuild');
+like($musicpl, qr/if \(!\$remote_render && \(\(\$settings->\{'library'\} \|\| 'local'\) eq 'local'\)/,
+	'a relayed render keeps the host player out');
 
 # The arithmetic is pure, so its two shapes are driven with plain numbers: a
 # wrapped title or an open panel must not change the pitch, and a mixed slice
