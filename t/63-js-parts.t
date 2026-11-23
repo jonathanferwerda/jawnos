@@ -375,6 +375,14 @@ my $security_index = read_file("$root/public/js/manager/security.js");
 like($security_index, qr/window_maker\s*:\s*['"]yes['"].*?windowMaker\(/s,
 	'the start-menu Security toggle still opens a window through windowMaker');
 
+# The app-unlock redraw used to name Passkeys, so the fingerprint on the
+# Padlock tab landed on Passkeys. It now redraws the view the person chose;
+# the tab press has already saved security_view before the locked reply.
+my ($refresh_block) = $house_key =~ /(function securityRefresh\(\).*?\n\t\})/s;
+ok(defined $refresh_block, 'the Security refresh is found');
+unlike($refresh_block, qr/security_view/,
+	'the app unlock redraws the chosen view, not a hard-coded Passkeys');
+
 diag("split scripts found: $splits; core entries: " . scalar(@core)
 	. "; lazy apps: " . scalar(keys %apps));
 done_testing();

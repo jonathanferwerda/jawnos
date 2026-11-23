@@ -189,11 +189,14 @@
 		for (var i = 0; i < b.length; i++) { s += String.fromCharCode(b[i]); }
 		return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 	}
+	// Redraw the view this screen was on. The tab press already saved
+	// security_view before the locked reply; naming Passkeys here threw the
+	// person back to Passkeys after every app unlock.
 	function securityRefresh() {
 		$.ajax({
 			url: '/manager/security',
 			type: 'GET',
-			data: { security_view: 'passkeys', unlock: (window.jawnosSecurityToken || ''), browser_tab_id: (typeof jawnosMediaTab === 'function' ? jawnosMediaTab() : '') },
+			data: { unlock: (window.jawnosSecurityToken || ''), browser_tab_id: (typeof jawnosMediaTab === 'function' ? jawnosMediaTab() : '') },
 			success: function (r) {
 				if (r && r.html) {
 					$('#security').replaceWith(r.html);
