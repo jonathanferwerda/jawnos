@@ -211,14 +211,14 @@ sub evaluation_house_conditions {
 	# A weather source can log ten measures; three families are what the person
 	# asked about. Keep at most four readings from any one app, so the moon and
 	# the geomagnetic field are not crowded out by the weather.
-	my %cap = (space_weather => 6, magnetometer => 3);
+	my %cap = (space_weather => 7, magnetometer => 3);
 	my (%per_app, @picked);
 	foreach my $entry ( @out ) {
 		my $limit = $cap{ $entry->{'app'} } || 4;
 		next if ($per_app{ $entry->{'app'} } || 0) >= $limit;
 		push @picked, $entry;
 		$per_app{ $entry->{'app'} }++;
-		last if scalar @picked >= 14;
+		last if scalar @picked >= 15;
 	}
 	return \@picked;
 }

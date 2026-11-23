@@ -457,7 +457,9 @@ function weatherSpaceLoad(force) {
 		type: 'GET',
 		data: data,
 		dataType: 'json',
-		timeout: 15000,
+		// The fetch makes several NOAA/USGS requests; the card should wait for it
+		// rather than abort halfway through and hide a usable reading.
+		timeout: 30000,
 		success: function(response) { weatherSpaceRender((response && response.space_weather) || {}); },
 		error: function() { $('.wind[app="weather"]').last().find('#weather_space').hide(); }
 	});
