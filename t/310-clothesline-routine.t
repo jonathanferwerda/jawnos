@@ -837,7 +837,14 @@ is_deeply([ map { $_->{'app'} } @{$hush_rows} ], [qw(soap)],
 	'a private step the routine missed is not put back');
 
 # a day curated before the app was made private must not carry it now
-my $today_key = subs::day_key(subs::rightNow());
+# The week keys its days on the house clock, so today is keyed the same way;
+# the box's own UTC is a different date for five hours every night.
+my $today_key;
+{
+	my $restore = &subs::clock_zone_adopt(&subs::clock_zone_house()) || sub { };
+	$today_key = subs::day_key(subs::rightNow());
+	$restore->();
+}
 subs::clothesline_anticipatory_save({ days => { $today_key => [ 'coffee', 'secret_thing' ] } });
 my ($today_card) = grep { $_->{'key'} eq $today_key } @{ subs::clothesline_anticipatory_week() };
 ok($today_card, 'the week carries today');
