@@ -229,6 +229,17 @@ like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s
 	$s{'jobs'} = [ { peer => 'phone', done => $now - 20 * 60 * 1000, fail => $now - 5 * 60 * 1000 } ];
 	like(subs::sync_stalled(), qr/no pull has finished/, 'a failed pull with no success since is a stall');
 
+	# A peer that has only ever failed has no done row at all, so its done time
+	# is 0. That is not a duration: the note must not read it as minutes since
+	# 1970 and report a decades-long stall (2026-11-23).
+	$s{'jobs'} = [ { peer => 'phone', fail => $now - 5 * 60 * 1000 } ];
+	my $never = subs::sync_stalled();
+	like($never, qr/has ever finished|never completed a pull/,
+		'a peer with no completed pull at all is a stall');
+	like($never, qr/last failure \d+m ago/, 'and the note says when its last failure was');
+	like($never, qr/phone/, 'and names the peer');
+	unlike($never, qr/\b\d{4,}m/, 'and does not read the missing done time as a minute count');
+
 	# A second peer that is pulling fine must not hide the broken one: the
 	# house-wide newest-done test did exactly that, so the kick never fired.
 	$s{'jobs'} = [

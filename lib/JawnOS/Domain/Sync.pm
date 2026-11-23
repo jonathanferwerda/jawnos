@@ -760,8 +760,15 @@ sub sync_stalled {
 	# history there is nothing to judge, so the watchdog stays quiet.
 	return '' unless $blocked;
 	my $last_done = ($blocked->{'done'} || 0) + 0;
-	return 'no pull has finished for ' . int(($now - $last_done) / 60000) . 'm since a failed one'
-		. (length($blocked->{'peer'} || '') ? ' (' . substr($blocked->{'peer'}, 0, 40) . ')' : '');
+	my $last_fail = ($blocked->{'fail'} || 0) + 0;
+	my $note = length($blocked->{'peer'} || '') ? ' (' . substr($blocked->{'peer'}, 0, 40) . ')' : '';
+	# A peer whose every pull has failed has no done row, so its done time is 0
+	# and $now - 0 is not a duration. Say it never finished and when the last
+	# failure was, instead of a nonsense decades-long minute count.
+	return 'no pull has ever finished for this peer; last failure '
+		. int(($now - $last_fail) / 60000) . 'm ago' . $note
+		unless $last_done;
+	return 'no pull has finished for ' . int(($now - $last_done) / 60000) . 'm since a failed one' . $note;
 }
 
 # Restart a sync rail that has stalled. Three things can hold it: a pull marker
