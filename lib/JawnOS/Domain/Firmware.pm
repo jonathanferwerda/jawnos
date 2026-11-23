@@ -290,13 +290,15 @@ sub firmware_push($data) {
 	# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
 	my $res;
 	if ($edt eq 'microcontroller') {
-		my $total = -s $file;
-		my $url = 'http://' . $ip . ':' . firmware_board_port() . '/upload/alarmclock.bin?total_size=' . $total
+		# The image is one small file: send it as the body. The streaming
+		# generator built the request from the transaction Mojo hands it, and a
+		# retry after a failed connect called it again with a different shape,
+		# which died mid-request and answered the panel with a 500. A plain body
+		# has one shape on every attempt.
+		my $image = read_file($file, binmode => ':raw');
+		my $url = 'http://' . $ip . ':' . firmware_board_port() . '/upload/alarmclock.bin?total_size=' . length($image)
 			. '&authorization=' . url_escape($auth);
-		$ua->transactor->add_generator(stream => sub ($transactor, $tx, $path) {
-			$tx->req->content->asset(Mojo::Asset::File->new(path => $file));
-		});
-		$res = $ua->post($url => { authorization => $auth } => stream => $file)->result;
+		$res = $ua->post($url => { authorization => $auth } => $image)->result;
 	}
 	else {
 		my $image = read_file($file, binmode => ':raw');

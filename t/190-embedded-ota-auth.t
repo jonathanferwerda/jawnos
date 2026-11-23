@@ -30,9 +30,14 @@ like($ota, qr/&subs::firmware_push\(/, 'the route sends through the one push pat
 # and the auto-OTA sweep cannot drift into sending an image differently.
 my ($push) = $firmware =~ /(sub firmware_push\(.*?\n\})/s;
 ok($push, 'firmware_push is still one function');
-like($push, qr/post\([^{;]*\{[^}]*authorization\s*=>\s*\$auth[^}]*\}[^;]*stream\s*=>\s*\$file/s,
-	'the streamed upload carries the authorization as a header');
-like($push, qr/stream\s*=>\s*\$file/, 'and still streams the staged file');
+like($push, qr/read_file\(\s*\$file\s*,\s*binmode\s*=>\s*':raw'\s*\)/,
+	'the upload reads the staged image as bytes');
+like($push, qr/post\([^{;]*\{[^}]*authorization\s*=>\s*\$auth[^}]*\}[^;]*\$image\s*\)/s,
+	'and sends it as the body with the authorization header');
+unlike($push, qr/add_generator/,
+	'no streaming generator can change shape on a failed-connect retry');
+like($push, qr/total_size='\s*\.\s*length\(\s*\$image\s*\)/,
+	'the query names the body length');
 
 # --- the board reads that header --------------------------------------------
 
