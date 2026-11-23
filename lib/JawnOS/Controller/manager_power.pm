@@ -116,8 +116,9 @@ sub action_53018 {
 # harmless if the setting is carried there.
 sub action_53019 {
 	my $c = shift;
-	my $on = ($c->param('enabled') || '') =~ /^(?:1|yes|on|true)$/i ? 1 : 0;
-	my $result = eval { &subs::power_guard_set($on) };
+	my $enabled = $c->param('enabled');
+	my $on = defined $enabled ? ($enabled =~ /^(?:1|yes|on|true)$/i ? 1 : 0) : undef;
+	my $result = eval { &subs::power_guard_set($on, $c->param('warn'), $c->param('shutdown')) };
 	$c->render(json => $result || { ok => 0, error => 'the guard setting could not be saved' });
 }
 

@@ -532,7 +532,7 @@ sub power_default_config {
 		# On a computer or a controller the low-battery guard warns at ten percent
 		# and shuts down cleanly at five. A phone keeps Android's own handling, so
 		# the toggle is not drawn there; the stored switch is harmless either way.
-		guard => { enabled => 1 },
+		guard => { enabled => 1, warn => 10, shutdown => 5 },
 		sleep => {
 			screen_timeout => 0,
 			sleep_timeout => 0,
@@ -545,6 +545,18 @@ sub power_default_config {
 	};
 }
 
+# The guard's two percentages are whole numbers. A value that is missing or
+# outside the useful range falls back, so an old or hand-edited config cannot
+# make a laptop shut down at 0% or at 80%.
+sub power_guard_percent {
+	my ($value, $default) = @_;
+	return $default unless defined $value && $value =~ /^\d+$/;
+	$value += 0;
+	return 3 if $value < 3;
+	return 50 if $value > 50;
+	return $value;
+}
+
 sub power_config_clean {
 	my ($config) = @_;
 	my $clean = &power_default_config();
@@ -552,8 +564,14 @@ sub power_config_clean {
 	$clean->{'auto'} = $config->{'auto'} ? 1 : 0 if exists $config->{'auto'};
 	$clean->{'manage'} = $config->{'manage'} ? 1 : 0 if exists $config->{'manage'};
 	my $guard = $config->{'guard'};
-	$clean->{'guard'}->{'enabled'} = $guard->{'enabled'} ? 1 : 0
-		if ref $guard eq 'HASH' && exists $guard->{'enabled'};
+	if (ref $guard eq 'HASH') {
+		$clean->{'guard'}->{'enabled'} = $guard->{'enabled'} ? 1 : 0 if exists $guard->{'enabled'};
+		my $warn = &power_guard_percent($guard->{'warn'}, 10);
+		my $shutdown = &power_guard_percent($guard->{'shutdown'}, 5);
+		$shutdown = $warn - 1 if $shutdown >= $warn;
+		$clean->{'guard'}->{'warn'} = $warn;
+		$clean->{'guard'}->{'shutdown'} = $shutdown;
+	}
 	for my $source (qw(ac battery)) {
 		my $entry = $config->{$source};
 		next unless ref $entry eq 'HASH';
@@ -865,9 +883,16 @@ sub power_auto_set {
 # another machine is not lost; the guard itself only runs on a computer or a
 # controller with a battery.
 sub power_guard_set {
-	my ($on) = @_;
+	my ($on, $warn, $shutdown) = @_;
 	my $config = &power_config();
-	$config->{'guard'} = { enabled => $on ? 1 : 0 };
+	my $guard = ref $config->{'guard'} eq 'HASH'
+		? { %{ $config->{'guard'} } }
+		: { enabled => 1, warn => 10, shutdown => 5 };
+	$guard->{'enabled'} = $on ? 1 : 0 if defined $on;
+	$guard->{'warn'} = &power_guard_percent($warn, $guard->{'warn'} || 10) if defined $warn;
+	$guard->{'shutdown'} = &power_guard_percent($shutdown, $guard->{'shutdown'} || 5) if defined $shutdown;
+	$guard->{'shutdown'} = $guard->{'warn'} - 1 if $guard->{'shutdown'} >= $guard->{'warn'};
+	$config->{'guard'} = $guard;
 	$config = &power_config_save($config);
 	return { ok => 1, config => $config };
 }
@@ -1010,10 +1035,11 @@ sub power_sleep_now {
 
 # A computer or a controller has no guaranteed low-battery action, and a
 # handheld's rk818 protection is a hard rail cut: the screen goes dark and the
-# board needs the charger before it will start. Warn once at ten percent, then
-# ask for a clean poweroff at five after a second ten-second tick confirms the
-# reading. The Power page's guard switch turns this off; a phone keeps Android's
-# own handling and is skipped.
+# board needs the charger before it will start. Warn once at the configured
+# warning (ten percent by default), then ask for a clean poweroff at the
+# configured shutdown (five by default) after a second ten-second tick confirms
+# the reading. The Power page's switch turns this off and moves both
+# percentages; a phone keeps Android's own handling and is skipped.
 sub power_battery_guard {
 	my ($battery, $config) = @_;
 	$config = &power_config() unless ref $config eq 'HASH';
@@ -1027,6 +1053,10 @@ sub power_battery_guard {
 	return { ok => 1, skipped => 'on mains' } if $battery->{'ac'};
 	my $percentage = $battery->{'percentage'};
 	return { ok => 1, skipped => 'no reading' } unless defined $percentage;
+	my $guard = ref $config->{'guard'} eq 'HASH' ? $config->{'guard'} : {};
+	my $warn_at = &power_guard_percent($guard->{'warn'}, 10);
+	my $shutdown_at = &power_guard_percent($guard->{'shutdown'}, 5);
+	$shutdown_at = $warn_at - 1 if $shutdown_at >= $warn_at;
 
 	my $boot = &power_boot_id();
 	my $state = eval { &subs::cache_get({ app => 'power', context => 'battery_guard' }) };
@@ -1039,7 +1069,7 @@ sub power_battery_guard {
 	my $low_at = $state->{'low_at'} || 0;
 	my $shutdown = $state->{'shutdown'} ? 1 : 0;
 
-	if (!$warned && $percentage <= 10) {
+	if (!$warned && $percentage <= $warn_at) {
 		eval {
 			&subs::notification_sender({
 				app => 'power', role => 'citizen', title => 'Battery low',
@@ -1050,7 +1080,7 @@ sub power_battery_guard {
 		$warned = 1; $changed = 1;
 	}
 
-	if (!$shutdown && $percentage <= 5) {
+	if (!$shutdown && $percentage <= $shutdown_at) {
 		if (!$low_at) { $low_at = $now; $changed = 1; }
 		elsif ($now - $low_at >= 10) {
 			my $answer = eval { &subs::power_action('shutdown') };
@@ -1068,7 +1098,7 @@ sub power_battery_guard {
 			};
 		}
 	}
-	elsif ($percentage > 5 && $low_at) { $low_at = 0; $changed = 1; }
+	elsif ($percentage > $shutdown_at && $low_at) { $low_at = 0; $changed = 1; }
 
 	if ($changed) {
 		$state->{'warned'} = $warned;

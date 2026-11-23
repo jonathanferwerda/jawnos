@@ -52,6 +52,9 @@ function powerBind() {
 	window_box.on('change', '#power_guard', function() {
 		powerGuard($(this).prop('checked'));
 	});
+	window_box.on('change', '#power_guard_warn, #power_guard_shutdown', function() {
+		powerGuardLimits();
+	});
 	window_box.on('change', '#power_charge', function() {
 		powerCharge($(this).val());
 	});
@@ -163,6 +166,8 @@ function powerRender(status) {
 	$('#power_manage').prop('checked', managing);
 	var guard = (status.config && status.config.guard) || {};
 	$('#power_guard').prop('checked', guard.enabled === undefined ? true : !!guard.enabled);
+	$('#power_guard_warn').val(guard.warn || 10);
+	$('#power_guard_shutdown').val(guard.shutdown || 5);
 	// With the master switch off a saved plan is only stored, not applied, so
 	// the plan controls wait instead of offering a write that would go nowhere.
 	$('#power_source_ac, #power_source_battery').find('select, input, button').prop('disabled', !managing);
@@ -423,6 +428,17 @@ function powerManage(on) {
 // the row, so this route is never reached there.
 function powerGuard(on) {
 	$.post('/manager/power/guard', { enabled: on ? 1 : 0 }, function(result) {
+		if (!result || !result.ok) { $('#power_status').text(jawnosT('The setting could not be saved.')); }
+		powerLoad();
+	}, 'json');
+}
+
+// The two percentages are saved together; the domain keeps the shutdown below
+// the warning and reloads the clean pair, so a bad pair corrects itself.
+function powerGuardLimits() {
+	var warn = parseInt($('#power_guard_warn').val(), 10) || 10;
+	var shutdown = parseInt($('#power_guard_shutdown').val(), 10) || 5;
+	$.post('/manager/power/guard', { warn: warn, shutdown: shutdown }, function(result) {
 		if (!result || !result.ok) { $('#power_status').text(jawnosT('The setting could not be saved.')); }
 		powerLoad();
 	}, 'json');

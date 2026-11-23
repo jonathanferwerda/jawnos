@@ -119,8 +119,11 @@
 	my $battery_note = $battery->{'present'}
 		? (@battery_bits ? join(' · ', @battery_bits) : &subs::ui('Battery'))
 		: &subs::ui('No battery sensor');
+	my $guard_cfg = (ref $status->{'config'} eq 'HASH' && ref $status->{'config'}{'guard'} eq 'HASH')
+		? $status->{'config'}{'guard'} : {};
+	my $guard_warn = $guard_cfg->{'warn'} || 10;
 	my $low_battery = $battery->{'present'} && !$battery->{'ac'} && defined $battery->{'percentage'}
-		&& $battery->{'percentage'} <= 10;
+		&& $battery->{'percentage'} <= $guard_warn;
 	my $low_battery_text = $low_battery
 		? sprintf('%s: %s%.0f%% — %s', &subs::ui('Battery low'), ($battery->{'estimated'} ? '~' : ''),
 			$battery->{'percentage'}, &subs::ui('Plug the controller in.'))
@@ -334,7 +337,8 @@ function closeControllerPanels(except) {
 			batt.textContent = has ? bits.join(' · ') : (b.present ? unknown : unavailable);
 		}
 		if (lowNote) {
-			var low = has && !b.ac && b.percentage <= 10;
+			var guardWarn = ((s.config || {}).guard || {}).warn || 10;
+			var low = has && !b.ac && b.percentage <= guardWarn;
 			lowNote.hidden = !low;
 			lowNote.textContent = low
 				? low_label + ': ' + (b.estimated ? '~' : '') + Math.round(b.percentage) + '% — ' + plug_label

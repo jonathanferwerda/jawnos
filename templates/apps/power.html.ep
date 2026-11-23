@@ -38,6 +38,8 @@
 #power .power_charge_row input[type=range] { width: 130px; }
 #power .power_guard_row { margin-top: 8px; }
 #power .power_guard_row label { display: flex; align-items: center; gap: 8px; }
+#power .power_guard_limits { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+#power .power_guard_limits input { width: 62px; }
 #power .power_guard_row .power_muted { margin-top: 4px; font-size: 12px; }
 #power #power_sleep_plan_row { margin-bottom: 8px; }
 </style>
@@ -57,7 +59,11 @@
 <% if ($guard_shown) { %>
 				<div id="power_guard_row" class="power_guard_row">
 					<label><input type="checkbox" id="power_guard"> <%= &subs::ui('Shut down before the battery dies') %></label>
-					<div class="power_muted"><%= &subs::ui('Warn at 10% and shut down cleanly at 5%. On a computer or a controller; a phone keeps its own battery handling.') %></div>
+					<div class="power_guard_limits">
+						<label><%= &subs::ui('Warn at') %> <input type="number" id="power_guard_warn" min="3" max="50" step="1"> %</label>
+						<label><%= &subs::ui('Shut down at') %> <input type="number" id="power_guard_shutdown" min="1" max="49" step="1"> %</label>
+					</div>
+					<div class="power_muted"><%= &subs::ui('The default is a warning at 10% and a clean shutdown at 5%. A phone keeps its own battery handling.') %></div>
 				</div>
 <% } %>
 			</div>

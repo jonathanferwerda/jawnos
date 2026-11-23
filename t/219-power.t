@@ -744,6 +744,36 @@ SH
 	is(scalar @actions, 0, 'and no shutdown yet');
 }
 
+# --- the guard's two percentages are adjustable ------------------------------
+{
+	my (%state, @notes, @actions);
+	no warnings 'redefine';
+	local *subs::device_setter = sub { 'controller' };
+	local *subs::power_config = sub { { guard => { enabled => 1, warn => 20, shutdown => 12 } } };
+	local *subs::cache_get = sub {
+		my ($p) = @_;
+		return { %{ $state{ $p->{'context'} } || {} } } if $p->{'context'};
+		return undef;
+	};
+	local *subs::cache_set = sub {
+		my ($p, $d) = @_;
+		$state{ $p->{'context'} } = { %{ $d || {} } };
+	};
+	local *subs::notification_sender = sub { push @notes, $_[0]; };
+	local *subs::power_action = sub { push @actions, $_[0]; return { ok => 1 }; };
+	my $battery = { present => 1, ac => 0, percentage => 15, status => 'discharging' };
+	my $warned = subs::power_battery_guard($battery);
+	is($warned->{'warned'}, 1, 'fifteen percent warns when the warning is twenty');
+	is(scalar @actions, 0, 'and does not shut down at the default five');
+	$battery->{'percentage'} = 11;
+	my $low = subs::power_battery_guard($battery);
+	is($low->{'shutdown'}, 0, 'eleven percent waits for the configured shutdown');
+	$state{'battery_guard'}{'low_at'} = time - 11;
+	my $off = subs::power_battery_guard($battery);
+	is($off->{'shutdown'}, 1, 'the configured shutdown fires');
+	is_deeply(\@actions, ['shutdown'], 'through the fixed action');
+}
+
 # --- the guard switch -------------------------------------------------------
 {
 	is(subs::power_default_config()->{'guard'}{'enabled'}, 1, 'the guard defaults on');
@@ -753,21 +783,34 @@ SH
 	is(subs::power_config()->{'guard'}{'enabled'}, 0, 'the saved switch is read back');
 	my $on = subs::power_guard_set(1);
 	is($on->{'config'}{'guard'}{'enabled'}, 1, 'and back on');
+	my $custom = subs::power_guard_set(1, 20, 12);
+	is($custom->{'config'}{'guard'}{'warn'}, 20, 'the warning threshold is saved');
+	is($custom->{'config'}{'guard'}{'shutdown'}, 12, 'the shutdown threshold is saved');
+	my $clamped = subs::power_guard_set(undef, 5, 8);
+	is($clamped->{'config'}{'guard'}{'warn'}, 5, 'a low warning is kept');
+	is($clamped->{'config'}{'guard'}{'shutdown'}, 4, 'and the shutdown stays below it');
+	subs::power_guard_set(1, 10, 5);
 
 	my $routes = read_file("$root/lib/JawnOS/Routes/manager_power.pm");
 	like($routes, qr/\[\s*53019\s*,\s*'post'\s*,\s*'\/manager\/power\/guard'\s*,\s*'action_53019'\s*\]/,
 		'the guard route is registered');
 	my $power_controller = read_file("$root/lib/JawnOS/Controller/manager_power.pm");
 	like($power_controller, qr/sub action_53019\b/, 'the guard action exists');
-	like($power_controller, qr/power_guard_set\(\$on\)/, 'and saves the switch');
+	like($power_controller, qr/power_guard_set\(\$on, \$c->param\('warn'\), \$c->param\('shutdown'\)\)/, 'and saves the two percentages');
 	my $template = read_file("$root/templates/apps/power.html.ep");
 	like($template, qr/id="power_guard"/, 'the Power page draws the guard switch');
+	like($template, qr/id="power_guard_warn"/, 'and the warning percentage');
+	like($template, qr/id="power_guard_shutdown"/, 'and the shutdown percentage');
 	like($template, qr/\$status->\{'machine'\}.*ne 'mobile'/, 'but not on a phone');
 	my $js = read_file("$root/public/js/manager/power.js");
 	like($js, qr/'#power_guard'/, 'the chunk binds the switch');
-	like($js, qr{/manager/power/guard}, 'and saves through its route');
+	like($js, qr/'#power_guard_warn, #power_guard_shutdown'/, 'and the two percentages');
+	like($js, qr/function powerGuardLimits/, 'which save together');
+	like($js, qr{/manager/power/guard}, 'and save through its route');
 	like(read_file("$root/lib/JawnOS/Domain/Loader.pm"), qr/\bpower_guard_set\b/,
 		'the switch is reachable by name');
+	like(read_file("$root/lib/JawnOS/Domain/Loader.pm"), qr/\bpower_guard_percent\b/,
+		'and so are the percentage bounds');
 }
 
 # --- the labels and the help topic -----------------------------------------
@@ -790,6 +833,7 @@ SH
 	like($body, qr/five percent/, 'and the clean-shutdown threshold');
 	like($body, qr/computer or a controller/, 'the help names the machines the guard covers');
 	like($body, qr/Shut down before the battery dies switch/, 'and the Power page switch');
+	like($body, qr/two percentages/, 'and says both thresholds are adjustable');
 
 	my $power_src = read_file("$root/lib/JawnOS/Domain/Power.pm");
 	like($power_src, qr/sub power_plan_tick \{.*?&power_battery_guard/s,
