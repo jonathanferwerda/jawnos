@@ -243,6 +243,40 @@ sub action_43536 {
 	$c->render(json => $returner);
 }
 
+# POST /manager/embedded/chip_memory
+# The type picker returns to the device chosen most recently for that type. The
+# choice is a house-wide setting, not this browser's: every machine that opens
+# Embedded reads it. Each type has its own row (chip_watch, chip_teletype,
+# chip_microcontroller), so saving the type the person left and the type they
+# chose cannot overwrite one another.
+sub action_43555 {
+	my $c = shift;
+	my $incoming = eval { decode_json($c->param('memory') || '{}') } || {};
+	$incoming = {} unless ref $incoming eq 'HASH';
+	my %wanted;
+	foreach my $edt ( keys %{$incoming} ) {
+		next unless $edt =~ /^(?:watch|teletype|microcontroller)$/;
+		my $chip_id = $incoming->{$edt} // '';
+		next if ref $chip_id;
+		next unless $chip_id =~ /^[A-Za-z0-9_-]{1,64}$/;
+		$wanted{$edt} = $chip_id;
+	}
+	unless (scalar keys %wanted) {
+		return $c->render(json => { ok => 0, error => 'nothing to remember' });
+	}
+	foreach my $edt ( sort keys %wanted ) {
+		&subs::setting_setter({
+			app => 'embedded',
+			setting => 'chip_' . $edt,
+			value => $wanted{$edt},
+			device => 'all',
+			source => 'embedded',
+			timestamp => &subs::rightNow(),
+		});
+	}
+	$c->render(json => { ok => 1, memory => \%wanted });
+}
+
 # POST /manager/embedded/ota_uploader
 sub action_43561 {
 	my $c = shift;

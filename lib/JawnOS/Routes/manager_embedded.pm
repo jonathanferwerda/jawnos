@@ -14,6 +14,7 @@ sub routes {
 	[43384, 'get', '/manager/embedded/pin_grabber', 'action_43384'],
 	[43495, 'get', '/manager/embedded/wigi', 'action_43495'],
 	[43536, 'post', '/manager/embedded/toggle', 'action_43536'],
+	[43555, 'post', '/manager/embedded/chip_memory', 'action_43555'],
 	[43561, 'post', '/manager/embedded/ota_uploader', 'action_43561'],
 	[43620, 'post', '/manager/embedded/ota_uploader_wifi', 'action_43620'],
 	[43673, 'get', '/manager/embedded/usb_ports', 'action_43673'],

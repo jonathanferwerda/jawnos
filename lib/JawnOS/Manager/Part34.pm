@@ -244,6 +244,16 @@ sub embedded_grabber($c,$timestamp) {
 		ip => $homebase,
 		name => ($homebase ne '' ? &subs::machine_name_for_ip($homebase) : ''),
 	};
+	# The last chip chosen for each device type, in one house-wide settings row
+	# per type (chip_watch, chip_teletype, chip_microcontroller) written by
+	# POST /manager/embedded/chip_memory. One row per type means a save cannot
+	# overwrite another type's last choice, even from two machines at once.
+	my %chip_memory;
+	foreach my $type ( qw/watch teletype microcontroller/ ) {
+		my $value = &subs::setting_grabber({ app => 'embedded', setting => 'chip_' . $type, device => 'all' });
+		$chip_memory{$type} = $value if defined $value && length $value;
+	}
+
 	my $returner = {
 		template => 'embedded/embedded',
 		embedded => $embedded,
@@ -263,6 +273,7 @@ sub embedded_grabber($c,$timestamp) {
 		components => $components,
 		wired_pins => $wired_pins,
 		chip_ids => $chip_ids,
+		chip_memory => \%chip_memory,
 		chip_id => $chip_id,
 		edt => $edt,
 		start_n => $start_n,

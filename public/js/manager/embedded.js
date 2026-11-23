@@ -7,12 +7,14 @@
    [[/js-split]] */
 var edt = 'watch';
 var edt_diagrams = { components: [], file: {} };
-// The device chosen most recently for each type. Switching type should return
-// to the device the person used last, not the top of the fleet list; the map is
-// small enough to keep in localStorage beside the two picker values.
+// The house's most recent chip per type, rendered into the panel from the
+// embedded app's settings row. It is a house-wide answer, not this browser's:
+// every machine that opens Embedded sees the same last choices.
+var embeddedChipPending = {};
+var embeddedChipSave = $.Deferred().resolve().promise();
 function embeddedChipMemory() {
 	try {
-		var map = JSON.parse(localStorage.getItem('embedded_chip_by_type') || '{}');
+		var map = JSON.parse($('#embedded').attr('data-chip-memory') || '{}');
 		return (map && typeof map === 'object') ? map : {};
 	}
 	catch (e) { return {}; }
@@ -20,13 +22,35 @@ function embeddedChipMemory() {
 function embeddedRememberChip(edt, chip_id) {
 	if (!edt || !chip_id) { return; }
 	var map = embeddedChipMemory();
+	if (map[edt] === chip_id) { return; }
 	map[edt] = chip_id;
-	localStorage.setItem('embedded_chip_by_type', JSON.stringify(map));
+	$('#embedded').attr('data-chip-memory', JSON.stringify(map));
+	embeddedChipPending[edt] = chip_id;
+}
+function embeddedSaveChipMemory() {
+	var pending = embeddedChipPending;
+	embeddedChipPending = {};
+	var any = false;
+	for (var k in pending) { if (Object.prototype.hasOwnProperty.call(pending, k)) { any = true; break; } }
+	if (!any) { return embeddedChipSave; }
+	// One save at a time, in the order the person changed the pickers; the panel
+	// redraw waits on the same chain. A failed save must not stall the next one.
+	var request = function() {
+		return $.ajax({
+			url: '/manager/embedded/chip_memory',
+			type: 'POST',
+			dataType: 'json',
+			data: { memory: JSON.stringify(pending), timestamp: Date.now() }
+		});
+	};
+	embeddedChipSave = embeddedChipSave.then(request, request);
+	return embeddedChipSave;
 }
 function embeddedRememberRenderedChip() {
 	var chip = $('#embedded_device_chip_id');
 	if (!chip.length) { return; }
 	embeddedRememberChip(chip.find('option:selected').attr('data-purpose') || '', chip.val() || '');
+	embeddedSaveChipMemory();
 }
 
 $(document).ready(function() {
@@ -66,7 +90,9 @@ $(document).on('change', '#embedded_device_picker', function() {
 		localStorage.setItem('embedded_chip_id', chosen);
 	}
 	localStorage.setItem('embedded_device_type', edt);
-	embeddedDevicesOpener();
+	// Draw only after the house has the new choice, so the panel it renders
+	// carries the same memory the person just set.
+	$.when(embeddedSaveChipMemory()).always(function() { embeddedDevicesOpener(); });
 });
 
 $(document).on('change', '#embedded_device_chip_id', function() {
@@ -84,7 +110,7 @@ $(document).on('change', '#embedded_device_chip_id', function() {
 		edt = purpose;
 	}
 	localStorage.setItem('embedded_device_type', edt);
-	embeddedDevicesOpener();
+	$.when(embeddedSaveChipMemory()).always(function() { embeddedDevicesOpener(); });
 });
 
 $(document).on('click', '#embedded_toggle', function() {

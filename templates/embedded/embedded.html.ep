@@ -1,6 +1,6 @@
 <% use Mojo::JSON qw/decode_json encode_json/; %>
 <% my $destinations = [ grep { $_->{'hostname'} && ($_->{'connection'} || 'active') eq 'active' } @{ &subs::remote_machine_lister({}) || [] } ]; %>
-<div id="embedded" style="overflow:scroll;text-align:center;background-color:var(--panel);height:100%;width:100%;">
+<div id="embedded" data-chip-memory="<%= encode_json($chip_memory) %>" style="overflow:scroll;text-align:center;background-color:var(--panel);height:100%;width:100%;">
 	<%# The Embedded app carries its own styles, like every other app: the classes
 	    below (embedded_*, teletype_*, centre_view/watch_*) were used but styled
 	    nowhere, so the app rendered raw while the rest of the house wore the theme
