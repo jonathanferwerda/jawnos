@@ -552,10 +552,12 @@ The app is a Termux fork that already supervises jawnos and already owns call au
 2. 10 ms Opus frames over the same UDP protocol, addressed by a **mic lease** the manager issues.
 3. `getUserMedia` stays the fallback — it is what works today, and what P0 measures against.
 
-### The T-Deck
+### The T-Deck — deferred
 
-It already has a 4-slot TDM microphone at 16 kHz (`jt/jt_01_globals_ble_house.ino:45`). Two things
-matter and both are already learned in the firmware:
+**Not on the current plan.** Recording from the deck is set aside for now; its two firmware facts
+are kept here so the work can return to P4 when a deck is set up. It already has a 4-slot TDM
+microphone at 16 kHz (`jt/jt_01_globals_ble_house.ino:45`). Two things matter and both are already
+learned in the firmware:
 
 - **Never write flash while capturing.** `jt_16_voice_capture.ino:4` records the whole clip into
   PSRAM because a flash program stalls the CPU with the cache off, the I2S DMA overruns, and the
@@ -767,12 +769,12 @@ longer stalls a block. No device opens in the bearer: wiring capture and the pat
 
 ### P4 — Sources that are late (2 weeks) — **engine code complete; gate unrun (needs a Studio guitar/peer take)**
 
-The uplink proper, with compensation: the phone (C) and the T-Deck (D) become channels on the master,
-each placed by its declared latency, so a take played 30 ms late is recorded in time. Each peer
+The uplink proper, with compensation: the phone (C) becomes a channel on the master,
+placed by its declared latency, so a take played 30 ms late is recorded in time. Each peer
 writes its own take locally first (D14), so the master places it rather than owning it.
 
 **Gate:** guitar through the UM2 and voice on the phone in one session, both in time with the click,
-both on the same take, ten minutes without a lost take. Then the same with a T-Deck clip.
+both on the same take, ten minutes without a lost take.
 
 **Master uplink (2026-11-21, in the tree):** a plan's `peer` source — a kind the manager already
 accepts — binds on the machine that mixes it. `--serve --uplink ADDR` with the session key starts a
@@ -910,7 +912,7 @@ live capture (`dropped`/`padded`/`resynced` 0, master `late` 6.1%); and two peer
 that tailnet path). The 30 ms declaration in that run reported `latency_frames 1440` and moved
 `first_master` 1 440 frames earlier. The gate itself is deliberately **unrun**, not passed: it needs
 a person playing the UM2 and a peer voice in one Studio take, with the click, for ten minutes on
-the house LAN, then the T-Deck clip. To run it: add the peer source(s) to the plan with their
+the house LAN. To run it: add the peer source(s) to the plan with their
 `latency_ms`, set the Uplink and save; start `--send-live --device ... --out ... --master ...
 --stream N --seconds 600` on the peer; arm the Studio take with the click and perform; then read the
 engine `status` (`late`, `concealed`, `handshakes`) and the take's alignment against the click.
