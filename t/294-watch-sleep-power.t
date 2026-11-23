@@ -61,7 +61,7 @@ like( $jw_doze, qr/static void doze_until_crown\(uint32_t until_ms = 0, bool rec
 	'the doze knows the cable may be pulled');
 like( $jw_doze, qr/if \(recheck_usb && !watch\.isUsbIn\(\)\) \{\s*Serial\.println\("\[doze\] cable pulled: back to the sleep path"\);\s*break;/,
 	'and ends itself when it is');
-like( $jw_sleep, qr/doze_until_crown\(0, lightSleep\);[\s\S]{0,600}?if \(lightSleep && !watch\.isUsbIn\(\) && !sleep_handler_reentering\) \{/,
+like( $jw_sleep, qr/doze_until_crown\(0, lightSleep\);[\s\S]{0,900}?if \(lightSleep && !watch\.isUsbIn\(\) && !sleep_handler_reentering\) \{/,
 	'the USB doze hands over to the sleep path instead of the wake tail');
 
 # The join lives in jawn_loop(), and lowPowerEnergyHandler() (or the doze it
@@ -70,12 +70,17 @@ like( $jw_sleep, qr/doze_until_crown\(0, lightSleep\);[\s\S]{0,600}?if \(lightSl
 # not come until morning; the return leaves the panel dark.
 like( $jw_doze, qr/if \(wifi_join_requested\) \{\s*\/\/[\s\S]{0,300}?Serial\.println\("\[doze\] wifi push: waking to join"\);\s*break;/,
 	'the doze yields when the bridge pushed WiFi credentials' );
-like( $jw_sleep, qr/if \(wifi_join_requested\) \{\s*Serial\.println\("\[sleep\] wifi push: staying up to join"\);\s*\/\/[\s\S]{0,300}?return;/,
-	'a pending push is never slept through' );
-like( $jw_sleep, qr/doze_until_crown\(0, lightSleep\);\s*if \(wifi_join_requested && !pmuIrq\) \{\s*\/\/[\s\S]{0,300}?Serial\.println\("\[sleep\] wifi push: staying up to join"\);\s*dozing = false;\s*setCpuFrequencyMhz\(240\);[\s\S]{0,120}?return;/,
+like( $jw_sleep, qr/if \(wifi_join_requested && !pmuIrq\) \{\s*Serial\.println\("\[sleep\] wifi push: staying up to join"\);\s*\/\/[^\n]*\n\s*setCpuFrequencyMhz\(240\);\s*return;/,
+	'a pending push is never slept through, and a crown in the same pass still gets its screen' );
+like( $jw_sleep, qr/doze_until_crown\(0, lightSleep\);\s*if \(wifi_join_requested && !pmuIrq\) \{\s*\/\/[\s\S]{0,300}?Serial\.println\("\[sleep\] wifi push: staying up to join"\);\s*\/\/[\s\S]{0,200}?dozing = true;\s*setCpuFrequencyMhz\(240\);[\s\S]{0,120}?return;/,
 	'and the doze ending on a push returns before the screen-on tail' );
-like( $jw_sleep, qr/doze_until_crown\(millis\(\) \+ BLE_LINGER_MS\);[\s\S]{0,600}?if \(wifi_join_requested && !pmuIrq\) \{/,
-	'a push inside the bridge linger also hands back to the join' );
+like( $jw_sleep, qr/if \(wifi_join_requested && !pmuIrq\) \{\s*Serial\.println\("\[sleep\] wifi push in the bridge window: staying up to join"\);\s*\/\/[\s\S]{0,200}?dozing = true;\s*setCpuFrequencyMhz\(240\);/,
+	'a push inside the bridge linger also hands back to the join, still asleep' );
+# The early returns skip watch.wakeupDisplay(), so dozing (and with it the voice
+# gate and the radio restore) must stay in its asleep state - a push at night
+# must not start a microphone listener on a dark watch.
+unlike( $jw_sleep, qr/wifi_join_requested && !pmuIrq\) \{[\s\S]{0,260}?dozing = false;/,
+	'the early join returns never claim the screen is awake' );
 
 # A wrist raise or crown inside the window still gets the screen, instead of
 # falling through into the sleep path.

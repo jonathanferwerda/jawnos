@@ -425,12 +425,12 @@ void lowPowerEnergyHandler()
   const bool want_sleep = lightSleep && !watch.isUsbIn();
   // A bridge push that asked for the house Wi-Fi must not be slept through: the
   // join lives in jawn_loop(), which this handler owns until it returns, so get
-  // out now and let it run with the panel dark.
-  if (wifi_join_requested) {
+  // out now and let it run with the panel dark. The doze state and the panel are
+  // left as they were; jawn_loop() joins whether or not dozing is set, and a
+  // crown in the same pass still earns its screen through the tail below.
+  if (wifi_join_requested && !pmuIrq) {
     Serial.println("[sleep] wifi push: staying up to join");
-    // the wake tail below is skipped so the panel stays dark, but the loop
-    // still needs its full clock and its "awake" state for the join
-    dozing = false;
+    // only the clock the wake tail would have restored is needed now
     setCpuFrequencyMhz(240);
     return;
   }
@@ -442,10 +442,14 @@ void lowPowerEnergyHandler()
     }
   }
   // the linger keeps the radio up, so a push may land after the check above:
-  // same reason, and a crown caught inside the window still gets its screen
+  // same reason, and a crown caught inside the window still gets its screen.
+  // The doze state and the panel are left as they were; the join runs in
+  // jawn_loop() with the screen dark.
   if (wifi_join_requested && !pmuIrq) {
     Serial.println("[sleep] wifi push in the bridge window: staying up to join");
-    dozing = false;
+    // the linger's doze exits with dozing cleared; the panel is dark, so put
+    // the asleep state back for the voice gate and the radio restore
+    dozing = true;
     setCpuFrequencyMhz(240);   // the wake tail is skipped; the join needs the clock
     return;
   }
@@ -681,9 +685,12 @@ void lowPowerEnergyHandler()
     doze_until_crown(0, lightSleep);
     if (wifi_join_requested && !pmuIrq) {
       // the doze ended on a bridge push, not on the crown: return before the
-      // wake tail so the join runs with the display still dark
+      // wake tail so the join runs with the display still dark. The doze state
+      // and the panel are left as they were; jawn_loop() joins regardless.
       Serial.println("[sleep] wifi push: staying up to join");
-      dozing = false;
+      // doze_until_crown leaves dozing cleared; the panel is dark, so put the
+      // asleep state back for the voice gate and the radio restore
+      dozing = true;
       setCpuFrequencyMhz(240);   // the tail is where 240 comes back; skip the screen only
       return;
     }
