@@ -54,6 +54,9 @@
 		text-decoration:none; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.controller_bar_button:hover { border-color:var(--accent, #4a90d9); }
 	#controller_battery { min-width:72px; }
+	#controller_low_battery { flex:0 0 auto; margin:6px 8px 0; padding:6px 10px; border:1px solid #c0392b;
+		border-radius:10px; background:#4a2323; color:#ffffff; font-size:13px; line-height:1.3; }
+	#controller_low_battery[hidden] { display:none; }
 	#controller_power_panel, #controller_volume_panel, #controller_network_panel { position:absolute; right:8px; top:34px; z-index:50; width:250px;
 		padding:10px; border:1px solid #4a4a4a; border-radius:12px; background:#2e2e2e;
 		color:#f4f4f4; box-shadow:0 8px 24px rgba(0,0,0,.5); }
@@ -111,10 +114,17 @@
 	my @battery_bits;
 	push @battery_bits, $battery->{'status'} if $battery->{'status'};
 	push @battery_bits, &subs::ui('estimated from voltage') if $battery->{'estimated'};
+	push @battery_bits, &subs::ui('last reading before charging') if $battery->{'percentage_held'};
 	push @battery_bits, &subs::ui('cable connected') if $battery->{'cable'};
 	my $battery_note = $battery->{'present'}
 		? (@battery_bits ? join(' · ', @battery_bits) : &subs::ui('Battery'))
 		: &subs::ui('No battery sensor');
+	my $low_battery = $battery->{'present'} && !$battery->{'ac'} && defined $battery->{'percentage'}
+		&& $battery->{'percentage'} <= 10;
+	my $low_battery_text = $low_battery
+		? sprintf('%s: %s%.0f%% — %s', &subs::ui('Battery low'), ($battery->{'estimated'} ? '~' : ''),
+			$battery->{'percentage'}, &subs::ui('Plug the controller in.'))
+		: '';
 	my @cpu_bits;
 	push @cpu_bits, $cpu->{'governor'} if $cpu->{'governor'};
 	push @cpu_bits, $cpu->{'cur_mhz'} . ' GHz' if defined $cpu->{'cur_mhz'};
@@ -140,6 +150,7 @@
 		<a id="controller_manager_button" hint="<%= &subs::ui('Open the Manager desk') %>" class="controller_bar_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
 		<span id="controller_clock" class="controller_bar_button controller_clock" aria-label="<%= &subs::ui('Time') %>">—</span>
 	</div>
+	<div id="controller_low_battery"<%= $low_battery ? '' : ' hidden' %> aria-live="polite"><%= $low_battery_text %></div>
 	<div id="controller_power_panel" hidden>
 		<h3><%= &subs::ui('Battery and CPU') %></h3>
 		<div class="controller_power_row"><span><%= &subs::ui('Battery') %></span><strong id="controller_power_battery"><%= $battery_note %></strong></div>
@@ -299,6 +310,10 @@ function closeControllerPanels(except) {
 	var unknown = <%== encode_json(&subs::ui('Unknown')) %>;
 	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
 	var estimated_label = <%== encode_json(&subs::ui('estimated from voltage')) %>;
+	var held_label = <%== encode_json(&subs::ui('last reading before charging')) %>;
+	var low_label = <%== encode_json(&subs::ui('Battery low')) %>;
+	var plug_label = <%== encode_json(&subs::ui('Plug the controller in.')) %>;
+	var lowNote = document.getElementById('controller_low_battery');
 	var cable_label = <%== encode_json(&subs::ui('cable connected')) %>;
 	var cores_label = <%== encode_json(&subs::ui('cores')) %>;
 	var data = null;
@@ -314,8 +329,16 @@ function closeControllerPanels(except) {
 			if (has) { bits.push(text); }
 			if (b.status) { bits.push(b.status); }
 			if (b.estimated) { bits.push(estimated_label); }
+			if (b.percentage_held) { bits.push(held_label); }
 			if (b.cable) { bits.push(cable_label); }
 			batt.textContent = has ? bits.join(' · ') : (b.present ? unknown : unavailable);
+		}
+		if (lowNote) {
+			var low = has && !b.ac && b.percentage <= 10;
+			lowNote.hidden = !low;
+			lowNote.textContent = low
+				? low_label + ': ' + (b.estimated ? '~' : '') + Math.round(b.percentage) + '% — ' + plug_label
+				: '';
 		}
 		if (cpu) {
 			var bits = [];

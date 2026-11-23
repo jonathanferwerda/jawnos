@@ -589,6 +589,9 @@ SH
 # 75% pack on the resting-voltage table. A fake i2cget supplies those registers;
 # the reader is read-only and is what the panel sees on the device.
 {
+	no warnings 'redefine';
+	local *subs::cache_get = sub { {} };
+	local *subs::cache_set = sub { };
 	my $fake = "$scratch/fake_i2cget";
 	write_file($fake, <<'SH');
 #!/bin/sh
@@ -626,6 +629,92 @@ SH
 	$ENV{'JAWNOS_POWER_RK818_DISABLE'} = 1;
 }
 
+# --- the charging gauge holds the last discharge reading ----------------------
+# The charger holds the terminal near 4.2 V, which the resting-voltage table
+# would read as full on a pack that is nearly empty. The last unplugged reading
+# is kept until the PMIC says the pack is full; the raw estimate is still kept.
+{
+	my %memo;
+	no warnings 'redefine';
+	local $subs::power_last_discharge_saved_pct = undef;
+	local *subs::cache_get = sub {
+		my ($p) = @_;
+		return { percentage => $memo{'last_discharge'} }
+			if ($p->{'context'} || '') eq 'last_discharge' && defined $memo{'last_discharge'};
+		return undef;
+	};
+	local *subs::cache_set = sub {
+		my ($p, $d) = @_;
+		$memo{ $p->{'context'} } = $d->{'percentage'} if ref $d eq 'HASH' && defined $d->{'percentage'};
+	};
+	my $charging = {
+		source => 'rk818', status => 'charging', ac => 1, percentage => 96,
+		percentage_raw => 96, estimated => 1, charge_full => 4_000_000,
+		charge_now => 3_840_000, current => 0.9, charge_eta => 0.1,
+	};
+	$memo{'last_discharge'} = 40;
+	my $held = subs::power_battery_charging_hold($charging);
+	is($held->{'percentage'}, 40, 'a charging rk818 keeps the last discharge reading');
+	is($held->{'percentage_ocv'}, 96, 'the raw voltage estimate is kept');
+	is($held->{'percentage_held'}, 1, 'and the reading says it is held');
+	is($held->{'charge_now'}, 1_600_000, 'the stored charge follows the held percentage');
+	ok(abs($held->{'charge_eta'} - ((4_000_000 - 1_600_000) / (0.9 * 1_000_000))) < 0.001,
+		'the charge estimate starts from the held level');
+	my $full = { %{$charging}, status => 'full', percentage => 100, percentage_held => 1 };
+	is(subs::power_battery_charging_hold($full)->{'percentage'}, 100, 'a full pack reads full');
+	my $out = { %{$charging}, status => 'not charging', ac => 0, percentage => 37, percentage_raw => 37 };
+	subs::power_battery_charging_hold($out);
+	is($memo{'last_discharge'}, 37, 'an unplugged reading is stored for the next charge');
+}
+
+# --- the controller's low-battery guard -------------------------------------
+# A controller has no daemon to catch a pack that is about to be cut off. Warn
+# once at ten percent and ask for a clean shutdown at five, after a second tick
+# confirms it; another machine keeps its own policy.
+{
+	my (%state, @notes, @actions);
+	no warnings 'redefine';
+	local *subs::device_setter = sub { 'controller' };
+	local *subs::cache_get = sub {
+		my ($p) = @_;
+		return { %{ $state{ $p->{'context'} } || {} } } if $p->{'context'};
+		return undef;
+	};
+	local *subs::cache_set = sub {
+		my ($p, $d) = @_;
+		$state{ $p->{'context'} } = { %{ $d || {} } };
+	};
+	local *subs::notification_sender = sub { push @notes, $_[0]; };
+	local *subs::power_action = sub { push @actions, $_[0]; return { ok => 1 }; };
+
+	my $battery = { present => 1, ac => 0, percentage => 9, status => 'discharging' };
+	my $first = subs::power_battery_guard($battery);
+	is($first->{'warned'}, 1, 'nine percent warns');
+	is(scalar @notes, 1, 'one notification is sent');
+	like($notes[0]{'message'}, qr/9%/, 'and it names the percentage');
+	is(scalar @actions, 0, 'but nothing is shut down yet');
+
+	subs::power_battery_guard($battery);
+	is(scalar @notes, 1, 'the warning is not repeated on every tick');
+
+	$battery->{'percentage'} = 4;
+	my $low = subs::power_battery_guard($battery);
+	is($low->{'shutdown'}, 0, 'four percent waits for a second confirmation');
+	is(scalar @actions, 0, 'so the first low tick does not shut down');
+	$state{'battery_guard'}{'low_at'} = time - 11;
+	my $off = subs::power_battery_guard($battery);
+	is($off->{'shutdown'}, 1, 'the confirmed low reading shuts down');
+	is_deeply(\@actions, ['shutdown'], 'through the fixed power action');
+	is(scalar @notes, 2, 'and the second notice says it is shutting down');
+
+	subs::power_battery_guard($battery);
+	is(scalar @actions, 1, 'the shutdown is not repeated');
+
+	local *subs::device_setter = sub { 'computer' };
+	is(subs::power_battery_guard($battery)->{'skipped'}, 'not a controller',
+		'another machine keeps its own policy');
+}
+
 # --- the labels and the help topic -----------------------------------------
 {
 	require "$root/perl/language.pl";
@@ -640,6 +729,16 @@ SH
 	is($topic->{app}, 'power', 'the topic names the app');
 	is($topic->{category}, 'apps', 'it lives in the app category');
 	like($topic->{summary}, qr/battery/i, 'the summary names the battery');
+	my $body = join ' ', @{ $topic->{body} || [] };
+	like($body, qr/last reading before charging/, 'the help describes the held charging reading');
+	like($body, qr/ten percent/, 'the help names the warning threshold');
+	like($body, qr/five percent/, 'and the clean-shutdown threshold');
+
+	my $power_src = read_file("$root/lib/JawnOS/Domain/Power.pm");
+	like($power_src, qr/sub power_plan_tick \{.*?&power_battery_guard/s,
+		'the slow tick runs the guard before the manage switch');
+	like(read_file("$root/lib/JawnOS/Domain/Loader.pm"), qr/\bpower_battery_guard\b/,
+		'and the guard is reachable by name');
 
 	my $jobs = read_file("$root/perl/jobs.pl");
 	like($jobs, qr/name => 'power watch'/, 'the slow loop carries the source switch');

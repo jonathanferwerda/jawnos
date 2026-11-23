@@ -262,13 +262,75 @@ sub power_rk818_read {
 	return \%b;
 }
 
+# The rk818's percentage is a resting-voltage estimate. With the cable in, the
+# charger holds the terminal near 4.2 V, so the same table would read full while
+# the pack is still nearly empty. Keep the last reading from before the cable
+# went in and use it until the PMIC reports the pack full; the raw estimate is
+# kept as percentage_ocv for the record. The cache is machine-local and survives
+# a reboot, so a boot while plugged in does not invent a full pack.
+our $power_last_discharge_saved_pct;
+
+sub power_last_discharge {
+	my $memo = eval { &subs::cache_get({ app => 'power', context => 'last_discharge' }) };
+	return ref $memo eq 'HASH' ? $memo : {};
+}
+
+sub power_last_discharge_save {
+	my ($percentage) = @_;
+	return unless defined $percentage;
+	return if defined $power_last_discharge_saved_pct && $power_last_discharge_saved_pct == $percentage;
+	$power_last_discharge_saved_pct = $percentage;
+	eval {
+		&subs::cache_set(
+			{ app => 'power', context => 'last_discharge', warranty => '-30d' },
+			{ percentage => $percentage + 0, at => time },
+		);
+	};
+}
+
+sub power_battery_charging_hold {
+	my ($battery) = @_;
+	return $battery unless ref $battery eq 'HASH' && ($battery->{'source'} || '') eq 'rk818';
+	my $status = $battery->{'status'} || '';
+	if ($status eq 'full') {
+		$battery->{'percentage'} = 100;
+		$battery->{'percentage_held'} = 0;
+		&power_last_discharge_save(100) if $battery->{'ac'};
+		return $battery;
+	}
+	if ($status eq 'charging') {
+		my $last = &power_last_discharge();
+		my $held = $last->{'percentage'};
+		if (defined $held) {
+			$held += 0;
+			my $ocv = $battery->{'percentage'};
+			$held = $ocv if defined $ocv && $ocv < $held;
+			$battery->{'percentage_ocv'} = $ocv if defined $ocv;
+			$battery->{'percentage'} = $held;
+			$battery->{'percentage_held'} = 1;
+			my $full = $battery->{'charge_full'} || 4_000_000;
+			my $now = int($full * $held / 100);
+			$battery->{'charge_now'} = $now;
+			delete $battery->{'discharge_eta'};
+			if (($battery->{'current'} || 0) > 0 && $full > $now) {
+				$battery->{'charge_eta'} = ($full - $now) / ($battery->{'current'} * 1_000_000);
+			}
+			else { delete $battery->{'charge_eta'}; }
+		}
+		return $battery;
+	}
+	&power_last_discharge_save($battery->{'percentage'}) unless $battery->{'ac'};
+	delete $battery->{'percentage_held'};
+	return $battery;
+}
+
 # Read the battery directly. On a Linux machine this is cheap and exact; on a
 # phone sysfs is often denied, so the bridge's battery.status is the fallback.
 # The bridge is not asked on a machine that is plainly not a phone: a desktop
 # with no pack should not wait five seconds for a bridge that is not there.
 sub power_battery_read {
 	my $rk818 = &power_rk818_read();
-	return $rk818 if ref $rk818 eq 'HASH';
+	return &power_battery_charging_hold($rk818) if ref $rk818 eq 'HASH';
 	my $root = &power_sysfs_root();
 	my @supply = grep { -d } glob("$root/class/power_supply/*");
 	my ($battery) = grep {
@@ -927,6 +989,75 @@ sub power_sleep_now {
 	return { %{ &power_helper('sleep', $type) }, type => $type };
 }
 
+# A controller has no low-battery daemon of its own, and the rk818's protection
+# is a hard rail cut: the screen goes dark and the board needs the charger
+# before it will start. Warn once at ten percent, then ask for a clean poweroff
+# at five after a second ten-second tick confirms the reading. Only a controller:
+# a laptop's own daemon may already guard it, and a server on a UPS must not be
+# shut down by a pack it may not even have.
+sub power_battery_guard {
+	my ($battery) = @_;
+	return { ok => 1, skipped => 'not a controller' }
+		unless (&subs::device_setter() || '') eq 'controller';
+	$battery = &power_battery_read() unless ref $battery eq 'HASH';
+	return { ok => 1, skipped => 'no battery' } unless $battery->{'present'};
+	return { ok => 1, skipped => 'on mains' } if $battery->{'ac'};
+	my $percentage = $battery->{'percentage'};
+	return { ok => 1, skipped => 'no reading' } unless defined $percentage;
+
+	my $boot = &power_boot_id();
+	my $state = eval { &subs::cache_get({ app => 'power', context => 'battery_guard' }) };
+	$state = {} unless ref $state eq 'HASH';
+	$state = {} if length $boot && (($state->{'boot'} // '') ne $boot);
+	$state->{'boot'} = $boot if length $boot;
+	my $now = time;
+	my $changed = 0;
+	my $warned = $state->{'warned'} ? 1 : 0;
+	my $low_at = $state->{'low_at'} || 0;
+	my $shutdown = $state->{'shutdown'} ? 1 : 0;
+
+	if (!$warned && $percentage <= 10) {
+		eval {
+			&subs::notification_sender({
+				app => 'power', role => 'citizen', title => 'Battery low',
+				message => "The controller has about $percentage% left. Plug it in.",
+				image => '/images/decipherable/information.png', urgent => 1,
+			});
+		};
+		$warned = 1; $changed = 1;
+	}
+
+	if (!$shutdown && $percentage <= 5) {
+		if (!$low_at) { $low_at = $now; $changed = 1; }
+		elsif ($now - $low_at >= 10) {
+			my $answer = eval { &subs::power_action('shutdown') };
+			my $ok = ref $answer eq 'HASH' && $answer->{'ok'} ? 1 : 0;
+			$shutdown = 1; $changed = 1;
+			$state->{'shutdown_ok'} = $ok;
+			eval {
+				&subs::notification_sender({
+					app => 'power', role => 'citizen', title => 'Battery almost empty',
+					message => $ok
+						? 'The controller is shutting down to protect the battery.'
+						: 'The controller could not shut down. Plug it in now.',
+					image => '/images/decipherable/information.png', urgent => 1, silent => $ok ? 1 : 0,
+				});
+			};
+		}
+	}
+	elsif ($percentage > 5 && $low_at) { $low_at = 0; $changed = 1; }
+
+	if ($changed) {
+		$state->{'warned'} = $warned;
+		$state->{'low_at'} = $low_at;
+		$state->{'shutdown'} = $shutdown;
+		$state->{'percentage'} = $percentage + 0;
+		$state->{'at'} = $now;
+		eval { &subs::cache_set({ app => 'power', context => 'battery_guard', warranty => '-30d' }, $state); };
+	}
+	return { ok => 1, percentage => $percentage + 0, warned => $warned, shutdown => $shutdown };
+}
+
 # The slow loop's turn: when the cable changes, the plan saved for that source
 # is applied once. The saved "last applied" row is what makes this idempotent -
 # every poll after the first is a no-op, so the ten-second tick cannot rewrite
@@ -944,13 +1075,16 @@ sub power_sleep_now {
 # The probe costs a helper run, so it rides a minute clock while the battery is
 # read every ten seconds.
 sub power_plan_tick {
+	my $controller = (&subs::device_setter() || '') eq 'controller';
+	my $battery = $controller ? &power_battery_read() : undef;
+	my $guard = &power_battery_guard($battery);
 	my $config = &power_config();
-	return { ok => 1, skipped => 'system managed' } unless $config->{'manage'};
+	return { ok => 1, skipped => 'system managed', guard => $guard } unless $config->{'manage'};
 	# The ceiling is a choice the kernel does not remember either. Put it back
 	# when a boot, the firmware or a restored daemon has moved it.
 	&power_charge_apply($config);
-	my $battery = &power_battery_read();
-	return { ok => 1, skipped => 'no battery' } unless $battery->{'present'};
+	$battery = &power_battery_read() unless ref $battery eq 'HASH';
+	return { ok => 1, skipped => 'no battery', guard => $guard } unless $battery->{'present'};
 	my $source = $battery->{'ac'} ? 'ac' : 'battery';
 	my $wanted = &power_plans_for_source($config, $source);
 	my $last = &power_last_applied();
@@ -1115,3 +1249,5 @@ sub power_status {
 		charge => $charge,
 	};
 }
+
+1;

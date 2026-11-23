@@ -64,6 +64,8 @@ like($help, qr/category => 'apps', app => 'controller'/,
 	'the topic claims the controller app page');
 like($help, qr/Tapping a text field raises the house keyboard/,
 	'and says the handheld raises the house keyboard for typing');
+like($help, qr/about five percent the controller shuts itself down cleanly/,
+	'and describes the controller\'s clean low-battery shutdown');
 
 # --- the desk sends a controller home ----------------------------------------
 # /manager is the desk. A controller cannot use it, and the panel's first
@@ -154,6 +156,10 @@ like($page, qr|href="/manager/controller/config"|, 'Configuration opens the hand
 like($page, qr/\.controller_tile_icon\s*\{[^}]*width:80%/, 'a tile icon fills 80% of its container');
 like($page, qr/data-power-plan=/, 'the panel offers the CPU profiles');
 like($page, qr/No battery sensor/, 'a pack with no gauge says so');
+like($page, qr/id="controller_low_battery"/, 'the launcher has a low-battery bar');
+like($page, qr/b\.percentage <= 10/, 'shown at ten percent');
+like($page, qr/Battery low/, 'and names the warning');
+like($page, qr/last reading before charging/, 'a held charging reading is named');
 like($page, qr/id="controller_volume"/, 'the launcher has a volume button');
 like($page, qr/id="controller_network"/, 'the launcher has a network button');
 like($page, qr/data-volume-channel="master"/, 'the volume panel has a master row');
