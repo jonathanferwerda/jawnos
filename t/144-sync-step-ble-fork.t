@@ -301,6 +301,8 @@ like( $part17, qr/cast\(server_time as integer\) >= cast\(\? as integer\)/,
 	'and the settings time check compares numbers, not text' );
 like( $part17, qr/settings_time_backfilled\(\$r->\{'server_time'\}\)/,
 	'a peer row wearing a backfill stamp cannot move the bulk hour' );
+like( $part17, qr/appointment_time_bulk\(\$r->\{'server_time'\}\)/,
+	'a peer appointment wearing a bulk stamp cannot overwrite a restored ost' );
 like( $part09, qr/sync_bucket_band_for\(\$table\)/, 'the pull measures each table at its own band' );
 like( $part09, qr/\$table ne 'settings' && ref \$base eq 'HASH'/,
 	'a settled settings baseline is not mistaken for a stale short-pull one' );

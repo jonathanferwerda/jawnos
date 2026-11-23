@@ -656,6 +656,17 @@ sub merge_table_rows {
 									}
 									$r->{'file'} = encode_json $files;
 								}
+								# An appointment the 2026-11 repair re-stamped in bulk wears a stamp
+								# newer than its own `ost`. Left alone that stamp wins every
+								# newest-wins merge and overwrites the per-row `ost` a repair
+								# restores, so the same tens of thousands of rows flip back and
+								# every peer re-reads them (2026-11-23). Rewrite a bulk stamp to
+								# the row's own `ost` before the compare: a row we already hold at
+								# `ost` is then equal and stays.
+								if ($q eq 'appointments' && &subs::appointment_time_bulk($r->{'server_time'})) {
+									my $ost = $r->{'ost'} // '';
+									$r->{'server_time'} = $ost if $ost =~ /^\d{13}$/;
+								}
 								my $removed_row = grep { defined $_->{'uuid'} && defined $r->{'uuid'} && ($_->{'uuid'} eq $r->{'uuid'} ) && ($_->{'table'} || '') eq $q && ($_->{'scope'} || '') ne 'file' } @{$deletions};
 								unless ($removed_row) {
 									if (scalar @resulters == 0) {

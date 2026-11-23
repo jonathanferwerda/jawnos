@@ -773,6 +773,22 @@ sub settings_time_backfilled {
 	return $settings_backfill_stamps->{ $time + 0 } ? 1 : 0;
 }
 
+# The write times the 2026-11 appointment repair left on ~36k rows. They are
+# newer than each row's own `ost`, so a peer still carrying one wins every
+# newest-wins merge and overwrites the `ost` a repair restores - the same rows
+# flip back and every peer re-reads them (2026-11-23). A live write cannot
+# honestly wear these; the merge rewrites them to `ost`. Remove this list when
+# no machine carries them any more.
+our $appointment_bulk_stamps = {
+	1795304127000 => 1, 1782489834918 => 1,
+	1794239786305 => 1, 1792389814015 => 1,
+};
+sub appointment_time_bulk {
+	my ($time) = @_;
+	return 0 unless defined $time && $time =~ /^\d+$/;
+	return $appointment_bulk_stamps->{ $time + 0 } ? 1 : 0;
+}
+
 sub sync_table_buckets {
 	my ($table, $band) = @_;
 	$band = &sync_bucket_normalize($band);

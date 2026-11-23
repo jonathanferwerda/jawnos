@@ -44,6 +44,14 @@ ok( subs::settings_time_backfilled('1795304127000'), 'and the incident stamp' );
 ok( !subs::settings_time_backfilled('1795387000000'), 'a live stamp is not' );
 ok( !subs::settings_time_backfilled(undef), 'and neither is a missing one' );
 
+# The appointment bulk stamps (2026-11): a row wearing one is newer than its own
+# `ost`, so the merge rewrites it instead of letting it overwrite a restored
+# time and flip the same rows back.
+ok( subs::appointment_time_bulk('1795304127000'), 'the appointment incident stamp is a bulk write' );
+ok( subs::appointment_time_bulk('1782489834918'), 'and the June stamp the Laptop kept' );
+ok( !subs::appointment_time_bulk('1795387000000'), 'a live appointment stamp is not' );
+ok( !subs::appointment_time_bulk(undef), 'and a missing one is not either' );
+
 my $dir = tempdir(CLEANUP => 1);
 my $db  = "$dir/jawnos.db";
 my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '',
