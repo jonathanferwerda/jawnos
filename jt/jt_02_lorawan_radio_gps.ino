@@ -24,9 +24,17 @@ uint8_t buffer[256];
 bool gpsReady = false;
 static uint8_t gpsAttempts = 0;
 static uint32_t gpsRetryAt = 0;
+// What the panel asked the module to do. `gps_enabled` is on by default (the
+// deck shipped with a receiver); a u-blox fallback keeps its own defaults.
+bool     gps_enabled = true;
+String   gps_constellation = "gps_glonass";
+uint8_t  gps_rate = 1;
+static bool gps_is_l76k = false;
+static bool gpsApplyRequested = false;
 #define GPS_RETRY_INTERVAL 30000
 #define GPS_MAX_ATTEMPTS   6
 static bool gpsBringUp(uint32_t stopWaitMs, uint32_t verWaitMs, int tries, uint32_t ackMs);
+static void gpsApply();
 
 String textarea_content = "";
 TaskHandle_t    playHandle = NULL;
@@ -108,6 +116,24 @@ uint8_t  lorawan_fport = 1;
 bool     lorawan_confirmed = false;
 String   lorawan_last_error = "";
 int16_t  lorawan_last_rssi = 0;
+
+// ---- raw point-to-point LoRa ------------------------------------------------
+// The SX1262 is shared with LoRaWAN: when `lorawan_enabled` is on the node owns
+// the modem, and these settings only describe the raw fallback. They arrive
+// from Now Me and live in config.json so a deck comes back on the same channel.
+float   lora_frequency = 433.0;
+uint8_t lora_spreading_factor = 9;
+float   lora_bandwidth = 125.0;
+int8_t  lora_tx_power = 22;
+float   lora_last_rssi = 0;
+float   lora_last_snr = 0;
+static bool     loraApplyRequested = false;
+static volatile bool loraTxPending = false;
+static uint32_t loraTxAt = 0;
+static String   loraPendingPayload;
+static uint32_t loraPendingAt = 0;
+static uint8_t  loraPendingTries = 0;
+
 volatile bool operationDone = false;
 void setFlag(void) {
   // we sent or received a packet, set the flag
@@ -258,6 +284,115 @@ static void radioBusProbe() {
   }
   deckLog("[radio] probe: version=%s user=0x%08x", hex,
           (unsigned)READ_PERI_REG(SPI_USER_REG(2)));
+}
+
+// Bring the modem up for the configured raw settings. This has to be the last
+// word on output power and current: SX1262::begin() calls setCurrentLimit(60)
+// and setOutputPower(cfg.power) itself, so a limit applied before begin is gone
+// by the time begin returns - which is why 22 dBm never reached the antenna.
+static void loraApply() {
+  loraApplyRequested = false;
+  if (lorawan_enabled && hasRadio) {
+    // LoRaWAN owns a live modem. A raw setting changed meanwhile is kept in
+    // config.json and applied when LoRaWAN is turned off (/lorawan_config).
+    deckLog("%s", "[radio] raw settings saved; LoRaWAN owns the modem");
+    return;
+  }
+  loraTxPending = false;
+  operationDone = false;
+  loraPendingPayload = "";
+  loraPendingTries = 0;
+  int state = radio.begin(lora_frequency, lora_bandwidth, lora_spreading_factor, 7,
+                          RADIOLIB_SX126X_SYNC_WORD_PRIVATE, lora_tx_power, 8, 1.6, false);
+  if (state != RADIOLIB_ERR_NONE) {
+    hasRadio = false;
+    deckLog("[radio] init failed (%d) at %.3f MHz", state, lora_frequency);
+    return;
+  }
+  // begin() has just reset both of these, so they belong after it, not before.
+  radio.setOutputPower(lora_tx_power);
+  radio.setCurrentLimit(lora_tx_power >= 20 ? 140.0 : 80.0);
+  radio.setDio1Action(setFlag);
+  hasRadio = true;
+  if (lorawan_enabled) {
+    // LoRaWAN owns the modem. The node sets its own channel frequency on every
+    // uplink, so the raw parameters above are only the initial bring-up; the
+    // radio must not also sit in the point-to-point receive state.
+    lorawanBegin();
+    deckLog("[radio] up for LoRaWAN (brought up at %.3f MHz)", lora_frequency);
+    return;
+  }
+  if (loraChatReceiver) {
+    radio.startReceive();
+  }
+  else {
+    radio.standby();
+  }
+  deckLog("[radio] up: %.3f MHz SF%u BW%.1f %d dBm", lora_frequency,
+          (unsigned)lora_spreading_factor, lora_bandwidth, (int)lora_tx_power);
+}
+
+// One raw transmit, after listening on the channel first. The SX1262 can CAD,
+// so a message waits out a busy channel instead of talking over a packet that
+// is already in the air. Only one payload is held; each try is bounded.
+static void loraQueuePayload(const String& payload) {
+  if (!hasRadio || lorawan_enabled || payload.length() == 0) { return; }
+  int16_t cad = radio.scanChannel();
+  // scanChannel() is blocking and its CAD_DONE also fires DIO1, so the flag it
+  // leaves behind is not a received packet.
+  operationDone = false;
+  if (cad == RADIOLIB_LORA_DETECTED) {
+    loraPendingPayload = payload;
+    if (loraPendingTries < 255) { loraPendingTries++; }
+    if (loraPendingTries <= 4) {
+      loraPendingAt = millis() + 80 + (esp_random() % 120);
+      deckLog("[lora] channel busy, retrying (%u)", (unsigned)loraPendingTries);
+    }
+    else {
+      deckLog("[lora] channel busy, dropped after %u tries", (unsigned)loraPendingTries);
+      loraPendingPayload = "";
+      loraPendingTries = 0;
+      // The CAD put the radio in standby; a dropped message must not leave it
+      // deaf for the next packet.
+      if (loraChatReceiver) { radio.startReceive(); } else { radio.standby(); }
+    }
+    return;
+  }
+  if (cad != RADIOLIB_CHANNEL_FREE) {
+    // CAD could not answer; a message is better late than never
+    deckLog("[lora] channel scan failed (%d); sending anyway", cad);
+  }
+  loraTxPending = true;
+  loraTxAt = millis();
+  operationDone = false;
+  // RadioLib's startTransmit takes a non-const reference
+  String out = payload;
+  int st = radio.startTransmit(out);
+  if (st != RADIOLIB_ERR_NONE) {
+    loraTxPending = false;
+    deckLog("[lora] transmit start failed (%d)", st);
+    if (loraChatReceiver) { radio.startReceive(); } else { radio.standby(); }
+    return;
+  }
+  loraPendingPayload = "";
+  loraPendingTries = 0;
+  deckLog("[lora] queued %u bytes", (unsigned)payload.length());
+}
+
+// The loop's half: retry a payload the channel was busy for, and stop waiting
+// on a transmit whose DIO1 never came (the radio must not sit in TX for ever).
+static void loraService() {
+  if (!hasRadio || lorawan_enabled) { return; }
+  if (loraTxPending && millis() - loraTxAt > 5000) {
+    loraTxPending = false;
+    radio.finishTransmit();
+    if (loraChatReceiver) { radio.startReceive(); } else { radio.standby(); }
+    deckLog("[lora] transmit timeout; back to listening");
+  }
+  if (loraPendingPayload.length() && millis() >= loraPendingAt) {
+    String pending = loraPendingPayload;
+    loraQueuePayload(pending);
+  }
 }
 
 // The allocator installed in setup(): mbedTLS's big buffers (the handshake's

@@ -1,61 +1,83 @@
 void readRadio() {
-  if (loraChatReceiver && hasRadio && !lorawan_enabled) {
-    if (operationDone) {
-      operationDone = false;
-      String str;
-      int state = radio.readData(str);
-      if (state == RADIOLIB_ERR_NONE) {
-        radio.startReceive();
+  // A bare `operationDone` is also fired by the CAD a transmit starts with, so
+  // the flag alone does not mean a packet arrived: loraTxPending tells the two
+  // apart, and a transmit completion must be finished before receiving again.
+  if (!hasRadio || lorawan_enabled || !operationDone) { return; }
+  operationDone = false;
+  if (loraTxPending) {
+    loraTxPending = false;
+    radio.finishTransmit();
+    if (loraChatReceiver) { radio.startReceive(); } else { radio.standby(); }
+    return;
+  }
+  if (!loraChatReceiver) {
+    radio.standby();
+    return;
+  }
+  String str;
+  int state = radio.readData(str);
+  if (state == RADIOLIB_ERR_NONE) {
+    // Read the figures before the radio is put back into receive: they describe
+    // the packet that just arrived, not whatever the next one will be.
+    lora_last_rssi = radio.getRSSI();
+    lora_last_snr = radio.getSNR();
+    deckLog("[lora] rx %u bytes rssi %.1f dBm snr %.1f dB",
+            (unsigned)str.length(), lora_last_rssi, lora_last_snr);
+    radio.startReceive();
 
-        JSONVar js = JSON.parse(str);
-        Serial.println(str);
-        String msg_check = (const char *)js["msg"];
-        String ssid_check = (const char *)js["ap_ssid"];
-        String chat_check = (const char *)js["m"];
-        if (chat_check != "") {
-          String username = js["u"];
-          String message = js["m"];
-          long timestamp = rightNow();
-          chat_text_writer(username, message, timestamp);
+    JSONVar js = JSON.parse(str);
+    Serial.println(str);
+    String msg_check = (const char *)js["msg"];
+    String ssid_check = (const char *)js["ap_ssid"];
+    String chat_check = (const char *)js["m"];
+    if (chat_check != "") {
+      String username = js["u"];
+      String message = js["m"];
+      long timestamp = rightNow();
+      chat_text_writer(username, message, timestamp);
 
-          Serial.println(str);
-          if (authorization != "") {
-            String request = "https://" + homebaseIP + "/watch/chat_received?message=" + urlEncode(message) + "&username=" + urlEncode(username);
-            String jawnnformation = https_request(request);
-            Serial.println(jawnnformation);
-          }
-        }
-        else if (ssid_check != "") {
-          Serial.println("Got an ssid " + ssid_check);
-          ssid = (const char *)js["ap_ssid"];
-          password = (const char *)js["ap_password"];
-
-          webserver_enabled = true;
-          wifi_server();
-          delay(1000);
-          // Serial.print("Transmitting...");
-
-          JSONVar returner;
-          returner["time"] = rtc.getLocalEpoch();
-          String returns = JSON.stringify(returner);
-          //   radio.startTransmit(returns);
-          //   Serial.println(returns);
-          //   delay(1000);
-        }
-        else if (msg_check != "") {
-          String app = (const char *)js["app"];
-          Serial.println(app);
-          Serial.println("Got a message: " + msg_check);
-          JSONVar result = JSON.parse(https_request(
-                                        "https://" + homebaseIP +
-                                        "/watch/telephone_msg?timestamp=" + rtc.getLocalEpoch() +
-                                        "&msg=" + msg_check + "&app=" + app
-                                      ));
-          String rs = JSON.stringify(result);
-          Serial.println(rs);
-        }
+      Serial.println(str);
+      if (authorization != "") {
+        String request = "https://" + homebaseIP + "/watch/chat_received?message=" + urlEncode(message) + "&username=" + urlEncode(username);
+        String jawnnformation = https_request(request);
+        Serial.println(jawnnformation);
       }
     }
+    else if (ssid_check != "") {
+      Serial.println("Got an ssid " + ssid_check);
+      ssid = (const char *)js["ap_ssid"];
+      password = (const char *)js["ap_password"];
+
+      webserver_enabled = true;
+      wifi_server();
+      delay(1000);
+      // Serial.print("Transmitting...");
+
+      JSONVar returner;
+      returner["time"] = rtc.getLocalEpoch();
+      String returns = JSON.stringify(returner);
+      //   radio.startTransmit(returns);
+      //   Serial.println(returns);
+      //   delay(1000);
+    }
+    else if (msg_check != "") {
+      String app = (const char *)js["app"];
+      Serial.println(app);
+      Serial.println("Got a message: " + msg_check);
+      JSONVar result = JSON.parse(https_request(
+                                    "https://" + homebaseIP +
+                                    "/watch/telephone_msg?timestamp=" + rtc.getLocalEpoch() +
+                                    "&msg=" + msg_check + "&app=" + app
+                                  ));
+      String rs = JSON.stringify(result);
+      Serial.println(rs);
+    }
+  }
+  else {
+    // A spurious DIO1 (or a CRC-dropped frame) still has to put the radio
+    // back into receive, or the next packet is missed.
+    deckLog("[lora] readData failed (%d); re-arming receive", state);
+    radio.startReceive();
   }
 }
 void display_exit( void ) {
@@ -477,8 +499,8 @@ void loraChatBroadcast(String computer_name, String body, long timestamp) {
 
     String returns = JSON.stringify(msg);
     Serial.println(returns);
-    radio.startTransmit(returns);
-    Serial.println("transmitted");
+    loraQueuePayload(returns);
+    Serial.println("queued");
     // delay(2000);
     //   radio.startReceive();
     Serial.println("back to listening");

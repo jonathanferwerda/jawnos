@@ -205,7 +205,47 @@ void jawn_loop() {
             audio_key = ak ? ak : "";
             audio_key.trim();
           }
+          // Raw LoRa and GPS settings from the room's __specs. A bad value
+          // leaves the current one alone; the radio/GPS apply at the end of
+          // this block, away from the BLE callback's own stack.
+          if (params.hasOwnProperty("lora_frequency")) {
+            float f = String((const char *)params["lora_frequency"]).toFloat();
+            if (f >= 150.0 && f <= 960.0) { lora_frequency = f; loraApplyRequested = true; }
+          }
+          if (params.hasOwnProperty("lora_spreading_factor")) {
+            int sf = String((const char *)params["lora_spreading_factor"]).toInt();
+            if (sf >= 7 && sf <= 12) { lora_spreading_factor = (uint8_t)sf; loraApplyRequested = true; }
+          }
+          if (params.hasOwnProperty("lora_bandwidth")) {
+            float bw = String((const char *)params["lora_bandwidth"]).toFloat();
+            if (bw == 125.0 || bw == 250.0 || bw == 500.0) { lora_bandwidth = bw; loraApplyRequested = true; }
+          }
+          if (params.hasOwnProperty("lora_tx_power")) {
+            int p = String((const char *)params["lora_tx_power"]).toInt();
+            if (p >= 0 && p <= 22) { lora_tx_power = (int8_t)p; loraApplyRequested = true; }
+          }
+          if (params.hasOwnProperty("gps_enabled")) {
+            String ge = String((const char *)params["gps_enabled"]); ge.trim();
+            if (ge == "on" || ge == "off") { gps_enabled = (ge == "on"); gpsApplyRequested = true; }
+          }
+          if (params.hasOwnProperty("gps_constellation")) {
+            String gc = String((const char *)params["gps_constellation"]); gc.trim();
+            if (gc == "gps_glonass" || gc == "all" || gc == "gps_bds" ||
+                gc == "gps" || gc == "glonass" || gc == "bds") {
+              gps_constellation = gc;
+              gpsApplyRequested = true;
+            }
+          }
+          if (params.hasOwnProperty("gps_rate")) {
+            String gr = String((const char *)params["gps_rate"]); gr.trim();
+            if (gr == "1" || gr == "2" || gr == "5") {
+              gps_rate = (uint8_t)gr.toInt();
+              gpsApplyRequested = true;
+            }
+          }
           voice_trigger_apply();
+          if (loraApplyRequested) { loraApply(); }
+          if (gpsApplyRequested) { gpsApply(); }
           buttoned_before = false;   // ask the bridge for fresh buttons
           deckLog("[bt] now_me applied");
           remote_room();
@@ -364,6 +404,8 @@ void jawn_loop() {
     ws_connected = 0;
     tauth_connect();
     voice_trigger_apply();
+    if (loraApplyRequested) { loraApply(); }
+    if (gpsApplyRequested) { gpsApply(); }
     // Persist the uplink now, unless the microphone is busy: a flash write
     // during a capture is the buzz the PSRAM buffer exists to avoid. An idle
     // deck writes its config; a busy one keeps the choice until the next save.
@@ -664,12 +706,13 @@ void jawn_loop() {
   }
   server.handleClient();
   readRadio();
+  loraService();
   uint32_t tAfterRadio = millis();
     // The GPS bring-up retries in the background: bounded, and it stops trying
     // after a few goes so a missing module costs nothing after that. Only while
     // the panel is asleep: the probe blocks for up to a couple of seconds and
     // must not stall a room the person is using.
-    if (!gpsReady && gpsAttempts < GPS_MAX_ATTEMPTS && millis() > gpsRetryAt && screenAsleep) {
+    if (gps_enabled && !gpsReady && gpsAttempts < GPS_MAX_ATTEMPTS && millis() > gpsRetryAt && screenAsleep) {
       gpsAttempts++;
       gpsRetryAt = millis() + GPS_RETRY_INTERVAL;
       deckLog("[gps] retry %u of %u", (unsigned)gpsAttempts, (unsigned)GPS_MAX_ATTEMPTS);
@@ -688,7 +731,7 @@ void jawn_loop() {
     static String hostLine;
     while (Serial.available()) {
         char ch = Serial.read();
-        SerialGPS.write(ch);
+        if (gps_enabled) { SerialGPS.write(ch); }
         if (ch == '\n') {
             if (hostLine.startsWith("JAWNDUMP ")) {
                 serialDumpFile(hostLine.substring(9));
@@ -752,7 +795,7 @@ void jawn_loop() {
         // wrong baud used to hold this loop for seconds. Parse at most 10 ms
         // worth per pass; the rest waits for the next pass.
         uint32_t gps_started = millis();
-        while (SerialGPS.available() && millis() - gps_started < 10) {
+        while (gps_enabled && gpsReady && SerialGPS.available() && millis() - gps_started < 10) {
             int c = SerialGPS.read();
             // Serial.write(c);
             if (gps.encode(c)) {
@@ -761,7 +804,7 @@ void jawn_loop() {
         }
     }
 
-    if (millis() > 30000 && gps.charsProcessed() < 10) {
+    if (gps_enabled && millis() > 30000 && gps.charsProcessed() < 10) {
         Serial.println(F("No GPS detected: check wiring."));
         delay(1000);
     }

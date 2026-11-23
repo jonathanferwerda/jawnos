@@ -300,9 +300,7 @@ void jawn_setup() {
     String jsm = JSON.stringify(m);
     //  Serial.println("Sending msg: " + jsm);
     if (hasRadio && !lorawan_enabled) {
-      radio.startTransmit(jsm);
-      delay(2000);
-      radio.startReceive();
+      loraQueuePayload(jsm);
     }
     server.send(200, "text/plain", "transmission sent");
   });
@@ -342,6 +340,11 @@ void jawn_setup() {
     if (server.hasArg("confirmed")) { lorawan_confirmed = server.arg("confirmed") == "on"; }
     configSave();
     lorawanBegin();
+    // Turning LoRaWAN off gives the modem back to the raw chat; turning it on
+    // leaves it to the node (lorawanBegin above already claimed it).
+    if (!lorawan_enabled) {
+      loraApply();
+    }
     server.send(200, "application/json", lorawanStatusJson());
   });
   server.on("/lorawan_join", []() {
@@ -407,6 +410,22 @@ void jawn_setup() {
     // pack sitting above a full cell's rest voltage. That is the same read
     // LilyGoLib uses, and it keeps a deck on USB from counting down.
     g["battery_status"] = (bmv > 4300) ? (bp >= 100 ? "full" : "charging") : "discharging";
+    // The radio and receiver settings, so the panel can show what the deck is
+    // actually doing (a stale config.json is visible here, not just in the UI).
+    g["has_radio"] = hasRadio ? "on" : "off";
+    g["lora_frequency"] = lora_frequency;
+    g["lora_spreading_factor"] = lora_spreading_factor;
+    g["lora_bandwidth"] = lora_bandwidth;
+    g["lora_tx_power"] = lora_tx_power;
+    g["lora_last_rssi"] = lora_last_rssi;
+    g["lora_last_snr"] = lora_last_snr;
+    g["gps_enabled"] = gps_enabled ? "on" : "off";
+    g["gps_constellation"] = gps_constellation;
+    g["gps_rate"] = gps_rate;
+    g["gps_ready"] = gpsReady ? "yes" : "no";
+    g["gps_lat"] = gps.location.lat();
+    g["gps_lng"] = gps.location.lng();
+    g["gps_sats"] = gps.satellites.value();
     JSONVar jonfig = g;
     jonfig["ssid"] = undefined;
     jonfig["password"] = undefined;
@@ -551,6 +570,44 @@ void jawn_setup() {
     if (server.hasArg("audio_uplink")) { audio_uplink = server.arg("audio_uplink"); audio_uplink.trim(); }
     if (server.hasArg("audio_stream")) { audio_stream = server.arg("audio_stream").toInt(); }
     if (server.hasArg("audio_key")) { audio_key = server.arg("audio_key"); audio_key.trim(); }
+    // Raw LoRa and GPS settings. A bad value leaves the current one alone; the
+    // apply runs in loop() with the rest of the Now Me work, never in this
+    // handler (a radio reconfigure there would nest under the HTTP server).
+    if (server.hasArg("lora_frequency")) {
+      float f = server.arg("lora_frequency").toFloat();
+      if (f >= 150.0 && f <= 960.0) { lora_frequency = f; loraApplyRequested = true; }
+    }
+    if (server.hasArg("lora_spreading_factor")) {
+      int sf = server.arg("lora_spreading_factor").toInt();
+      if (sf >= 7 && sf <= 12) { lora_spreading_factor = (uint8_t)sf; loraApplyRequested = true; }
+    }
+    if (server.hasArg("lora_bandwidth")) {
+      float bw = server.arg("lora_bandwidth").toFloat();
+      if (bw == 125.0 || bw == 250.0 || bw == 500.0) { lora_bandwidth = bw; loraApplyRequested = true; }
+    }
+    if (server.hasArg("lora_tx_power")) {
+      int p = server.arg("lora_tx_power").toInt();
+      if (p >= 0 && p <= 22) { lora_tx_power = (int8_t)p; loraApplyRequested = true; }
+    }
+    if (server.hasArg("gps_enabled")) {
+      String ge = server.arg("gps_enabled"); ge.trim();
+      if (ge == "on" || ge == "off") { gps_enabled = (ge == "on"); gpsApplyRequested = true; }
+    }
+    if (server.hasArg("gps_constellation")) {
+      String gc = server.arg("gps_constellation"); gc.trim();
+      if (gc == "gps_glonass" || gc == "all" || gc == "gps_bds" ||
+          gc == "gps" || gc == "glonass" || gc == "bds") {
+        gps_constellation = gc;
+        gpsApplyRequested = true;
+      }
+    }
+    if (server.hasArg("gps_rate")) {
+      String gr = server.arg("gps_rate"); gr.trim();
+      if (gr == "1" || gr == "2" || gr == "5") {
+        gps_rate = (uint8_t)gr.toInt();
+        gpsApplyRequested = true;
+      }
+    }
 
     pmuIrq = false;
     buttoned_before = false;
@@ -604,35 +661,14 @@ void jawn_setup() {
   // here should hold the room off the screen for a network round trip.
   wsclient.onMessage(wsMessageCallback);
   wsclient.onEvent(wsEventCallback);
-  // set output power to 10 dBm (accepted range is -17 - 22 dBm)
   // The radio is a bonus like the GPS: each of these used to park in a silent
   // `while (true);` on failure, which froze the deck with nothing in the log.
   // Booting without a radio is better (hasRadio is what the LoRa paths check).
   deckLog("[deck] radio init");
-  if (radio.setOutputPower(22) == RADIOLIB_ERR_INVALID_OUTPUT_POWER) {
-    deckLog("[radio] invalid output power; continuing without it");
-  }
-  // set over current protection limit to 80 mA (accepted range is 45 - 240 mA)
-  // NOTE: set value to 0 to disable overcurrent protection
-  if (radio.setCurrentLimit(80) == RADIOLIB_ERR_INVALID_CURRENT_LIMIT) {
-    deckLog("[radio] invalid current limit; continuing without it");
-  }
-  int state = radio.begin(433.0);
-  if (state == RADIOLIB_ERR_NONE) {
-    radio.setDio1Action(setFlag);
-    hasRadio = true;
-    // LoRaWAN owns the radio when it is on; the point-to-point chat stays an
-    // alternative mode and must not also sit in raw receive waiting for a packet.
-    if (lorawan_enabled) {
-      lorawanBegin();
-    }
-    else {
-      radio.startReceive();
-    }
-    deckLog("[radio] up");
-  } else {
-    deckLog("[radio] init failed (%d); continuing without it", state);
-  }
+  // loraApply() owns begin(), output power and current limit (in that order:
+  // begin() resets the last two), so the LoRaWAN path and the raw path share
+  // one bring-up. It restores the settings configRestore() just loaded.
+  loraApply();
   if (!hasRadio) {
     radioBusProbe();
   }

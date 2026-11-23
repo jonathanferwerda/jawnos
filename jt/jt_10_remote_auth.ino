@@ -55,6 +55,11 @@ static void loraReceiveToggle(lv_event_t *e) {
     lv_obj_set_style_bg_color(lora_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
     loraChatReceiver = false;
   }
+  // The receiver flag is only a preference: loop() re-arms from it, but a
+  // toggle has to move the radio now so the next packet is not missed.
+  if (hasRadio && !lorawan_enabled) {
+    if (loraChatReceiver) { radio.startReceive(); } else { radio.standby(); }
+  }
 }
 
 static void ap_lora_send(lv_event_t *e) {
@@ -64,7 +69,7 @@ static void ap_lora_send(lv_event_t *e) {
   pa["ap_password"] = ap_password;
   String public_announcement = JSON.stringify(pa);
   if (hasRadio) {
-    radio.startTransmit(public_announcement);
+    loraQueuePayload(public_announcement);
   }
   //Serial.print(public_announcement);
 }
@@ -77,7 +82,7 @@ static void wifi_lora_send(lv_event_t *e) {
   pa["ap_password"] = password;
   String public_announcement = JSON.stringify(pa);
   if (hasRadio) {
-    radio.startTransmit(public_announcement);
+    loraQueuePayload(public_announcement);
   }
   //Serial.print(public_announcement);
 }

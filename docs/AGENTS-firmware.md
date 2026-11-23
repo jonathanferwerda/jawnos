@@ -42,3 +42,10 @@ unstaged build means an OTA sends the previous firmware.
   is shown in the panel), and downlinks reach `/watch/chat_received?transport=lorawan`. While
   LoRaWAN is on, the old raw-LoRa point-to-point broadcast/receive stand down. Build and stage the
   firmware with the same `stage_firmware.pl` path before an OTA.
+- **Raw LoRa mesh and GPS (T-Deck)** — the raw mesh settings `lora_frequency`,
+  `lora_spreading_factor`, `lora_bandwidth` and `lora_tx_power`, and the GPS settings `gps_enabled`,
+  `gps_constellation` and `gps_rate`, are `__specs` values pushed by Now Me and saved in the deck's
+  `config.json`. The raw path runs a CAD listen-before-talk check before transmit, reports RSSI/SNR
+  for received packets, and re-arms receive after a send. The radio is band-specific (LilyGo
+  433/868/915 SKUs): the Chat → LoRa band dropdown is not a hardware selector, so the band must match
+  the board.

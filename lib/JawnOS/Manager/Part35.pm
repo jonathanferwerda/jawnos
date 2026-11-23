@@ -252,6 +252,16 @@ sub now_me($data) {
 		$params->{audio_uplink} = $deck_uplink->{address} // '';
 		$params->{audio_stream} = defined $deck_uplink->{stream} ? $deck_uplink->{stream} : -1;
 		$params->{audio_key}    = $deck_uplink->{key} // '';
+		# Raw GPS and LoRa mesh choices the deck applies itself. The radio's band
+		# is hardware-specific: a frequency outside this board's band is carried
+		# and stored, but the deck cannot hear it.
+		$params->{gps_enabled}           = $op_d->{'__specs'}->{'gps_enabled'} // 'on';
+		$params->{gps_constellation}     = $op_d->{'__specs'}->{'gps_constellation'} // 'gps_glonass';
+		$params->{gps_rate}              = $op_d->{'__specs'}->{'gps_rate'} // '1';
+		$params->{lora_frequency}        = $op_d->{'__specs'}->{'lora_frequency'} // '433.0';
+		$params->{lora_spreading_factor} = $op_d->{'__specs'}->{'lora_spreading_factor'} // '9';
+		$params->{lora_bandwidth}        = $op_d->{'__specs'}->{'lora_bandwidth'} // '125.0';
+		$params->{lora_tx_power}         = $op_d->{'__specs'}->{'lora_tx_power'} // '22';
 	}
 
 	my $watch_home = Mojo::URL->new("http://$watch->{ip}:$config->{port}/now_me")

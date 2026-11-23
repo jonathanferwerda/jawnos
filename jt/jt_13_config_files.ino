@@ -44,6 +44,15 @@ void configSave() {
   conf["lorawan_app_key"] = lorawan_app_key;
   conf["lorawan_fport"] = lorawan_fport;
   conf["lorawan_confirmed"] = lorawan_confirmed ? "on" : "off";
+  // raw LoRa and GPS settings: these describe the modem and receiver the panel
+  // tuned, so they survive a reboot even before the next Now Me
+  conf["lora_frequency"] = lora_frequency;
+  conf["lora_spreading_factor"] = lora_spreading_factor;
+  conf["lora_bandwidth"] = lora_bandwidth;
+  conf["lora_tx_power"] = lora_tx_power;
+  conf["gps_enabled"] = gps_enabled ? "on" : "off";
+  conf["gps_constellation"] = gps_constellation;
+  conf["gps_rate"] = gps_rate;
   if (buttoned_before == true) {
     conf["buttoned_before"] = "on";
   }
@@ -178,6 +187,15 @@ void configDefaults() {
 	  lorawan_fport = 1;
 	  lorawan_confirmed = false;
 	  lorawan_last_error = "";
+	  lora_frequency = 433.0;
+	  lora_spreading_factor = 9;
+	  lora_bandwidth = 125.0;
+	  lora_tx_power = 22;
+	  lora_last_rssi = 0;
+	  lora_last_snr = 0;
+	  gps_enabled = true;
+	  gps_constellation = "gps_glonass";
+	  gps_rate = 1;
   tauth_remote_enabled = "off";
   voice_trigger = "off";
   voice_floor = "auto";
@@ -344,6 +362,26 @@ void configRestore() {
 	    int lwf = conf["lorawan_fport"];
 	    lorawan_fport = (lwf >= 1 && lwf <= 223) ? (uint8_t)lwf : 1;
     lorawan_confirmed = (String((const char *)conf["lorawan_confirmed"]) == "on");
+    // raw LoRa and GPS settings; a value the modem/PCAS cannot use falls back
+    // to the default configDefaults() just installed
+    double lfq = conf["lora_frequency"];
+    if (lfq >= 150.0 && lfq <= 960.0) { lora_frequency = (float)lfq; }
+    int lsf = conf["lora_spreading_factor"];
+    if (lsf >= 7 && lsf <= 12) { lora_spreading_factor = (uint8_t)lsf; }
+    double lbw = conf["lora_bandwidth"];
+    if (lbw == 125.0 || lbw == 250.0 || lbw == 500.0) { lora_bandwidth = (float)lbw; }
+    int ltp = conf["lora_tx_power"];
+    if (ltp >= 0 && ltp <= 22) { lora_tx_power = (int8_t)ltp; }
+    String gps_en = (const char *)conf["gps_enabled"];
+    if (gps_en == "on" || gps_en == "off") { gps_enabled = (gps_en == "on"); }
+    String gps_c = (const char *)conf["gps_constellation"];
+    if (gps_c == "gps_glonass" || gps_c == "all" || gps_c == "gps_bds" ||
+        gps_c == "gps" || gps_c == "glonass" || gps_c == "bds") {
+      gps_constellation = gps_c;
+    }
+    // configSave writes this as a JSON number, so read it as one
+    int gps_r = conf["gps_rate"];
+    if (gps_r == 1 || gps_r == 2 || gps_r == 5) { gps_rate = (uint8_t)gps_r; }
     tauth_remote_enabled = (const char *)conf["tauth_remote_enabled"];
     if (tauth_remote_enabled == "on") {
       // Not here: the dial blocks on the connect timeout, and this is setup().

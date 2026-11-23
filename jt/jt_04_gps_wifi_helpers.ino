@@ -1,3 +1,33 @@
+// L76K PCAS helpers. Both commands take a decimal argument and end with the
+// NMEA XOR checksum, so the payload is built once here and the checksum is
+// computed instead of being kept by hand in every command string.
+static uint8_t gpsConstellationMode() {
+  // PCAS04 mode table (L76K): 1 GPS, 2 BeiDou, 3 GPS+BeiDou, 4 GLONASS,
+  // 5 GPS+GLONASS (the module's default), 6 BeiDou+GLONASS, 7 all three.
+  // The M10Q has no Galileo either, and keeps its own default instead.
+  if (gps_constellation == "gps")     { return 1; }
+  if (gps_constellation == "bds")     { return 2; }
+  if (gps_constellation == "gps_bds") { return 3; }
+  if (gps_constellation == "glonass") { return 4; }
+  if (gps_constellation == "all")     { return 7; }
+  return 5;   // gps_glonass
+}
+
+static uint16_t gpsRateMs() {
+  // PCAS02 interval in ms: 200 = 5 Hz, 500 = 2 Hz, 1000 = 1 Hz
+  if (gps_rate == 2) { return 500; }
+  if (gps_rate == 5) { return 200; }
+  return 1000;
+}
+
+static void gpsNmeaWrite(const String& body) {
+  char line[96];
+  uint8_t sum = 0;
+  for (size_t i = 0; i < body.length(); i++) { sum ^= (uint8_t)body[i]; }
+  snprintf(line, sizeof(line), "$%s*%02X\r\n", body.c_str(), (unsigned)sum);
+  SerialGPS.write((const uint8_t *)line, strlen(line));
+}
+
 bool setupGPS(uint32_t stopWaitMs, uint32_t verWaitMs, int tries) {
   // L76K GPS USE 9600 BAUDRATE
   SerialGPS.begin(9600, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
@@ -40,18 +70,21 @@ bool setupGPS(uint32_t stopWaitMs, uint32_t verWaitMs, int tries) {
     ver = SerialGPS.readStringUntil('\n');
     if (ver.startsWith("$GPTXT,01,01,02")) {
         Serial.println("L76K GNSS init succeeded, using L76K GNSS Module\n");
+        gps_is_l76k = true;
         result = true;
         break;
     }
     delay(500);
   }
-  // Initialize the L76K Chip, use GPS + GLONASS
-  SerialGPS.write("$PCAS04,5*1C\r\n");
+  // Initialize the L76K Chip with the panel's constellation and rate
+  gpsNmeaWrite("PCAS04," + String(gpsConstellationMode()));
   delay(250);
-  SerialGPS.write("$PCAS03,1,1,1,1,1,1,1,1,1,1,,,0,0*02\r\n");
+  gpsNmeaWrite("PCAS02," + String(gpsRateMs()));
+  delay(250);
+  gpsNmeaWrite("PCAS03,1,1,1,1,1,1,1,1,1,1,,,0,0");
   delay(250);
   // Switch to Vehicle Mode, since SoftRF enables Aviation < 2g
-  SerialGPS.write("$PCAS11,3*1E\r\n");
+  gpsNmeaWrite("PCAS11,3");
   return result;
 }
 
@@ -100,6 +133,7 @@ static bool gpsBringUp(uint32_t stopWaitMs, uint32_t verWaitMs, int tries, uint3
     return true;
   }
   // maybe it is a u-blox M10Q at 38400 instead of an L76K at 9600
+  gps_is_l76k = false;
   deckLog("[gps] no L76K, trying u-blox at 38400");
   SerialGPS.begin(38400, SERIAL_8N1, BOARD_GPS_RX_PIN, BOARD_GPS_TX_PIN);
   if (GPS_Recovery(ackMs)) {
@@ -108,9 +142,41 @@ static bool gpsBringUp(uint32_t stopWaitMs, uint32_t verWaitMs, int tries, uint3
   deckLog("[gps] trying u-blox at 9600");
   SerialGPS.updateBaudRate(9600);
   if (GPS_Recovery(ackMs)) {
+    // UBX constellation/rate configuration is deliberately not attempted: the
+    // M10Q keeps its own default constellation and 1 Hz.
+    gps_is_l76k = false;
     return true;
   }
   return false;
+}
+
+// Apply a constellation or rate change to an already-brought-up module. A
+// module that is not up yet is only scheduled: the retry in loop() owns the
+// blocking bring-up, so this never stalls the UI.
+static void gpsApply() {
+  gpsApplyRequested = false;
+  if (!gps_enabled) {
+    SerialGPS.end();
+    gpsReady = false;
+    gpsAttempts = 0;
+    deckLog("[gps] disabled");
+    return;
+  }
+  if (gpsReady && gps_is_l76k) {
+    gpsNmeaWrite("PCAS04," + String(gpsConstellationMode()));
+    delay(100);
+    gpsNmeaWrite("PCAS02," + String(gpsRateMs()));
+    deckLog("[gps] constellation %u at %u ms", (unsigned)gpsConstellationMode(),
+            (unsigned)gpsRateMs());
+    return;
+  }
+  if (gpsReady) {
+    deckLog("[gps] u-blox keeps its default constellation and 1 Hz");
+    return;
+  }
+  gpsAttempts = 0;
+  gpsRetryAt = millis() + 1000;
+  deckLog("[gps] scheduled bring-up");
 }
 
 

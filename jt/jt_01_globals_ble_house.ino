@@ -44,6 +44,13 @@ static bool audio_uplink_start(void);
 static void audio_uplink_finish(void);
 static void audio_uplink_push(const int16_t *samples, size_t count);
 
+// the raw radio settings and GPS settings (jt_02/jt_04) are applied from the
+// Now Me handlers in jt_03/jt_05 and from the loop
+static void loraApply();
+static void loraQueuePayload(const String& payload);
+static void loraService();
+static void gpsApply();
+
 static const uint16_t screenWidth  = 320;
 static const uint16_t screenHeight = 240;
 #define DEFAULT_COLOR               (lv_color_make(252, 218, 72))
