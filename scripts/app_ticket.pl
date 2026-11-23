@@ -24,6 +24,7 @@
 #   perl scripts/app_ticket.pl desktop          # print the URL (mint if needed)
 #   perl scripts/app_ticket.pl phone --rotate   # mint a fresh one anyway
 #   perl scripts/app_ticket.pl phone --save     # and leave it in .shots/ticket.txt
+#   perl scripts/app_ticket.pl desktop --host 127.0.0.1 --save   # a loopback origin
 use strict;
 use warnings;
 
@@ -33,15 +34,40 @@ chdir "$RealBin/.." or die "no jawnos dir at $RealBin/..\n";
 $ENV{PURPOSE} = '';
 eval { require './perl/Manager.pl'; 1 } or die "app_ticket: no house here (config.json?)\n";
 
-my $client = shift @ARGV // '';
+my ($client, $host_override, $rotate, $save) = ('', '', 0, 0);
+my @positional;
+for (my $i = 0; $i < @ARGV; $i++) {
+	my $arg = $ARGV[$i];
+	if ($arg eq '--host') {
+		$host_override = $ARGV[$i + 1] // '';
+		$i++;
+		die "usage: app_ticket.pl <client> [--host <host>] [--rotate] [--save]\n"
+			unless length $host_override;
+		next;
+	}
+	if ($arg =~ /^--host=(.*)$/) {
+		$host_override = $1;
+		die "usage: app_ticket.pl <client> [--host <host>] [--rotate] [--save]\n"
+			unless length $host_override;
+		next;
+	}
+	if ($arg eq '--rotate') { $rotate = 1; next; }
+	if ($arg eq '--save') { $save = 1; next; }
+	push @positional, $arg;
+}
+$client = shift @positional // '';
 $client =~ s/[^A-Za-z0-9_-]//g;
-die "usage: app_ticket.pl <client> [--rotate] [--save]\n" unless $client;
-my $rotate = grep { $_ eq '--rotate' } @ARGV;
-my $save = grep { $_ eq '--save' } @ARGV;
+die "usage: app_ticket.pl <client> [--host <host>] [--rotate] [--save]\n" unless $client;
+# The URL names a host the ticket's cookie is scoped to. --host pins it for
+# one ticket (the desktop's loopback view) without changing config.domain,
+# which still names this machine to its peers.
+if (length $host_override && $host_override !~ /^[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?$/) {
+	die "app_ticket.pl: --host must be a hostname or IPv4 address\n";
+}
 
 my $config = eval { &subs::config_reader() } || {};
 my $domain = $config->{'domain'} || '';
-my $host = $domain || '127.0.0.1';
+my $host = length $host_override ? $host_override : ($domain || '127.0.0.1');
 # the live workers get these from the master; a bare script must name them
 $ENV{PORT_DOCK} = $ENV{PORT_DOCK} || $config->{'port'} || 3000;
 $ENV{PORT_AHOY} = $ENV{PORT_AHOY} || $config->{'working_port'} || 45545;
@@ -81,7 +107,9 @@ else {
 		privilege => 'citizen',
 		project => 'app-ticket',
 		# nic names the host when it is the configured domain; without a domain
-		# the mint falls back to 127.0.0.1 for this house's own view
+		# the mint falls back to 127.0.0.1 for this house's own view. --host
+		# wins over both, so a loopback desktop ticket keeps its origin.
+		host => (length $host_override ? $host_override : undef),
 		nic => ($domain || undef),
 		db => ($domain ? 0 : 1),
 		warranty => 'forever',

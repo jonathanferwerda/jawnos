@@ -46,4 +46,10 @@ like($ticket, qr/my \$write = \$save \|\| \(\$rotate && \$minted && \$fallback_c
 like($master, qr/foreach my \$key \( 'port', 'working_port' \)/,
 	'the watchdog asks the dock and the manager');
 
+# A host override lets a ticket's origin be loopback while config.domain still
+# names the machine to its peers.
+like($ticket, qr/--host/, 'the ticket desk accepts a host override');
+like($ticket, qr/my \$host = length \$host_override \? \$host_override :/, 'the override chooses the URL host');
+like($ticket, qr/host => \(length \$host_override \? \$host_override : undef\)/, 'a minted ticket carries the override');
+
 done_testing();
