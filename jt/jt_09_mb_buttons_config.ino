@@ -518,6 +518,19 @@ void setting_room() {
                        lv_color_hex(loraChatReceiver ? 0x53ff24 : 0xb0b0b0));
       configure_button("AP Send", ap_lora_send, 10, 112, 145, 56, lv_color_hex(0xdafc5d));
       configure_button("WiFi Send", wifi_lora_send, 165, 112, 145, 56, lv_color_hex(0xdafc5d));
+      // What the modem is actually on, and the signal of the last raw packet.
+      // Two short lines fit between the buttons and the bottom row.
+      lora_channel_label = lv_label_create(lv_scr_act());
+      lv_obj_set_pos(lora_channel_label, 10, 168);
+      lv_obj_set_width(lora_channel_label, 300);
+      lv_label_set_long_mode(lora_channel_label, LV_LABEL_LONG_CLIP);
+      lv_obj_set_style_text_color(lora_channel_label, lv_color_make(255, 255, 255), LV_PART_MAIN);
+      lora_signal_label = lv_label_create(lv_scr_act());
+      lv_obj_set_pos(lora_signal_label, 10, 182);
+      lv_obj_set_width(lora_signal_label, 300);
+      lv_label_set_long_mode(lora_signal_label, LV_LABEL_LONG_CLIP);
+      lv_obj_set_style_text_color(lora_signal_label, lv_color_make(83, 255, 36), LV_PART_MAIN);
+      loraSignalWriter();
       break;
     default:
       // power, the config file, and clearing the typewriter. Two columns over

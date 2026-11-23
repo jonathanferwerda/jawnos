@@ -403,6 +403,7 @@ void presidents_buttons() {
   // on the screen, so the redraw grew with every button pressed elsewhere until
   // the deck froze and ran out of memory. A flash still on screen holds a widget
   // pointer, so it is forgotten before those widgets are deleted.
+  loraSignalForget();
   button_feedback_forget();
   lv_obj_clean(lv_scr_act());
   for (int i = 0; i < ROOM_BUTTON_SLOTS; i++) { room_button_obj[i] = nullptr; }

@@ -133,6 +133,13 @@ static uint32_t loraTxAt = 0;
 static String   loraPendingPayload;
 static uint32_t loraPendingAt = 0;
 static uint8_t  loraPendingTries = 0;
+// The Radio tab's two lines: the channel in use and the last packet's signal.
+// The pointers are forgotten wherever the screen is cleaned, because a label
+// pointer left behind after lv_obj_clean() is a use-after-free.
+lv_obj_t *lora_channel_label = nullptr;
+lv_obj_t *lora_signal_label = nullptr;
+static bool lora_has_signal = false;
+static bool loraSignalDirty = true;
 
 volatile bool operationDone = false;
 void setFlag(void) {
@@ -286,6 +293,46 @@ static void radioBusProbe() {
           (unsigned)READ_PERI_REG(SPI_USER_REG(2)));
 }
 
+// The Radio tab's status is built from the same globals the radio applies, so
+// it says what the modem is actually on, not what the last panel save asked
+// for. A null label means the tab is not on screen; the write is a no-op.
+static void loraSignalForget() {
+  lora_channel_label = nullptr;
+  lora_signal_label = nullptr;
+}
+
+static void loraSignalWriter() {
+  loraSignalDirty = false;
+  char buf[72];
+  if (lora_channel_label) {
+    if (!hasRadio) {
+      snprintf(buf, sizeof(buf), "LoRa: radio not detected");
+    }
+    else if (lorawan_enabled) {
+      snprintf(buf, sizeof(buf), "LoRa: LoRaWAN mode");
+    }
+    else {
+      snprintf(buf, sizeof(buf), "LoRa %.1f MHz SF%u BW%.0f %d dBm",
+               lora_frequency, (unsigned)lora_spreading_factor,
+               lora_bandwidth, (int)lora_tx_power);
+    }
+    lv_label_set_text(lora_channel_label, buf);
+  }
+  if (lora_signal_label) {
+    if (!hasRadio || lorawan_enabled) {
+      snprintf(buf, sizeof(buf), "RX: --");
+    }
+    else if (!lora_has_signal) {
+      snprintf(buf, sizeof(buf), "RX: no packet yet");
+    }
+    else {
+      snprintf(buf, sizeof(buf), "RX %.0f dBm  SNR %.1f dB",
+               lora_last_rssi, lora_last_snr);
+    }
+    lv_label_set_text(lora_signal_label, buf);
+  }
+}
+
 // Bring the modem up for the configured raw settings. This has to be the last
 // word on output power and current: SX1262::begin() calls setCurrentLimit(60)
 // and setOutputPower(cfg.power) itself, so a limit applied before begin is gone
@@ -302,6 +349,8 @@ static void loraApply() {
   operationDone = false;
   loraPendingPayload = "";
   loraPendingTries = 0;
+  lora_has_signal = false;
+  loraSignalDirty = true;
   int state = radio.begin(lora_frequency, lora_bandwidth, lora_spreading_factor, 7,
                           RADIOLIB_SX126X_SYNC_WORD_PRIVATE, lora_tx_power, 8, 1.6, false);
   if (state != RADIOLIB_ERR_NONE) {
@@ -382,6 +431,7 @@ static void loraQueuePayload(const String& payload) {
 // The loop's half: retry a payload the channel was busy for, and stop waiting
 // on a transmit whose DIO1 never came (the radio must not sit in TX for ever).
 static void loraService() {
+  if (loraSignalDirty) { loraSignalWriter(); }
   if (!hasRadio || lorawan_enabled) { return; }
   if (loraTxPending && millis() - loraTxAt > 5000) {
     loraTxPending = false;

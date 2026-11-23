@@ -1,9 +1,11 @@
-# tests-for: jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jt/jt_04_gps_wifi_helpers.ino jt/jt_05_loop.ino jt/jt_06_ui_lora_keypad.ino jt/jt_10_remote_auth.ino jt/jt_13_config_files.ino
+# tests-for: jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jt/jt_04_gps_wifi_helpers.ino jt/jt_05_loop.ino jt/jt_06_ui_lora_keypad.ino jt/jt_08_display_touch_rooms.ino jt/jt_09_mb_buttons_config.ino jt/jt_10_remote_auth.ino jt/jt_13_config_files.ino
 # covers:    The deck's SX1262 brings up its output power after begin() (begin
 #            resets the power and current limit), every raw transmit goes
 #            through one CAD-guarded queue, the receiver re-arms after a
 #            transmit or a failed read, and the L76K's constellation and rate
-#            come from the panel instead of two hardcoded PCAS commands.
+#            come from the panel instead of two hardcoded PCAS commands. The
+#            Radio tab shows the channel and the last packet's RSSI/SNR, and
+#            every screen clean forgets those labels first.
 
 use strict;
 use warnings;
@@ -20,6 +22,8 @@ my $jt_setup = read_file("$root/jt/jt_03_setup.ino");
 my $jt_gps   = read_file("$root/jt/jt_04_gps_wifi_helpers.ino");
 my $jt_loop  = read_file("$root/jt/jt_05_loop.ino");
 my $jt_key   = read_file("$root/jt/jt_06_ui_lora_keypad.ino");
+my $jt_face  = read_file("$root/jt/jt_08_display_touch_rooms.ino");
+my $jt_conf_ui = read_file("$root/jt/jt_09_mb_buttons_config.ino");
 my $jt_auth  = read_file("$root/jt/jt_10_remote_auth.ino");
 my $jt_conf  = read_file("$root/jt/jt_13_config_files.ino");
 
@@ -93,6 +97,26 @@ like($read, qr/readData failed.*?radio\.startReceive\(\);/s,
 	'a failed read still re-arms the receiver');
 like($read, qr/if \(!hasRadio \|\| lorawan_enabled \|\| !operationDone\)/,
 	'LoRaWAN and a missing radio stand the raw path down');
+
+# --- the Radio tab shows the channel and the last packet's signal ------------
+my ($writer) = $jt_radio =~ /(static void loraSignalWriter\(\).*?\n\}\n)/s;
+ok($writer, 'loraSignalWriter was found');
+like($writer, qr/LoRa %\.1f MHz SF%u BW%\.0f %d dBm/, 'it prints the configured channel');
+like($writer, qr/RX %\.0f dBm  SNR %\.1f dB/, 'and the last packet RSSI/SNR');
+like($writer, qr/RX: no packet yet/, 'with a first-run wording before a packet');
+like($jt_radio, qr/static void loraSignalForget\(\)/, 'and a forget helper for the pointers');
+like($read, qr/lora_has_signal = true;\s*loraSignalDirty = true;/, 'a received packet marks the tab for refresh');
+like($service, qr/if \(loraSignalDirty\) \{ loraSignalWriter\(\); \}/, 'the loop flushes the tab');
+like($jt_key, qr/void display_exit\( void \) \{\s*loraSignalForget\(\);\s*lv_obj_clean/,
+	'a screen wipe forgets the Radio tab labels before deleting them');
+like($jt_face, qr/loraSignalForget\(\);\s*button_feedback_forget\(\);\s*lv_obj_clean/,
+	'and so does a room rebuild');
+
+my ($config_radio) = $jt_conf_ui =~ /(case 1:.*?break;)/s;
+ok($config_radio, 'the Radio tab page was found');
+like($config_radio, qr/lora_channel_label = lv_label_create/, 'the tab builds a channel line');
+like($config_radio, qr/lora_signal_label = lv_label_create/, 'and a signal line');
+like($config_radio, qr/loraSignalWriter\(\);/, 'and fills both on entry');
 
 # --- the new settings are saved, restored and defaulted ----------------------
 my ($save)    = $jt_conf =~ /(void configSave\(\).*?\n\}\n)/s;

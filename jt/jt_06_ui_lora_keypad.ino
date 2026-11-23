@@ -21,6 +21,8 @@ void readRadio() {
     // the packet that just arrived, not whatever the next one will be.
     lora_last_rssi = radio.getRSSI();
     lora_last_snr = radio.getSNR();
+    lora_has_signal = true;
+    loraSignalDirty = true;
     deckLog("[lora] rx %u bytes rssi %.1f dBm snr %.1f dB",
             (unsigned)str.length(), lora_last_rssi, lora_last_snr);
     radio.startReceive();
@@ -81,6 +83,7 @@ void readRadio() {
   }
 }
 void display_exit( void ) {
+  loraSignalForget();
   lv_obj_clean ( lv_scr_act() ); // Clean objects from current screen.
   deck_nav_row_reset();            // the bottom row went with them
   lv_obj_invalidate( lv_scr_act() ); // Invalidate objects for redraw.

@@ -345,6 +345,7 @@ void jawn_setup() {
     if (!lorawan_enabled) {
       loraApply();
     }
+    loraSignalDirty = true;
     server.send(200, "application/json", lorawanStatusJson());
   });
   server.on("/lorawan_join", []() {

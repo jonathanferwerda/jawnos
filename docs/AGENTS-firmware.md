@@ -46,6 +46,6 @@ unstaged build means an OTA sends the previous firmware.
   `lora_spreading_factor`, `lora_bandwidth` and `lora_tx_power`, and the GPS settings `gps_enabled`,
   `gps_constellation` and `gps_rate`, are `__specs` values pushed by Now Me and saved in the deck's
   `config.json`. The raw path runs a CAD listen-before-talk check before transmit, reports RSSI/SNR
-  for received packets, and re-arms receive after a send. The radio is band-specific (LilyGo
-  433/868/915 SKUs): the Chat → LoRa band dropdown is not a hardware selector, so the band must match
-  the board.
+  for received packets in the deck's Radio tab, and re-arms receive after a send. The radio is
+  band-specific (LilyGo 433/868/915 SKUs): the Chat → LoRa band dropdown is not a hardware
+  selector, so the band must match the board.
