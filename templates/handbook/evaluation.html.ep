@@ -1,0 +1,13 @@
+<%# The whole-house evaluation is its own Handbook chapter: one manual briefing
+    that reads every app through category totals, the money that moved, the
+    projects that ran, and the environmental conditions the house lives under.
+    The prompt is fitted automatically, so there is no breadth knob. %>
+<% my $report = &subs::evaluation_report_for('__president'); %>
+<div id="handbook_evaluation" class="appointment appointment_evaluation_zone" style="text-align:left;padding:8px;">
+	<h2 style="margin-top:0;"><%= &subs::ui('Everything') %></h2>
+	<p class="weather_muted" style="opacity:.72;font-size:13px;line-height:1.4;">
+		<%= &subs::ui('A manual appraisal of the whole house. Every app is counted in its category; only the busiest few in each category are sent by name, so the report can span everything without sending everything. The moon, the weather and the geomagnetic field are offered as conditions to weigh against the house\'s own days.') %>
+	</p>
+	<%= include 'apps/evaluation_wide_controls', app => '__president' %>
+	<%= include 'apps/evaluation', evaluation => $report, app => '__president', controls => 0 %>
+</div>

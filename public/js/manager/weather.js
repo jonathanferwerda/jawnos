@@ -14,6 +14,7 @@ var weatherHistoryLoaded = false;
 var weatherAccuracyLoaded = false;
 var weatherLoading = false;
 var weatherAlertOpen = {};
+var weatherSpaceAt = 0;
 
 $(document).on('click', '.weather_tab', function() {
 	weatherShowTab($(this).attr('data-tab'));
@@ -388,6 +389,96 @@ function weatherRender(data) {
 	if (data.hourly_provider) { status += ' · ' + jawnosT('Hourly from') + ' ' + (data.hourly_provider_label || data.hourly_provider); }
 	if (data.daily_provider) { status += ' · ' + jawnosT('Later days from') + ' ' + (data.daily_provider_label || data.daily_provider); }
 	$w.find('#weather_status').text(status);
+	weatherMoonRender(data.moon);
+	weatherSpaceLoad(false);
+}
+
+// The moon's phase is a shape, not a glyph: the illuminated limb and the
+// terminator ellipse are drawn from the percentage the server computed. The
+// lit side is the right while waxing, mirrored in the southern hemisphere.
+function weatherMoonRender(moon) {
+	var $m = $('.wind[app="weather"]').last().find('#weather_moon');
+	if (!$m.length) { return; }
+	if (!moon || moon.illumination === undefined) { $m.hide(); return; }
+	var illumination = Math.max(0, Math.min(100, Number(moon.illumination) || 0));
+	var waxing = moon.waxing ? 1 : 0;
+	var southern = moon.southern ? 1 : 0;
+	var label = jawnosT(moon.phase_name || '') + ' · ' + illumination + '% ' + jawnosT('illuminated');
+	var flipped = (waxing ? 0 : 1) ^ (southern ? 1 : 0);
+	var art = weatherMoonSvg(illumination, flipped);
+	$m.find('#weather_moon_art').html(art).attr('aria-label', label);
+	$m.find('#weather_moon_label').text(label);
+	$m.attr('hint', label).css('display', 'flex');
+}
+
+function weatherMoonSvg(illumination, flip) {
+	var cx = 24, cy = 24, r = 20;
+	var k = Math.max(0, Math.min(1, illumination / 100));
+	var rx = Math.abs(1 - 2 * k) * r;
+	var parts = [];
+	parts.push('<circle class="weather_moon_dark" cx="' + cx + '" cy="' + cy + '" r="' + r + '"/>');
+	if (k >= 0.995) {
+		parts.push('<circle class="weather_moon_lit" cx="' + cx + '" cy="' + cy + '" r="' + r + '"/>');
+	}
+	else if (k > 0.005) {
+		// the lit right half, then the terminator: subtract it for a crescent,
+		// add its other half for a gibbous
+		parts.push('<path class="weather_moon_lit" d="M ' + cx + ' ' + (cy - r) + ' A ' + r + ' ' + r + ' 0 0 1 ' + cx + ' ' + (cy + r) + ' Z"/>');
+		if (k < 0.5) {
+			parts.push('<path class="weather_moon_dark" d="M ' + cx + ' ' + (cy - r) + ' A ' + rx + ' ' + r + ' 0 0 1 ' + cx + ' ' + (cy + r) + ' Z"/>');
+		}
+		else if (k > 0.5) {
+			parts.push('<path class="weather_moon_lit" d="M ' + cx + ' ' + (cy - r) + ' A ' + rx + ' ' + r + ' 0 0 0 ' + cx + ' ' + (cy + r) + ' Z"/>');
+		}
+	}
+	parts.push('<circle class="weather_moon_halo" cx="' + cx + '" cy="' + cy + '" r="' + (r + 0.5) + '"/>');
+	var inner = parts.join('');
+	return flip ? '<g transform="scale(-1,1) translate(-48,0)">' + inner + '</g>' : inner;
+}
+
+// Space weather arrives on its own request so a slow NOAA never holds the
+// forecast shut. A quiet failure hides the card; the weather still draws.
+function weatherSpaceLoad(force) {
+	var now = Date.now();
+	if (!force && weatherSpaceAt && now - weatherSpaceAt < 10 * 60 * 1000) { return; }
+	weatherSpaceAt = now;
+	$.ajax({
+		url: '/manager/weather/space_weather',
+		type: 'GET',
+		data: force ? { force: 1 } : {},
+		dataType: 'json',
+		timeout: 15000,
+		success: function(response) { weatherSpaceRender((response && response.space_weather) || {}); },
+		error: function() { $('.wind[app="weather"]').last().find('#weather_space').hide(); }
+	});
+}
+
+function weatherSpaceRender(space) {
+	var $w = $('.wind[app="weather"]').last();
+	var $card = $w.find('#weather_space');
+	if (!$card.length) { return; }
+	if (!space || (space.error && space.kp === undefined)) { $card.hide(); return; }
+	var level = Number(space.level) || 0;
+	var cls = level >= 4 ? 'storm' : level >= 2 ? 'active' : 'quiet';
+	$w.find('#weather_space_level').removeClass('quiet active storm').addClass(cls).text(jawnosT(space.label || ''));
+	var stats = [];
+	function stat(label, value) {
+		if (value === undefined || value === null || value === '') { return; }
+		stats.push('<div class="weather_space_stat"><b>' + weatherEsc(jawnosT(label)) + '</b>' + weatherEsc(value) + '</div>');
+	}
+	stat('Kp', space.kp !== undefined && space.kp !== null ? space.kp : '');
+	stat('Peak Kp (24 h)', space.kp_max_24h !== undefined && space.kp_max_24h !== null ? space.kp_max_24h : '');
+	stat('Bz', space.bz !== undefined && space.bz !== null ? space.bz + ' nT' : '');
+	stat('Solar wind', space.solar_wind_speed !== undefined && space.solar_wind_speed !== null ? space.solar_wind_speed + ' km/s' : '');
+	stat('Density', space.solar_wind_density !== undefined && space.solar_wind_density !== null ? space.solar_wind_density + ' p/cm³' : '');
+	stat('Observed', space.observed_at ? weatherTime(space.observed_at) : '');
+	var bar = '';
+	if (space.kp !== undefined && space.kp !== null) {
+		var pct = Math.max(0, Math.min(100, (Number(space.kp) / 9) * 100));
+		bar = '<div class="weather_space_bar" title="Kp ' + weatherEsc(space.kp) + '"><span style="width:' + pct.toFixed(1) + '%"></span></div>';
+	}
+	$w.find('#weather_space_body').html(stats.join('') + bar);
+	$card.show();
 }
 
 function weatherSourceDetail(data) {

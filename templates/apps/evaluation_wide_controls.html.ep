@@ -1,0 +1,23 @@
+<% use Mojo::JSON qw/decode_json/; %>
+<%# The run control for the whole-house evaluation. There is deliberately no
+    cadence here: the widest prompt the house can send is a manual act. The
+    size and shape of the prompt are chosen by evaluation_digest_fit. %>
+<% my $scope = $app || '__president'; %>
+<% my $report = &subs::evaluation_report_for($scope); %>
+<div class="appointment_evaluation_controls" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0;">
+	<button class="system_evaluation" app="<%= $scope %>"><%= &subs::ui('Evaluate') %></button>
+	<span class="weather_muted" style="opacity:.68;font-size:12px;line-height:1.35;flex:1 1 240px;">
+		<%= &subs::ui('Runs only when you press Evaluate. The briefing is optimized automatically: category totals, top apps per category, money, projects, and environmental conditions.') %>
+	<% if ($report->{'briefing_bytes'}) { %>
+		<br><%= &subs::ui('Last briefing') %>: <%= int($report->{'briefing_bytes'} / 1024) %> KB<% if ($report->{'omitted_apps'}) { %>, <%= $report->{'omitted_apps'} %> <%= &subs::ui('apps summarized as category totals') %><% } %>
+	<% } %>
+	</span>
+</div>
+<% my $runs = eval { return decode_json(&subs::setting_grabber({ app => $scope, setting => 'evaluation_runs' }) || '') } || []; %>
+<% my $last = $runs->[0] || {}; %>
+<% if ($last->{'timestamp'}) { %>
+	<div class="evaluation_last_run" app="<%= $scope %>" style="font-size:80%;margin:0 0 6px;">
+		<%= &subs::ui('Last run') %>: <b><%= $last->{'machine'} || &subs::ui('a machine') %></b> <%= $last->{'outcome'} || '' %>
+		<span class="time" timestamp="<%= $last->{'timestamp'} %>"></span><% if ($last->{'model'}) { %> (<%= $last->{'model'} %>)<% } %><% if ($last->{'note'}) { %> &mdash; <%= $last->{'note'} %><% } %>
+	</div>
+<% } %>

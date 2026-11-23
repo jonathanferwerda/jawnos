@@ -260,6 +260,10 @@ sub headless_browser {
 	foreach my $a ( @{$apps} ) {
 		my $app = $a->{'app'};
 		next unless defined $app && length $app;
+		# A local source (the moon's arithmetic, NOAA's space weather) needs no
+		# scraper: leaving an old moongiant URL configured must not keep fetching
+		# a page the house no longer reads.
+		next if (&setting_value_for($app, 'local_source') || '') eq 'on';
 		my $rw = &subs::setting_rows_for($app, 'web_recurring')->[0] or next;
 		# The newest choice wins. A machine keeps its own row and may also see a
 		# peer's, so an old row saying "mobile" would keep a phone fetching after

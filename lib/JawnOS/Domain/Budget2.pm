@@ -111,6 +111,341 @@ sub budget_holding {
 	return \@out;
 }
 
+# ---- the whole house, made small ------------------------------------------
+# A house can have a thousand apps. Sending each one to the model is both a
+# token bill and a worse report: the tail is noise. The digest keeps every app
+# in its category's total, names only the top few in each category, and rolls
+# the rest into one line of arithmetic. Nothing here is free text: app names,
+# counts, durations, category names and numeric readings only.
+sub evaluation_house_categories {
+	my $device = &subs::device_setter() || '';
+	my $rows = &subs::db_query(
+		q{select app, setting, value, coalesce(device,'') as device, coalesce(server_time,0) as server_time}
+		. q{ from settings where setting in ('category','subcategory','pos','mab') and app is not null and app != ''}
+	)->hashes || [];
+	my %best;
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'};
+		next unless defined $app && length $app;
+		my $setting = $row->{'setting'};
+		next unless defined $setting && length $setting;
+		my $score = (($row->{'device'} || '') eq $device) ? 2 : 0;
+		my $have = $best{$app}->{$setting};
+		if ($have) {
+			# this machine's row wins; otherwise the newest wins
+			my $better = $score > $have->{'score'}
+				|| ($score == $have->{'score'} && ($row->{'server_time'} || 0) > $have->{'server_time'});
+			next unless $better;
+		}
+		$best{$app}->{$setting} = {
+			value => $row->{'value'},
+			score => $score,
+			server_time => ($row->{'server_time'} || 0) + 0,
+		};
+	}
+	my %out;
+	foreach my $app ( keys %best ) {
+		my $entry = $best{$app};
+		my $pick = sub {
+			my ($key) = @_;
+			my $v = $entry->{$key}->{'value'};
+			return (defined $v && length $v) ? $v : '';
+		};
+		$out{$app} = {
+			category => $pick->('category'),
+			subcategory => $pick->('subcategory'),
+			pos => $pick->('pos'),
+			mab => $pick->('mab'),
+		};
+	}
+	return \%out;
+}
+
+# The environmental readings worth correlating with the house's day: the moon,
+# the weather and the geomagnetic field are the ones people ask about. Weather
+# apps name their readings differently, so the list is by measure name.
+my %HOUSE_CONDITION_MEASURE = map { $_ => 1 } qw(
+	illumination moon_phase temperature humidity pressure wind_speed dew_point uv precipitation
+	kp kp_max_24h bz bt solar_wind_speed solar_wind_density
+);
+
+sub evaluation_house_conditions {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $daily = $opts->{'daily'} || {};
+	my $measures = $opts->{'measures'} || {};
+	my @out;
+	foreach my $app ( sort keys %{$measures} ) {
+		foreach my $name ( sort keys %{ $measures->{$app} } ) {
+			next unless $HOUSE_CONDITION_MEASURE{$name};
+			my $series = $measures->{$app}->{$name};
+			next unless ref $series eq 'HASH' && scalar(keys %{$series});
+			# A reading with too few days is still worth reporting as a current
+			# condition; only a long enough series gets a correlation.
+			my $c;
+			if (scalar(keys %{$series}) >= 14) {
+				my ($xs, $ys) = &subs::day_pair_series($daily, $series);
+				$c = &subs::series_correlation($xs, $ys);
+			}
+			my @vals = sort { $a <=> $b } grep { defined $_ } values %{$series};
+			next unless scalar @vals >= 1;
+			my $sum = 0; $sum += $_ for @vals;
+			my ($latest_day) = sort { $b cmp $a } keys %{$series};
+			push @out, {
+				app => $app,
+				measure => $name,
+				n => scalar @vals,
+				latest => 0 + sprintf('%.2f', $series->{$latest_day}),
+				average => &subs::briefing_number($sum / scalar @vals),
+				min => 0 + sprintf('%.2f', $vals[0]),
+				max => 0 + sprintf('%.2f', $vals[-1]),
+				($c ? (r => $c->{'r'}, lag_days => $c->{'lag_days'}) : (insufficient_days => 1)),
+			};
+		}
+	}
+	@out = sort {
+		(defined $b->{'r'} ? abs($b->{'r'}) : -1) <=> (defined $a->{'r'} ? abs($a->{'r'}) : -1)
+	} @out;
+	# A weather source can log ten measures; three families are what the person
+	# asked about. Keep at most four readings from any one app, so the moon and
+	# the geomagnetic field are not crowded out by the weather.
+	my (%per_app, @picked);
+	foreach my $entry ( @out ) {
+		next if ($per_app{ $entry->{'app'} } || 0) >= 4;
+		push @picked, $entry;
+		$per_app{ $entry->{'app'} }++;
+		last if scalar @picked >= 12;
+	}
+	return \@picked;
+}
+
+# The digest itself. $opts carries the month's rollup, every window's rollup,
+# the measure series and the category map, so the caller that already gathered
+# them does not pay for a second pass.
+sub evaluation_house_digest {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $roll = $opts->{'roll'} || {};
+	my $rolls = $opts->{'rolls'} || {};
+	my $measures = $opts->{'measures'} || {};
+	my $now = $opts->{'now'} || &subs::rightNow();
+	my $cats = $opts->{'categories'} || &evaluation_house_categories();
+	my $top_k = $opts->{'top_k'} || 5;
+	my $month_days = $opts->{'month_days'} || 30;
+	my $activity = $roll->{'activity'} || {};
+	my %cat;
+	foreach my $app ( keys %{$activity} ) {
+		my $act = $activity->{$app} || {};
+		my $known = $cats->{$app} || {};
+		my $name = $known->{'category'} || $known->{'pos'} || 'other';
+		my $sub = $known->{'subcategory'} || $known->{'mab'} || '';
+		my $c = ($cat{$name} ||= { name => $name, apps => 0, occurrences => 0, duration => 0, top => [] });
+		$c->{'apps'}++;
+		$c->{'occurrences'} += ($act->{'count'} || 0) + 0;
+		$c->{'duration'} += ($act->{'duration'} || 0) + 0;
+		my $entry = {
+			app => $app,
+			occurrences => ($act->{'count'} || 0) + 0,
+			per_day => &subs::briefing_number(($act->{'count'} || 0) / $month_days),
+			total_duration => &subs::duration_sayer(($act->{'duration'} || 0) / 1000),
+			($sub ? (subcategory => $sub) : ()),
+		};
+		my $kinds = &subs::evaluation_kinds($roll->{'kinds'}->{$app}, 2);
+		$entry->{'kinds'} = $kinds if scalar keys %{$kinds};
+		my $q = ($roll->{'quantity'} || {})->{$app};
+		if ($q && $q->{'count'}) {
+			$entry->{'quantity'} = {
+				total => &subs::briefing_number($q->{'total'}),
+				unit => $q->{'unit'},
+			};
+		}
+		push @{ $c->{'top'} }, $entry;
+	}
+	my @categories;
+	my ($tail_apps, $tail_occ) = (0, 0);
+	foreach my $name ( sort keys %cat ) {
+		my $c = $cat{$name};
+		my @top = sort { $b->{'occurrences'} <=> $a->{'occurrences'} || $a->{'app'} cmp $b->{'app'} } @{ $c->{'top'} };
+		if (scalar @top > $top_k) {
+			$tail_apps += scalar(@top) - $top_k;
+			$tail_occ += $_->{'occurrences'} for @top[$top_k .. $#top];
+			splice(@top, $top_k);
+		}
+		push @categories, {
+			name => $name,
+			apps => $c->{'apps'} + 0,
+			occurrences => $c->{'occurrences'} + 0,
+			per_day => &subs::briefing_number($c->{'occurrences'} / $month_days),
+			total_duration => &subs::duration_sayer($c->{'duration'} / 1000),
+			top_apps => \@top,
+		};
+	}
+	@categories = sort { $b->{'occurrences'} <=> $a->{'occurrences'} || $a->{'name'} cmp $b->{'name'} } @categories;
+	# the house's own five windows, summed over every app
+	my %house_windows;
+	my %window_days = %{ $opts->{'window_days'} || {} };
+	foreach my $wname ( sort keys %{$rolls} ) {
+		my $r = $rolls->{$wname} || {};
+		my ($occ, $dur, $first) = (0, 0, 0);
+		foreach my $app ( keys %{ $r->{'activity'} || {} } ) {
+			$occ += ($r->{'activity'}->{$app}->{'count'} || 0) + 0;
+			$dur += ($r->{'activity'}->{$app}->{'duration'} || 0) + 0;
+			my $f = ($r->{'activity'}->{$app}->{'first'} || 0) + 0;
+			$first = $f if $f > 0 && (!$first || $f < $first);
+		}
+		my $days = $window_days{$wname} || 0;
+		# all time has no fixed span; its rate is against the history it has
+		$days = ($now - $first) / 86400000 if !$days && $wname eq 'all' && $first;
+		my $entry = {
+			occurrences => $occ,
+			total_duration => &subs::duration_sayer($dur / 1000),
+		};
+		$entry->{'per_day'} = &subs::briefing_number($occ / $days) if $days >= 1;
+		$house_windows{$wname} = $entry;
+	}
+	my (%daily, %hours, %weekdays);
+	foreach my $app ( keys %{ $roll->{'daily'} || {} } ) {
+		foreach my $day ( keys %{ $roll->{'daily'}->{$app} } ) {
+			$daily{$day} += $roll->{'daily'}->{$app}->{$day};
+		}
+	}
+	foreach my $app ( keys %{ $roll->{'hours'} || {} } ) {
+		foreach my $hour ( keys %{ $roll->{'hours'}->{$app} } ) {
+			$hours{$hour} += $roll->{'hours'}->{$app}->{$hour};
+		}
+	}
+	foreach my $app ( keys %{ $roll->{'weekdays'} || {} } ) {
+		foreach my $wday ( keys %{ $roll->{'weekdays'}->{$app} } ) {
+			$weekdays{$wday} += $roll->{'weekdays'}->{$app}->{$wday};
+		}
+	}
+	my $conditions = &evaluation_house_conditions({ daily => \%daily, measures => $measures });
+	# Money is the other half of a lived day. Grouped by app, so a vendor's free
+	# text never enters the prompt.
+	my $since = $now - $month_days * 86400000;
+	my $money_rows = eval {
+		&subs::db_query(
+			"select movement, sum(abs(cast(total as real))) as total, count(*) as n from warehouse"
+			. " where kind='money' and type='transaction' and cast(timestamp as integer) >= ? group by movement",
+			$since
+		)->hashes
+	} || [];
+	my %money = (in => 0, out => 0, net => 0, apps => []);
+	foreach my $row ( @{$money_rows} ) {
+		my $total = ($row->{'total'} || 0) + 0;
+		if (($row->{'movement'} || '') eq 'income') { $money{'in'} += $total; }
+		elsif (($row->{'movement'} || '') eq 'expense' || ($row->{'movement'} || '') eq 'payment') { $money{'out'} += $total; }
+	}
+	$money{'net'} = $money{'in'} - $money{'out'};
+	my $money_apps = eval {
+		&subs::db_query(
+			"select app, sum(abs(cast(total as real))) as total from warehouse"
+			. " where kind='money' and type='transaction' and movement in ('expense','payment')"
+			. " and cast(timestamp as integer) >= ? group by app order by total desc limit 8",
+			$since
+		)->hashes
+	} || [];
+	$money{'apps'} = [ map { { app => $_->{'app'} || 'other', amount => &subs::briefing_number($_->{'total'}) } } @{$money_apps} ];
+	foreach my $key ( qw(in out net) ) { $money{$key} = &subs::briefing_number($money{$key}); }
+	my $projects = eval {
+		&subs::db_query(
+			"select project, count(*) as n from appointments where project is not null and project != ''"
+			. " and cast(timestamp as integer) >= ? group by project order by n desc limit 10",
+			$since
+		)->hashes
+	} || [];
+	my $people = eval { &subs::db_query('select count(*) as n from people')->hash } || {};
+	return {
+		house => {
+			apps => scalar(keys %{$activity}),
+			categories => scalar(keys %cat),
+			windows => \%house_windows,
+			daily => \%daily,
+			hours => \%hours,
+			weekdays => \%weekdays,
+		},
+		categories => \@categories,
+		tail => { apps => $tail_apps, occurrences => $tail_occ },
+		conditions => $conditions,
+		money => \%money,
+		projects => [ map { { project => $_->{'project'}, count => ($_->{'n'} || 0) + 0 } } @{$projects} ],
+		people => { count => (($people->{'n'} || 0) + 0) },
+	};
+}
+
+# Keep the digest under a byte budget by removing detail in a fixed order. The
+# category totals are the last thing to go: they are what makes the report
+# cover the whole house instead of the top twelve apps.
+sub evaluation_digest_fit {
+	my ($digest, $budget) = @_;
+	$budget ||= 24 * 1024;
+	my $bytes = length(encode_json($digest));
+	return ($digest, $bytes, 0) if $bytes <= $budget;
+	my $d = $digest;
+	my $recount = sub {
+		my $named = 0;
+		$named += scalar @{ $_->{'top_apps'} || [] } for @{ $d->{'categories'} || [] };
+		my $all = $d->{'house'}->{'apps'} || 0;
+		$d->{'tail'}->{'apps'} = $all > $named ? $all - $named : 0;
+	};
+	my $merge_categories = sub {
+		my ($keep) = @_;
+		my @cats = sort { $b->{'occurrences'} <=> $a->{'occurrences'} } @{ $d->{'categories'} || [] };
+		return if scalar @cats <= $keep;
+		my @kept = @cats[0 .. $keep - 1];
+		my $other = { name => 'other', apps => 0, occurrences => 0, per_day => 0, total_duration => '', top_apps => [] };
+		foreach my $c ( @cats[$keep .. $#cats] ) {
+			$other->{'apps'} += $c->{'apps'} || 0;
+			$other->{'occurrences'} += $c->{'occurrences'} || 0;
+		}
+		$other->{'per_day'} = &subs::briefing_number($other->{'occurrences'} / 30);
+		push @kept, $other;
+		$d->{'categories'} = \@kept;
+		$recount->();
+	};
+	my @steps = (
+		# the busiest kinds per app are the first luxury
+		sub { foreach my $c ( @{ $d->{'categories'} || [] } ) { foreach my $a ( @{ $c->{'top_apps'} || [] } ) { delete $a->{'kinds'}; } } },
+		# keep only the strongest environmental associations
+		sub { splice(@{ $d->{'conditions'} || [] }, 6) if scalar @{ $d->{'conditions'} || [] } > 6; },
+		# the tail of the money apps
+		sub { my $a = $d->{'money'}->{'apps'} || []; splice(@{$a}, 3) if scalar @{$a} > 3; },
+		# projects are the most optional section
+		sub { delete $d->{'projects'}; },
+		# name only the two busiest apps in each category
+		sub {
+			foreach my $c ( @{ $d->{'categories'} || [] } ) {
+				splice(@{ $c->{'top_apps'} || [] }, 2) if scalar @{ $c->{'top_apps'} || [] } > 2;
+			}
+			$recount->();
+		},
+		# the clock shape and the daily series are the next to go
+		sub { delete $d->{'house'}->{'hours'}; delete $d->{'house'}->{'weekdays'}; },
+		sub { delete $d->{'house'}->{'daily'}; },
+		# one app per category, and the money list gone
+		sub {
+			foreach my $c ( @{ $d->{'categories'} || [] } ) {
+				splice(@{ $c->{'top_apps'} || [] }, 1) if scalar @{ $c->{'top_apps'} || [] } > 1;
+			}
+			delete $d->{'money'}->{'apps'};
+			$recount->();
+		},
+		# keep the twelve busiest categories; roll the rest into one line
+		sub { $merge_categories->(12); },
+		# the environmental list, money and people are optional before breadth
+		sub { splice(@{ $d->{'conditions'} || [] }, 3) if scalar @{ $d->{'conditions'} || [] } > 3; },
+		sub { delete $d->{'money'}; delete $d->{'people'}; delete $d->{'conditions'}; },
+		sub { $merge_categories->(8); },
+		sub { $merge_categories->(5); },
+	);
+	foreach my $step ( @steps ) {
+		$step->();
+		$bytes = length(encode_json($d));
+		last if $bytes <= $budget;
+	}
+	return ($d, $bytes, 1);
+}
+
 sub evaluation_agent {
 	my ($app, $period) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -171,7 +506,7 @@ sub evaluation_agent {
 	# the schedule this scope is on, so the report knows how often it is asked for
 	# on its own and when the next run is due - the configuration the controls show
 	my $schedule;
-	{
+	if (!$global) {
 		my $cadence = &subs::evaluation_cadence($app);
 		if ($cadence && $cadence ne 'off') {
 			my @day_names = qw/sunday monday tuesday wednesday thursday friday saturday/;
@@ -402,6 +737,23 @@ sub evaluation_agent {
 	# (a metal price, the weather, a currency quote) cannot pass as a finding.
 	my $all_counts = $global ? $mroll->{'daily'} : &subs::appointment_rollup('__president', $corr_since)->{'daily'};
 	my $measures = &subs::measure_series($corr_since);
+	# The whole house is read through category totals, not one app per line. The
+	# digest is fitted to a fixed budget, so the model gets breadth without the
+	# tail and the person gets no surprise bill.
+	my ($house_digest, $house_bytes, $house_truncated);
+	if ($global) {
+		my $categories = &evaluation_house_categories();
+		my %window_days = map { $_->{'name'} => ($_->{'span'} ? $_->{'span'} / 86400000 : 0) } @window_defs;
+		my $raw = &evaluation_house_digest({
+			roll => $mroll,
+			rolls => \%roll,
+			measures => $measures,
+			now => $now,
+			categories => $categories,
+			window_days => \%window_days,
+		});
+		($house_digest, $house_bytes, $house_truncated) = &evaluation_digest_fit($raw, 24 * 1024);
+	}
 	my @targets;
 	if ($global) {
 		my @owners = sort { ($mroll->{'activity'}->{$b}->{'count'} || 0) <=> ($mroll->{'activity'}->{$a}->{'count'} || 0) } keys %{$mroll->{'activity'}};
@@ -497,13 +849,23 @@ sub evaluation_agent {
 	}
 	# How much the answer should carry: brief is a headline only (cheap, for a
 	# daily run), full is the whole report
-	my $depth = (&subs::setting_grabber({ app => $app, setting => 'evaluation_depth' }) || '') eq 'brief' ? 'brief' : 'full';
+	my $depth = $global ? 'full' : ((&subs::setting_grabber({ app => $app, setting => 'evaluation_depth' }) || '') eq 'brief' ? 'brief' : 'full');
 	my $briefing = {
 		scope => $global ? 'the whole house' : $app,
 		time_zone => $zone,
 		now => $now_text,
 		constructs => [ sort keys %{$gb::relationals} ],
-		windows => $windows,
+		windows => $global ? $house_digest->{'house'}->{'windows'} : $windows,
+		($global ? (
+			house => $house_digest->{'house'},
+			categories => $house_digest->{'categories'},
+			tail => $house_digest->{'tail'},
+			conditions => $house_digest->{'conditions'},
+			money => $house_digest->{'money'},
+			projects => $house_digest->{'projects'},
+			people => $house_digest->{'people'},
+			digest_bytes => $house_bytes,
+		) : ()),
 		($measure_app ? (measurements_only => 1) : ()),
 		($schedule ? (schedule => $schedule) : ()),
 		($serving ? (serving => $serving) : ()),
@@ -529,12 +891,15 @@ sub evaluation_agent {
 	$system .= ' This scope records measurements, not events: each appointment is a reading of a value. Report only the measured values and what changed between them - never occurrences, sessions, episodes, days active, pace, logs or counts of any kind. A window with no readings is a gap in logging, not a fall to zero.' if $measure_app;
 	$system .= " The house's time zone is $zone; it is $now_text there now. Timestamps in the briefing are epoch milliseconds (UTC): when you name a time, a day or an hour, read it and write it in $zone, never UTC. Where a stamp rides with its local text (ran_at, at, previous_at_text, next_run_text, latest_at), use that text as the zone's own reading.";
 	$system .= ' Speed is not a reading of this scope; do not mention it, even if a previous report did.' if !$global && !$speed_app;
+	$system .= ' A condition without r has too few days to correlate: report it as a current reading, never as an effect it causes.' if $global;
+	$system .= ' A whole-house briefing also carries house (the five windows summed over every app, the daily counts and the clock shape), categories (one entry per category: occurrences, per_day, total_duration, apps, and top_apps, each top app with its own counts and the kinds it was made of), tail (the apps not named individually, as one total), money (30 days in, out, net and the apps that moved the outlay), projects (the projects that ran), people (a count only, never names), and conditions (environmental readings - the moon, the weather and the geomagnetic field - each with its 30-day average, range and a Pearson r against the house daily activity at the best lag; positive lag_days means the reading trails activity). Use categories for breadth: name the categories and only the few apps that actually moved, and never enumerate the tail. Treat conditions as associations, not causes: say when a correlation is weak, likely to be the calendar, or too few days to trust. A whole-house report is read as a briefing on the house, not a list of every app.' if $global;
 	my $measure_instructions = 'Begin with a single headline line - at most twenty words, no label - that names what the values did, then a blank line. Say what changed since the last run using since_last (and previous when it rides along). Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends, give each measurement\'s latest value against that window\'s average, min and max, and say whether it is rising, falling or steady across the windows; hold the range the app is set to expect against it where the briefing gives one. This scope records measurements, not events: never mention occurrences, sessions, episodes, days active, pace, logs or how often anything was recorded. A window with no readings is a gap in logging, not a fall to zero. Under Correlations, weigh any conditions the briefing carries, or say there is nothing to correlate. Under Predictions give two or three concrete, falsifiable predictions that the readings carry. Plain text.';
 	my $instructions = $depth eq 'brief'
 		? ($measure_app
 			? 'Write one line only - a headline, at most twenty words, no label and no headings - that states what the values did, or that they held if nothing changed. Nothing else.'
 			: 'Write one line only - a headline, at most twenty words, no label and no headings - that states what changed in the pace, or that it held if nothing did. Nothing else.')
 		: ($measure_app ? $measure_instructions : 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. Say first what this appointment is for - what the activity is - reading it from its name, its constructs and its kinds. Where the appointment measures something consumed or done (water drunk, teeth brushed, cigarettes), the windows\' quantity and its amount_per_day (and volume_ml when the unit converts) are how much actually happened: give the generally recommended or typical daily figure for a person (for water, several glasses to a few litres a day; for coffee, a few cups), then say where the logged amount sits against it - a plain guide, not medical advice. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Where the app logs measurements, say where each reading is going - the latest reading against the average and the min and max for that window - and hold the range the app is set to expect against it. Where a window carries continent, say how far the app went and how fast, and whether that is rising or falling across the windows. Read trends too: say whether the recent periods are rising or falling, not only what the aggregate windows show, and name the period a turn began at. Where episodes ride along, give the typical onset hour and the median and longest episode, and say whether the episodes are getting longer, shorter, earlier or later. The newest period is still running - its count carries the percent elapsed - so do not read a part-run period as a fall: call it in progress and judge its pace against the percent. Where budget_pace rides along, say plainly whether the app is on track for its budget - read on_track and progress_percent against value and due_by_now, and give the projected figure - and never call a young period behind. Under Correlations weigh related (a Pearson r of the daily series) and around (things that happened at the same time of day, by lift) together: say what r means here and whether the lag suggests one follows the other, say what around says - what consistently runs beside this app and which way, reading offset_minutes - and treat a measure in different as a suspect even when no pair clears the bar; name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.');
+	$instructions .= ' For the whole house, lead with the categories and the few apps that moved, then the environmental conditions. Do not enumerate the tail, and do not call a condition a cause.' if $global;
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model && &evaluation_agent_ready()) {
@@ -550,6 +915,12 @@ sub evaluation_agent {
 	$mentions{$app} = 1 unless $global;
 	if ($global) {
 		foreach my $o ( keys %{ $roll{'month'}->{'activity'} } ) { $mentions{$o} = 1 if $o; }
+		# the app-level names the digest actually hands over must be links
+		foreach my $c ( @{ $house_digest->{'categories'} || [] } ) {
+			foreach my $a ( @{ $c->{'top_apps'} || [] } ) {
+				$mentions{ $a->{'app'} } = 1 if $a->{'app'};
+			}
+		}
 	}
 	foreach my $entry ( @related ) { $mentions{ $entry->{'app'} } = 1 if $entry->{'app'}; }
 	foreach my $entry ( @{ $around || [] } ) {
@@ -608,6 +979,13 @@ sub evaluation_agent {
 		apps => [ sort keys %mentions ],
 		mentions => [ sort keys %mentions ],
 		($global ? () : (snapshot => \%snapshot)),
+		($global ? (
+			briefing_bytes => $house_bytes,
+			briefing_truncated => $house_truncated ? 1 : 0,
+			omitted_apps => $house_digest->{'tail'}->{'apps'},
+			categories => [ map { $_->{'name'} } @{ $house_digest->{'categories'} } ],
+			conditions => [ map { { app => $_->{'app'}, measure => $_->{'measure'}, r => $_->{'r'}, lag_days => $_->{'lag_days'} } } @{ $house_digest->{'conditions'} } ],
+		) : ()),
 		$linked ? (linked => $linked) : (),
 		($autolinked && scalar @{$autolinked} ? (autolinked => [ map { $_->{'app'} } @{$autolinked} ]) : ()),
 		($pruned && scalar @{$pruned} ? (pruned => $pruned) : ()),

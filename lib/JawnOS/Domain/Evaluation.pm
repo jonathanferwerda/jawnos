@@ -192,6 +192,14 @@ sub evaluation_prune {
 	return \@removed;
 }
 
+# The whole-house report is a manual act: it is the widest prompt the house can
+# send, so it never schedules itself. Per-app evaluations keep their cadence.
+sub evaluation_manual_only {
+	my ($app) = @_;
+	$app = '__president' unless defined $app && length $app;
+	return $app eq '__president' ? 1 : 0;
+}
+
 # the machine whose worker runs the nightly evaluations; blank means every
 # machine that reconciles keeps its own queue
 sub evaluation_machine {
@@ -258,6 +266,7 @@ sub evaluation_schedule_cron {
 	# an explicit "none" clears the daily/weekly schedule; a blank value is the
 	# old wish for every night, and monthly/yearly/hourly ignore the days anyway
 	my $scope = ($app && $app ne '') ? $app : '__president';
+	return undef if &evaluation_manual_only($scope);
 	my $days_setting = &subs::setting_grabber({ app => $scope, setting => 'nightly_evaluation_days' });
 	return undef if defined $days_setting && $days_setting =~ /^\s*none\s*$/i && ($cadence eq 'daily' || $cadence eq 'weekly');
 	my @days = @{ &subs::nightly_evaluation_days($app) };
@@ -401,6 +410,7 @@ sub nightly_evaluation_reconcile {
 		}
 		my %wanted;
 		foreach my $app ( keys %scope ) {
+			next if &subs::evaluation_manual_only($app);
 			my $cadence = &subs::evaluation_cadence($app);
 			$wanted{$app} = 1 if $cadence ne 'off' && $cadence ne 'each_run';
 		}

@@ -362,11 +362,11 @@
 		</div>
 	<% } elsif ($settings->{$device}->{'system_settings_list_view'} eq 'eval') { %>
 
-		<%# the whole house's own evaluation controls sit here, where the global
-		    report already lives %>
+		<%# The whole-house evaluation is manual and lives in Handbook -> Everything.
+		    What stays here is the one house-wide choice a scheduled per-app run
+		    still needs: which machine carries the cadence. %>
 		<div class="cfg-card">
-			<%= include 'apps/evaluation_controls', app => '' %>
-			<%= include 'apps/evaluation', evaluation => $evaluation, app => undef, controls => 0 %>
+			<p class="cfg-note"><%= &subs::ui('The whole-house evaluation is in Handbook, under Everything. It runs only when you press Evaluate there. Per-app evaluations still use the cadence and days below.') %></p>
 		</div>
 		<%# every machine keeps its own queue, so the house has to say where the
 		    nightly evaluations happen; remote_machine_lister (above) names the machines %>

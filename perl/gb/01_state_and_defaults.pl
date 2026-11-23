@@ -105,6 +105,9 @@ our $timeouts = {
 	# open. Its own interval (not a pool): the old page was hourly, and half an
 	# hour is the shortest sensible ask of a public forecast service.
 	'weather_observe' => { interval => 60 * 60, toggle => 'on', timeout => 240 },
+	# The moon's arithmetic and the space weather are hourly: cheap, local, and
+	# one small row a day, so the evaluation has a history to correlate with.
+	'astronomy' => { interval => 60 * 60, toggle => 'on', timeout => 90, group => 'slow' },
 	'telephone_check' => { interval => 1 * 60 * 5, toggle => 'off', timeout => 90, group => 'fast' },
 	'email_sender' => { interval => 1 * 30, toggle => 'off', timeout => 90, group => 'fast' },
 	'email_receiver' => { interval => 5 * 60, toggle => 'off', timeout => 390, group => 'fast' },

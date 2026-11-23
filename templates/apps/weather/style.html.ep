@@ -44,6 +44,44 @@
 .wind[app="weather"] #weather_temp { font-size: 54px; font-weight: 700; line-height: 1; margin: 2px 0; }
 .wind[app="weather"] #weather_cond { font-size: 18px; }
 .wind[app="weather"] #weather_glyph { font-size: 58px; line-height: 1; }
+.wind[app="weather"] #weather_moon {
+	flex: 0 0 auto;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+	max-width: 88px;
+}
+.wind[app="weather"] #weather_moon_art { width: 48px; height: 48px; display: block; }
+.wind[app="weather"] .weather_moon_label { font-size: 10px; line-height: 1.15; opacity: .72; text-align: center; }
+.wind[app="weather"] .weather_moon_lit { fill: var(--moon-lit, #f5f0dc); }
+.wind[app="weather"] .weather_moon_dark { fill: var(--moon-dark, #2a2f3a); }
+.wind[app="weather"] .weather_moon_halo { fill: none; stroke: var(--line); stroke-width: 1; }
+.wind[app="weather"] .weather_space_head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: .06em;
+	opacity: .72;
+}
+.wind[app="weather"] .weather_space_level { text-transform: none; letter-spacing: 0; font-weight: 600; opacity: 1; }
+.wind[app="weather"] .weather_space_level.quiet { color: #2e7d32; }
+.wind[app="weather"] .weather_space_level.active { color: #b26a00; }
+.wind[app="weather"] .weather_space_level.storm { color: var(--danger, #c0392b); }
+.wind[app="weather"] .weather_space_body {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+	gap: 4px 12px;
+	font-size: 13px;
+	margin-top: 4px;
+}
+.wind[app="weather"] .weather_space_stat b { display: block; font-size: 11px; font-weight: 500; opacity: .58; text-transform: uppercase; letter-spacing: .04em; }
+.wind[app="weather"] .weather_space_bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 4px; }
+.wind[app="weather"] .weather_space_bar span { display: block; height: 100%; background: currentColor; }
+.wind[app="weather"] .weather_space_muted { opacity: .6; font-size: 12px; }
 .wind[app="weather"] #weather_stats {
 	flex: 1 1 240px;
 	display: grid;

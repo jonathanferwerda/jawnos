@@ -128,6 +128,9 @@ sub action_52321 {
 	$log->info("weather data: no hourly for $location_key from " . ($weather->{'provider'} // ''))
 		if $log && !@{ $weather->{'hourly'} || [] };
 	eval { &subs::weather_alert_enrich($weather) };
+	# The moon is arithmetic, not a feed: no scraper, no key, and it works on a
+	# new install. The hemisphere only decides which limb is drawn lit.
+	$weather->{'moon'} = eval { &subs::moon_current({ timestamp => &subs::rightNow(), lat => $use_lat }) } || {};
 	$weather->{'source'} = $label;
 	$weather->{'source_at'} = $seen_at;
 	$weather->{'source_device'} = $device;
@@ -317,6 +320,15 @@ sub action_52325 {
 		})
 	};
 	$c->render(json => $result || { error => &subs::ui('Weather sources are unavailable.') });
+}
+
+# GET /manager/weather/space_weather
+# The planetary K index and the solar wind, from NOAA. A separate request so a
+# slow or unreachable space-weather service never holds the weather page shut.
+sub action_52331 {
+	my $c = shift;
+	my $space = eval { &subs::space_weather_fetch({ force => ($c->param('force') ? 1 : 0) }) };
+	$c->render(json => { space_weather => $space || { error => &subs::ui('Space weather is unavailable right now.') } });
 }
 
 # POST /manager/weather/sources

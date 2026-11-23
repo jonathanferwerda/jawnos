@@ -79,13 +79,15 @@ my %known_gap = map { $_ => 1 } qw(
 	account coding_chat project
 	app_details app_file app_measure_details app_measures app_transaction
 	appointment_header appointment_stats budget_current_information edit_app evaluation_controls
-	evaluation_report gallery_album gallery_home ide_files information
+	evaluation_report evaluation_wide_controls gallery_album gallery_home ide_files information
 	inventory_info people_person
 );
 # account and project have no route that renders them (nothing includes or
 # redirects to either page), so there is nothing to explain yet. coding_chat is
 # a chatbox other apps mount, named by the `ide` topic's templates list. The rest
-# are fragments of an app's page, explained by that app's topic.
+	# are fragments of an app's page, explained by that app's topic.
+	# evaluation_wide_controls is the Handbook Everything chapter's run control,
+	# explained by the evaluation and handbook topics.
 
 my @orphans;
 for my $file (sort glob("$root/templates/apps/*.html.ep")) {

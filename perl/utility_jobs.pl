@@ -614,6 +614,13 @@ sub utility_functions() {
 			eval { &subs::weather_observe_tick(); };
 		};
 
+		# The moon and the geomagnetic field, recorded locally so a new house has
+		# history without a scraper or an API key.
+		$gb::timeouts->{'astronomy'}->{'subroutine'} = sub {
+			my $r = eval { &subs::astronomy_tick() };
+			return $@ ? 'astronomy: failed: ' . $@ : 'astronomy: moon and space weather updated';
+		};
+
 		$gb::timeouts->{'telephone_check'}->{'subroutine'} = sub {
 			return 'telephone: not a mobile' unless $device eq 'mobile';
 			my ($contacts, $calls, $lines) = (0, 0, 0);

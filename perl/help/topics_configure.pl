@@ -182,7 +182,7 @@ $topic{'box_office'} = {
 	};
 $topic{'handbook'} = {
 		title => 'Handbook', category => 'apps', app => 'handbook',
-		templates => [ 'templates/handbook/handbook.html.ep', 'templates/handbook/today.html.ep' ],
+		templates => [ 'templates/handbook/handbook.html.ep', 'templates/handbook/today.html.ep', 'templates/handbook/evaluation.html.ep' ],
 		controls => [ 'Chapters', 'Explode', 'Home', 'Next day', 'Previous day', 'The day as a journal', 'Type a day and press Enter' ],
 		verified => '2026-11-15',
 		summary => 'The day as a journal, and chaptered notes about the system itself.',
@@ -191,6 +191,7 @@ $topic{'handbook'} = {
 			'The day header is also a time machine: type a day (today, yesterday, jul 16, 2025-10-21) and press Enter, or use the arrows to step one day at a time. Today reads the same stores the rest of the program writes to, so nothing is copied or typed twice.',
 			'The Journal box writes an entry for the day being read. Save entry writes it into the Journal app for that day, as an encrypted note like that app\'s own entries, so the journal is reachable outside Handbook too; Today reads the Journal app and any older Handbook notes together. Plant with the Guide asks the configured Guide model to read the journal (the last 30 days and the entry you just typed) and to plant the ideas, plans and dreams that point forward: each becomes a quiet Journal appointment on the day it belongs to, marked planted, so it appears when you turn Today to that day. Nothing is invented - the Guide quotes the entry - and a planted entry can be opened, edited or deleted like any other appointment.',
 			'Predicted by your records is the ghost appointments\' view of the day: the times an app\'s own history says it is likely to happen, drawn faded and without writing anything. They are the same predictions the desktop timeline, calendar and clockface draw, read here for the one day.',
+			'Everything is the whole-house evaluation: a manual briefing that reads every app through category totals, the money that moved, the projects that ran, a count of people, and the moon, weather and geomagnetic conditions the house lives under. The prompt is fitted automatically, so the report can span everything without sending every app. It runs only when you press Evaluate.',
 			'Below Today, Handbook is still the reference shelf: chaptered pages about how JawnOS works, with diagrams. It is the longer-form cousin of this Help app.'
 		],
 		steps => [
@@ -200,7 +201,8 @@ $topic{'handbook'} = {
 			'Read State of life for the day\'s timeline, predictions, measures and journal entries.',
 			'Write in the Journal box and press Save entry to keep the day\'s note.',
 			'Press Plant with the Guide to have the journal read and its forward-looking ideas, plans and dreams placed on their days.',
-			'Read Projects and People for what moved recently and who is in the day\'s plans.'
+			'Read Projects and People for what moved recently and who is in the day\'s plans.',
+			'Open Everything and press Evaluate for a manual appraisal of the whole house.'
 		],
 		related => [ 'help_app' ]
 	};

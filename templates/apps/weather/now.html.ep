@@ -6,9 +6,20 @@
 		<div id="weather_cond"><%= &subs::ui('Loading…') %></div>
 	</div>
 	<div id="weather_glyph">🌡️</div>
+	<div id="weather_moon" class="weather_moon" style="display:none;" hint="<%= &subs::ui('The moon\'s phase right now') %>">
+		<svg id="weather_moon_art" viewBox="0 0 48 48" role="img" aria-label=""></svg>
+		<span id="weather_moon_label" class="weather_moon_label"></span>
+	</div>
 	<div id="weather_stats"></div>
 </div>
 <div id="weather_source_detail" class="weather_muted"></div>
+<div id="weather_space" class="weather_card weather_space" style="display:none;">
+	<div class="weather_space_head">
+		<span><%= &subs::ui('Space weather') %></span>
+		<span id="weather_space_level" class="weather_space_level"></span>
+	</div>
+	<div id="weather_space_body" class="weather_space_body"></div>
+</div>
 <div id="weather_hourly_title"><%= &subs::ui('Next 24 hours') %></div>
 <div id="weather_hourly"><span class="weather_muted"><%= &subs::ui('Hourly forecast will appear here.') %></span></div>
 <div id="weather_daily_title"><%= &subs::ui('14-day forecast') %></div>
