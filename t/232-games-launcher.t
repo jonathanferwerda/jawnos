@@ -1,8 +1,8 @@
 # tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_ws.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js public/js/manager/websocket.js public/js/manager/windows/03_stack.js templates/apps/transaction/options.html.ep perl/help/topics_people.pl public/css/manager.css
-# covers:    The second launcher behind the Controller's Games tile, Twirl's
-#            clockwise and counter-clockwise turns and its single animation
-#            loop, and the strip a full-screen app used to keep where its
-#            title bar had been.
+# covers:    The Games shelf behind the Controller's Games tile, the house games
+#            in recency order above the emulated cards, Twirl's clockwise and
+#            counter-clockwise turns and its single animation loop, and the strip
+#            a full-screen app used to keep where its title bar had been.
 
 use strict;
 use warnings;
@@ -90,13 +90,14 @@ like($options_template, qr/\$l->\{'app'\} eq 'games'/, 'a game option opens the 
 # --- the shelf ----------------------------------------------------------------
 my $page = read_file("$root/templates/apps/games.html.ep");
 like($page, qr/href="\/manager\?open=<%=\s*\$tile->\{'key'\}\s*%>&amp;full=1&amp;back=%2Fmanager%2Fgames"/,
-	'a house game tile opens its game full screen and remembers the Games launcher');
+	'a house game tile opens its game full screen and remembers the Games shelf');
 like($controller, qr/key => 'cards'[\s\S]*?\/images\/decipherable\/cards\.png/,
-	'Cards opens the card room full screen and remembers the Games launcher');
+	'Cards opens the card room full screen and remembers the Games shelf');
 like($controller, qr/key => 'twirl'[\s\S]*?\/images\/decipherable\/tetris\.png/,
-	'Twirl opens the puzzle full screen and remembers the Games launcher');
-like($page, qr/Emulated games/, 'the emulated shelf is named');
-like($page, qr/None installed yet/, 'and says there is nothing on it yet');
+	'Twirl opens the puzzle full screen and remembers the Games shelf');
+like($page, qr/id="games_own"/, 'the shelf carries the house games');
+like($page, qr/id="games_own_title"><%=\s*&subs::ui\('JawnOS games'\)/, 'under the JawnOS games name');
+like($page, qr/None installed yet/, 'and says there is nothing on the emulated shelf yet');
 like($page, qr/id="games_home"[^>]*href="\/manager\/controller"/, 'Home returns to the Controller launcher');
 like($page, qr/^\s*\.wind \{[^}]*width:100vw/m, 'the launcher page itself fills the glass');
 
@@ -151,24 +152,23 @@ unlike($page, qr/cursor:(?!var\()/, 'every cursor uses the house pointer token')
 like($page, qr/include 'controller\/standalone'/, 'the shelf includes the standalone theme and Home rule');
 like($controller, qr{'/images/decipherable/cards\.png'}, 'Cards wears the active icon set');
 like($controller, qr{'/images/decipherable/tetris\.png'}, 'Twirl wears the active icon set');
-like($page, qr/icon_for\('\/images\/decipherable\/diskette\.png'\)/, 'Emulated games wears the active icon set');
+like($page, qr/icon_for\(\$tile->\{'icon'\}\)/, 'the house games wear the active icon set');
 like($page, qr/decoding="async"/, 'a cover decodes off the page\'s drawing thread');
 
 # --- the desk and the Controller know it -------------------------------------
 my $back = read_file("$root/public/js/manager/manager/09_app_back.js");
 like(read_file("$root/templates/apps/controller.html.ep"), qr/href="\/manager\/games"/,
-	'the Controller Games tile opens the launcher page, not Twirl directly');
+	'the Controller Games tile opens the shelf, not Twirl directly');
 unlike($back, qr/games: '\/manager\/games'/, 'the desk does not deal the launcher as a window');
 like($back, qr/function jawnosHomeBack\(/, 'Home has one page-back rule of its own');
 like($back, qr/'\/manager\/controller\/retroarch': '\/manager\/controller\/config'/,
 	'RetroArch returns to Configuration');
 like($back, qr/'\/manager\/controller\/config': '\/manager\/controller'/,
 	'Configuration returns to the launcher');
-like($back, qr/'\/manager\/games\/mapping': '\/manager\/games\?view=emulated'/,
-	'the controls page returns to the emulated shelf');
+like($back, qr/'\/manager\/games\/mapping': '\/manager\/games'/,
+	'the controls page returns to the shelf');
 like($back, qr/get\('back'\)/, 'an app opened from a launcher carries the page to return to');
-like($back, qr/view === 'emulated' \? '\/manager\/games' : '\/manager\/controller'/,
-	'the shelf returns to Games and the Games launcher returns to the Controller');
+unlike($back, qr/view === 'emulated'/, 'the shelf returns straight to the Controller launcher');
 like($page, qr/\.wind\[app="games"\] \.top_navbar\s*\{[^}]*display:none/, 'the launcher hides its own window bar');
 
 # --- the Guide ----------------------------------------------------------------

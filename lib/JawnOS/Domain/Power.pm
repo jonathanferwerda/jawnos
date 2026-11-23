@@ -831,12 +831,17 @@ sub power_sleep_block {
 
 # One write through the helper, shared by the global block and a profile block.
 # A machine with no sleep state cannot honour a sleep timer; write 0 instead of
-# asking logind to enter a state this kernel does not offer.
+# asking logind to enter a state this kernel does not offer. A controller never
+# writes one either: its Leave menu does not offer Sleep (a system suspend would
+# take the radios down), and logind's own idle action must not become the timer
+# the menu refuses. That also defuses a nonzero value left in an older row.
 sub power_sleep_write {
 	my ($block, $capabilities) = @_;
 	$capabilities = &power_sleep_capabilities() unless ref $capabilities eq 'HASH';
 	my $types = ref $capabilities->{'types'} eq 'ARRAY' ? $capabilities->{'types'} : [];
-	my $effective_sleep = @{$types} ? $block->{'sleep_timeout'} : 0;
+	my $requested = $block->{'sleep_timeout'} // 0;
+	my $controller = (&subs::device_setter() || '') eq 'controller';
+	my $effective_sleep = (!$controller && @{$types}) ? $requested : 0;
 	my $answer = &power_helper(
 		'settings',
 		$block->{'screen_timeout'},
@@ -844,7 +849,7 @@ sub power_sleep_write {
 		$block->{'lid_action'},
 		$block->{'sleep_type'},
 	);
-	return ($answer, $effective_sleep == $block->{'sleep_timeout'} ? 0 : 1);
+	return ($answer, $effective_sleep == $requested ? 0 : 1);
 }
 
 # Save the sleep and display block. Every supplied value is checked before it

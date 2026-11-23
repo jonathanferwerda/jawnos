@@ -230,6 +230,40 @@ no warnings 'redefine';
 	my $no_hibernate = subs::power_sleep_now('hibernate');
 	is($no_hibernate->{'supported'}, 0, 'Sleep now refuses an unsupported state');
 	write_file("$sys/power/state", "freeze mem disk\n");
+
+	# A controller's idle timer is the dark panel, not a suspend: its Leave menu
+	# does not offer Sleep, so logind must not be given one either, even when an
+	# older row still holds a timeout. The screen timeout is kept.
+	{
+		no warnings 'redefine';
+		local *subs::device_setter = sub { 'controller' };
+		my $controller = subs::power_sleep_set({
+			screen_timeout => 10,
+			sleep_timeout => 15,
+			lid_action => 'suspend',
+			sleep_type => 'suspend',
+		});
+		ok($controller->{'ok'}, 'a controller saves its screen timeout');
+		is($controller->{'sleep_ignored'}, 1, 'and reports the sleep timeout ignored');
+		is_deeply($controller->{'applied'}{'command'},
+			[$^X, "$root/scripts/jawnos_power.pl", 'settings', 10, 0, 'suspend', 'suspend'],
+			'logind is told the controller has no idle sleep');
+	}
+}
+
+# --- the controller's Power page has no Sleep row ---------------------------
+# The same page serves a laptop and a controller. A controller is not offered
+# Sleep in its Leave menu, so the Power page must not offer the timer either,
+# and the chunk must not post a value it cannot see.
+{
+	my $template = read_file("$root/templates/apps/power.html.ep");
+	like($template, qr/device_setter\(\) \|\| ''\) eq 'controller'/,
+		'the Power page knows it is on a controller');
+	like($template, qr/A controller does not suspend; the screen goes dark instead/,
+		'and says so where the sleep row would be');
+	my $js = read_file("$root/public/js/manager/power.js");
+	like($js, qr/if \(sleep\.length\) \{ data\.sleep_timeout = sleep\.val\(\); \}/,
+		'a sleep row that is not on the page is not posted');
 }
 
 # --- the fixed helper ------------------------------------------------------

@@ -30,12 +30,7 @@
 		e.preventDefault();
 		var path = location.pathname.replace(/\/+$/, '') || '/';
 		var back = '/manager/controller';
-		if (path === '/manager/games') {
-			var view = '';
-			try { view = new URLSearchParams(location.search).get('view') || ''; } catch (err) { view = ''; }
-			back = view === 'emulated' ? '/manager/games' : '/manager/controller';
-		}
-		else if (path === '/manager/games/mapping') { back = '/manager/games?view=emulated'; }
+		if (path === '/manager/games/mapping') { back = '/manager/games'; }
 		else if (path === '/manager/controller/time' || path === '/manager/controller/retroarch'
 			|| path === '/manager/controller/power') { back = '/manager/controller/config'; }
 		else if (path === '/manager/controller/config') { back = '/manager/controller'; }
@@ -45,16 +40,18 @@
 })();
 </script>
 <script>
-/* The screen and suspend timeouts, run from the pages that stay on the glass:
-   the launcher and its own Configuration pages. The games shelf is left out - a
-   game is the panel for as long as it runs. The backlight is blanked without
-   stopping X or the kiosk, so the page keeps receiving the press that brings
-   the light back - an `off` that stopped them could never be woken by the
-   touch it waited for. Re-read every five minutes so a change in Configuration
-   lands without a reload. */
+/* The screen timeout, run from the pages that stay on the glass: the launcher
+   and its own Configuration pages. The games shelf is left out - a game is the
+   panel for as long as it runs. The backlight is blanked without stopping X or
+   the kiosk, so the page keeps receiving the press that brings the light back -
+   an `off` that stopped them could never be woken by the touch it waited for.
+   A controller never suspends on idle: its Leave menu does not offer Sleep
+   because a system suspend would take the radios down, so this timer must not
+   take that route either. Re-read every five minutes so a change in
+   Configuration lands without a reload. */
 (function () {
 	if (location.pathname.indexOf('/manager/games') === 0) { return; }
-	var blanked = false, slept = false, sleep = null, last = Date.now(), busy = false;
+	var blanked = false, block = null, last = Date.now(), busy = false;
 	function touched() { last = Date.now(); if (blanked && !busy) { setBlank(false); } }
 	['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (name) {
 		document.addEventListener(name, touched, { passive: true });
@@ -70,26 +67,21 @@
 	function load() {
 		fetch('/manager/power_status', { credentials: 'same-origin' })
 			.then(function (r) { return r.json(); })
-			.then(function (s) { sleep = (s && s.config && s.config.sleep) || null; })
+			.then(function (s) { block = (s && s.config && s.config.sleep) || null; })
 			.catch(function () {});
 	}
 	function tick() {
-		if (sleep) {
+		if (block) {
 			var idle = (Date.now() - last) / 1000;
-			var screen = (sleep.screen_timeout || 0) * 60;
-			var nap = (sleep.sleep_timeout || 0) * 60;
+			var screen = (block.screen_timeout || 0) * 60;
 			if (screen > 0 && idle >= screen && !blanked && !busy) { setBlank(true); }
-			if (nap > 0 && idle >= nap && !slept) {
-				slept = true;
-				fetch('/manager/power/sleep_now', {
-					method: 'POST', credentials: 'same-origin',
-					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-					body: 'type=' + encodeURIComponent(sleep.sleep_type || 'suspend')
-				}).catch(function () {});
-			}
 		}
 		setTimeout(tick, 5000);
 	}
 	load(); setInterval(load, 300000); tick();
+	/* A page that has just loaded is one someone reached - a tile press, Home,
+	   or a reload after the kiosk restarted. Ask for the light once, so a panel
+	   the timeout left dark on the page before this one comes back. */
+	setBlank(false);
 })();
 </script>

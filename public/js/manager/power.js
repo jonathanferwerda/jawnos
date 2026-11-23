@@ -288,10 +288,13 @@ function powerCharge(end) {
 }
 
 function powerSleepSave() {
+	var sleep = $('#power_sleep_timeout');
 	var data = {
-		screen_timeout: $('#power_screen_timeout').val(),
-		sleep_timeout: $('#power_sleep_timeout').val()
+		screen_timeout: $('#power_screen_timeout').val()
 	};
+	// A controller's Power page does not draw the Sleep row, so there is no
+	// value to post; the domain keeps what it has and writes 0 to logind.
+	if (sleep.length) { data.sleep_timeout = sleep.val(); }
 	var plan = $('#power_sleep_plan').val();
 	if (plan) { data.plan = plan; }
 	var lid = $('#power_lid_action').val();

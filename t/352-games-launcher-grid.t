@@ -1,7 +1,7 @@
 # tests-for: templates/apps/games.html.ep lib/JawnOS/Controller/manager_misc9.pm
-# covers:    The second launcher's eight-column shelf, the emulated tile kept
-#            first, and the house games ordered by the play ledger's latest
-#            visit with a fixed tie-break.
+# covers:    The Games shelf's house-game row and its scrolling card grid, and
+#            the house games ordered by the play ledger's latest visit with a
+#            fixed tie-break.
 
 use strict;
 use warnings;
@@ -16,27 +16,31 @@ my $root = repo_root();
 my $page = read_file("$root/templates/apps/games.html.ep");
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
 my ($action) = $controller =~ /(sub action_44004\b.*?\n\})/s;
-ok($action, 'action_44004 supplies the launcher its list');
+ok($action, 'action_44004 supplies the shelf its list');
 
-# --- the grid -----------------------------------------------------------------
-my ($grid) = $page =~ /(#games_grid \{[^}]*\})/s;
-ok($grid, 'the launcher grid has a rule of its own');
-like($grid, qr/grid-template-columns:repeat\(8, ?minmax\(0, ?1fr\)\)/, 'eight columns, one share each');
+# --- the shelf grid and the house row -----------------------------------------
+my ($grid) = $page =~ /(#games_library \{[^}]*\})/s;
+ok($grid, 'the shelf grid has a rule of its own');
+like($grid, qr/grid-template-columns:repeat\(auto-fill, ?minmax\(104px, ?1fr\)\)/, 'the cards fill the glass');
 like($grid, qr/overflow-y:auto/, 'the shelf scrolls down when it outgrows the glass');
 like($grid, qr/align-content:start/, 'a short shelf starts at the top instead of stretching');
 like($grid, qr/flex:1 1 auto/, 'and it takes the height the bar leaves');
 like($grid, qr/min-height:0/, 'so the scrolling is real inside a flex column');
+my ($own_grid) = $page =~ /(#games_own_grid \{[^}]*\})/s;
+ok($own_grid, 'the house games have a row of their own');
+like($own_grid, qr/grid-template-columns:repeat\(4, ?minmax\(0, ?1fr\)\)/, 'four tiles across');
 like($page, qr/\.games_tile_note \{ display:none/, 'the long note folds away at this width but stays in the markup');
 like($page, qr/class="games_tile_note"><%= &subs::ui\(\$tile->\{'note'\}\) %>/,
 	'and every tile still carries it');
 
-# --- emulated first, then the house's games -----------------------------------
-my $emulated_at = index($page, 'href="/manager/games?view=emulated"');
-my $loop_at = index($page, 'for my $tile (@{ $tiles })');
-ok($emulated_at >= 0, 'the emulated shelf tile is on the page');
-ok($loop_at > $emulated_at, 'the emulated tile comes first and the house games follow it');
-like($page, qr/icon_for\('\/images\/decipherable\/diskette\.png'\)/, 'it keeps the diskette icon');
-like($page, qr/None installed yet/, 'and its count note');
+# --- the house games sit above the cards ---------------------------------------
+my $own_at = index($page, 'id="games_own"');
+my $cards_at = index($page, 'for my $game (@{$games})');
+ok($own_at >= 0, 'the house games are on the shelf');
+ok($own_at >= 0 && $cards_at > $own_at, 'and they come before the emulated cards');
+unlike($page, qr/\?view=emulated/, 'there is no second landing page to open first');
+unlike($page, qr/diskette/, 'and no emulated-games tile to press');
+like($page, qr/None installed yet/, 'the shelf bar still carries the emulated count');
 
 # --- the loop is fed by the action's list ------------------------------------
 like($page, qr/\$tiles = \(ref \$jawnos_games eq 'ARRAY'\)/, 'the tile loop reads the action-rendered list');
@@ -83,5 +87,7 @@ like($action, qr/key => 'cards'[\s\S]*?key => 'twirl'[\s\S]*?key => 'pipedream'[
 	'and that rank is Cards, Twirl, Pipedream, Minesweeper');
 like($action, qr/jawnos_games => \\\@jawnos_games/, 'the sorted list is handed to the page');
 like($action, qr/template => 'apps\/games'/, 'which is the games template');
+unlike($action, qr/if \(\$view eq 'launcher'\)/, 'the recency order is not hidden behind a second view');
+unlike($action, qr/view => \$view/, 'the page has one view');
 
 done_testing();

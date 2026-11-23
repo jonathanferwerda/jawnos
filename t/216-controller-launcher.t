@@ -80,9 +80,10 @@ my $page = read_file("$root/templates/apps/controller.html.ep");
 my $standalone = read_file("$root/templates/controller/standalone.html.ep");
 like($standalone, qr{/manager/controller/panel}, 'a launcher page blanks the panel on idle');
 like($standalone, qr{screen_timeout}, 'following the configured screen timeout');
-like($standalone, qr{sleep_timeout}, 'and the suspend timeout');
-like($standalone, qr{sleep_now}, 'which asks the power route to sleep the machine');
+unlike($standalone, qr{sleep_timeout}, 'a controller page has no suspend timeout');
+unlike($standalone, qr{sleep_now}, 'and never asks the power route to sleep the machine');
 like($standalone, qr/passive: true/, 'and wakes on the first press without swallowing it');
+like($standalone, qr/setBlank\(false\)/, 'a page that just loaded asks for the light once');
 like($standalone, qr{/manager/games}, 'the games shelf is left out of the idle timer');
 if ($page =~ /encode_json/) {
 	like($page, qr/<%\s*use Mojo::JSON[^%]*encode_json/, 'the page imports encode_json it uses');
@@ -200,7 +201,8 @@ like($page, qr/include 'controller\/standalone'/, 'the launcher includes the sta
 like($standalone, qr/cursor_css/, 'the standalone page gets the cursor-set stylesheet');
 like($standalone, qr/data-cursor-set/, 'and marks the body with the theme cursor');
 like($standalone, qr/jawnosStandaloneHome/, 'and sends Home back one launcher page');
-like($standalone, qr/\/manager\/games\/mapping'\) \{ back = '\/manager\/games\?view=emulated'/, 'the controls page returns to the shelf');
+like($standalone, qr{/manager/games/mapping'\) \{ back = '/manager/games'}, 'the controls page returns to the shelf');
+unlike($standalone, qr{view === 'emulated'}, 'the shelf has no second landing page above it');
 like($standalone, qr/\/manager\/controller\/config'\) \{ back = '\/manager\/controller'/, 'Configuration returns to the launcher');
 like($standalone, qr/\/manager\/controller\/power'\)\s*\{\s*back = '\/manager\/controller\/config'/, 'Power returns to Configuration');
 like($standalone, qr/\.window_fullview_exit[^{]*\{[^}]*display\s*:\s*none/,

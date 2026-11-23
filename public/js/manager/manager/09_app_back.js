@@ -882,8 +882,8 @@ $(function () {
 
 /* The handheld's Home button is KEY_HOME (the input daemon sends it). One press
    goes back one launcher page, never straight to the top: RetroArch returns to
-   Configuration, Configuration returns to the launcher, and the emulated shelf
-   returns to the Games launcher. An app opened from a launcher carries
+   Configuration, Configuration returns to the launcher, and the Games shelf
+   returns to the Controller launcher. An app opened from a launcher carries
    ?back=<page> (Cards and Twirl from Games, Wi-Fi and the rest from
    Configuration), so it too returns to the page that opened it. Anywhere else
    still comes home to the controller's launcher - the kiosk has no other way
@@ -899,14 +899,9 @@ function jawnosHomeBack() {
 			'/manager/controller/config': '/manager/controller',
 			'/manager/controller/time': '/manager/controller/config',
 			'/manager/controller/retroarch': '/manager/controller/config',
-			'/manager/games/mapping': '/manager/games?view=emulated'
+			'/manager/games/mapping': '/manager/games'
 		};
 		back = launcher[path] || '';
-		if (!back && path === '/manager/games') {
-			var view = '';
-			try { view = new URLSearchParams(location.search).get('view') || ''; } catch (e) { view = ''; }
-			back = view === 'emulated' ? '/manager/games' : '/manager/controller';
-		}
 	}
 	if (!back || back === path + location.search) { back = '/manager/controller'; }
 	// A launcher app is a whole-screen window. Leaving it open made the next

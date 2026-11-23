@@ -893,16 +893,14 @@ sub action_44003 {
 }
 
 # GET /manager/games
-# A second launcher, one press in from the Controller's Games tile. The house's
-# own games run inside it and are listed most recently played first, from the
-# play ledger; the emulated shelf is the same page with ?view=emulated, which
-# draws the ROMs found under ~/roms and the two install buttons. The scan is
-# cheap (one directory walk) and every card carries the id the launch route
-# checks against it.
+# The Controller's Games tile lands on the shelf itself: the house's own games
+# run from here, most recently played first, then the ROMs found under ~/roms
+# with the two install buttons above them. The house games' recency comes from
+# the play ledger. The scan is cheap (one directory walk) and every card carries
+# the id the launch route checks against it.
 sub action_44004 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
-	my $view = ($c->param('view') // '') eq 'emulated' ? 'emulated' : 'launcher';
 	my $library = eval { &subs::game_library() } || { ok => 0, games => [], systems => [] };
 	# One tile per house game, the card games sharing the recency of the table
 	# played last. rank is the fixed tie-break, so a shelf nobody has touched
@@ -918,35 +916,32 @@ sub action_44004 {
 		{ key => 'minesweeper', title => 'Minesweeper', note => 'Clear the field without hitting a mine',
 			icon => '/images/decipherable/marker.png', rank => 3, projects => [ 'Minesweeper' ] },
 	);
-	if ($view eq 'launcher') {
-		# The play ledger writes a games appointment per game, its project the
-		# name the game reports. A game with no row is simply unplayed (0).
-		my $played = {};
-		my $rows = eval {
-			&subs::db_query(
-				"select project, max(cast(timestamp as integer)) as last_at from appointments"
-					. " where app = 'games' and project is not null and project != '' group by project"
-			)->hashes;
-		} || [];
-		$played->{ $_->{'project'} } = $_->{'last_at'} // 0 for grep { ref $_ eq 'HASH' && defined $_->{'project'} } @{ $rows };
-		for my $game (@jawnos_games) {
-			$game->{'last_at'} = 0;
-			for my $project (@{ $game->{'projects'} }) {
-				my $at = $played->{$project} // 0;
-				$game->{'last_at'} = $at if $at > $game->{'last_at'};
-			}
+	# The play ledger writes a games appointment per game, its project the
+	# name the game reports. A game with no row is simply unplayed (0).
+	my $played = {};
+	my $rows = eval {
+		&subs::db_query(
+			"select project, max(cast(timestamp as integer)) as last_at from appointments"
+				. " where app = 'games' and project is not null and project != '' group by project"
+		)->hashes;
+	} || [];
+	$played->{ $_->{'project'} } = $_->{'last_at'} // 0 for grep { ref $_ eq 'HASH' && defined $_->{'project'} } @{ $rows };
+	for my $game (@jawnos_games) {
+		$game->{'last_at'} = 0;
+		for my $project (@{ $game->{'projects'} }) {
+			my $at = $played->{$project} // 0;
+			$game->{'last_at'} = $at if $at > $game->{'last_at'};
 		}
-		@jawnos_games = sort {
-			($b->{'last_at'} <=> $a->{'last_at'}) || ($a->{'rank'} <=> $b->{'rank'})
-		} @jawnos_games;
 	}
+	@jawnos_games = sort {
+		($b->{'last_at'} <=> $a->{'last_at'}) || ($a->{'rank'} <=> $b->{'rank'})
+	} @jawnos_games;
 	for my $game (@jawnos_games) {
 		delete $game->{'projects'};
 		delete $game->{'rank'};
 	}
 	my $contents = $c->render_to_string(
 		template => 'apps/games',
-		view => $view,
 		library => $library,
 		emulators => &subs::game_emulator_present(),
 		jawnos_games => \@jawnos_games,

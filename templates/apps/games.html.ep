@@ -1,12 +1,11 @@
 <% use Mojo::JSON qw(encode_json); %>
-<%# A second launcher, one press in from the Controller's Games tile. The house's
-    own games run inside it, most recently played first. ?view=emulated is the emulated shelf: the ROMs
-    found under ~/roms, a card each, with the two install buttons above them,
-    a filter by system, the emulator each system runs on, a cover fetch and a
-    way to the controls page. %>
+<%# The Games shelf, one press in from the Controller's Games tile. The house's
+    own games run from here, most recently played first, then the ROMs found
+    under ~/roms, a card each, with the two install buttons above them, a filter
+    by system, the emulator each system runs on, a cover fetch and a way to the
+    controls page. %>
 <%= include 'controller/standalone' %>
 <%
-	my $mode = (defined $view && $view eq 'emulated') ? 'emulated' : 'launcher';
 	my $games = (ref $library eq 'HASH' && ref $library->{'games'} eq 'ARRAY') ? $library->{'games'} : [];
 	my $count = scalar @{ $games };
 	# The shelf's own data may come from a scan that is older than this page, so
@@ -38,6 +37,7 @@
 	#games_home:hover, .games_action:hover { border-color:var(--accent, #4a90d9); }
 	.games_action:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
 	#games_bar_spacer { flex:1 1 auto; }
+	#games_count_note { font-size:11px; opacity:.85; }
 	#games_install_note { flex:1 1 100%; font-size:11px; line-height:1.3; min-height:1em; opacity:.85; }
 	#games_covers_note { font-size:11px; line-height:1.3; opacity:.85; }
 	/* The filter rides above the shelf and scrolls sideways: a system set is
@@ -62,12 +62,11 @@
 		border:1px solid #4a4a4a; border-radius:6px; background:#3a3a3a; color:#ffffff;
 		cursor:var(--jawnos-cursor-pointer, pointer); }
 	.games_emulator_note { flex:1 1 auto; min-width:0; opacity:.8; }
-	/* Eight across so the shelf fits a handheld's glass, and it scrolls down as
-	   the house gains games. At this width a tile is the icon and its name, which
-	   may wrap under it; the note stays in the markup and returns when wide. */
-	#games_grid { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:repeat(8, minmax(0, 1fr));
-		grid-auto-rows:min-content; align-content:start; overflow-y:auto; gap:6px;
-		padding:8px; box-sizing:border-box; }
+	/* The house games ride at the top of the shelf, one row of tiles, most
+	   recently played first; the ROM cards follow under them. */
+	#games_own { grid-column:1 / -1; display:flex; flex-direction:column; gap:4px; }
+	#games_own_title { margin:0; font-size:11px; font-weight:600; opacity:.85; }
+	#games_own_grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; }
 	.games_tile { display:flex; flex-direction:column; align-items:center; justify-content:center;
 		gap:4px; min-width:0; padding:6px 3px; border:1px solid #4a4a4a; border-radius:10px;
 		background:#3a3a3a; color:#ffffff; text-decoration:none; text-align:center; }
@@ -107,26 +106,9 @@
 	.house_get:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
 </style>
 <div id="games_shell">
-% if ($mode eq 'launcher') {
-	<div id="games_bar"><a id="games_home" href="/manager/controller"><%= &subs::ui('Home') %></a></div>
-	<div id="games_grid">
-		<a class="games_tile" href="/manager/games?view=emulated">
-			<img class="games_tile_icon" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" alt="">
-			<span class="games_tile_label"><%= &subs::ui('Emulated games') %></span>
-			<span class="games_tile_note"><%= $count ? ($count . ' ' . &subs::ui('games ready')) : &subs::ui('None installed yet') %></span>
-		</a>
-%	my $tiles = (ref $jawnos_games eq 'ARRAY') ? $jawnos_games : [];
-%	for my $tile (@{ $tiles }) {
-		<a class="games_tile" href="/manager?open=<%= $tile->{'key'} %>&amp;full=1&amp;back=%2Fmanager%2Fgames">
-			<img class="games_tile_icon" src="<%= &subs::icon_for($tile->{'icon'}) %>" alt="">
-			<span class="games_tile_label"><%= &subs::ui($tile->{'title'}) %></span>
-			<span class="games_tile_note"><%= &subs::ui($tile->{'note'}) %></span>
-		</a>
-%	}
-	</div>
-% } else {
 	<div id="games_bar">
-		<a id="games_home" href="/manager/games"><%= &subs::ui('Back') %></a>
+		<a id="games_home" href="/manager/controller"><%= &subs::ui('Home') %></a>
+		<span id="games_count_note"><%= $count ? ($count . ' ' . &subs::ui('games ready')) : &subs::ui('None installed yet') %></span>
 		<span id="games_bar_spacer"></span>
 		<button type="button" class="games_action" id="games_install_emulators" hint="<%= &subs::ui('Fetch RetroArch and the emulator cores') %>"><%= &subs::ui('Install emulators') %></button>
 		<button type="button" class="games_action" id="games_install_roms" hint="<%= &subs::ui('Copy ROMs in from the emmc or a USB stick') %>"><%= &subs::ui('Install ROMs') %></button>
@@ -162,6 +144,19 @@
 % }
 	</div>
 	<div id="games_library">
+		<div id="games_own">
+			<h3 id="games_own_title"><%= &subs::ui('JawnOS games') %></h3>
+			<div id="games_own_grid">
+%	my $tiles = (ref $jawnos_games eq 'ARRAY') ? $jawnos_games : [];
+%	for my $tile (@{ $tiles }) {
+				<a class="games_tile" href="/manager?open=<%= $tile->{'key'} %>&amp;full=1&amp;back=%2Fmanager%2Fgames">
+					<img class="games_tile_icon" src="<%= &subs::icon_for($tile->{'icon'}) %>" alt="">
+					<span class="games_tile_label"><%= &subs::ui($tile->{'title'}) %></span>
+					<span class="games_tile_note"><%= &subs::ui($tile->{'note'}) %></span>
+				</a>
+%	}
+			</div>
+		</div>
 % if (!@{$games}) {
 		<p class="games_empty"><%= $emulators ? &subs::ui('No games yet. Copy ROMs in from a USB stick or the emmc.') : &subs::ui('No games yet. Install the emulators, then copy ROMs in from a USB stick or the emmc.') %></p>
 % }
@@ -183,9 +178,7 @@
 			<div id="games_house_grid"></div>
 		</div>
 	</div>
-% }
 </div>
-% if ($mode eq 'emulated') {
 <script>
 /* The install buttons start one helper and read its one status row; a card asks
    the launch route to run the game. The launch stops the kiosk, so that request
@@ -470,4 +463,3 @@
 	}
 })();
 </script>
-% }

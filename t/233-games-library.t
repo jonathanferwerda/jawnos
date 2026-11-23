@@ -205,7 +205,7 @@ for my $row (
 }
 
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
-like($controller, qr/my \$view = .* eq 'emulated'/, 'the page has an emulated view');
+unlike($controller, qr/my \$view = .* eq 'emulated'/, 'the page lands on the shelf without a view switch');
 like($controller, qr/game_runner\(\$game->\{'system'\}\)/, 'the launch route checks the runner first');
 like($controller, qr/retroarch/, 'and refuses a launch with no emulator');
 like($controller, qr/sub game_helper_start/, 'the helper is detached from the request');

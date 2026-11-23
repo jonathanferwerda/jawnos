@@ -1,3 +1,4 @@
+<% my $controller_device = (&subs::device_setter() || '') eq 'controller'; %>
 <style>
 #power { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow: auto; font-size: 16px; }
 #power .power_muted { opacity: .68; }
@@ -126,6 +127,9 @@
 				<option value="30">30 <%= &subs::ui('minutes') %></option>
 			</select>
 		</label>
+<% if ($controller_device) { %>
+		<div class="power_muted"><%= &subs::ui('A controller does not suspend; the screen goes dark instead.') %></div>
+<% } else { %>
 		<label><%= &subs::ui('Sleep after') %>
 			<select id="power_sleep_timeout">
 				<option value="0"><%= &subs::ui('Never') %></option>
@@ -138,6 +142,7 @@
 				<option value="60">60 <%= &subs::ui('minutes') %></option>
 			</select>
 		</label>
+<% } %>
 		<label id="power_lid_row"<%== $sleep_caps->{'lid'} ? '' : ' style="display:none"' %>><%= &subs::ui('When the lid closes') %>
 			<select id="power_lid_action">
 				<option value="suspend"><%= &subs::ui('Suspend') %></option>
@@ -147,6 +152,7 @@
 				<option value="ignore"><%= &subs::ui('Do nothing') %></option>
 			</select>
 		</label>
+<% if (!$controller_device) { %>
 		<label id="power_sleep_type_row"><%= &subs::ui('Sleep type') %>
 			<select id="power_sleep_type">
 				<option value="suspend"<%== $sleep_type_ok{'suspend'} ? '' : ' hidden disabled' %>><%= &subs::ui('Suspend') %></option>
@@ -155,8 +161,11 @@
 				<option value="suspend_then_hibernate"<%== $sleep_type_ok{'suspend_then_hibernate'} ? '' : ' hidden disabled' %>><%= &subs::ui('Suspend then hibernate') %></option>
 			</select>
 		</label>
+<% } %>
 		<button type="button" id="power_sleep_save"><%= &subs::ui('Save') %></button>
+<% if (!$controller_device) { %>
 		<button type="button" id="power_sleep_now"><%= &subs::ui('Sleep now') %></button>
+<% } %>
 		<div id="power_sleep_note" class="power_muted"></div>
 		<div id="power_sleep_status"></div>
 	</section>
