@@ -26,6 +26,9 @@
 		#<%= $miss %>_position_preview {
 			width: 200px;
 			height: 120px;
+			/* the seek preview is drawn over the bar and the chapter strip above
+			   it; it is the answer to a hover and must never sit under them */
+			z-index: 30;
 		}
 		#<%= $miss %>_back {
 			position: absolute;
@@ -134,6 +137,72 @@
 		}
 		.media_tools_panel.shown { display: flex; }
 		.media_tools_panel > * { position: static !important; left: auto !important; right: auto !important; top: auto !important; bottom: auto !important; margin: 0; }
+		/* The film's chapters, in the theatre or a fullscreen: a row of cards
+		   just above the player bar, each as big as the seek preview thumb.
+		   music.js fills it from the queue entry and sets the bottom offset so
+		   an open tools panel pushes it up rather than under it. The row scrolls
+		   sideways when there are more chapters than the window can show. */
+		.music_chapters {
+			position: absolute;
+			left: 8px;
+			right: auto;
+			bottom: 112px;
+			display: none;
+			gap: 8px;
+			padding: 8px;
+			width: max-content;
+			max-width: calc(100% - 16px);
+			overflow-x: auto;
+			overflow-y: hidden;
+			white-space: nowrap;
+			box-sizing: border-box;
+			background-color: rgba(0,0,0,.45);
+			border-radius: 12px;
+			z-index: 15;
+			-webkit-overflow-scrolling: touch;
+		}
+		.music_chapters.shown { display: flex; }
+		.music_chapters .music_chapter_tile {
+			position: relative;
+			flex: 0 0 auto;
+			width: 200px;
+			height: 120px;
+			border-radius: 12px;
+			overflow: hidden;
+			cursor: var(--jawnos-cursor-pointer, pointer);
+			background-color: rgba(255,255,255,.08);
+		}
+		.music_chapters .music_chapter_tile img {
+			display: block;
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+			border: none;
+		}
+		.music_chapters .music_chapter_caption {
+			position: absolute;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			display: flex;
+			justify-content: space-between;
+			gap: 6px;
+			padding: 3px 6px;
+			background-color: rgba(0,0,0,.65);
+			color: #fff;
+			font-size: 12px;
+			line-height: 1.2;
+		}
+		.music_chapters .music_chapter_title {
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.music_chapters .music_chapter_time {
+			flex: 0 0 auto;
+			color: #ffcf2e;
+			font-variant-numeric: tabular-nums;
+		}
 		/* the visualiser's drawing surface: it is never shown itself. music.js
 		   draws here and hands the canvas' stream to the muted video below, so the
 		   sound's picture reaches the player the way a video track's does */
@@ -186,7 +255,7 @@
 			padding: 0 4px;
 			box-sizing: border-box;
 		}
-		.music_player_bar > *:not(.media_tools_panel):not(#<%= $miss %>_position_preview):not(#<%= $miss %>_position_preview_info) {
+		.music_player_bar > *:not(.media_tools_panel):not(#<%= $miss %>_position_preview):not(#<%= $miss %>_position_preview_info):not(.music_chapters) {
 			position: static !important;
 			left: auto !important;
 			right: auto !important;

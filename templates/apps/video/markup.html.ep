@@ -26,6 +26,10 @@
 			<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" enabled="<%= $crate->{'settings'}->{'shuffle'} %>" id="music_shuffle" class="little_thumb music_shuffle shuffle hover">
 			<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
 			<img id="<%= $miss %>_tools_toggle" hint="More tools" class="little_thumb hover media_tools_toggle" src="<%= &subs::icon_path('wrench', '/images/decipherable/gear.png') %>">
+			<%# the film's chapters: music.js builds this strip and shows it in the
+			    theatre or a fullscreen, just above this bar - and above the tools
+			    panel while that is open. It scrolls sideways when they do not all fit. %>
+			<div id="<%= $miss %>_chapters" class="music_chapters" style="display:none;"></div>
 			<span id="<%= $id %>_full_title"></span>
 			<%# the fullscreen toggle sits right of the title rather than inside the
 			    tools panel: it is used far more often than the panel's speed,

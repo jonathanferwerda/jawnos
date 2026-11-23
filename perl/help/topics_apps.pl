@@ -226,7 +226,7 @@ $topic{'music'} = {
 		'title' => 'Music', category => 'apps', app => 'music',
 		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/audio.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/music/track_rows.html.ep', 'templates/apps/video.html.ep', 'templates/apps/video/markup.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization', 'Volume normalization', 'Remote audio format', 'Sync offset', 'Me audio delay', 'Remote delay', 'Left speaker', 'Stereo', 'Right speaker', 'Video enhancement', 'Sharpness', 'Quality', 'Frame rate', 'Video status' ],
-		verified => '2026-11-21',
+		verified => '2026-11-23',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
@@ -247,7 +247,8 @@ $topic{'music'} = {
 			'On a desktop the artists and albums sit side by side, each taking half the window; in a window too narrow for two readable columns they stack one above the other, and the tracks move down below them. A shelf can be dragged taller or shorter, and that band is the measure both draws use. Until it is dragged, the shelves take the share that leaves the tracks 71.28% of the space between the top bar and the player (never less than 125px).',
 			'The layout, the search word, the shuffle and repeat switches, the archive switch and the lit folder buttons are remembered on this machine. A laptop and the table are both computers, but each keeps its own view of the same library: changing the shuffle on one leaves the other as it was.',
 			'On a phone the window draws itself differently: the artists and albums become one line of pills each, scrolling sideways, and the tracks below them are cards — the picture, the title (up to two lines), the artist and album, and the time — with the list running right down to the player, so the time is always in reach.',
-			'Every row keeps its details out of the way: the picture, the artist, the album, the track name and the time, with an i button on the right. Press the i (Details) to open that track\'s picture, tags and chapters under the row, and press it again to close them; nothing is fetched until you press it. A long library is drawn a screenful at a time and the next rows load as you scroll, but the player still holds the whole list in order, so Next, Previous, Shuffle and Repeat reach every track.'
+			'Every row keeps its details out of the way: the picture, the artist, the album, the track name and the time, with an i button on the right. Press the i (Details) to open that track\'s picture, tags and chapters under the row, and press it again to close them; nothing is fetched until you press it. A long library is drawn a screenful at a time and the next rows load as you scroll, but the player still holds the whole list in order, so Next, Previous, Shuffle and Repeat reach every track.',
+			'In Theatre mode or fullscreen, a video that has chapters shows them as a row of picture cards just above the player bar, each the size of the seek preview: the chapter\'s title and start time sit on the card, and pressing one moves the picture to that chapter. When the More tools panel is open the row sits above it, and when there are more chapters than the window can show the row scrolls sideways.'
 		],
 		steps => [
 			'Open Music; the library lists artists and albums from your media folders.',

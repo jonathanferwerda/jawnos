@@ -256,6 +256,11 @@
 				var panel = $(this).closest('.media_controls').find('.media_tools_panel');
 				panel.toggleClass('shown');
 				$(this).toggleClass('active', panel.hasClass('shown'));
+<% if ($source eq 'music') { %>
+				// the chapter strip sits above this panel while it is open, so it is
+				// moved once the panel has a height to measure
+				if (typeof musicChaptersPlace == 'function') { musicChaptersPlace(); }
+<% } %>
 			});
 			if (!windowPhoneChecker()) {
 				var <%= $miss %>_jw_deg =  0;

@@ -2318,6 +2318,9 @@ function musicContentCache(html) {
 	// where the theatre's chrome is at this instant is runtime state; the next
 	// open decides it again from theatre_mode instead of replaying a hidden bar
 	shell.find('#interface, .media_controls.music_player_bar').removeClass('music_chrome_hidden');
+	// the chapters belong to the track that was playing; the restored one draws
+	// its own, so neither a stale row nor its signature is stored
+	shell.find('.music_chapters').removeClass('shown').empty().removeAttr('data-sig');
 	shell.find('#music_player_data').empty();
 	// The queue is the manifest; the cards are only the slice that happened to
 	// be mounted. Store the shell with that slice gone if it was scrolled away,
@@ -3990,6 +3993,9 @@ function musicRepaintCurrent() {
 	if ($('#video').attr('theatre_mode') == 'on' && $('#video').attr('type') == 'audio' && entry.thumb) {
 		$('#music_album_cover').attr('src', entry.thumb).show();
 	}
+	// an enrichment that filled in this track's chapters draws them now, if the
+	// theatre or a fullscreen is waiting for them
+	musicChaptersRefresh();
 }
 
 function musicTitleMaker(object) {
@@ -4053,6 +4059,102 @@ function musicPictureBig() {
 	return !!(fs && v && (fs == v || fs.contains(v)));
 }
 
+// ---- the film's chapters in the theatre and in fullscreen -------------------
+// A video with chapters gets a strip of their thumbnails just above the player
+// bar, each the size of a seek preview (200x120), on a translucent band that
+// scrolls sideways when they do not all fit. It is theatre/fullscreen chrome,
+// so it shows only while musicPictureBig() is true; it lives inside the bar, so
+// it slides away with the chrome. The queue entry is the source, not the DOM,
+// so a restored or unmounted track still draws its chapters.
+function musicChapterStrip() {
+	var miss = $('#video').attr('miss');
+	if (!miss) { return $(); }
+	return $('#' + miss + '_chapters');
+}
+
+function musicChapterList(entry) {
+	entry = entry || musicCurrentEntry() || {};
+	return entry.chapters || (entry.info && entry.info.chapters) || [];
+}
+
+// The strip sits on the bar's top edge; an open tools panel takes that place,
+// so the chapters move above it once it has a height to measure.
+function musicChaptersPlace() {
+	var strip = musicChapterStrip();
+	if (!strip.length) { return; }
+	var controls = strip.closest('.media_controls');
+	if (!controls.length) { return; }
+	// the bar's own height is the floor; while the window is hidden it may not
+	// measure, so the bar's 110px fallback keeps the strip in the right place
+	var bottom = (controls.outerHeight() || 110) + 2;
+	var panel = controls.find('.media_tools_panel');
+	if (panel.hasClass('shown')) { bottom += panel.outerHeight() + 8; }
+	strip.css('bottom', bottom + 'px');
+}
+
+function musicChaptersRefresh() {
+	var strip = musicChapterStrip();
+	if (!strip.length) { return; }
+	var entry = musicCurrentEntry() || {};
+	var chapters = musicChapterList(entry);
+	var wanted = musicPictureBig() && $('#video').attr('type') == 'video' && chapters.length > 0;
+	if (!wanted) {
+		strip.removeClass('shown').empty().attr('data-sig', '');
+		return;
+	}
+	// A new track or an enrichment that filled in its chapters rebuilds the row;
+	// otherwise a repaint keeps the images it already has, so it does not ask the
+	// thumbnail endpoint for every chapter again.
+	var signature = musicSongKey(entry) + '|' + chapters.length;
+	if (strip.attr('data-sig') !== signature) {
+		strip.empty().attr('data-sig', signature);
+		var file = entry.file || entry.filename || '';
+		var duration = entry.duration || (entry.info && entry.info.duration) || '';
+		var remote = entry.remote_uuid ? '&remote_uuid=' + encodeURIComponent(entry.remote_uuid) : '';
+		$.each(chapters, function (i, ch) {
+			var start = parseFloat(ch.start_time);
+			if (!isFinite(start)) { start = 0; }
+			var title = (ch.tags && ch.tags.title) || ch.id || '';
+			var url = '/file_open?file=' + encodeURIComponent(file) +
+				'&thumb=ya&duration=' + encodeURIComponent(duration) +
+				'&start_time=' + encodeURIComponent(ch.start_time || 0) +
+				'&end_time=' + encodeURIComponent(ch.end_time || '') +
+				'&id=' + encodeURIComponent(title) +
+				'&chapter=ya' + remote;
+			var tile = $('<div class="music_chapter_tile hover"></div>')
+				.attr('start_time', start)
+				.attr('hint', title || '')
+				.attr('aria-label', title || '');
+			// the same transparent placeholder as the library's chapter thumbs; the
+			// artwork collector fills it and batches the loads
+			$('<img loading="lazy" decoding="async">')
+				.attr('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
+				.attr('data-artwork', url)
+				.appendTo(tile);
+			var caption = $('<div class="music_chapter_caption"></div>');
+			$('<span class="music_chapter_title"></span>').text(title).appendTo(caption);
+			$('<span class="music_chapter_time"></span>').text(numeral(start).format('00:00:00')).appendTo(caption);
+			caption.appendTo(tile);
+			tile.appendTo(strip);
+		});
+	}
+	strip.addClass('shown');
+	musicChaptersPlace();
+}
+
+$(document).on('click', '.music_chapter_tile', function() {
+	var v = document.getElementById('video');
+	var start = parseFloat($(this).attr('start_time'));
+	if (!v || !isFinite(start)) { return; }
+	v.currentTime = start;
+	// the playing interval sees the jump and carries it to the remote outputs,
+	// the same way the previous/next chapter buttons' seeks are carried
+});
+
+$(window).on('resize.music_chapters', function() {
+	if (musicChapterStrip().hasClass('shown')) { musicChaptersPlace(); }
+});
+
 // In and out of fullscreen the player's own picture is put back where it
 // belongs; the visualiser's picture is placed by its own frame loop. The two
 // floating sheets move into the fullscreen element too, so they stay visible
@@ -4065,6 +4167,8 @@ $(document).on('fullscreenchange webkitfullscreenchange', function() {
 	if (v.length && v.attr('type') == 'video' && v.attr('theatre_mode') != 'on') {
 		v.attr('style', v.attr(musicPictureBig() ? 'big_style' : 'thumb_style'));
 	}
+	// a fullscreen is the other time the picture is big enough for chapters
+	musicChaptersRefresh();
 });
 
 // The theatre's two bars slide instead of fading. The class is the state,
@@ -4114,6 +4218,7 @@ function theatreModeOn() {
 		$('#music_padlock_toggle').hide();
 		$('#music_album_cover').hide()
 	}
+	musicChaptersRefresh();
 }
 
 function theatreModeOff() {
@@ -4140,6 +4245,9 @@ function theatreModeOff() {
 	$('#music_configuration_toggle').show();
 	$('#music_album_cover').hide();
 	$('#video').attr('theatre_mode', 'off'); 
+	// a stay in fullscreen keeps the chapters; a real leave from the big
+	// picture takes them with the rest of the theatre chrome
+	musicChaptersRefresh();
 }
 
 $(document).on('click', '#video_subtitle_toggle', function() {
