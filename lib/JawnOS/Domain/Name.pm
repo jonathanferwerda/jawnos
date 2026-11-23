@@ -774,6 +774,23 @@ sub misc_setting {
 	return $value;
 }
 
+# A misc setting that names a folder on this machine. The configure panel's Me
+# tab writes the signatorial row, but the class row is shared by machines that
+# are not alike - a laptop and a tablet are both 'computer' - and a recording,
+# upload or studio take read from the class used to land in another machine's
+# /sdcard path. Read this machine first, then the class it inherited.
+sub misc_machine_setting {
+	my $setting = shift;
+	return undef unless defined $setting && length $setting;
+	my $class = &device_setter();
+	my $machine = &signatorial_designer();
+	if (defined $machine && length $machine && $machine ne $class) {
+		my $value = &setting_grabber({ app => 'misc', setting => $setting, device => $machine });
+		return $value if defined $value && length $value;
+	}
+	return &setting_grabber({ app => 'misc', setting => $setting, device => $class });
+}
+
 # The desk's material as the layout and universal.css name it. 'plain' was the
 # solid rounded pill's old internal value; it reads as 'round' now that Plain
 # means the clothesline as it looked before the materials (internal 'classic').

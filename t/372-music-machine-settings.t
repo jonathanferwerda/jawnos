@@ -163,6 +163,21 @@ $put->('music', 'search', '', $machine, $now + 3000);
 is(&subs::setting_grabber({ app => 'music', setting => 'search' }), '',
 	'an empty machine value is not replaced by the class row');
 
+# ------------------------------------------- a folder setting reads the machine
+# A location is the machine's own: the class row is shared with another
+# computer whose folders are not here. Recordings and studio takes resolve it.
+&subs::setting_setter({ app => 'misc', setting => 'rec_location', value => '/sdcard/Recordings', device => 'computer', timestamp => $now });
+&subs::setting_setter({ app => 'misc', setting => 'rec_location', value => '~/Recordings', device => $machine, timestamp => $now + 1000 });
+is(&subs::misc_machine_setting('rec_location'), '~/Recordings',
+	'a recording folder follows the machine row over the class');
+&subs::setting_setter({ app => 'misc', setting => 'video_location', value => '~/Videos', device => 'computer', timestamp => $now });
+is(&subs::misc_machine_setting('video_location'), '~/Videos',
+	'a folder the machine has not written falls back to the class');
+&subs::setting_setter({ app => 'misc', setting => 'music_location', value => '', device => $machine, timestamp => $now + 2000 });
+&subs::setting_setter({ app => 'misc', setting => 'music_location', value => '~/Music', device => 'computer', timestamp => $now });
+is(&subs::misc_machine_setting('music_location'), '~/Music',
+	'a blank machine folder falls back to the class');
+
 # ------------------------------------------------------ read: merged settings
 $put->('music', 'uuid', 'class-uuid', 'computer', $now);
 $put->('music', 'repeat', 'off', 'computer', $now);

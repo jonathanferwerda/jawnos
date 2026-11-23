@@ -74,7 +74,7 @@ sub record_video($data) {
 	my $app_path = &subs::path_name($app);
 	my $uuid = $data->{'uuid'};
 	my $timestamp = $data->{'timestamp'};
-	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } ));
+	my $folder = &subs::home(&subs::misc_machine_setting('video_location'));
 
 	my $filename = $folder . '/' . $app_path;
 	system('mkdir', '-p', $filename) unless -e $filename;
@@ -92,7 +92,7 @@ sub record_audio($data) {
 	my $app_path = &subs::path_name($app);
 	my $uuid = $data->{'uuid'};
 	my $timestamp = $data->{'timestamp'};
-	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } ));
+	my $folder = &subs::home(&subs::misc_machine_setting('rec_location'));
 	my $filename = $folder . '/' . $app_path;
 	system('mkdir', '-p', $filename) unless -e $filename;
 	if ($device eq 'mobile') {
@@ -123,7 +123,7 @@ sub record_video_stop($data) {
 	my $timestamp = $data->{'timestamp'};
 
 
-	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } ));
+	my $folder = &subs::home(&subs::misc_machine_setting('video_location'));
 
 	my $filename = $folder . '/' . $app_path;
 	system('mkdir', '-p', $filename) unless -e $filename;
@@ -174,7 +174,7 @@ sub record_audio_stop($data) {
 	elsif ($device eq 'computer') {
 		`pkill rec`;
 	}
-	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } ));
+	my $folder = &subs::home(&subs::misc_machine_setting('rec_location'));
 	my ($db) = &subs::database_grabber();
 	my $stopped = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
 	if ($stopped->{'uuid'} && $stopped->{'type'} eq 'record') {

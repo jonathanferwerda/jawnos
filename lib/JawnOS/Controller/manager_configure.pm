@@ -156,31 +156,31 @@ sub action_6704 {
 
 		if ($upload->{'type'} =~ /audio/gi) {
 			$upload_type = 'audio';
-			$folder = &subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } );
+			$folder = &subs::misc_machine_setting('rec_location');
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /video/gi) {
 			$upload_type = 'video';
-			$folder = &subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } );
+			$folder = &subs::misc_machine_setting('video_location');
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /pdf/gi) {
 			$upload_type = 'scan';
-			$folder = &subs::setting_grabber( { app => 'misc', setting => 'document_location', device => $device } );
+			$folder = &subs::misc_machine_setting('document_location');
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /application/gi) {
 			$upload_type = 'software';
-			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
+			$folder = &subs::misc_machine_setting('download_location');
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		elsif ($upload->{'type'} =~ /image/gi) {
 			$upload_type = 'image';
-			$folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
+			$folder = &subs::misc_machine_setting('photo_location');
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		else {
-			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
+			$folder = &subs::misc_machine_setting('download_location');
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
 		require File::Path;

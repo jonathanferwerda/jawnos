@@ -660,7 +660,7 @@ sub action_28480 {
 	my $uuid = &subs::random_string_creator(20);
 	my @files;
 	foreach my $u ( @{$c->req->uploads} ) {
-		my $folder = &subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } );
+		my $folder = &subs::misc_machine_setting('rec_location');
 		my $location = &subs::home($folder) . '/' . $app_path;
 		my $take_uuid = &subs::random_string_creator(17);
 		my @filename = split '_', (split /\./, $u->filename)[0];
@@ -1750,7 +1750,7 @@ sub studio_take_start_at {
 # a relative `out`. An unset or unusable setting is the empty string, which the
 # route turns into one clear refusal.
 sub studio_take_folder {
-	my $folder = eval { &subs::setting_grabber({ app => 'misc', setting => 'rec_location' }) };
+	my $folder = eval { &subs::misc_machine_setting('rec_location') };
 	return '' unless defined $folder && !ref $folder && length $folder;
 	my $dir = eval { &subs::home($folder) };
 	$dir = $folder unless defined $dir && length $dir;
@@ -2469,9 +2469,7 @@ sub action_44032 {
 	}
 
 	my $location = eval {
-		&subs::home(&subs::setting_grabber({
-			app => 'misc', setting => 'rec_location', device => $device,
-		}));
+		&subs::home(&subs::misc_machine_setting('rec_location'));
 	};
 	unless (defined $location && !ref $location && length $location) {
 		$c->render(json => { ok => 0, error => 'no recording folder is set on this machine' }, status => 503);

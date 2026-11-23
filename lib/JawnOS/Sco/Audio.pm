@@ -41,7 +41,7 @@ sub media_roots {
 	my @roots;
 	my %seen;
 	foreach my $setting (qw(photo_location video_location rec_location music_location)) {
-		my $folder = eval { &subs::setting_grabber({ app => 'misc', setting => $setting }) };
+		my $folder = eval { &subs::misc_machine_setting($setting) };
 		next unless defined $folder && length $folder;
 		my $dir = &subs::home($folder);
 		next unless defined $dir && length $dir;
