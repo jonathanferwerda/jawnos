@@ -156,6 +156,8 @@
 			overflow-y: hidden;
 			white-space: nowrap;
 			box-sizing: border-box;
+			/* a finger on the row pans the row; it is not a scrub or a volume drag */
+			touch-action: pan-x;
 			background-color: rgba(0,0,0,.45);
 			border-radius: 12px;
 			z-index: 15;

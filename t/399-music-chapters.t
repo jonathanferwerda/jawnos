@@ -73,4 +73,11 @@ cmp_ok($arm, '>=', 2, 'the theatre and fullscreen both arm it');
 like($js, qr!\$\(document\)\.on\('click', '\.music_chapter_tile'!, 'a card is clickable');
 like($js, qr!v\.currentTime = start;!, 'and seeks the picture to that chapter');
 
+# --- the wheel over the row scrolls it, never the film ----------------------
+like($script, qr!\.jog_wheel, \.music_chapters'!, 'the player gesture leaves the chapter row alone');
+like($js, qr!\$\(document\)\.on\(musicChapterWheel, '\.music_chapters'!, 'music.js owns the wheel over the row');
+like($js, qr!this\.scrollLeft \+= dy \* step;!, 'a vertical wheel moves the row sideways');
+like($js, qr!if \(Math\.abs\(dx\) >= Math\.abs\(dy\)\) \{ return; \}!, 'a sideways swipe is left to the browser');
+like($style, qr!touch-action:\s*pan-x;!, 'a finger pans the row instead of scrubbing');
+
 done_testing();

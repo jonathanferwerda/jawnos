@@ -353,7 +353,9 @@
 			var <%= $miss %>Touch = { active: false, moved: false, x: 0, y: 0, time: 0, volume: 1, axis: '' };
 			function <%= $miss %>GestureAllowed(target, mode) {
 				var t = $(target);
-				if (t.closest('#music_library, #music_configuration, #music_padlock, #search_results, input, select, textarea, button, .jog_wheel').length) { return false; }
+				// The library, the sheets, a control and the chapter row have their own
+				// use for a wheel or a finger; the picture and its bars keep the gesture.
+				if (t.closest('#music_library, #music_configuration, #music_padlock, #search_results, input, select, textarea, button, .jog_wheel, .music_chapters').length) { return false; }
 				// a finger on the transport belongs to its slider or button, not to a
 				// scrub; a wheel over the bars has nothing else to do, so it still scrubs
 				if (mode == 'touch' && t.closest('#<%= $miss %>_controls, #interface').length) { return false; }

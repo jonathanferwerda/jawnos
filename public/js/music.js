@@ -4796,6 +4796,24 @@ $(document).on('wheel', '.music_seek', function(e) {
 	var scale = musicWheelFine(e) ? 0.08 : 1;
 	musicSeekBy(amount * step * scale);
 });
+// A wheel or trackpad over the chapter row scrolls the row, never the film:
+// the player's own wheel gesture would scrub, and the row is the one part of
+// the picture that scrolls. A two-finger sideways swipe is the browser's own
+// horizontal scroll; a wheel mouse has only the vertical axis, so it moves the
+// row the same way. The video include leaves this row out of its gesture, so
+// nothing here can seek.
+var musicChapterWheel = ('onwheel' in document) ? 'wheel' : 'mousewheel';
+$(document).on(musicChapterWheel, '.music_chapters', function(e) {
+	var ev = e.originalEvent || e;
+	var dx = ev.deltaX || 0;
+	var dy = (ev.deltaY != undefined) ? ev.deltaY : -(ev.wheelDelta || 0);
+	// the sideways swipe scrolls natively; leave it alone
+	if (Math.abs(dx) >= Math.abs(dy)) { return; }
+	// a wheel notch is in pixels (deltaMode 0), lines (1) or pages (2)
+	var step = (ev.deltaMode == 1) ? 16 : ((ev.deltaMode == 2) ? this.clientWidth : 1);
+	if (e.preventDefault) { e.preventDefault(); }
+	this.scrollLeft += dy * step;
+});
 $(document).on('change', '#music_normalize_select', function() {
 	music_normalize = $(this).val() || 'off';
 	$('#music').attr('normalize', music_normalize);
