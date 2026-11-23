@@ -8,13 +8,31 @@ use Mojo::JSON qw(decode_json encode_json);
 
 our ($music_device, $music_files, $music_permissive);
 
+# This machine's own misc row, with the device class filling a key it has never
+# written. The class is shared by machines that are not alike - a laptop and a
+# tablet are both 'computer' - so reading it directly gave the laptop the
+# tablet's /sdcard/Music paths and the walk found nothing. misc_setting_list
+# already folds the class into the signatorial row for the music apps; this is
+# the whole row for the callers that need more than one key (locations, archives).
+sub music_machine_settings($misc_settings) {
+	$misc_settings = &Manager::misc_setting_list() unless ref $misc_settings eq 'HASH';
+	my %settings = %{ $misc_settings->{$music_device} || {} };
+	my $machine = &subs::signatorial_designer();
+	if (defined $machine && length $machine && ref $misc_settings->{$machine} eq 'HASH') {
+		foreach my $key ( keys %{ $misc_settings->{$machine} } ) {
+			my $value = $misc_settings->{$machine}->{$key};
+			$settings{$key} = $value if defined $value && length $value;
+		}
+	}
+	return \%settings;
+}
+
 # The local root each location type keeps its files in, as this machine sees
 # it. A configured <location>_location wins; when the row is absent the house's
 # folder list supplies the conventional folder (Videos, Music, ...), which is
 # what the configure panel offers and what an archive folder is named after.
 sub music_location_roots($misc_settings, $folders = undef) {
-	$misc_settings = &Manager::misc_setting_list() unless ref $misc_settings eq 'HASH';
-	my $settings = $misc_settings->{$music_device} || {};
+	my $settings = &music_machine_settings($misc_settings);
 	my @folders = ref $folders eq 'ARRAY' ? @{$folders} : @{ &subs::config_reader()->{'folders'} || [] };
 	my %roots;
 	foreach my $location ( &subs::location_types() ) {
@@ -183,19 +201,19 @@ sub music_folder_grabber($selected) {
 sub music_archive_entries($data) {
 	my $picked = $data->{'picked'} || [];
 	my $misc = $data->{'misc_settings'} || &Manager::misc_setting_list();
-	my $device = &subs::device_setter();
+	my $machine_settings = &music_machine_settings($misc);
 	my $machines = $data->{'machines'} || &subs::archive_machines();
 	my @lookups;
 	foreach my $pick ( @{$picked} ) {
 		if ($pick->{'location'}) {
-			my $rm = &subs::archive_machine_for($pick->{'location'}, $misc->{$device} || {}, $machines);
+			my $rm = &subs::archive_machine_for($pick->{'location'}, $machine_settings, $machines);
 			next unless ($rm && ($rm->{'self'} || $rm->{'uuid'}));
 			push @lookups, { location => $pick->{'location'}, rm => $rm, remote_uuid => ($rm->{'self'} ? '' : $rm->{'uuid'}), prefix => ($pick->{'relative'} // '') };
 		}
 		else {
 			my $plan = &subs::archive_plan({
 				items => [ { path => $pick->{'path'}, type => 'folder' } ],
-				settings => $misc->{$device} || {},
+				settings => $machine_settings,
 				machines => $machines
 			});
 			foreach my $job ( @{$plan->{'jobs'}} ) {

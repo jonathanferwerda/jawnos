@@ -26,7 +26,8 @@
 <div class="music_cfg_section">
 	<h4 class="music_cfg_heading"><%= &subs::lang('music.folders') %></h4>
 	<div id="music_folders" class="music_cfg_chips">
-		<% foreach my $f ( sort keys %{$folders->{$device}} ) { %>
+		<% my $machine_folders = &Manager::music_machine_settings($folders); %>
+		<% foreach my $f ( sort keys %{$machine_folders} ) { %>
 			<% next unless $f =~ /location$/gi; %>
 			<% my $n = $f; $n =~ s/_location//gi; %>
 			<% my $status = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $f }) // ''; %>

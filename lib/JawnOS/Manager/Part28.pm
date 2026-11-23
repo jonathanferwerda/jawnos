@@ -221,8 +221,7 @@ sub help_music_file($c, $q, $shuffle) {
 	$settings->{'artist'} = [];
 	$settings->{'album'} = [];
 	my $misc = &misc_setting_list();
-	my $device = &subs::device_setter();
-	my @every = sort grep { /_location$/ } keys %{ $misc->{$device} || {} };
+	my @every = sort grep { /_location$/ } keys %{ &music_machine_settings($misc) };
 	my $port = $c->req->url->base->port;
 	my $res = &music_search({ settings => $settings, c => $c, now_playing => {}, port => $port, misc_settings => $misc, return_files => 1, folders => \@every, permissive => (&help_media_revealed(&media_unlock_device($c)) ? 1 : 0) });
 	my @files = @{ $res->{'files'} || [] };

@@ -51,6 +51,25 @@ ok(!defined $roots->{'rec'}, 'a location with no configured or conventional fold
 		'a one-argument call reads the house folders');
 }
 
+{
+	# The class row is shared by machines that are not alike: a tablet wrote
+	# /sdcard/Music into 'computer', and the laptop's own row holds ~/Music.
+	# The walk must follow the machine, not the class it shares.
+	my $mixed = {
+		computer => { music_location => '/sdcard/Music', video_location => '/sdcard/Videos' },
+		$machine => { music_location => '~/Music', video_location => '~/Videos' },
+	};
+	my $mine = &Manager::music_location_roots($mixed, \@house_folders);
+	is($mine->{'music'}, &subs::home('~/Music'), 'the machine\'s own music folder wins over the class');
+	is($mine->{'video'}, &subs::home('~/Videos'), 'and the machine\'s own video folder too');
+	my $chosen = &Manager::music_machine_settings($mixed);
+	is($chosen->{'music_location'}, '~/Music', 'the archive choice reads the same machine row');
+
+	# a key the machine never wrote still comes from the class
+	my $partial = &Manager::music_machine_settings({ computer => { video_location => '~/Videos' }, $machine => {} });
+	is($partial->{'video_location'}, '~/Videos', 'a class key fills what the machine has not written');
+}
+
 my $parts = &Manager::music_local_parts(&subs::home('~/Videos/Friends/S01E01.mkv'), $roots);
 is($parts->{'location'}, 'video', 'a local file resolves to its location');
 is($parts->{'relative'}, 'Friends/S01E01.mkv', 'and its path inside the location');
