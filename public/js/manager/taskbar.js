@@ -614,6 +614,11 @@ function jawnosBarsApply() {
 	// search's home, the taskbar's height or edge), so a half or maximized window
 	// takes the new clearance now rather than keeping the old one
 	if (typeof jawnosWindowFootApply == 'function') { jawnosWindowFootApply(); }
+	// A bar that moved to the top edge also owns the ceiling. Fit every window
+	// once so a title bar left over the old line is pulled back into reach.
+	if (typeof windowFit == 'function') {
+		$('.wind').each(function () { windowFit($(this)); });
+	}
 }
 
 // The menu hangs from the button that opens it, wherever the bars have put that

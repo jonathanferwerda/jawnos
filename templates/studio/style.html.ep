@@ -812,6 +812,18 @@
 	.studio_layout_bar button {
 		font-size: 12px;
 	}
+	/* the app-bar grip moves the whole window, so the title bar is never the
+	   only place a crowded top edge leaves to grab */
+	.studio_window_grip {
+		cursor: var(--jawnos-cursor-grab, grab);
+		touch-action: none;
+		user-select: none;
+		padding: 0 4px;
+		font-size: 14px;
+		line-height: 1;
+		opacity: .65;
+	}
+	.studio_window_grip:hover { opacity: 1; }
 	/* the effect palette: add any contract effect to the selected track */
 	.studio_effect_palette {
 		display: inline-flex;

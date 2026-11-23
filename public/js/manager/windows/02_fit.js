@@ -315,6 +315,9 @@ function windowFullViewportLeave(win) {
 	if (box) {
 		win.css({ 'position': 'fixed', 'left': box.left, 'top': box.top, 'width': box.width, 'height': box.height });
 		windowDimensionSetter(win);
+		// A box saved before a bar moved to the top edge can put the title bar
+		// under it; the fit pulls the window back onto the desk.
+		windowFit(win);
 	}
 	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
 }
@@ -557,6 +560,11 @@ function windowDraggable(win) {
 			win.removeClass('active');
 		},50);
 	}
+	// Studio's own top bar carries a grip. The handle is a selector, read at
+	// press time, so a shell rendered before the grip exists still finds it.
+	if (win.attr('app') === 'studio' && win.hasClass('ui-draggable')) {
+		win.draggable('option', 'handle', '.top_navbar, .studio_window_grip');
+	}
 }
 
 // ---------------------------------------------------------------- a window's place
@@ -759,6 +767,14 @@ function windowFit(win) {
 	}
 	var winLeft = Number(numeral(win.css('left')).format()) || 0;
 	var winTop = Number(numeral(win.css('top')).format()) || 0;
+	// A bar on the top edge is a hard edge too: no window may tuck its title bar
+	// under it, or the one part that drags it is out of reach. This is the case a
+	// top taskbar opened after the window was moved to the top creates.
+	var top_limit = (typeof windowTopLimit == 'function') ? windowTopLimit() : 0;
+	if (!windowPhoneChecker() && winTop < top_limit) {
+		win.css('top', top_limit + 'px');
+		winTop = top_limit;
+	}
 	if (winLeft + win.width() > viewW) {
 		win.width(Math.max(240, viewW - winLeft));
 	}

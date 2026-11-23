@@ -123,6 +123,7 @@
 		<button class="studio_rack_remove hover" hint="<%= &subs::ui('Remove this effect from the chain') %>">X</button>
 	</div>
 	<div id="studio_layout_bar" class="studio_layout_bar">
+		<span class="studio_window_grip hover" hint="<%= &subs::ui('Drag to move the Studio window') %>">⠿</span>
 		<span id="studio_track_count" class="studio_track_count"></span>
 		<%# One button for the DAW-informed arrangement: transport across the top,
 		   the timeline under it, and the console at the foot. On a narrow window

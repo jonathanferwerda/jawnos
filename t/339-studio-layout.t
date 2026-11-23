@@ -1,4 +1,4 @@
-# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep templates/studio/drums.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/09_pedals.js public/js/manager/studio/11_drums.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
+# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep templates/studio/drums.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/09_pedals.js public/js/manager/studio/11_drums.js public/js/manager/windows.js public/js/manager/windows/02_fit.js public/js/manager/taskbar.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
 # covers:    The Studio layout as four interior panel windows: a taskbar in the
 #            top bar, a title bar with Minimize and Maximize, a drag handle, a
 #            corner resize grip and a remembered box for the transport, the
@@ -41,6 +41,7 @@ my $pedals  = slurp("$root/public/js/manager/studio/09_pedals.js");
 my $drumsjs = slurp("$root/public/js/manager/studio/11_drums.js");
 my $winjs   = slurp("$root/public/js/manager/windows.js");
 my $fitjs   = slurp("$root/public/js/manager/windows/02_fit.js");
+my $taskbar = slurp("$root/public/js/manager/taskbar.js");
 my $maker   = slurp("$root/lib/JawnOS/Manager/Part22.pm");
 my $help    = slurp("$root/perl/help/topics_apps.pl");
 my $all     = $markup . $drums;
@@ -185,6 +186,23 @@ like($maker, qr/default_width="' \. \$default_width \. '" default_height="' \. \
 	'the window element carries its default size for the tile joiner');
 like($winjs, qr/win\.attr\('default_width'\)\) \|\| windowTileDefaultWidth/,
 	'the tile joiner uses the app default and keeps 480 as the fallback');
+
+# --- the window always has a drag handle -----------------------------------
+like($markup, qr/class="studio_window_grip hover"[^>]*hint="<%= &subs::ui\('Drag to move the Studio window'\) %>"/,
+	'the layout bar carries a window drag grip');
+like($style, qr/\.studio_window_grip\s*\{[^}]*cursor:\s*var\(--jawnos-cursor-grab/s,
+	'the grip shows the grab cursor');
+like($fitjs, qr/win\.attr\('app'\) === 'studio' && win\.hasClass\('ui-draggable'\)/,
+	'Studio gets its own drag handle option');
+like($fitjs, qr/'\.top_navbar, \.studio_window_grip'/, 'the title bar and the app-bar grip both drag the window');
+like($fitjs, qr/winTop < top_limit/, 'the fit keeps a title bar below a top bar');
+like($fitjs, qr/if \(box\) \{[\s\S]*?windowFit\(win\);/, 'leaving full screen fits the window again');
+like($taskbar, qr/\.each\(function \(\) \{ windowFit\(\$\(this\)\); \}\)/,
+	'a bar move re-fits every window');
+like($maker, qr/defined \$settings->\{'dimensions'\}->\{'left'\}/,
+	'a window with no saved place still gets a valid left');
+unlike($maker, qr/left:' \. \(\$settings->\{'dimensions'\}->\{'left'\}\) \. 'px'/,
+	'the undefined left is never written as left:px');
 
 # --- one layout engine owns the panel windows -------------------------------
 like($layout, qr/var studioPanelNames = \['transport', 'tracks', 'mixer', 'drums'\]/,
@@ -354,6 +372,7 @@ like($help, qr/'Minimize this panel'/, 'help lists the Minimize control');
 like($help, qr/'Maximize or restore this panel'/, 'help lists the Maximize control');
 like($help, qr/'Show this panel, or minimize it'/, 'help lists the taskbar control');
 like($help, qr/'Drag the bottom edge to resize this panel\\'s height'/, 'help lists the bottom edge grip');
+like($help, qr/'Drag to move the Studio window'/, 'help lists the window drag grip');
 like($help, qr/'Take another channel\\'s output as this channel\\'s input'/, 'help lists the input channel send');
 like($help, qr/'Send this channel\\'s output to another channel'/, 'help lists the output channel send');
 like($help, qr/'Drag to resize this panel'/, 'help lists the corner grip');
