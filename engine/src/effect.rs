@@ -42,7 +42,11 @@ const SMOOTH_SECONDS: f32 = 0.02;
 
 /// One effect in a channel's insert chain. `prepare` is the only place an
 /// implementation may allocate; `process` must not allocate, lock or panic.
-pub trait Effect {
+///
+/// `Send` lets a compiled [`EffectChain`] travel with the patchbay it belongs
+/// to: the patch graph is built on the control thread and moved to its worker,
+/// and every effect is plain state with no shared interior mutability.
+pub trait Effect: Send {
     /// Size the effect for `rate` and the largest block it will see.
     fn prepare(&mut self, rate: u32, max_frames: usize);
     /// One mono channel, in place.
@@ -942,6 +946,152 @@ struct InsertSlot {
     bypassed: bool,
 }
 
+/// A bare insert chain, with no strip around it.
+///
+/// A Studio channel runs `trim -> inserts -> pan`; a patchbay source has its
+/// own gain and its routes already carry the pan, so it needs only the middle
+/// stage. This is the same [`InsertSlot`] list a [`Channel`] owns, exposed so a
+/// source's inserts are built, prepared and driven by exactly the code a take's
+/// inserts use.
+pub struct EffectChain {
+    inserts: Vec<InsertSlot>,
+    /// The largest block [`process`](EffectChain::process) will accept. Set by
+    /// [`prepare`](EffectChain::prepare), so a longer block is refused rather
+    /// than reallocating on the audio thread.
+    max_frames: usize,
+}
+
+impl EffectChain {
+    pub fn new() -> Self {
+        EffectChain {
+            inserts: Vec::new(),
+            max_frames: 0,
+        }
+    }
+
+    /// Add one insert at the end of the chain.
+    pub fn push(&mut self, kind: InsertKind) {
+        self.push_effect(kind.build());
+    }
+
+    /// Add an already-built effect, for a caller that owns it (a take's
+    /// [`Channel`] and a test's double).
+    pub fn push_effect(&mut self, effect: Box<dyn Effect>) {
+        self.inserts.push(InsertSlot {
+            effect,
+            bypassed: false,
+        });
+    }
+
+    /// Add one insert in the position it was declared in, optionally bypassed.
+    /// A source plan can carry two pedals of the same kind with different
+    /// footswitches, so the flag belongs to the slot rather than to a later
+    /// `bypass` by name.
+    pub fn push_bypassed(&mut self, kind: InsertKind, bypassed: bool) {
+        self.inserts.push(InsertSlot {
+            effect: kind.build(),
+            bypassed,
+        });
+    }
+
+    /// Add one insert with the controls a plan declared, in its own slot. The
+    /// controls are applied before the chain is prepared, so an effect starts
+    /// at the declared value rather than at its web default; this is also the
+    /// only way to configure two inserts of the same kind differently, because
+    /// [`set_insert`](EffectChain::set_insert) addresses the first by name.
+    pub fn push_configured(
+        &mut self,
+        kind: InsertKind,
+        bypassed: bool,
+        controls: &[(String, f32)],
+    ) {
+        let mut effect = kind.build();
+        for (control, value) in controls {
+            effect.set(control, kind.native_value(control, *value));
+        }
+        self.inserts.push(InsertSlot { effect, bypassed });
+    }
+
+    /// Move one insert's knob by the effect's own prefix.
+    pub fn set_insert(&mut self, prefix: &str, knob: &str, value: f32) -> bool {
+        for slot in &mut self.inserts {
+            if slot.effect.name() == prefix {
+                return slot.effect.set(knob, value);
+            }
+        }
+        false
+    }
+
+    /// Bypass or restore the first insert whose [`name`](Effect::name) is
+    /// `prefix`. Returns false when no such insert is in the chain.
+    pub fn bypass(&mut self, prefix: &str, bypassed: bool) -> bool {
+        for slot in &mut self.inserts {
+            if slot.effect.name() == prefix {
+                slot.bypassed = bypassed;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Size every insert. Allocation happens here and nowhere else.
+    pub fn prepare(&mut self, rate: u32, max_frames: usize) {
+        self.max_frames = max_frames;
+        for slot in &mut self.inserts {
+            slot.effect.prepare(rate, max_frames);
+        }
+    }
+
+    /// Run the chain in place. A block longer than the prepared one is an
+    /// error, never a reallocation.
+    pub fn process(&mut self, block: &mut [f32]) -> Result<(), GraphError> {
+        if block.len() > self.max_frames {
+            return Err(GraphError::BlockTooLong {
+                max_frames: self.max_frames,
+                found: block.len(),
+            });
+        }
+        for slot in &mut self.inserts {
+            if !slot.bypassed {
+                slot.effect.process(block);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn reset(&mut self) {
+        for slot in &mut self.inserts {
+            slot.effect.reset();
+        }
+    }
+
+    /// The chain order, for a status line: `tone,distortion`. Bypassed inserts
+    /// are still in the rack, so they are still named.
+    pub fn insert_names(&self) -> String {
+        self.inserts
+            .iter()
+            .map(|slot| slot.effect.name())
+            .collect::<Vec<&str>>()
+            .join(",")
+    }
+}
+
+impl Default for EffectChain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for EffectChain {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EffectChain")
+            .field("inserts", &self.insert_names())
+            .field("max_frames", &self.max_frames)
+            .finish()
+    }
+}
+
 /// One channel strip: trim, the inserts in order, then the equal-power pan.
 ///
 /// Studio's channel is `trim -> bass -> mid -> treble -> inserts -> record`;
@@ -951,7 +1101,7 @@ struct InsertSlot {
 /// through the same strip.
 pub struct Channel {
     strip: Strip,
-    inserts: Vec<InsertSlot>,
+    chain: EffectChain,
     scratch: Vec<f32>,
 }
 
@@ -962,7 +1112,7 @@ impl Channel {
     pub fn new(gain: f32, pan: f32) -> Self {
         Channel {
             strip: Strip::new(gain, pan),
-            inserts: Vec::new(),
+            chain: EffectChain::new(),
             scratch: Vec::new(),
         }
     }
@@ -1026,20 +1176,12 @@ impl Channel {
     /// already been parsed into a kind and a control, so this does no string
     /// construction and stays usable from the audio thread between blocks.
     pub fn set_insert(&mut self, prefix: &str, knob: &str, value: f32) -> bool {
-        for slot in &mut self.inserts {
-            if slot.effect.name() == prefix {
-                return slot.effect.set(knob, value);
-            }
-        }
-        false
+        self.chain.set_insert(prefix, knob, value)
     }
 
     /// Add one insert at the end of the chain.
     pub fn push(&mut self, effect: Box<dyn Effect>) {
-        self.inserts.push(InsertSlot {
-            effect,
-            bypassed: false,
-        });
+        self.chain.push_effect(effect);
     }
 
     /// Bypass or restore the first insert whose [`name`](Effect::name) is
@@ -1047,22 +1189,14 @@ impl Channel {
     /// bypassed insert is simply not run. Returns false when no such insert is
     /// in the rack.
     pub fn bypass(&mut self, prefix: &str, bypassed: bool) -> bool {
-        for slot in &mut self.inserts {
-            if slot.effect.name() == prefix {
-                slot.bypassed = bypassed;
-                return true;
-            }
-        }
-        false
+        self.chain.bypass(prefix, bypassed)
     }
 
     /// Size the scratch buffer and every insert. Allocation happens here and
     /// nowhere else.
     pub fn prepare(&mut self, rate: u32, max_frames: usize) {
         self.scratch = vec![0.0; max_frames];
-        for slot in &mut self.inserts {
-            slot.effect.prepare(rate, max_frames);
-        }
+        self.chain.prepare(rate, max_frames);
     }
 
     /// `input` is one mono block; `stereo` must be twice as long and is
@@ -1087,11 +1221,9 @@ impl Channel {
         for sample in scratch.iter_mut() {
             *sample *= gain;
         }
-        for slot in &mut self.inserts {
-            if !slot.bypassed {
-                slot.effect.process(scratch);
-            }
-        }
+        self.chain
+            .process(scratch)
+            .expect("a prepared channel block is never too long");
         // Gain was applied before the inserts; the output only needs the pan.
         let (left, right) = pan_coefficients(self.strip.pan.get());
         stereo.fill(0.0);
@@ -1099,19 +1231,13 @@ impl Channel {
     }
 
     pub fn reset(&mut self) {
-        for slot in &mut self.inserts {
-            slot.effect.reset();
-        }
+        self.chain.reset();
     }
 
     /// The chain order, for a take report: `tone,distortion`. Bypassed inserts
     /// are still in the rack, so they are still named.
     pub fn insert_names(&self) -> String {
-        let mut names: Vec<&str> = Vec::with_capacity(self.inserts.len());
-        for slot in &self.inserts {
-            names.push(slot.effect.name());
-        }
-        names.join(",")
+        self.chain.insert_names()
     }
 }
 

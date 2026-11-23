@@ -55,6 +55,10 @@ impl ParamName {
     pub const Gain: Self = Self::strip(0);
     #[allow(non_upper_case_globals)]
     pub const Pan: Self = Self::strip(1);
+    /// The patchbay's source footswitch. A mixer strip has no mute here (its
+    /// mute is the route or the take), so only a patch source reads this name.
+    #[allow(non_upper_case_globals)]
+    pub const Mute: Self = Self::strip(2);
     #[allow(non_upper_case_globals)]
     pub const ToneBass: Self = Self::from_insert(InsertKind::Tone, 0);
     #[allow(non_upper_case_globals)]
@@ -97,6 +101,7 @@ impl ParamName {
         match name {
             "gain" => return Some(Self::Gain),
             "pan" => return Some(Self::Pan),
+            "mute" => return Some(Self::Mute),
             _ => {}
         }
         let (prefix, control) = name.split_once('.')?;
@@ -119,7 +124,7 @@ impl ParamName {
         let kind_code = ((bits >> KIND_SHIFT) & 0x7F) as u8;
         let control = (bits & CONTROL_MASK) as usize;
         if kind_code == STRIP_KIND {
-            return if !master && control < 2 {
+            return if !master && control < 3 {
                 Some(Self(bits))
             } else {
                 None
@@ -193,8 +198,10 @@ impl ParamName {
             None => {
                 if self.0 & CONTROL_MASK == 0 {
                     "gain"
-                } else {
+                } else if self.0 & CONTROL_MASK == 1 {
                     "pan"
+                } else {
+                    "mute"
                 }
             }
         }

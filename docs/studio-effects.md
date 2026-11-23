@@ -141,6 +141,59 @@ chain and that control belongs to it. Anything else is a refusal on the socket,
 never a silent no-op. The master rack is a separate address because it is not a
 track; `master_*` names resolve to the same effect implementations.
 
+### Patch sources
+
+A patchbay source may carry its own `gain` and `inserts`, and they run before
+that source's routes and sends. The bus a take records is therefore the
+effected source, and the mix hears the same thing. `inserts` is an array of
+engine effect names, or objects with a `name` and an optional `bypass` (the
+pedal stays in the rack, exactly as a footswitch does):
+
+```json
+{"id":"gtr","kind":"input","channel":0,"gain":0.8,
+ "inserts":["distortion",{"name":"delay","bypass":true,
+            "controls":{"time":250,"feedback":0.3,"vol":0.4}}]}
+```
+
+The trim is the engine's +12 dB recording range (`0..=4`); an out-of-range gain,
+an unknown insert, or an insert object with no name is a refusal when the plan
+compiles. An insert may also carry a sparse `controls` map of that effect's own
+names to the contract's native units; the engine applies them in the insert's
+own slot before the chain is prepared, so a pedal starts where the player left
+it. An unknown control is a refusal. A stereo source (`device`, `handset`) runs
+one independent instance of each effect per side, because an effect is a mono
+processor.
+
+A live knob is addressed to the source, not to a route:
+
+```
+POST /manager/sound/param  target=patch_source  source=N
+                           name=gain|mute|<insert>.<control>  value=V
+```
+
+`source` is the 0-based index in the plan's `sources` array. The engine refuses
+a source that is not in the running plan, and an insert the source did not arm.
+`mute` is the source's own footswitch: `1` silences it without changing its
+trim, `0` restores it. `status` reports every source's compiled chain, live
+trim and mute as `source_effects: [{id, gain, mute, inserts: [names]}]`.
+
+### Monitoring several inputs
+
+The historical `listen` monitors one input. The same command accepts a
+`channels` array instead of `channel`, and builds one strip per input, summed on
+the output:
+
+```
+{"cmd":"listen","channels":[0,1],"gain":0.8,"pan":0,"inserts":["tone"]}
+```
+
+The single-input reply and `stop` shape are unchanged; a multi-input `status`
+adds `channels: [..]` beside the first channel. `POST /manager/sound/monitor`
+(`action=start|stop|status`, `channels=0,1` or a JSON array) exposes it to the
+Sound page. When a plan is running, the patchbay is already the multi-source
+monitor: every routed source mixes to the sink, and each source's inserts run
+first.
+
 A change is forwarded only while the engine is the path that is actually
 playing (a take is armed, or live monitoring is on). The browser's own graph
 stays authoritative when it is; a knob is not sent twice for one movement.

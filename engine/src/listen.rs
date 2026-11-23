@@ -4,8 +4,11 @@
 //! This is the path a plugged-in guitar takes when it is not being recorded.
 //! The capture device's input `channel` becomes a mono block, passes through
 //! the same [`Channel`] a take uses (trim -> inserts -> equal-power pan), and
-//! is written to the stereo outputs. The two streams are unlinked, exactly as
-//! the loopback's are: the block size is the latency budget, not a promise.
+//! is written to the stereo outputs. A listener may name several inputs: each
+//! gets its own strip ([`MultiListenStrip`]) and the strips are summed, so a
+//! microphone and an instrument can be heard together without a plan. The two
+//! streams are unlinked, exactly as the loopback's are: the block size is the
+//! latency budget, not a promise.
 //!
 //! A capture cannot feed both monitoring and a take yet. The socket refuses
 //! `listen` while a take records and `record` while listening; sharing one
@@ -24,8 +27,13 @@ use crate::mixer::ParamQueue;
 /// The strip a listener arms: which input, and the strip's knobs.
 #[derive(Clone, Debug)]
 pub struct ListenPlan {
-    /// The device input to monitor, 0-based.
+    /// The device input to monitor, 0-based. It is the first of `channels`,
+    /// kept so a single-input caller still names the field it always named.
     pub channel: usize,
+    /// Every device input to monitor. One entry is the historical listen; more
+    /// than one is the multi-input monitor, each through its own strip and
+    /// summed on the output.
+    pub channels: Vec<usize>,
     /// Trim before the inserts.
     pub gain: f32,
     /// -1 left ..= 1 right, after the inserts.
@@ -214,6 +222,180 @@ impl ListenStrip {
     #[cfg(test)]
     pub(crate) fn channel_mut(&mut self) -> &mut Channel {
         &mut self.channel
+    }
+}
+
+/// Several inputs monitored at once, each through its own [`ListenStrip`] and
+/// summed on the output.
+///
+/// The historical listen is one input. Studio can need to hear two at once
+/// (a microphone and an instrument) before a take starts, and the patchbay is
+/// the house's multi-source path; this is the same idea without a plan: every
+/// input keeps its own trim, inserts and pan, and the output is their sum.
+/// Each strip is built separately, so an insert's state is never shared between
+/// inputs.
+pub struct MultiListenStrip {
+    strips: Vec<ListenStrip>,
+    /// The one control ring every strip drains. A `param` is broadcast: a page
+    /// that moves the monitor's gain expects every input to move, exactly as
+    /// the one-input listen does.
+    params: Option<Arc<ParamQueue>>,
+}
+
+impl MultiListenStrip {
+    pub fn new(
+        inputs: &[usize],
+        gain: f32,
+        pan: f32,
+        inserts: &[InsertKind],
+        params: Option<Arc<ParamQueue>>,
+    ) -> Self {
+        let strips = inputs
+            .iter()
+            .map(|input| ListenStrip::new(*input, gain, pan, inserts, None))
+            .collect();
+        MultiListenStrip { strips, params }
+    }
+
+    pub fn inputs(&self) -> Vec<usize> {
+        self.strips.iter().map(ListenStrip::input).collect()
+    }
+
+    pub fn prepare(&mut self, rate: u32, period: usize) {
+        for strip in &mut self.strips {
+            strip.prepare(rate, period);
+        }
+    }
+
+    fn apply_pending(&mut self) {
+        let Some(params) = &self.params else {
+            return;
+        };
+        while let Some((_index, name, value)) = params.pop() {
+            for strip in &mut self.strips {
+                name.apply_to(&mut strip.channel, value);
+            }
+        }
+    }
+
+    fn block_frames(&self, samples: usize, channels: usize) -> Result<usize, String> {
+        if channels == 0 {
+            return Err("a capture needs at least one channel".to_string());
+        }
+        for strip in &self.strips {
+            if strip.input() >= channels {
+                return Err(format!(
+                    "listen input {} is outside the {channels}-channel capture",
+                    strip.input()
+                ));
+            }
+        }
+        if samples % channels != 0 {
+            return Err(format!(
+                "a capture block of {samples} samples is not whole {channels}-channel frames"
+            ));
+        }
+        let frames = samples / channels;
+        for strip in &self.strips {
+            if frames > strip.mono.len() {
+                return Err(format!(
+                    "a {frames}-frame block is longer than the prepared {} frames",
+                    strip.mono.len()
+                ));
+            }
+        }
+        Ok(frames)
+    }
+
+    /// One interleaved f32 capture block at `channels` samples per frame, and
+    /// the summed stereo block to play.
+    pub fn process_f32(
+        &mut self,
+        input: &[f32],
+        channels: usize,
+        out: &mut [f32],
+    ) -> Result<usize, String> {
+        let frames = self.block_frames(input.len(), channels)?;
+        let stereo = frames * 2;
+        if out.len() < stereo {
+            return Err(format!(
+                "the listen output holds {} samples, the block needs {stereo}",
+                out.len()
+            ));
+        }
+        self.apply_pending();
+        out[..stereo].fill(0.0);
+        for strip in &mut self.strips {
+            strip.select_f32(input, channels)?;
+            let out_len = strip.stereo.len();
+            strip.render(frames, out_len)?;
+            for (target, sample) in out[..stereo].iter_mut().zip(&strip.stereo[..stereo]) {
+                *target += sample;
+            }
+        }
+        Ok(frames)
+    }
+
+    /// The same, from interleaved i16 capture samples into i16 playback samples.
+    pub fn process_i16(
+        &mut self,
+        input: &[i16],
+        channels: usize,
+        out: &mut [i16],
+    ) -> Result<usize, String> {
+        let frames = self.block_frames(input.len(), channels)?;
+        let stereo = frames * 2;
+        if out.len() < stereo {
+            return Err(format!(
+                "the listen output holds {} samples, the block needs {stereo}",
+                out.len()
+            ));
+        }
+        self.apply_pending();
+        out[..stereo].fill(0);
+        for strip in &mut self.strips {
+            strip.select_i16(input, channels)?;
+            let out_len = strip.stereo.len();
+            strip.render(frames, out_len)?;
+            for (target, sample) in out[..stereo].iter_mut().zip(&strip.stereo[..stereo]) {
+                *target = target.saturating_add(crate::to_i16(*sample));
+            }
+        }
+        Ok(frames)
+    }
+}
+
+/// The strip a listen actually runs: one input or the same strip once per
+/// input. The worker, the null loop and the hardware sink all speak to this one
+/// type, so a one-input listen takes exactly the old path.
+pub enum ListenUnit {
+    One(ListenStrip),
+    Many(MultiListenStrip),
+}
+
+impl ListenUnit {
+    /// Build the unit a plan asks for. One channel is the historical strip;
+    /// several are a strip per channel. The plan's `channel` is the first entry
+    /// of `channels`, so a caller that only filled the old field still works.
+    pub fn new(plan: &ListenPlan, params: Option<Arc<ParamQueue>>) -> Self {
+        if plan.channels.len() > 1 {
+            ListenUnit::Many(MultiListenStrip::new(
+                &plan.channels,
+                plan.gain,
+                plan.pan,
+                &plan.inserts,
+                params,
+            ))
+        } else {
+            let channel = plan.channels.first().copied().unwrap_or(plan.channel);
+            ListenUnit::One(ListenStrip::new(
+                channel,
+                plan.gain,
+                plan.pan,
+                &plan.inserts,
+                params,
+            ))
+        }
     }
 }
 
@@ -429,6 +611,141 @@ pub trait ListenSink {
         let _ = system;
         self.block(input, output)
     }
+
+    /// The f32 shape, for the null loop and its tests. A hardware sink does not
+    /// need it, so the default names that rather than converting twice. The
+    /// capture width is explicit because an f32 block carries no frame marker.
+    fn block_f32(
+        &mut self,
+        _input: &[f32],
+        _channels: usize,
+        _output: &mut [f32],
+    ) -> Result<usize, String> {
+        Err("this listen sink has no f32 path".to_string())
+    }
+}
+
+impl ListenSink for ListenStrip {
+    fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
+        let _ = channels;
+        self.prepare(rate, period);
+        Ok(())
+    }
+
+    fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
+        let channels = channels_of(input.len(), output.len());
+        self.process_i16(input, channels, output)?;
+        Ok(())
+    }
+
+    fn block_with_system(
+        &mut self,
+        input: &[i16],
+        system: &[f32],
+        output: &mut [i16],
+    ) -> Result<(), String> {
+        let channels = channels_of(input.len(), output.len());
+        let frames = self.process_i16(input, channels, output)?;
+        add_system_to_i16(output, system, frames);
+        Ok(())
+    }
+
+    fn block_f32(
+        &mut self,
+        input: &[f32],
+        channels: usize,
+        output: &mut [f32],
+    ) -> Result<usize, String> {
+        self.process_f32(input, channels, output)
+    }
+}
+
+/// The trait's `block` methods carry no channel count, because a hardware sink
+/// is handed the block's shape by its device loop. These impls derive it from
+/// the capture and output lengths (the output is always twice the frames); the
+/// null path passes the width explicitly through `block_f32`.
+impl ListenSink for MultiListenStrip {
+    fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
+        let _ = channels;
+        self.prepare(rate, period);
+        Ok(())
+    }
+
+    fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
+        let channels = channels_of(input.len(), output.len());
+        self.process_i16(input, channels, output)?;
+        Ok(())
+    }
+
+    fn block_f32(
+        &mut self,
+        input: &[f32],
+        channels: usize,
+        output: &mut [f32],
+    ) -> Result<usize, String> {
+        self.process_f32(input, channels, output)
+    }
+}
+
+impl ListenSink for ListenUnit {
+    fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
+        let _ = channels;
+        match self {
+            ListenUnit::One(strip) => strip.prepare(rate, period),
+            ListenUnit::Many(strips) => strips.prepare(rate, period),
+        }
+        Ok(())
+    }
+
+    fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
+        let channels = channels_of(input.len(), output.len());
+        match self {
+            ListenUnit::One(strip) => {
+                strip.process_i16(input, channels, output)?;
+            }
+            ListenUnit::Many(strips) => {
+                strips.process_i16(input, channels, output)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn block_with_system(
+        &mut self,
+        input: &[i16],
+        system: &[f32],
+        output: &mut [i16],
+    ) -> Result<(), String> {
+        self.block(input, output)?;
+        let frames = output.len() / 2;
+        add_system_to_i16(output, system, frames);
+        Ok(())
+    }
+
+    fn block_f32(
+        &mut self,
+        input: &[f32],
+        channels: usize,
+        output: &mut [f32],
+    ) -> Result<usize, String> {
+        match self {
+            ListenUnit::One(strip) => strip.process_f32(input, channels, output),
+            ListenUnit::Many(strips) => strips.process_f32(input, channels, output),
+        }
+    }
+}
+
+/// The channel count of an i16 capture/output pair. The trait hands a sink the
+/// blocks without a width, so it is derived from the pair: the output is twice
+/// the frames and the capture is `channels` samples per frame. The null path
+/// does not use this; it passes the width to `block_f32` explicitly.
+fn channels_of(input_len: usize, output_len: usize) -> usize {
+    let frames = output_len / 2;
+    if frames == 0 {
+        1
+    } else {
+        (input_len / frames).max(1)
+    }
 }
 
 /// The null listen loop: a sine (or silence) as the capture input, the strip,
@@ -446,6 +763,26 @@ pub fn run_null(
     total: Option<u64>,
     tone: Option<f32>,
     stop: &AtomicBool,
+    progress: impl FnMut(u64),
+) -> Result<ListenRun, String> {
+    let input = strip.input();
+    run_null_sink(
+        strip, &[input], rate, period, channels, total, tone, stop, progress,
+    )
+}
+
+/// The same null loop over any sink: the unit a multi listen builds, a bare
+/// strip, or a test double. `inputs` is the set of device inputs the run asked
+/// for, validated here rather than trusted from the caller.
+pub fn run_null_sink(
+    sink: &mut dyn ListenSink,
+    inputs: &[usize],
+    rate: u32,
+    period: usize,
+    channels: usize,
+    total: Option<u64>,
+    tone: Option<f32>,
+    stop: &AtomicBool,
     mut progress: impl FnMut(u64),
 ) -> Result<ListenRun, String> {
     if period == 0 {
@@ -454,18 +791,22 @@ pub fn run_null(
     if channels == 0 {
         return Err("a capture needs at least one channel".to_string());
     }
-    if strip.input() >= channels {
-        return Err(format!(
-            "listen input {} is outside the {channels}-channel capture",
-            strip.input()
-        ));
+    if inputs.is_empty() {
+        return Err("a listen needs at least one input".to_string());
+    }
+    for input in inputs {
+        if *input >= channels {
+            return Err(format!(
+                "listen input {input} is outside the {channels}-channel capture"
+            ));
+        }
     }
 
     let mut device = crate::device::NullDevice::new(rate, period, channels);
     if let Some(hz) = tone {
         device = device.with_tone(hz);
     }
-    strip.prepare(rate, period);
+    sink.prepared(rate, period, channels)?;
 
     let mut source = vec![0.0f32; period * channels];
     let mut stereo = vec![0.0f32; period * 2];
@@ -486,8 +827,8 @@ pub fn run_null(
             .process(&mut source)
             .map_err(|error| format!("device: {error:?}"))?;
         let samples = want * channels;
-        strip.process_f32(&source[..samples], channels, &mut stereo[..want * 2])?;
-        frames += want as u64;
+        let rendered = sink.block_f32(&source[..samples], channels, &mut stereo[..want * 2])?;
+        frames += rendered as u64;
         progress(frames);
         // Let a client polling `status` run between blocks; a tight loop would
         // starve the control thread.
@@ -691,5 +1032,66 @@ mod tests {
         let failed = ListenReport::failure("null", "null".to_string(), 0, 48_000, "no card".into());
         assert!(failed.to_json().starts_with("{\"ok\":false,"));
         assert!(failed.to_json().contains("\"frames\":0"));
+    }
+
+    #[test]
+    fn a_multi_listen_sums_each_input_through_its_own_strip() {
+        let mut strip = MultiListenStrip::new(&[0, 1], 1.0, 0.0, &[], None);
+        strip.prepare(RATE, 4);
+        let input = [0.5f32, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25];
+        let mut out = vec![0.0f32; 8];
+        let frames = strip.process_f32(&input, 2, &mut out).expect("process");
+        assert_eq!(frames, 4);
+        // 0.5 + 0.25 at a centred pan is 0.75/√2 in each speaker.
+        let expected = 0.75f32 / std::f32::consts::SQRT_2;
+        for frame in out.chunks(2) {
+            assert!((frame[0] - expected).abs() < 1e-5, "{frame:?}");
+            assert!((frame[1] - expected).abs() < 1e-5, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn a_multi_listen_broadcasts_one_param_to_every_input() {
+        let params = Arc::new(ParamQueue::new());
+        let mut strip = MultiListenStrip::new(&[0, 1], 0.5, 0.0, &[], Some(Arc::clone(&params)));
+        strip.prepare(RATE, 4);
+        let input = [0.5f32, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5];
+        let mut out = vec![0.0f32; 8];
+        strip.process_f32(&input, 2, &mut out).expect("first block");
+        let quiet = out[0];
+
+        params.push(0, crate::mixer::ParamName::Gain, 1.0);
+        strip.process_f32(&input, 2, &mut out).expect("second block");
+        assert!(out[0] > quiet, "the trim moved both inputs: {quiet} -> {}", out[0]);
+    }
+
+    #[test]
+    fn a_null_run_over_several_inputs_renders_its_frames() {
+        let stop = AtomicBool::new(false);
+        let mut strip = MultiListenStrip::new(&[0, 1], 0.8, 0.0, &[InsertKind::Tone], None);
+        let run = run_null_sink(
+            &mut strip,
+            &[0, 1],
+            48_000,
+            64,
+            2,
+            Some(64),
+            Some(440.0),
+            &stop,
+            |_| {},
+        )
+        .expect("null multi listen");
+        assert_eq!(run.frames, 64);
+    }
+
+    #[test]
+    fn a_multi_listen_refuses_an_input_the_capture_does_not_have() {
+        let mut strip = MultiListenStrip::new(&[0, 2], 1.0, 0.0, &[], None);
+        strip.prepare(RATE, 2);
+        let mut out = vec![0.0f32; 4];
+        let error = strip
+            .process_f32(&[0.0; 4], 2, &mut out)
+            .expect_err("refused");
+        assert!(error.contains("outside"), "{error}");
     }
 }

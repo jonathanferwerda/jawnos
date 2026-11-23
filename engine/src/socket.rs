@@ -88,7 +88,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use jawn_audio::{
-    listen::{self, ListenPlan, ListenStrip},
+    listen::{self, ListenPlan, ListenUnit},
     monitor_start, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device, DiskWriter,
     InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack,
     Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
@@ -174,9 +174,11 @@ const SOCKET_WATCH: Duration = Duration::from_millis(250);
 /// A command is one object; this bounds a client that never sends a newline.
 const MAX_LINE: usize = 64 * 1024;
 
-/// A value may hold an object (a take's `tracks` plan), but a plan is one
-/// level deep: this bounds a caller that nests one object inside another.
-const MAX_VALUE_DEPTH: usize = 3;
+/// A value may hold an object (a take's `tracks` plan or a source insert's
+/// `controls` map), so the plan's own nesting is allowed: this bounds a caller
+/// that nests objects without limit. The deepest legitimate plan is
+/// `plan > source > insert > controls`, four objects.
+const MAX_VALUE_DEPTH: usize = 4;
 
 /// How many times `send` retries a blocked write before deciding the peer is
 /// gone. A reply is one short line, so this is generous.
@@ -1374,6 +1376,8 @@ impl Server {
 
         let summary = patchbay.summary().clone();
         let params = patchbay.params();
+        let source_params = patchbay.source_params();
+        let source_inserts = patchbay.source_inserts();
         let bus_ids = patchbay.bus_ids().to_vec();
         let tap = patchbay.tap();
         let executable = (0..patchbay.route_count())
@@ -1411,6 +1415,8 @@ impl Server {
                     stop,
                     handle: Some(handle),
                     params,
+                    source_params,
+                    source_inserts,
                     executable,
                     handset,
                     uplink,
@@ -1689,7 +1695,10 @@ impl Server {
             Some(Value::Str(target)) if target == "listen" => self.param_listen(object),
             Some(Value::Str(target)) if target == "master" => self.param_master(object),
             Some(Value::Str(target)) if target == "patch" => self.param_patch(object),
-            _ => error_line("\"target\" must be \"take\", \"monitor\", \"input\", \"listen\", \"master\" or \"patch\""),
+            Some(Value::Str(target)) if target == "patch_source" => {
+                self.param_patch_source(object)
+            }
+            _ => error_line("\"target\" must be \"take\", \"monitor\", \"input\", \"listen\", \"master\", \"patch\" or \"patch_source\""),
         }
     }
 
@@ -2140,7 +2149,7 @@ impl Server {
         )
     }
 
-    /// The same two knobs, addressed to a patch route: `"target":"patch"`.
+    /// The same knobs, addressed to a patch route: `"target":"patch"`.
     /// `route` is the 0-based index in the plan's `routes` array; only gain and
     /// pan are live, a muted route is refused, and the change is queued for the
     /// next block (see [`ParamQueue`]).
@@ -2185,6 +2194,88 @@ impl Server {
         format!(
             "{{\"ok\":true,\"target\":\"patch\",\"route\":{},\"name\":\"{}\"}}",
             route,
+            jawn_audio::loopback::json_escape(name)
+        )
+    }
+
+    /// A source's own trim or one of its insert knobs:
+    /// `{"cmd":"param","target":"patch_source","source":0,
+    /// "name":"distortion.drive","value":75}`. The source index is the
+    /// 0-based position in the plan's `sources` array. `gain` moves the trim
+    /// before the chain; an `<insert>.<control>` name is accepted only when
+    /// the source actually declared that insert, so a typo is a refusal rather
+    /// than a knob the audio thread silently drops.
+    fn param_patch_source(&mut self, object: &Object) -> String {
+        let source = match get(object, "source") {
+            Some(Value::Num(value))
+                if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 =>
+            {
+                *value as usize
+            }
+            _ => return error_line("param needs \"source\": a 0-based source number"),
+        };
+        let name = match get(object, "name") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => return error_line("param needs \"name\": a parameter name"),
+        };
+        let value = match get(object, "value") {
+            Some(Value::Num(value)) if value.is_finite() => *value as f32,
+            _ => return error_line("\"value\" must be a finite number"),
+        };
+        let session = match &self.patch {
+            Some(session) if session.is_patching() => session,
+            _ => return error_line("no patch is running"),
+        };
+        if source >= session.source_inserts.len() {
+            return error_line(&format!(
+                "no source {source} (the plan has {})",
+                session.source_inserts.len()
+            ));
+        }
+        let parameter = match ParamName::parse(name) {
+            Some(parameter) if !parameter.master() => parameter,
+            _ => return error_line(&format!("no such parameter: {name}")),
+        };
+        match parameter.insert_kind() {
+            None => {
+                if !matches!(parameter.control(), "gain" | "mute") {
+                    return error_line(
+                        "a patch source carries \"gain\", \"mute\" or an <insert>.<control> name",
+                    );
+                }
+            }
+            Some(kind) => {
+                let armed = session.source_inserts[source]
+                    .iter()
+                    .any(|candidate| candidate.name() == kind.name());
+                if !armed {
+                    return error_line(&format!(
+                        "source {source} has no {} insert",
+                        kind.name()
+                    ));
+                }
+            }
+        }
+        if !session.source_params.push(source, parameter, value) {
+            return error_line("the parameter queue is full; try again next block");
+        }
+        // The audio thread owns the chain; this mirror is what `status` reads.
+        if parameter.insert_kind().is_none() {
+            let mut status = session
+                .status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(effects) = status.summary.source_effects.get_mut(source) {
+                match parameter.control() {
+                    "gain" => effects.gain = Channel::clamp_gain(value),
+                    "mute" => effects.mute = value >= 0.5,
+                    _ => {}
+                }
+            }
+        }
+        format!(
+            "{{\"ok\":true,\"target\":\"patch_source\",\"source\":{},\"name\":\"{}\"}}",
+            source,
             jawn_audio::loopback::json_escape(name)
         )
     }
@@ -2234,21 +2325,67 @@ impl Server {
             }
         }
 
-        let channel = match get(object, "channel") {
-            None | Some(Value::Null) => 0,
-            Some(Value::Num(value))
-                if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 =>
-            {
-                *value as usize
-            }
-            _ => return error_line("\"channel\" must be a whole, non-negative input number"),
-        };
-        if channel >= self.config.channels {
-            return error_line(&format!(
-                "listen channel {channel} is outside the {}-channel device: restart the engine with a larger --channels",
-                self.config.channels
-            ));
+        // One input is the historical `channel`; several are a `channels`
+        // array. The array is what lets Studio monitor two inputs at once, and
+        // every one gets its own strip, so each input's inserts are still its
+        // own. Giving both is ambiguous and refused rather than guessed.
+        let has_channel = matches!(get(object, "channel"), Some(value) if !matches!(value, Value::Null));
+        let has_channels =
+            matches!(get(object, "channels"), Some(value) if !matches!(value, Value::Null));
+        if has_channel && has_channels {
+            return error_line("give \"channel\" or \"channels\", not both");
         }
+        let channels = if has_channels {
+            match get(object, "channels") {
+                Some(Value::Arr(values)) if !values.is_empty() => {
+                    let mut channels = Vec::with_capacity(values.len());
+                    for value in values {
+                        match value {
+                            Value::Num(value)
+                                if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 =>
+                            {
+                                channels.push(*value as usize)
+                            }
+                            _ => {
+                                return error_line(
+                                    "\"channels\" must hold whole, non-negative input numbers",
+                                )
+                            }
+                        }
+                    }
+                    channels
+                }
+                Some(Value::Arr(_)) => {
+                    return error_line("\"channels\" must name at least one input")
+                }
+                _ => return error_line("\"channels\" must be an array of input numbers"),
+            }
+        } else {
+            let channel = match get(object, "channel") {
+                None | Some(Value::Null) => 0,
+                Some(Value::Num(value))
+                    if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 =>
+                {
+                    *value as usize
+                }
+                _ => return error_line("\"channel\" must be a whole, non-negative input number"),
+            };
+            vec![channel]
+        };
+        let mut seen_channels: Vec<usize> = Vec::with_capacity(channels.len());
+        for channel in &channels {
+            if *channel >= self.config.channels {
+                return error_line(&format!(
+                    "listen channel {channel} is outside the {}-channel device: restart the engine with a larger --channels",
+                    self.config.channels
+                ));
+            }
+            if seen_channels.contains(channel) {
+                return error_line(&format!("listen channel {channel} is named twice"));
+            }
+            seen_channels.push(*channel);
+        }
+        let channel = channels[0];
         let gain = match get(object, "gain") {
             None | Some(Value::Null) => 1.0,
             Some(Value::Num(value)) if value.is_finite() => Channel::clamp_gain(*value as f32),
@@ -2298,14 +2435,24 @@ impl Server {
 
         let plan = ListenPlan {
             channel,
+            channels: channels.clone(),
             gain,
             pan,
             inserts,
         };
         let inserts_text = plan.insert_list();
+        // The reply keeps the old single-input shape exactly; a multi listen
+        // names every input it is monitoring.
+        let multi = channels.len() > 1;
+        let channel_list = channels
+            .iter()
+            .map(|channel| channel.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
         let status = Arc::new(Mutex::new(ListenStatus {
             state: State::Listening,
             channel,
+            channels,
             frames: 0,
             gain,
             pan,
@@ -2337,7 +2484,13 @@ impl Server {
                     handle: Some(handle),
                     params,
                 });
-                format!("{{\"ok\":true,\"state\":\"listening\",\"channel\":{channel}}}")
+                if multi {
+                    format!(
+                        "{{\"ok\":true,\"state\":\"listening\",\"channel\":{channel},\"channels\":[{channel_list}]}}"
+                    )
+                } else {
+                    format!("{{\"ok\":true,\"state\":\"listening\",\"channel\":{channel}}}")
+                }
             }
             Err(error) => error_line(&format!("cannot start the listen thread: {error}")),
         }
@@ -5621,6 +5774,9 @@ fn transport_hardware(
 struct ListenStatus {
     state: State,
     channel: usize,
+    /// Every input this listen monitors, in the order it was armed. `channel`
+    /// is the first, kept so an older page reads the field it always read.
+    channels: Vec<usize>,
     frames: u64,
     gain: f32,
     pan: f32,
@@ -5672,11 +5828,18 @@ impl ListenSession {
     fn line(&self) -> String {
         let status = self.snapshot();
         let ok = status.state != State::Failed;
+        let channels = status
+            .channels
+            .iter()
+            .map(|channel| channel.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
         format!(
-            "{{\"ok\":{},\"state\":\"{}\",\"channel\":{},\"frames\":{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
+            "{{\"ok\":{},\"state\":\"{}\",\"channel\":{},\"channels\":[{}],\"frames\":{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
             ok,
             status.state.name(),
             status.channel,
+            channels,
             status.frames,
             status.gain,
             status.pan,
@@ -5695,17 +5858,15 @@ fn run_listen_worker(
     stop: Arc<AtomicBool>,
     params: Arc<ParamQueue>,
 ) {
-    let mut strip = ListenStrip::new(
-        plan.channel,
-        plan.gain,
-        plan.pan,
-        &plan.inserts,
-        Some(Arc::clone(&params)),
-    );
+    // One input is the old strip; several are the same strip built once per
+    // input and summed. The unit is built on this thread because an insert is
+    // not `Send`.
+    let mut unit = ListenUnit::new(&plan, Some(Arc::clone(&params)));
+    let inputs = plan.channels.clone();
     let outcome = match config.backend {
-        BackendKind::Null => listen_null(&mut strip, &config, &status, &stop),
+        BackendKind::Null => listen_null(&mut unit, &inputs, &config, &status, &stop),
         BackendKind::Alsa | BackendKind::PipeWire => {
-            listen_hardware(&config, &mut strip, &status, &stop)
+            listen_hardware(&config, &mut unit, &status, &stop)
         }
         BackendKind::Jack => Err(crate::listen_support_message()),
     };
@@ -5729,16 +5890,18 @@ fn run_listen_worker(
     }
 }
 
-/// The null listen: silence through the same strip, as fast as the CPU allows.
+/// The null listen: silence through the same strips, as fast as the CPU allows.
 /// `progress` keeps `status`'s frame count moving while the client watches.
 fn listen_null(
-    strip: &mut ListenStrip,
+    sink: &mut ListenUnit,
+    inputs: &[usize],
     config: &Config,
     status: &Arc<Mutex<ListenStatus>>,
     stop: &AtomicBool,
 ) -> Result<u64, String> {
-    let run = listen::run_null(
-        strip,
+    let run = listen::run_null_sink(
+        sink,
+        inputs,
         config.rate,
         config.period,
         config.channels,
@@ -5782,6 +5945,11 @@ struct PatchSession {
     /// The shared control ring the socket pushes `param` changes to; the
     /// patchbay drains it at the top of each block.
     params: Arc<ParamQueue>,
+    /// Source trims and insert knobs, drained beside the route queue.
+    source_params: Arc<ParamQueue>,
+    /// Each source's armed insert chain, in plan order, so a `patch_source`
+    /// param can be checked against the chain the source actually built.
+    source_inserts: Vec<Vec<InsertKind>>,
     /// One flag per route (plan order): whether it has a live strip and can
     /// take a gain/pan change.
     executable: Vec<bool>,
@@ -6177,23 +6345,19 @@ fn patch_hardware(
 
 #[cfg(feature = "alsa")]
 struct SocketListenSink<'a> {
-    strip: &'a mut ListenStrip,
+    sink: &'a mut ListenUnit,
     status: &'a Arc<Mutex<ListenStatus>>,
-    /// Device channels per frame, learned in `prepared`.
-    channels: usize,
     frames: u64,
 }
 
 #[cfg(feature = "alsa")]
 impl listen::ListenSink for SocketListenSink<'_> {
     fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
-        self.channels = channels;
-        self.strip.prepare(rate, period);
-        Ok(())
+        self.sink.prepared(rate, period, channels)
     }
 
     fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
-        let frames = self.strip.process_i16(input, self.channels, output)?;
+        let frames = self.sink.block(input, output)?;
         self.frames += frames as u64;
         let mut current = self
             .status
@@ -6209,8 +6373,7 @@ impl listen::ListenSink for SocketListenSink<'_> {
         system: &[f32],
         output: &mut [i16],
     ) -> Result<(), String> {
-        let frames = self.strip.process_i16(input, self.channels, output)?;
-        listen::add_system_to_i16(output, system, frames);
+        let frames = self.sink.block_with_system(input, system, output)?;
         self.frames += frames as u64;
         let mut current = self
             .status
@@ -6224,7 +6387,7 @@ impl listen::ListenSink for SocketListenSink<'_> {
 #[cfg(feature = "alsa")]
 fn listen_hardware(
     config: &Config,
-    strip: &mut ListenStrip,
+    sink: &mut ListenUnit,
     status: &Arc<Mutex<ListenStatus>>,
     stop: &AtomicBool,
 ) -> Result<u64, String> {
@@ -6253,9 +6416,8 @@ fn listen_hardware(
         None => (None, None),
     };
     let sink = SocketListenSink {
-        strip,
+        sink,
         status,
-        channels: config.channels,
         frames: 0,
     };
     let run = jawn_audio::alsa_device::run_listen_with_system(
@@ -6280,11 +6442,11 @@ fn listen_hardware(
 #[cfg(not(feature = "alsa"))]
 fn listen_hardware(
     config: &Config,
-    strip: &mut ListenStrip,
+    sink: &mut ListenUnit,
     status: &Arc<Mutex<ListenStatus>>,
     stop: &AtomicBool,
 ) -> Result<u64, String> {
-    let _ = (config, strip, status, stop);
+    let _ = (config, sink, status, stop);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
@@ -7575,7 +7737,7 @@ mod tests {
         assert_eq!(get(second, "inserts"), Some(&Value::Arr(Vec::new())));
 
         // Depth is bounded, so a caller cannot nest a plan inside a plan.
-        let deep = r#"{"a":{"b":{"c":{"d":1}}}}"#;
+        let deep = r#"{"a":{"b":{"c":{"d":{"e":1}}}}}"#;
         assert!(parse_object(deep).is_err());
     }
 
@@ -8296,6 +8458,7 @@ break"}"#).is_err());
                         bound_sources: 1,
                         bound_sinks: 1,
                         silent: Vec::new(),
+                        source_effects: Vec::new(),
                         inputs: Vec::new(),
                         system: route,
                         handset: "off",
@@ -9178,6 +9341,94 @@ break"}"#).is_err());
     fn start_house_patch(server: &mut Server) -> String {
         let request = format!("{{\"cmd\":\"patch\",\"plan\":{HOUSE_PATCH}}}");
         reply(server.handle(&request))
+    }
+
+    /// A patch whose source carries its own trim and insert, so the
+    /// `patch_source` address has a chain to move.
+    const SOURCE_EFFECTS_PATCH: &str = r#"{"sources":[{"id":"in0","kind":"input","channel":0,"gain":1,"inserts":["distortion"]}],"buses":[{"id":"house"}],"sinks":[{"id":"out","kind":"interface"}],"routes":[{"from":"in0","to":"house","gain":1,"pan":0},{"from":"house","to":"out","gain":1,"pan":0}]}"#;
+
+    #[test]
+    fn patch_source_params_move_an_armed_chain_and_refuse_a_stranger() {
+        let mut server = socket_server();
+        let started = reply(server.handle(&format!(
+            "{{\"cmd\":\"patch\",\"plan\":{SOURCE_EFFECTS_PATCH}}}"
+        )));
+        assert!(started.contains("\"state\":\"patching\""), "{started}");
+        assert!(
+            started.contains("\"source_effects\":[{\"id\":\"in0\",\"gain\":1,\"mute\":false,\"inserts\":[\"distortion\"]}]"),
+            "the patch reports the source's chain: {started}"
+        );
+
+        let drive = reply(server.handle(
+            r#"{"cmd":"param","target":"patch_source","source":0,"name":"distortion.drive","value":100}"#,
+        ));
+        assert!(drive.contains("\"ok\":true"), "{drive}");
+        assert!(drive.contains("\"target\":\"patch_source\""), "{drive}");
+        assert!(drive.contains("\"source\":0"), "{drive}");
+
+        let gain = reply(server.handle(
+            r#"{"cmd":"param","target":"patch_source","source":0,"name":"gain","value":0.5}"#,
+        ));
+        assert!(gain.contains("\"ok\":true"), "{gain}");
+        let status = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(
+            status.contains("\"source_effects\":[{\"id\":\"in0\",\"gain\":0.5,\"mute\":false,\"inserts\":[\"distortion\"]}]"),
+            "status mirrors the moved trim: {status}"
+        );
+
+        // A mute is the source's own footswitch: it moves live and is mirrored
+        // in `status` without touching the trim the player set.
+        let mute = reply(server.handle(
+            r#"{"cmd":"param","target":"patch_source","source":0,"name":"mute","value":1}"#,
+        ));
+        assert!(mute.contains("\"ok\":true"), "{mute}");
+        let muted = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(
+            muted.contains("\"source_effects\":[{\"id\":\"in0\",\"gain\":0.5,\"mute\":true,\"inserts\":[\"distortion\"]}]"),
+            "status reports the mute beside the trim: {muted}"
+        );
+
+        // A name for an insert the source did not arm is a refusal, not a
+        // knob the audio thread silently drops.
+        let stranger = reply(server.handle(
+            r#"{"cmd":"param","target":"patch_source","source":0,"name":"reverb.mix","value":50}"#,
+        ));
+        assert!(stranger.contains("\"ok\":false"), "{stranger}");
+        assert!(stranger.contains("has no reverb insert"), "{stranger}");
+
+        let missing = reply(server.handle(
+            r#"{"cmd":"param","target":"patch_source","source":2,"name":"gain","value":1}"#,
+        ));
+        assert!(missing.contains("no source 2"), "{missing}");
+
+        let _ = server.handle(r#"{"cmd":"unpatch"}"#);
+    }
+
+    #[test]
+    fn a_multi_input_listen_arms_status_and_refuses_bad_input_sets() {
+        let mut server = socket_server();
+        server.config.channels = 2;
+
+        for (request, error) in [
+            (r#"{"cmd":"listen","channels":[]}"#, "at least one input"),
+            (r#"{"cmd":"listen","channels":[0,0]}"#, "named twice"),
+            (r#"{"cmd":"listen","channel":0,"channels":[0,1]}"#, "not both"),
+            (r#"{"cmd":"listen","channels":[0,2]}"#, "outside"),
+        ] {
+            let refused = reply(server.handle(request));
+            assert!(refused.contains("\"ok\":false"), "{request}: {refused}");
+            assert!(refused.contains(error), "{request}: {refused}");
+        }
+
+        let started = reply(server.handle(r#"{"cmd":"listen","channels":[0,1]}"#));
+        assert!(started.contains("\"ok\":true"), "{started}");
+        assert!(started.contains("\"channels\":[0,1]"), "{started}");
+
+        let status = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(status.contains("\"channels\":[0,1]"), "{status}");
+
+        let stopped = reply(server.handle(r#"{"cmd":"stop"}"#));
+        assert!(stopped.contains("\"channels\":[0,1]"), "{stopped}");
     }
 
     /// Poll until the bus take has written its first block, so the test never

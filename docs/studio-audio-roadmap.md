@@ -481,6 +481,27 @@ page has no control for it yet, so the gate sends the one form field itself.
 
 This is the answer to item 5: one table, on any device, for every input and output in the house.
 
+**Source processing and the multi-source monitor (2026-11-23).** A plan source
+may carry its own `gain` (the engine's `0..=4` recording trim) and `inserts`,
+an array of engine effect names or `{name, bypass, controls}` objects; `controls`
+is a sparse map of that effect's own knobs in the contract's native units. The
+chain runs before that source's routes and sends, so a bus take records the
+effected source and the sink hears the same signal; a stereo `device`/`handset`
+source runs one independent instance per side. A live knob rides the param
+target `patch_source` with `source=N` and `name=gain`, `mute` or
+`<insert>.<control>`; the engine refuses a source not in the plan and an insert
+the source did not arm. A source mute is its own footswitch: it silences the
+source without changing the trim, and unmute restores exactly what was set.
+`status` (and the patch reply) carries `source_effects: [{id, gain, mute,
+inserts: [names]}]` beside the existing summary.
+
+The patchbay already mixes every routed source to the sink, so it is the
+house's multi-source monitor while a plan runs. The single-input `listen` now
+also accepts `channels: [0,1]`: one strip per input, summed on the output, with
+the old `channel`/reply/`stop` shape untouched. `POST /manager/sound/monitor`
+exposes that to Sound (`action=start|stop|status`, `channels` a comma list or a
+JSON array); the Studio listen keeps its one-input path.
+
 ---
 
 ## 9. Who owns the mixer
@@ -552,9 +573,12 @@ Node discovery reuses what the firmware already does: one more mDNS TXT key, `au
 
 The patch reply, and every `status` line, carries the compiled plan and its verdict as plain keys so
 a supervisor and a page read one document: `sources`, `buses`, `sinks`, `routes`,
-`bound_sources`, `bound_sinks`, `silent` (ids this machine cannot bind), and `inputs` — one entry per
+`bound_sources`, `bound_sinks`, `silent` (ids this machine cannot bind), `inputs` — one entry per
 bound local input, `{"id": …, "node": …}`, where `node` is the plan's own capture name or
-`@DEFAULT_SOURCE@`. `system_route` says `routed` or `fallback`, `handset` says `pending`,
+`@DEFAULT_SOURCE@` — and `source_effects` — one entry per source, `{"id": …,
+"gain": …, "mute": …, "inserts": [names]}`, with the compiled insert chain, the
+live trim and the live footswitch. `system_route` says
+`routed` or `fallback`, `handset` says `pending`,
 `capturing`, `unavailable` or `off`, and `mode` says `duplex` or `playback`. `system` on the same line
 is the capture state — `capturing`, `unavailable`, `off`, or `feedback` when the playback guard
 refused to play into the sink this pass captures. A refusal keeps `ok` true (the server is healthy),

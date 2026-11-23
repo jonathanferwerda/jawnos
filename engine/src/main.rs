@@ -2528,6 +2528,7 @@ fn run_listen(options: &Options) -> Result<ExitCode, String> {
     let device = options.backend.device_name(options.device.as_deref());
     let plan = ListenPlan {
         channel: options.input,
+        channels: vec![options.input],
         gain: Channel::clamp_gain(options.gain),
         pan: Channel::clamp_pan(options.pan),
         inserts,

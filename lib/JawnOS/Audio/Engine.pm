@@ -264,6 +264,22 @@ sub audio_engine_listen {
 	return audio_engine_command($request);
 }
 
+# Several inputs monitored at once: `{"cmd":"listen","channels":[0,1],
+# "gain":0.8,"pan":0,"inserts":["tone"]}`. The engine builds one strip per
+# channel and sums them on the output; the single-input `audio_engine_listen`
+# above keeps its historical line and its one-input path. The route validates
+# the channel numbers; the engine refuses one the device does not have.
+sub audio_engine_listen_channels {
+	my ($channels, $gain, $pan, $inserts, $system) = @_;
+	my $request = { cmd => 'listen' };
+	$request->{'channels'} = $channels if ref $channels eq 'ARRAY';
+	$request->{'gain'} = $gain if defined $gain;
+	$request->{'pan'} = $pan if defined $pan;
+	$request->{'inserts'} = $inserts if ref $inserts eq 'ARRAY';
+	$request->{'system'} = $system ? true : false if defined $system;
+	return audio_engine_command($request);
+}
+
 # The house patchbay: `{"cmd":"patch","plan":{...}}`. The plan is the saved
 # object `JawnOS::Audio::Plan` normalises, and the engine compiles it before it
 # opens the device. The answer is `state:"patching"` with the plan's shape and
@@ -294,6 +310,21 @@ sub audio_engine_patch_param {
 	my ($route, $name, $value) = @_;
 	return audio_engine_command({
 		cmd => 'param', target => 'patch', route => $route,
+		name => $name, value => $value,
+	});
+}
+
+# One source's trim, footswitch or insert knob of the running patch:
+# `{"cmd":"param","target":"patch_source","source":0,
+# "name":"distortion.drive","value":75}`. `source` is the 0-based index in
+# the plan's `sources` array; `name` is `gain`, `mute` or `<insert>.<control>`.
+# The route validates the name and the numbers; the engine refuses a source that
+# is not in the plan and an insert the source did not arm, and its answer is
+# what a caller relays.
+sub audio_engine_patch_source_param {
+	my ($source, $name, $value) = @_;
+	return audio_engine_command({
+		cmd => 'param', target => 'patch_source', source => $source,
 		name => $name, value => $value,
 	});
 }

@@ -1,8 +1,9 @@
-# tests-for: lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm
+# tests-for: lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm
 # covers:    the engine's line protocol client (one JSON object per line, a
 #            timeout that is reported rather than hung, a missing engine that is
-#            an answer) and Studio's take route (start/status/stop, a server-
-#            chosen path under misc/rec_location, and no path from the request).
+#            an answer), Studio's take route (start/status/stop, a server-
+#            chosen path under misc/rec_location, and no path from the request),
+#            and Sound's patch-source fader and multi-input monitor route.
 
 use strict;
 use warnings;
@@ -111,6 +112,8 @@ my %reply = (
 	record => '{"ok":true,"take":1,"state":"recording","start_sample":96000}',
 	status => '{"ok":true,"take":1,"state":"recording","path":"/tmp/take.wav","frames":4800,"dropped":0,"start_sample":96000,"xruns":2,"error":""}',
 	stop   => '{"ok":true,"take":1,"state":"done","path":"/tmp/take.wav","frames":48000,"dropped":0,"start_sample":96000,"xruns":2,"error":""}',
+	listen => '{"ok":true,"state":"listening","channel":0,"channels":[0,1]}',
+	param  => '{"ok":true,"target":"patch_source","source":0,"name":"distortion.drive"}',
 	quit   => '{"ok":true}',
 );
 
@@ -227,6 +230,42 @@ my %reply = (
 	$server_pids[-1] = undef;
 }
 
+# --- a multi-input monitor and a patch-source fader --------------------------
+{
+	my ($path, $log, $pid) = start_mock(replies => \%reply);
+	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
+
+	my $monitor = JawnOS::Audio::Engine::audio_engine_listen_channels(
+		[0, 1], 0.8, 0, [qw(tone delay)], 0,
+	);
+	ok($monitor->{'ok'}, 'a multi-input listen is answered');
+	is_deeply($monitor->{'channels'}, [0, 1], 'and the reply names every input');
+
+	my $fader = JawnOS::Audio::Engine::audio_engine_patch_source_param(
+		0, 'distortion.drive', 75,
+	);
+	ok($fader->{'ok'}, 'a patch-source fader is answered');
+	is($fader->{'target'}, 'patch_source', 'with its own target');
+
+	my $seen = (logged_requests($log))[-1];
+	is($seen->{'cmd'}, 'param', 'the source fader is a param');
+	is($seen->{'target'}, 'patch_source', 'addressed to a source');
+	is($seen->{'source'}, 0, 'with the source index');
+	is($seen->{'name'}, 'distortion.drive', 'and the insert control');
+	is($seen->{'value'}, 75, 'and its value');
+
+	$seen = (logged_requests($log))[-2];
+	is($seen->{'cmd'}, 'listen', 'the monitor is a listen');
+	is_deeply($seen->{'channels'}, [0, 1], 'the channels array reaches the engine');
+	ok(!exists $seen->{'channel'}, 'and the one-input field is not also sent');
+	is_deeply($seen->{'inserts'}, [qw(tone delay)], 'the chain is relayed');
+	ok(!$seen->{'system'}, 'system 0 is a JSON false');
+
+	JawnOS::Audio::Engine::audio_engine_quit();
+	waitpid($pid, 0);
+	$server_pids[-1] = undef;
+}
+
 # --- a sandbox database for the route --------------------------------------
 # The route reads misc/rec_location through subs::setting_grabber, so the test
 # needs the app's own settings table. This is the same shape as the shared
@@ -267,8 +306,10 @@ sub sandbox_database {
 
 my $sandbox = sandbox_database();
 require "$root/lib/JawnOS/Controller/manager_misc9.pm";
+require "$root/lib/JawnOS/Controller/manager_sound.pm";
 
 ok(Manager->can('action_44023'), 'the controller defines action_44023');
+ok(Manager->can('action_53037'), 'the sound controller defines action_53037');
 
 # --- the route row is plain text, the t/58 shape ----------------------------
 my $route_text = join '', map { read_file($_) } sort glob("$root/lib/JawnOS/Routes/*.pm");
@@ -276,6 +317,11 @@ like(
 	$route_text,
 	qr/\[\s*44023\s*,\s*'post'\s*,\s*'\/manager\/studio\/take'\s*,\s*'action_44023'\s*\]/,
 	'POST /manager/studio/take is registered with its action'
+);
+like(
+	$route_text,
+	qr/\[\s*53037\s*,\s*'post'\s*,\s*'\/manager\/sound\/monitor'\s*,\s*'action_53037'\s*\]/,
+	'POST /manager/sound/monitor is registered with its action'
 );
 
 # --- a fake controller -------------------------------------------------------
@@ -297,6 +343,22 @@ sub run_take {
 	my (%params) = @_;
 	my $fake = FakeStudioTakeController->new({ action => 'start', %params });
 	Manager::action_44023($fake);
+	$fake->{'status'} = 200 unless defined $fake->{'status'};
+	return $fake;
+}
+
+sub run_monitor {
+	my (%params) = @_;
+	my $fake = FakeStudioTakeController->new({ action => 'start', %params });
+	Manager::action_53037($fake);
+	$fake->{'status'} = 200 unless defined $fake->{'status'};
+	return $fake;
+}
+
+sub run_sound_param {
+	my (%params) = @_;
+	my $fake = FakeStudioTakeController->new({ %params });
+	Manager::action_53033($fake);
 	$fake->{'status'} = 200 unless defined $fake->{'status'};
 	return $fake;
 }
@@ -575,6 +637,113 @@ sub run_take {
 
 	my $missing = run_take(action => undef);
 	is($missing->{'status'}, 400, 'a missing action is a 400 too');
+}
+
+# --- the Sound route monitors several inputs --------------------------------
+{
+	my @calls;
+	local *JawnOS::Audio::Engine::audio_engine_listen_channels = sub {
+		push @calls, [@_];
+		return { ok => 1, state => 'listening', channels => $_[0] };
+	};
+
+	my $started = run_monitor(
+		channels => '0,1', gain => '0.5', pan => '-0.25',
+		inserts => 'tone, delay', system => '0',
+	);
+	is($started->{'status'}, 200, 'a multi-input monitor is 200');
+	is_deeply($calls[0][0], [0, 1], 'the comma list becomes channel numbers');
+	is($calls[0][1], 0.5, 'the gain is a number');
+	is($calls[0][2], -0.25, 'the pan is a number');
+	is_deeply($calls[0][3], [qw(tone delay)], 'the insert chain is split');
+	is($calls[0][4], 0, 'system 0 is carried as false');
+
+	my $json = run_monitor(channels => '[2,0]');
+	is($json->{'status'}, 200, 'a JSON array of channels is accepted');
+	is_deeply($calls[1][0], [2, 0], 'and keeps its order');
+
+	my $before = scalar @calls;
+	for my $case (
+		[ channels => '0,0',  qr/named twice/ ],
+		[ channels => '0,32', qr/between 0 and 31/ ],
+		[ channels => 'x',    qr/whole input numbers/ ],
+		[ gain     => '9',    qr/between 0 and 4/ ],
+		[ pan      => '2',    qr/between -1 and 1/ ],
+		[ inserts  => 'Wobble', qr/no such insert/ ],
+		[ system   => 'maybe', qr/system must be 0 or 1/ ],
+	) {
+		my ($key, $value, $error) = @$case;
+		my $bad = run_monitor(channels => '0', $key => $value);
+		is($bad->{'status'}, 400, "$key=$value is a 400");
+		like($bad->{'json'}{'error'}, $error, 'and names the rule');
+	}
+	is(scalar @calls, $before, 'no malformed monitor reaches the engine');
+
+	local *JawnOS::Audio::Engine::audio_engine_status = sub {
+		return { ok => 1, state => 'listening', channels => [0, 1] };
+	};
+	my $status = run_monitor(action => 'status');
+	is($status->{'json'}{'state'}, 'listening', 'monitor status relays the engine');
+
+	local *JawnOS::Audio::Engine::audio_engine_stop = sub {
+		return { ok => 1, state => 'done' };
+	};
+	my $stopped = run_monitor(action => 'stop');
+	is($stopped->{'json'}{'state'}, 'done', 'monitor stop relays the engine');
+
+	my $dance = run_monitor(action => 'dance');
+	is($dance->{'status'}, 400, 'an unknown monitor action is a 400');
+}
+
+# --- the Sound route addresses a patch source -------------------------------
+{
+	my @calls;
+	local *JawnOS::Audio::Engine::audio_engine_patch_source_param = sub {
+		push @calls, [@_];
+		return { ok => 1, target => 'patch_source', source => $_[0] };
+	};
+
+	my $fader = run_sound_param(
+		target => 'patch_source', source => '0',
+		name => 'distortion.drive', value => '75',
+	);
+	is($fader->{'status'}, 200, 'a patch-source fader is 200');
+	is_deeply($calls[0], [0, 'distortion.drive', 75], 'the source, name and value reach the engine');
+
+	my $gain = run_sound_param(
+		target => 'patch_source', source => '1', name => 'gain', value => '0.4',
+	);
+	is($gain->{'status'}, 200, 'a source gain is accepted');
+	is_deeply($calls[1], [1, 'gain', 0.4], 'and is forwarded');
+
+	my $mute = run_sound_param(
+		target => 'patch_source', source => '0', name => 'mute', value => '1',
+	);
+	is($mute->{'status'}, 200, 'a source mute is accepted');
+	is_deeply($calls[2], [0, 'mute', 1], 'and is forwarded to the source');
+
+	my $before = scalar @calls;
+	for my $case (
+		[ source => 'x', name => 'gain', value => '1', qr/source number/ ],
+		[ source => '0', name => 'reverb', value => '1', qr/gain, mute or <insert>/ ],
+		[ source => '0', name => 'tone.bass', value => 'loud', qr/finite number/ ],
+	) {
+		my $error = $case->[-1];
+		my %params = @$case[0 .. $#$case - 1];
+		my $bad = run_sound_param(target => 'patch_source', %params);
+		is($bad->{'status'}, 200, 'a bad fader is answered without a route-level status change');
+		ok(!$bad->{'json'}{'ok'}, 'with ok false');
+		like($bad->{'json'}{'error'}, $error, 'and names the rule');
+	}
+	is(scalar @calls, $before, 'no malformed source fader reaches the engine');
+
+	local *JawnOS::Audio::Engine::audio_engine_patch_param = sub {
+		push @calls, [@_];
+		return { ok => 1, target => 'patch' };
+	};
+	my $route = run_sound_param(route => '2', name => 'gain', value => '0.5');
+	is($route->{'status'}, 200, 'the route fader keeps its behaviour');
+	is_deeply($calls[-1], [2, 'gain', 0.5], 'and still addresses a route');
 }
 
 done_testing();

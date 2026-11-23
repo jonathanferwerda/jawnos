@@ -52,7 +52,7 @@ use jawn_audio::listen::ListenSink;
 use jawn_audio::mixer::{ParamName, ParamQueue};
 use jawn_audio::monbus::{Consumer, Producer};
 use jawn_audio::playback::StandaloneClick;
-use jawn_audio::{to_i16, Device, NullDevice};
+use jawn_audio::{to_i16, Channel, Device, EffectChain, InsertKind, NullDevice, Param};
 
 use crate::backends::BackendKind;
 use crate::socket::{get, Object, Value};
@@ -93,6 +93,21 @@ enum SourceRoute {
 struct Source {
     id: String,
     channel: Option<usize>,
+    /// The source's own trim, before its insert chain and every route. It is a
+    /// [`Param`], so a live `param` moves it without re-arming the graph. The
+    /// default is unity; a source that declares no `gain` is a wire.
+    gain: Param,
+    /// The source's footswitch, folded into the trim. `1` is audible and `0` is
+    /// silent; it is a [`Param`], so a live mute crosses to the audio thread at
+    /// the next block without touching the gain the player set.
+    mute: Param,
+    /// The inserts this source runs before its routes and sends, in plan order.
+    /// A stereo source (`device`, `handset`) has one chain per side, exactly as
+    /// the master rack runs two independent instances; a mono source has one.
+    chains: Vec<EffectChain>,
+    /// The insert kinds the source declared, for the status line and for the
+    /// socket's check that a knob belongs to an armed insert.
+    inserts: Vec<InsertKind>,
     /// The PipeWire/Pulse source this input captures, when the plan names one.
     /// `None` means the machine's default source (`@DEFAULT_SOURCE@`); a named
     /// node is never replaced by that default, because a take that asked for
@@ -163,6 +178,18 @@ struct BusSend {
     strip: usize,
 }
 
+/// One source's declared processing, for `status`: its trim and the inserts it
+/// runs before its routes. The gain is live, so a page reads back a moved fader
+/// here; the insert names are the compiled chain order.
+#[derive(Clone, Debug)]
+pub struct SourceEffects {
+    pub id: String,
+    pub gain: f32,
+    /// True when the source is muted by a live `patch_source` param.
+    pub mute: bool,
+    pub inserts: Vec<String>,
+}
+
 /// What a plan compiled into, for `status` and a CLI report.
 #[derive(Clone, Debug)]
 pub struct PatchSummary {
@@ -174,6 +201,10 @@ pub struct PatchSummary {
     pub bound_sinks: usize,
     /// Node ids that were declared and routed but cannot be bound here.
     pub silent: Vec<String>,
+    /// Every source's trim and insert chain, in plan order. A source that
+    /// declares neither still appears, so a page can tell an unprocessed
+    /// source from one the plan did not mention.
+    pub source_effects: Vec<SourceEffects>,
     /// Every bound local `input`, as (id, capture node): the plan's own `node`,
     /// or `@DEFAULT_SOURCE@` when it names none. The status shows which
     /// microphone a take will actually use.
@@ -223,8 +254,28 @@ impl PatchSummary {
             })
             .collect::<Vec<String>>()
             .join(",");
+        let source_effects = self
+            .source_effects
+            .iter()
+            .map(|source| {
+                let inserts = source
+                    .inserts
+                    .iter()
+                    .map(|name| format!("\"{}\"", jawn_audio::loopback::json_escape(name)))
+                    .collect::<Vec<String>>()
+                    .join(",");
+                format!(
+                    "{{\"id\":\"{}\",\"gain\":{},\"mute\":{},\"inserts\":[{}]}}",
+                    jawn_audio::loopback::json_escape(&source.id),
+                    source.gain,
+                    source.mute,
+                    inserts
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(",");
         format!(
-            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"inputs\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\",\"peer\":\"{}\"",
+            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"inputs\":[{}],\"source_effects\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\",\"peer\":\"{}\"",
             self.sources,
             self.buses,
             self.sinks,
@@ -233,6 +284,7 @@ impl PatchSummary {
             self.bound_sinks,
             silent,
             inputs,
+            source_effects,
             self.system,
             self.handset,
             self.mode,
@@ -265,6 +317,10 @@ pub struct Patchbay {
     /// The shared control ring the socket's `param` pushes to and the block
     /// drains at its top.
     params: Arc<ParamQueue>,
+    /// Source trims and insert knobs, a ring of their own. A source address is
+    /// not a route number, so it cannot share the route queue without a second
+    /// namespace; this one carries only source indices.
+    source_params: Arc<ParamQueue>,
     summary: PatchSummary,
     /// Whether a bound `device` source is routed by the plan. When it is not,
     /// the system mix is added to the output at unity instead of disappearing.
@@ -289,6 +345,14 @@ pub struct Patchbay {
     handset_block: Vec<f32>,
     /// One mono source, reused for every source.
     mono: Vec<f32>,
+    /// The two channels of a stereo source while its inserts run, so a `device`
+    /// or `handset` source can use one independent mono chain per side without
+    /// interleaving inside an effect. `source_stereo` is the processed pair the
+    /// routes read; the shared capture block stays untouched, so two sources on
+    /// one capture do not run each other's inserts.
+    source_left: Vec<f32>,
+    source_right: Vec<f32>,
+    source_stereo: Vec<f32>,
     /// One stereo block per bus.
     buses: Vec<Vec<f32>>,
     /// One stereo block per sink.
@@ -386,6 +450,21 @@ impl Patchbay {
     /// The plan's bus ids in compile order. A bus take names one of these.
     pub fn bus_ids(&self) -> &[String] {
         &self.bus_ids
+    }
+
+    /// The source trims' and inserts' control ring. The socket pushes a
+    /// `patch_source` param here; the block drains it at its top.
+    pub fn source_params(&self) -> Arc<ParamQueue> {
+        Arc::clone(&self.source_params)
+    }
+
+    /// Every source's insert chain, in plan order. The socket checks a live
+    /// `patch_source` knob against the chain the source actually armed.
+    pub fn source_inserts(&self) -> Vec<Vec<InsertKind>> {
+        self.sources
+            .iter()
+            .map(|source| source.inserts.clone())
+            .collect()
     }
 }
 
@@ -500,9 +579,31 @@ impl Patchbay {
                 // this list: it is pending until the uplink attaches its ring.
                 silent.push(id.clone());
             }
+            // A source runs its own trim and inserts before any route, so the
+            // bus a take records is the effected source. The chain is built
+            // here, before the routes, and a stereo source gets two independent
+            // instances: an effect is a mono processor, exactly as the master
+            // rack runs one per side. Declared controls are applied per slot,
+            // so two pedals of one kind can start at different settings.
+            let planned = source_inserts(entry, &id)?;
+            let gain = source_gain(entry, &id)?;
+            let chains_per_source = if system || handset { 2 } else { 1 };
+            let mut chains = Vec::with_capacity(chains_per_source);
+            for _ in 0..chains_per_source {
+                let mut chain = EffectChain::new();
+                for insert in &planned {
+                    chain.push_configured(insert.kind, insert.bypass, &insert.controls);
+                }
+                chains.push(chain);
+            }
+            let inserts = planned.iter().map(|insert| insert.kind).collect();
             sources.push(Source {
                 id,
                 channel: reachable.then_some(channel),
+                gain: Param::new(gain),
+                mute: Param::new(1.0),
+                chains,
+                inserts,
                 node: reachable.then_some(node).flatten(),
                 system,
                 handset,
@@ -707,6 +808,19 @@ impl Patchbay {
         } else {
             "off"
         };
+        let source_effects = sources
+            .iter()
+            .map(|source| SourceEffects {
+                id: source.id.clone(),
+                gain: source.gain.get(),
+                mute: source.mute.get() < 0.5,
+                inserts: source
+                    .inserts
+                    .iter()
+                    .map(|kind| kind.name().to_string())
+                    .collect(),
+            })
+            .collect();
         let summary = PatchSummary {
             sources: sources.len(),
             buses: buses.len(),
@@ -720,6 +834,7 @@ impl Patchbay {
                 .count(),
             bound_sinks: sinks.iter().filter(|sink| sink.bound).count(),
             silent,
+            source_effects,
             inputs: bound_inputs(&sources),
             system: if system_routed { "routed" } else { "fallback" },
             handset: if sources.iter().any(|source| source.handset) {
@@ -744,6 +859,7 @@ impl Patchbay {
             order,
             strips,
             params: Arc::new(ParamQueue::new()),
+            source_params: Arc::new(ParamQueue::new()),
             summary,
             system_routed,
             input: Vec::new(),
@@ -753,6 +869,9 @@ impl Patchbay {
             handset: None,
             handset_block: Vec::new(),
             mono: Vec::new(),
+            source_left: Vec::new(),
+            source_right: Vec::new(),
+            source_stereo: Vec::new(),
             buses: (0..bus_count).map(|_| Vec::new()).collect(),
             sink_buffers: (0..sink_count).map(|_| Vec::new()).collect(),
             mix: Vec::new(),
@@ -973,6 +1092,39 @@ impl Patchbay {
                 _ => {}
             }
         }
+        // A source's trim and insert knobs arrive in their own ring; the index
+        // is a source, not a route. A source that is gone is ignored, exactly
+        // as a stale route is.
+        while let Some((source, name, value)) = self.source_params.pop() {
+            let Some(source) = self.sources.get_mut(source) else {
+                continue;
+            };
+            match name.insert_kind() {
+                None => {
+                    if name.master() || !value.is_finite() {
+                        continue;
+                    }
+                    match name.control() {
+                        "gain" => source.gain.set(value.clamp(0.0, Channel::MAX_GAIN)),
+                        // The wire is `1` for muted so a checkbox reads the way
+                        // a page expects. It is a separate gain, so unmuting
+                        // restores the trim the player set.
+                        "mute" => source.mute.set(if value >= 0.5 { 0.0 } else { 1.0 }),
+                        _ => {}
+                    }
+                }
+                Some(kind) => {
+                    if name.master() {
+                        continue;
+                    }
+                    let control = name.control();
+                    let native = kind.native_value(control, value);
+                    for chain in &mut source.chains {
+                        chain.set_insert(kind.name(), control, native);
+                    }
+                }
+            }
+        }
     }
 
     /// Apply a bus take's attach or detach. A block only reaches the slot's
@@ -1001,7 +1153,7 @@ impl Patchbay {
 
     /// Size every buffer. This is the only allocation in the patchbay; the
     /// device loop then only reads and writes what this owns.
-    pub fn prepared(&mut self, _rate: u32, period: usize, channels: usize) -> Result<(), String> {
+    pub fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
         if period == 0 {
             return Err("a patch block must hold at least one frame".to_string());
         }
@@ -1048,6 +1200,14 @@ impl Patchbay {
             })
             .collect();
         self.mono = vec![0.0; period];
+        self.source_left = vec![0.0; period];
+        self.source_right = vec![0.0; period];
+        self.source_stereo = vec![0.0; period.saturating_mul(2)];
+        for source in &mut self.sources {
+            for chain in &mut source.chains {
+                chain.prepare(rate, period);
+            }
+        }
         for bus in &mut self.buses {
             *bus = vec![0.0; period.saturating_mul(2)];
         }
@@ -1248,16 +1408,26 @@ impl Patchbay {
             consumer.pop(&mut self.handset_block[..stereo]);
         }
 
-        // Sources first: each one is read once, then summed into every place
-        // it was routed to. An `input` source is one capture channel; a
-        // `device` source is the machine's stereo system mix.
-        for (index, source) in self.sources.iter().enumerate() {
+        // Sources first: each one is read once, then its own trim and inserts
+        // run, then it is summed into every place it was routed to. An `input`
+        // source is one capture channel; a `device` source is the machine's
+        // stereo system mix.
+        for (index, source) in self.sources.iter_mut().enumerate() {
             if source.routes.is_empty() {
                 continue;
             }
             if let Some(channel) = source.channel {
                 for frame in 0..frames {
                     self.mono[frame] = self.input[frame * self.channels + channel];
+                }
+                let gain = source.gain.get() * source.mute.get();
+                for sample in &mut self.mono[..frames] {
+                    *sample *= gain;
+                }
+                if let Some(chain) = source.chains.get_mut(0) {
+                    chain
+                        .process(&mut self.mono[..frames])
+                        .map_err(|error| format!("source {index} inserts: {error:?}"))?;
                 }
                 for route in &source.routes {
                     match route {
@@ -1287,6 +1457,25 @@ impl Patchbay {
                 }
             }
             else if source.system {
+                // A stereo source runs one independent mono chain per side.
+                let gain = source.gain.get() * source.mute.get();
+                for frame in 0..frames {
+                    self.source_left[frame] = self.system[frame * 2] * gain;
+                    self.source_right[frame] = self.system[frame * 2 + 1] * gain;
+                }
+                if source.chains.len() >= 2 {
+                    let (left_chain, right_chain) = source.chains.split_at_mut(1);
+                    left_chain[0]
+                        .process(&mut self.source_left[..frames])
+                        .map_err(|error| format!("source {index} inserts (left): {error:?}"))?;
+                    right_chain[0]
+                        .process(&mut self.source_right[..frames])
+                        .map_err(|error| format!("source {index} inserts (right): {error:?}"))?;
+                }
+                for frame in 0..frames {
+                    self.source_stereo[frame * 2] = self.source_left[frame];
+                    self.source_stereo[frame * 2 + 1] = self.source_right[frame];
+                }
                 for route in &source.routes {
                     match route {
                         SourceRoute::Bus { index, strip } => {
@@ -1295,7 +1484,7 @@ impl Patchbay {
                             };
                             mix_stereo_into_stereo(
                                 &mut self.buses[*index][..stereo],
-                                &self.system[..stereo],
+                                &self.source_stereo[..stereo],
                                 strip,
                             );
                         }
@@ -1305,13 +1494,31 @@ impl Patchbay {
                             };
                             mix_stereo_into_stereo(
                                 &mut self.sink_buffers[*index][..stereo],
-                                &self.system[..stereo],
+                                &self.source_stereo[..stereo],
                                 strip,
                             );
                         }
                     }
                 }
             } else if source.handset {
+                let gain = source.gain.get() * source.mute.get();
+                for frame in 0..frames {
+                    self.source_left[frame] = self.handset_block[frame * 2] * gain;
+                    self.source_right[frame] = self.handset_block[frame * 2 + 1] * gain;
+                }
+                if source.chains.len() >= 2 {
+                    let (left_chain, right_chain) = source.chains.split_at_mut(1);
+                    left_chain[0]
+                        .process(&mut self.source_left[..frames])
+                        .map_err(|error| format!("source {index} inserts (left): {error:?}"))?;
+                    right_chain[0]
+                        .process(&mut self.source_right[..frames])
+                        .map_err(|error| format!("source {index} inserts (right): {error:?}"))?;
+                }
+                for frame in 0..frames {
+                    self.source_stereo[frame * 2] = self.source_left[frame];
+                    self.source_stereo[frame * 2 + 1] = self.source_right[frame];
+                }
                 for route in &source.routes {
                     match route {
                         SourceRoute::Bus { index, strip } => {
@@ -1320,7 +1527,7 @@ impl Patchbay {
                             };
                             mix_stereo_into_stereo(
                                 &mut self.buses[*index][..stereo],
-                                &self.handset_block[..stereo],
+                                &self.source_stereo[..stereo],
                                 strip,
                             );
                         }
@@ -1330,7 +1537,7 @@ impl Patchbay {
                             };
                             mix_stereo_into_stereo(
                                 &mut self.sink_buffers[*index][..stereo],
-                                &self.handset_block[..stereo],
+                                &self.source_stereo[..stereo],
                                 strip,
                             );
                         }
@@ -1348,6 +1555,15 @@ impl Patchbay {
                 }
                 for frame in 0..frames {
                     self.mono[frame] = block[frame * 2];
+                }
+                let gain = source.gain.get() * source.mute.get();
+                for sample in &mut self.mono[..frames] {
+                    *sample *= gain;
+                }
+                if let Some(chain) = source.chains.get_mut(0) {
+                    chain
+                        .process(&mut self.mono[..frames])
+                        .map_err(|error| format!("source {index} inserts: {error:?}"))?;
                 }
                 for route in &source.routes {
                     match route {
@@ -1652,6 +1868,110 @@ fn source_node(object: &Object, kind: &str) -> Result<Option<String>, String> {
         ));
     }
     Ok(Some(node))
+}
+
+/// A source's optional insert chain. The contract's names and the engine's
+/// [`InsertKind`] are the authority (`docs/studio-effects.md`): a string is an
+/// effect name, and an object is the same name with an optional footswitch and
+/// an optional control map, so a saved page can keep a bypassed pedal in the
+/// rack and an effect can start where the player left it.
+///
+/// A name the engine cannot build is refused rather than dropped: a source
+/// that asked for a pedal it never gets is a plan that lies about its sound.
+/// A control the effect does not have is refused for the same reason. The
+/// values are in the contract's units, so the delay's time is milliseconds and
+/// the socket's own `native_value` conversion applies here too.
+struct PlannedInsert {
+    kind: InsertKind,
+    bypass: bool,
+    controls: Vec<(String, f32)>,
+}
+
+fn source_inserts(object: &Object, id: &str) -> Result<Vec<PlannedInsert>, String> {
+    let list = match get(object, "inserts") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Arr(list)) => list,
+        Some(_) => return Err(format!("{id} has an \"inserts\" that is not an array")),
+    };
+    let mut planned = Vec::with_capacity(list.len());
+    for entry in list {
+        let (name, bypass, controls) = match entry {
+            Value::Str(name) => (name.clone(), false, Vec::new()),
+            Value::Obj(fields) => {
+                let name = text(fields, "name")
+                    .or_else(|| text(fields, "kind"))
+                    .ok_or_else(|| format!("{id} has an insert with no \"name\""))?;
+                let bypass = match get(fields, "bypass") {
+                    None | Some(Value::Null) => false,
+                    Some(Value::Bool(value)) => *value,
+                    Some(Value::Num(value)) if *value == 0.0 => false,
+                    Some(Value::Num(value)) if *value == 1.0 => true,
+                    Some(_) => {
+                        return Err(format!(
+                            "{id} has an insert \"{name}\" whose \"bypass\" is not true or false"
+                        ))
+                    }
+                };
+                let mut controls = Vec::new();
+                match get(fields, "controls") {
+                    None | Some(Value::Null) => {}
+                    Some(Value::Obj(map)) => {
+                        for (control, value) in map {
+                            let value = match value {
+                                Value::Num(value) if value.is_finite() => *value as f32,
+                                _ => {
+                                    return Err(format!(
+                                        "{id} has insert \"{name}\" control \"{control}\" that is not a finite number"
+                                    ))
+                                }
+                            };
+                            controls.push((control.clone(), value));
+                        }
+                    }
+                    Some(_) => {
+                        return Err(format!(
+                            "{id} has insert \"{name}\" whose \"controls\" is not an object"
+                        ))
+                    }
+                }
+                (name, bypass, controls)
+            }
+            _ => {
+                return Err(format!(
+                    "{id} has an insert that is not a name or an object with a \"name\""
+                ))
+            }
+        };
+        let kind = InsertKind::parse(&name)
+            .ok_or_else(|| format!("{id} names insert \"{name}\"; the engine does not build it"))?;
+        for (control, _) in &controls {
+            if kind.control_index(control).is_none() {
+                return Err(format!(
+                    "{id} names insert \"{name}\" control \"{control}\"; the effect has no such control"
+                ));
+            }
+        }
+        planned.push(PlannedInsert {
+            kind,
+            bypass,
+            controls,
+        });
+    }
+    Ok(planned)
+}
+
+/// A source's own trim, defaulting to unity. A negative gain or one past the
+/// engine's +12 dB trim is a mistake in the plan rather than a value to clamp
+/// silently, exactly as a route gain is.
+fn source_gain(object: &Object, id: &str) -> Result<f32, String> {
+    let gain = number(object, "gain")?.unwrap_or(1.0);
+    if !(0.0..=Channel::MAX_GAIN).contains(&gain) {
+        return Err(format!(
+            "{id} has gain {gain}; a source gain is between 0 and {}",
+            Channel::MAX_GAIN
+        ));
+    }
+    Ok(gain)
 }
 
 /// A node's optional `"machine"` host. Absent or empty means "this machine",
@@ -2488,6 +2808,318 @@ mod tests {
         );
         assert!(!patchbay.route_live(0));
         assert!(patchbay.route_live(1));
+    }
+
+    // --- a source's own trim and inserts -------------------------------------
+
+    /// A source's inserts run before its route, so the bus and the sink see the
+    /// effected signal. The reference is the same strip a take would build.
+    #[test]
+    fn a_source_runs_its_inserts_before_its_route() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0,
+                    "inserts":[{"name":"distortion"}]}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"in0","to":"out","gain":1,"pan":-1}]
+            }"#,
+        );
+        let input = [0.5f32, 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 0.0];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+
+        let mut reference = Channel::new(1.0, -1.0);
+        reference.push(InsertKind::Distortion.build());
+        reference.prepare(48_000, 4);
+        let mut expected = [0.0f32; 8];
+        reference
+            .process(&[0.5f32; 4], &mut expected)
+            .expect("reference strip");
+
+        for (got, want) in output.iter().zip(&expected) {
+            assert!((got - want).abs() < 1e-5, "got {output:?}, want {expected:?}");
+        }
+        assert!(
+            output[0].abs() > 1e-4,
+            "the insert actually coloured the source: {output:?}"
+        );
+    }
+
+    #[test]
+    fn a_source_insert_can_be_bypassed_in_place() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0,
+                    "inserts":[{"name":"distortion","bypass":true}]}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"in0","to":"out","gain":1,"pan":-1}]
+            }"#,
+        );
+        let input = [0.5f32, 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 0.0];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+        for frame in output.chunks(2) {
+            assert!((frame[0] - 0.5).abs() < 1e-6, "a bypassed insert was not a wire: {frame:?}");
+            assert!(frame[1].abs() < 1e-6, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn a_source_gain_moves_live() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0,"gain":0.5}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"in0","to":"out","gain":1,"pan":-1}]
+            }"#,
+        );
+        let queue = patchbay.source_params();
+        let input = [0.4f32, 0.0, 0.4, 0.0, 0.4, 0.0, 0.4, 0.0];
+        let mut output = [0.0f32; 8];
+
+        patchbay.block_f32(&input, &mut output).expect("first block");
+        assert!((output[0] - 0.2).abs() < 1e-5, "the source trim ran first: {output:?}");
+
+        queue.push(0, ParamName::Gain, 1.0);
+        patchbay.block_f32(&input, &mut output).expect("second block");
+        assert!((output[0] - 0.4).abs() < 1e-5, "the trim reached the audio thread: {output:?}");
+    }
+
+    #[test]
+    fn a_source_insert_knob_moves_live() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0,
+                    "inserts":["distortion"]}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"in0","to":"out","gain":1,"pan":-1}]
+            }"#,
+        );
+        let queue = patchbay.source_params();
+        let input = [0.4f32, 0.0, 0.4, 0.0, 0.4, 0.0, 0.4, 0.0];
+        let mut output = [0.0f32; 8];
+
+        patchbay.block_f32(&input, &mut output).expect("first block");
+        let before = output[0];
+        queue.push(
+            0,
+            ParamName::parse("distortion.drive").expect("the insert's knob"),
+            100.0,
+        );
+        patchbay.block_f32(&input, &mut output).expect("second block");
+        assert!(
+            (output[0] - before).abs() > 1e-3,
+            "the insert knob reached the audio thread: before {before}, after {}",
+            output[0]
+        );
+    }
+
+    #[test]
+    fn a_source_insert_starts_at_its_declared_controls() {
+        // The plan's control map is native units. Distortion's drive is 0..100,
+        // so 100 must sound like a strip built at 100, not at its default 50.
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0,
+                    "inserts":[{"name":"distortion","controls":{"drive":100}}]}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"in0","to":"out","gain":1,"pan":-1}]
+            }"#,
+        );
+        let input = [0.5f32, 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 0.0];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+
+        let mut reference = Channel::new(1.0, -1.0);
+        reference.push(InsertKind::Distortion.build());
+        reference.set("distortion.drive", 100.0);
+        reference.prepare(48_000, 4);
+        let mut expected = [0.0f32; 8];
+        reference
+            .process(&[0.5f32; 4], &mut expected)
+            .expect("reference strip");
+
+        for (got, want) in output.iter().zip(&expected) {
+            assert!((got - want).abs() < 1e-5, "got {output:?}, want {expected:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_source_control_is_refused() {
+        let object = parse_object(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0,
+                    "inserts":[{"name":"distortion","controls":{"wobble":1}}]}],
+                "buses":[],"sinks":[{"id":"out","kind":"interface"}],"routes":[]
+            }"#,
+        )
+        .expect("the plan parses");
+        let error = Patchbay::from_object(&object, 2, "local").expect_err("the control is refused");
+        assert!(
+            error.contains("wobble") && error.contains("no such control"),
+            "the refusal names the control: {error}"
+        );
+    }
+
+    #[test]
+    fn a_source_mute_stops_its_routes() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"in0","to":"out","gain":1,"pan":-1}]
+            }"#,
+        );
+        let queue = patchbay.source_params();
+        let input = [0.4f32, 0.0, 0.4, 0.0, 0.4, 0.0, 0.4, 0.0];
+        let mut output = [0.0f32; 8];
+
+        patchbay.block_f32(&input, &mut output).expect("first block");
+        assert!((output[0] - 0.4).abs() < 1e-5, "the source is audible: {output:?}");
+
+        queue.push(0, ParamName::Mute, 1.0);
+        patchbay.block_f32(&input, &mut output).expect("muted block");
+        assert!(output[0].abs() < 1e-6, "the mute silenced the source: {output:?}");
+
+        queue.push(0, ParamName::Mute, 0.0);
+        patchbay.block_f32(&input, &mut output).expect("unmuted block");
+        assert!((output[0] - 0.4).abs() < 1e-5, "unmute restored the trim: {output:?}");
+    }
+
+    #[test]
+    fn a_source_gain_and_inserts_reach_the_bus_take() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0,"gain":0.5}],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[
+                    {"from":"in0","to":"house","gain":1,"pan":-1},
+                    {"from":"house","to":"out","gain":1,"pan":0}
+                ]
+            }"#,
+        );
+        let tap = patchbay.tap();
+        let (producer, consumer) = jawn_audio::monbus::new(4096);
+        assert!(tap.attach(0, producer, None));
+        let input = [0.5f32, 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 0.0];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+
+        let mut recorded = [0.0f32; 8];
+        assert_eq!(consumer.pop(&mut recorded), 4);
+        for frame in recorded.chunks(2) {
+            assert!((frame[0] - 0.25).abs() < 1e-5, "the tap saw the trimmed source: {frame:?}");
+            assert!(frame[1].abs() < 1e-5, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn two_device_sources_run_their_inserts_independently() {
+        // Both sources read the same system mix. A shared block processed in
+        // place would distort it twice for the second source; each source must
+        // start from the untouched capture. One source and two sources must
+        // therefore differ by exactly a factor of two, sample for sample.
+        let mut single = bay(
+            r#"{
+                "sources":[{"id":"music","kind":"device","inserts":["distortion"]}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"music","to":"out","gain":1,"pan":-1}]
+            }"#,
+        );
+        single.prepared(48_000, 4, 2).expect("prepare one");
+
+        let mut double = bay(
+            r#"{
+                "sources":[
+                    {"id":"music","kind":"device","inserts":["distortion"]},
+                    {"id":"video","kind":"device","inserts":["distortion"]}
+                ],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[
+                    {"from":"music","to":"out","gain":1,"pan":-1},
+                    {"from":"video","to":"out","gain":1,"pan":-1}
+                ]
+            }"#,
+        );
+        double.prepared(48_000, 4, 2).expect("prepare two");
+
+        let input = [0.0f32; 8];
+        let system = [0.4f32, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4];
+        let mut one_out = [0.0f32; 8];
+        let mut two_out = [0.0f32; 8];
+        single
+            .block_f32_with_system(&input, &system, &mut one_out)
+            .expect("run one");
+        double
+            .block_f32_with_system(&input, &system, &mut two_out)
+            .expect("run two");
+
+        for (single_frame, double_frame) in one_out.chunks(2).zip(two_out.chunks(2)) {
+            assert!(
+                (double_frame[0] - single_frame[0] * 2.0).abs() < 1e-5,
+                "a source processed another source's output: {single_frame:?} vs {double_frame:?}"
+            );
+            assert!(double_frame[1].abs() < 1e-5, "the pan kept the right silent");
+        }
+    }
+
+    #[test]
+    fn the_summary_reports_each_source_gain_and_insert_chain() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","channel":0,
+                    "gain":0.75,"inserts":["tone",{"name":"delay"}]}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"in0","to":"out"}]
+            }"#,
+        );
+        let effects = &patchbay.summary().source_effects;
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].id, "in0");
+        assert_eq!(effects[0].gain, 0.75);
+        assert!(!effects[0].mute, "a source from a plan is audible");
+        assert_eq!(effects[0].inserts, vec!["tone", "delay"]);
+        let line = patchbay.summary().json();
+        assert!(
+            line.contains("\"source_effects\":[{\"id\":\"in0\",\"gain\":0.75,\"mute\":false,\"inserts\":[\"tone\",\"delay\"]}]"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_source_insert_the_engine_cannot_build_is_refused() {
+        let object = parse_object(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","inserts":["wobble"]}],
+                "buses":[], "sinks":[], "routes":[]
+            }"#,
+        )
+        .expect("parse");
+        let error = Patchbay::from_object(&object, 2, "local").expect_err("refused");
+        assert!(error.contains("wobble"), "{error}");
+    }
+
+    #[test]
+    fn a_source_gain_outside_the_trim_range_is_refused() {
+        let object = parse_object(
+            r#"{
+                "sources":[{"id":"in0","kind":"input","gain":5}],
+                "buses":[], "sinks":[], "routes":[]
+            }"#,
+        )
+        .expect("parse");
+        let error = Patchbay::from_object(&object, 2, "local").expect_err("refused");
+        assert!(error.contains("gain"), "{error}");
     }
 
     // --- the machine's own mix -------------------------------------------------
