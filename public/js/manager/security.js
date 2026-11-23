@@ -39,11 +39,10 @@ $(document).on('click', '#security_toggle', function() {
 	});
 });
 
-// The Padlock view's Phone unlock page is a button. An embedded webview may
-// block a popup, so fall back to this tab (the page has its own way back).
+// The Padlock view's Phone unlock page is a button. The template carries the
+// same navigation inline, so an app whose JS chunk is cached still goes.
 $(document).on('click', '#padlock_key_show', function() {
-	var opened = window.open('/manager/security/padlock_key', '_blank');
-	if (!opened) { window.location.href = '/manager/security/padlock_key'; }
+	window.location.href = '/manager/security/padlock_key';
 });
 
 $(document).on('click', '#padlock_gate_enable, #padlock_gate_disable', function() {
