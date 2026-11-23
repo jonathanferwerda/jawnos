@@ -1,6 +1,9 @@
 <script>
 	var padlockKeyMode = 'locker';
 	var padlockKeyTarget = '';
+	// A whole-house unlock has no target screen: the phone signs the house name
+	// itself, the same way the locked screen's Send signs the screen it names.
+	var padlockKeyHouse = false;
 	// show=1 is an explicit ask (the locked screen's Send, or a late-join push),
 	// so the page offers Unlock even when this machine has not pulled the lock
 	// row yet - its state would otherwise say "no screen is locked".
@@ -83,7 +86,7 @@
 	}
 	function padlockKeyStart(target) {
 		if (padlockKeyBusy || padlockKeyDone) { return; }
-		if (typeof target === 'string') { padlockKeyTarget = target; }
+		if (typeof target === 'string') { padlockKeyTarget = target; padlockKeyHouse = false; }
 		padlockKeyBusy = true;
 		padlockKeyEmblemLocked(false);
 		$('#padlock_key_unlock, #padlock_key_retry, #padlock_key_targets').hide();
@@ -132,17 +135,31 @@
 			// its own open stamp, or when only another screen carries the lock.
 			// Targets are what this device can still sign for.
 			if (!s.locked && !(s.targets && s.targets.length)) {
-				$('#padlock_key_note').text('No screen is locked.');
-				$('#padlock_key_unlock').hide();
+				// A whole-house inactivity lock is not a locked screen: this device
+				// has its own open stamp, so s.locked is false and there is no target
+				// to sign. The phone can still sign the house open.
+				if (s.global_locked) {
+					padlockKeyHouse = true;
+					padlockKeyTarget = '';
+					$('#padlock_key_note').text('The whole house is locked.');
+					$('#padlock_key_unlock').show();
+				}
+				else {
+					padlockKeyHouse = false;
+					$('#padlock_key_note').text('Nothing is locked.');
+					$('#padlock_key_unlock').hide();
+				}
 				$('#padlock_key_targets').hide();
 				return;
 			}
 			if (s.targets && s.targets.length > 1) {
+				padlockKeyHouse = false;
 				$('#padlock_key_note').text('Which screen do you want to unlock?');
 				padlockKeyTargets(s.targets);
 				return;
 			}
 			if (s.targets && s.targets.length == 1) {
+				padlockKeyHouse = false;
 				padlockKeyTarget = s.targets[0].uuid || '';
 				$('#padlock_key_note').text('The screen is locked.');
 				$('#padlock_key_unlock').show();
@@ -150,14 +167,17 @@
 				return;
 			}
 			if (s.device) {
+				padlockKeyHouse = false;
 				padlockKeyTarget = s.device;
 				$('#padlock_key_note').text('This screen is locked.');
 				$('#padlock_key_unlock').show();
 				$('#padlock_key_targets').hide();
 				return;
 			}
-			$('#padlock_key_note').text('The whole house is locked. Open the screen you are at and press Send the unlock page to my phone.');
-			$('#padlock_key_unlock').hide();
+			padlockKeyHouse = true;
+			padlockKeyTarget = '';
+			$('#padlock_key_note').text('The whole house is locked.');
+			$('#padlock_key_unlock').show();
 			$('#padlock_key_targets').hide();
 		});
 	}
@@ -250,11 +270,13 @@
 					return;
 				}
 				var msg = 'padlock-unlock\n' + uuid + '\n';
-				if (padlockKeyTarget) { msg += padlockKeyTarget + '\n'; }
+				if (padlockKeyHouse) { msg += 'house\n'; }
+				else if (padlockKeyTarget) { msg += padlockKeyTarget + '\n'; }
 				msg += ch.nonce;
 				return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
 					var body = new URLSearchParams({ device_uuid: uuid, nonce: ch.nonce, signature: padlockKeyB64(sig), mode: padlockKeyMode });
-					if (padlockKeyTarget) { body.set('target', padlockKeyTarget); }
+					if (padlockKeyHouse) { body.set('house', '1'); }
+					else if (padlockKeyTarget) { body.set('target', padlockKeyTarget); }
 					return fetch('/manager/security/padlock_unlock', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

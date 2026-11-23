@@ -383,6 +383,22 @@ ok(defined $refresh_block, 'the Security refresh is found');
 unlike($refresh_block, qr/security_view/,
 	'the app unlock redraws the chosen view, not a hard-coded Passkeys');
 
+# --- the phone key can open the whole house ---------------------------------
+# With a house-wide inactivity lock and this phone's own screen open, s.locked
+# is false and there is no target to sign. The page used to say "No screen is
+# locked" and hide its Unlock button, which was a dead end. It now offers the
+# house unlock and signs the house name.
+my $key_script = read_file("$root/templates/padlock_key/script.html.ep");
+like($key_script, qr/padlockKeyHouse\s*=\s*true/,
+	'the phone key offers a whole-house unlock when only the house timer is closed');
+like($key_script, qr/\+= 'house/,
+	'it signs the house name rather than a target screen');
+like($key_script, qr/body\.set\('house', '1'\)/,
+	'and posts house=1 to padlock_unlock');
+my $key_markup = read_file("$root/templates/padlock_key/markup.html.ep");
+like($key_markup, qr/id="padlock_key_back"/,
+	'the phone key page has a way back to the house');
+
 diag("split scripts found: $splits; core entries: " . scalar(@core)
 	. "; lazy apps: " . scalar(keys %apps));
 done_testing();
