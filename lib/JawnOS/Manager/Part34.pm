@@ -103,8 +103,7 @@ sub embedded_grabber($c,$timestamp) {
 	$timestamp = $c->param('timestamp');
 	my $tty_enabled = &subs::setting_grabber({ app => $edt, setting => 'enabled' });
 	my $pseudonyms = &pseudonym_maker($edt, '');
-	my $json_wifi = &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) || '{}';
-	my $wifi = decode_json $json_wifi;
+	my ($wifi) = &subs::embedded_wifi_row($edt, $chip_id);
 
 	my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id } );
 	my $op_d = eval { return decode_json $od } || {};

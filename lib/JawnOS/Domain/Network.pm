@@ -217,6 +217,21 @@ sub ble_bridge_client {
 	return undef;
 }
 
+sub embedded_wifi_current {
+	# The network this machine is on, in the shape an embedded device's `wifi`
+	# row and the BLE `wifi` message use. The Controller flash path reads the
+	# same helper answer; keep the validation here so the two cannot drift.
+	my $network = eval { &Manager::network_helper(['wifi_current']) };
+	return undef unless ref $network eq 'HASH' && $network->{'ok'};
+	my $ssid = $network->{'ssid'} // '';
+	my $key  = $network->{'passphrase'} // '';
+	return undef unless length $ssid && length($ssid) <= 32 && $ssid !~ /[\x00-\x1f\x7f]/;
+	return undef if $ssid =~ /[\r\n]/ || $key =~ /[\r\n]/;
+	# An open network has no key; a protected one must be a real passphrase.
+	return undef unless $key eq '' || $key =~ /^[\x20-\x7e]{8,63}$/ || $key =~ /^[0-9A-Fa-f]{64}$/;
+	return { ssid => $ssid, password => $key };
+}
+
 # ---- multi-link bridge state (protocol v2) --------------------------------
 # A desktop or phone bridge can hold several radios at once. Every link event
 # names its MAC; keep the same map here so a send, a yield and a sighting can
@@ -328,6 +343,23 @@ sub embedded_operator_door {
 		$edt, 'operator_door', $chip_id
 	)->hashes->[0];
 	return $row ? $row->{'value'} : undef;
+}
+
+sub embedded_wifi_row {
+	# The newest `wifi` row a device owns, with the raw JSON beside it. Any
+	# machine may have written it (the panel, a Now Me, a USB provision), and an
+	# older build wrote under its own device class, so read by the device's chip
+	# key rather than by this machine's class - the same rule as
+	# embedded_operator_door. Returns ({}, '{}') when nothing is stored.
+	my ($edt, $chip_id) = @_;
+	return ({}, '{}') unless $edt && $chip_id;
+	my $row = &subs::db_query(
+		'select value from settings where app = ? and setting = ? and subsetting = ? order by server_time desc limit 1',
+		$edt, 'wifi', $chip_id
+	)->hashes->[0];
+	my $json = ($row && defined $row->{'value'}) ? $row->{'value'} : '';
+	my $decoded = eval { decode_json $json } || {};
+	return ((ref $decoded eq 'HASH' ? $decoded : {}), ($json ne '' ? $json : '{}'));
 }
 
 # The embedded devices' one authentication check: a watch, deck or alarmclock
@@ -636,16 +668,36 @@ sub ble_homebase_sighting {
 	return $gb::ble_hb_seen->{$key};
 }
 
+sub ble_homebase_known {
+	# Does the machine a device's record names still exist? A record written
+	# before a machine was renamed (or before the person renamed the house's
+	# database) can name a '<who>@<mesh>.<computer>' no machine answers to. That
+	# id is stale, not a homebase that is merely off the LAN: treating it as
+	# alive stranded the watch, because no machine owned its link and none would
+	# take it. A machine that owns the device by its own id answers first.
+	my ($edt, $chip_id) = @_;
+	my $who = &ble_device_specs($edt, $chip_id)->{'computer'};
+	return 0 unless defined $who && length $who;
+	my $mine = &ble_manager_file();
+	return 1 if $mine && &ble_machine_match($who, $mine);
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes || [] } ) {
+		return 1 if &ble_machine_match($rm->{'manager_file'}, $who);
+	}
+	return 0;
+}
+
 sub ble_homebase_alive {
 	# Has the machine the device was paired to been gone long enough to stop
 	# waiting for it? Its own peer row is the authority - not a ping of the address
 	# it last had, which was wrong the moment that machine left the LAN (a phone on
 	# cellular). A sighting counts until it is older than the grace: a deliberate
 	# stop waits the short one, a homebase merely off the LAN (still marked active)
-	# the long one. A record that names no machine, or names one we hold no
-	# sighting for, is assumed alive, so we never usurp a homebase we cannot judge.
+	# the long one. An id the mesh does not know is stale (a machine or person
+	# was renamed), not a homebase that is merely off the LAN: treating it as
+	# alive left nobody holding the link, which is what stranded the watch.
 	my ($edt, $chip_id) = @_;
 	return 1 unless &ble_device_specs($edt, $chip_id)->{'computer'};
+	return 0 unless &ble_homebase_known($edt, $chip_id);
 	my $seen = &ble_homebase_sighting($edt, $chip_id);
 	return 1 unless defined $seen;
 	my $grace = $seen->[1] ? &ble_fallback_grace() : &ble_fallback_stop_grace();

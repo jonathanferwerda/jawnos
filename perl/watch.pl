@@ -103,9 +103,9 @@ get '/teletype/wifi_update' => sub($c) {
 	}
 	my $edt = $c->param('edt');
 	my $timestamp = $c->param('timestamp');
-	my $json_wifi = &subs::setting_grabber({ app => $edt, setting => 'wifi'}) || '{}';
-	my $wifi = eval { decode_json $json_wifi } || {};
-	$c->render(text => $json_wifi);
+	my $chip_id = $c->param('chip_id');
+	my (undef, $json_wifi) = &subs::embedded_wifi_row($edt, $chip_id);
+	$c->render(text => $json_wifi || '{}');
 };
 
 get '/embedded/teletype/backup' => sub($c) {

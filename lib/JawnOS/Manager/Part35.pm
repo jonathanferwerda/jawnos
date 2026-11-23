@@ -296,6 +296,31 @@ sub now_me($data) {
 	# orders by server_time, and a seconds value here (the now_me clock above is
 	# in seconds) sorts below the row it is meant to replace.
 	my $row_time = &subs::rightNow();
+	# An explicit Now Me / BT Now Me also hands the device this machine's Wi-Fi.
+	# The Controller flash path already gives its board the network the manager
+	# is on; a watch or deck paired over Bluetooth should join the same way,
+	# with nothing typed. Stored on the device's own `wifi` row, keyed by its
+	# chip (the panel, a USB provision and /wifi_update all read that key), and
+	# carried over the link beside Now Me. A settings save passes keep_pairing
+	# and must not reprovision.
+	my $wifi_push;
+	unless ($keep_pairing) {
+		my $wifi_now = &subs::embedded_wifi_current();
+		if ($wifi_now) {
+			my ($existing_wifi) = &subs::embedded_wifi_row($edt, $chip_id);
+			$wifi_push = {
+				%{$existing_wifi},
+				ssid => $wifi_now->{'ssid'},
+				password => $wifi_now->{'password'},
+			};
+			# 'all' is the house-wide key: every machine reads this row by chip,
+			# so a phone and a desktop never keep two copies that disagree.
+			&subs::setting_setter({
+				app => $edt, setting => 'wifi', value => encode_json($wifi_push),
+				subsetting => $chip_id, device => 'all', server_time => $row_time,
+			});
+		}
+	}
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_op, subsetting => $chip_id, server_time => $row_time });
 	# The device probes a fallback House machine with this pair, so every peer
 	# on this LAN must hold this rotation now, not on a later sync tick. Done
@@ -332,6 +357,19 @@ sub now_me($data) {
 					edt => $push_edt,
 					message => { type => 'now_me', data => $params }
 				});
+				# A device that just paired may have no network at all. The watch,
+				# deck and alarmclock each join on this message (see jw/jt/jp).
+				if ($wifi_push) {
+					&subs::bluetooth_sender({
+						intent => 'com.jawn.president.bt.connect',
+						chip_id => $push_chip,
+						edt => $push_edt,
+						message => { type => 'wifi', data => {
+							ssid => $wifi_push->{'ssid'}, password => $wifi_push->{'password'},
+							ap_ssid => $wifi_push->{'ap_ssid'}, ap_password => $wifi_push->{'ap_password'},
+						} }
+					});
+				}
 				# The role follows the params. A watch/deck draws its buttons from the
 				# room payload; a board gets the compact form (no chat lists, no
 				# pairing patience) so it can be carried as plain JSON and applied

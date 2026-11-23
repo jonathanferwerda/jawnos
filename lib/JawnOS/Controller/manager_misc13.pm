@@ -97,10 +97,8 @@ sub action_43001 {
 	my $edt = $c->param('edt');
 	my $timestamp = $c->param('timestamp');
 	my $chip_id = $c->param('chip_id');
-	my $json_wifi = &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) || '{}';
-
-	my $wifi = decode_json $json_wifi;
-	$c->render(text => $json_wifi);
+	my (undef, $json_wifi) = &subs::embedded_wifi_row($edt, $chip_id);
+	$c->render(text => $json_wifi || '{}');
 }
 
 # POST /manager/teletype/appearance
@@ -135,12 +133,11 @@ sub action_43050 {
 	my $field = $c->param('field');
 	my $value = $c->param('val');
 	my $chip_id = $c->param('chip_id');
-	my $json_wifi = &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) || '{}';
-	my $wifi = decode_json $json_wifi;
+	my ($wifi) = &subs::embedded_wifi_row($edt, $chip_id);
 	$wifi->{$field} = $value;
-	$json_wifi = encode_json $wifi;
+	my $json_wifi = encode_json $wifi;
 
-	my $returner = &subs::setting_setter({ app => $edt, setting => 'wifi', value => $json_wifi, subsetting => $chip_id });
+	my $returner = &subs::setting_setter({ app => $edt, setting => 'wifi', value => $json_wifi, subsetting => $chip_id, device => 'all' });
 	my $teletype = &subs::device_lister($timestamp, $edt);
 
 	$c->render(json => $returner);
@@ -155,8 +152,7 @@ sub action_43067 {
 	# Prefer the Bluetooth bridge: this button exists to hand a device credentials
 	# it does not have yet, so it usually cannot be reached over the network it is
 	# trying to join. Read the stored wifi setting back and push it over BLE.
-	my $json_wifi = &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) || '{}';
-	my $wifi = eval { decode_json $json_wifi } || {};
+	my ($wifi) = &subs::embedded_wifi_row($edt, $chip_id);
 	if ($wifi->{'ssid'} && &subs::ble_push_available($edt, $chip_id)) {
 		# Off the request: the client waits for the radio to acknowledge the write,
 		# and a watch that has gone to sleep never does (see bluetooth_sender_async).

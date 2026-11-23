@@ -746,7 +746,11 @@ sub ble_rehome_check {
 		&ble_yield($chip_id);
 		return;
 	}
-	return unless &ble_owns($edt, $chip_id);
+	# The owner repairs a drifted address. A machine serving a stale id also
+	# repairs it: the id names no machine, so this is the takeover that ends a
+	# stranded device, not a second machine stealing a live homebase's watch.
+	my $stale_homebase = !&ble_homebase_known($edt, $chip_id);
+	return unless &ble_owns($edt, $chip_id) || $stale_homebase;
 	# The watch's *own* homebase, as it reports it: the stored operator_door
 	# specs can already name this machine while the watch still points
 	# elsewhere (a push that never landed left them out of step), so the compare
@@ -772,7 +776,7 @@ sub ble_rehome_check {
 	return unless @usable;
 	my ($mine_ip) = grep { $stored_host && &subs::same_net_test($_, $stored_host, '127.0.0.1') eq 'yes' } @usable;
 	$mine_ip ||= $usable[0];
-	return if defined $stored_host && $stored_host eq $mine_ip;
+	return if !$stale_homebase && defined $stored_host && $stored_host eq $mine_ip;
 	my $now = &subs::rightNow();
 	$gb::ble_rehome_at ||= {};
 	return if $gb::ble_rehome_at->{$chip_id} && $now - $gb::ble_rehome_at->{$chip_id} < 60000;
