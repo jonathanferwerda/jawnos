@@ -497,9 +497,10 @@ source's 0-based index and `name=gain`. The plan's source `gain` is saved on
 release so the position survives a reload. Mute is the engine's source
 footswitch, the same route with `name=mute` and value `1` or `0`; the plan keeps
 the trim, so unmuting restores what was set, and `engine.source_effects[].mute`
-is what the box reflects. Neither move re-patches. A source's insert bypass and
-its effect chain stay plan facts and are saved with the whole plan, which
-re-patches the engine.
+is what the box reflects. The live move never re-patches; releasing the fader
+saves the plan so its position survives a reload, and that save is the one
+re-patch. A source's insert bypass and its effect chain stay plan facts and are
+saved with the whole plan, which re-patches the engine.
 
 A source's effects are its `inserts` array in the plan (the shape is
 `docs/studio-effects.md`, "A source's inserts in the house plan"): the section shows the chain in
