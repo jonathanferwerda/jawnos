@@ -723,6 +723,9 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
+		/* the bottom grip owns this strip, so a track's own bottom edge stays
+		   reachable just above it */
+		padding-bottom: 6px;
 		background: var(--panel, #eee);
 		border: 2px solid var(--line, #333);
 		border-radius: 8px;
@@ -917,10 +920,27 @@
 		bottom: 0;
 		width: 18px;
 		height: 18px;
-		z-index: 4;
+		/* above a track's own bottom grip, which it overlaps at the corner */
+		z-index: 31;
 		cursor: var(--jawnos-cursor-nwse-resize, nwse-resize);
 		touch-action: none;
 		background: linear-gradient(135deg, transparent 0 42%, var(--line, #333) 43% 50%, transparent 51% 62%, var(--line, #333) 63% 70%, transparent 71%);
+	}
+	/* The bottom edge resizes the height. It sits above the content so a track's
+	   own edge cannot swallow the press at the foot of the window. */
+	.studio_panel_bottom {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 6px;
+		z-index: 30;
+		touch-action: none;
+		cursor: var(--jawnos-cursor-ns-resize, ns-resize);
+	}
+	.studio_panel_bottom:hover {
+		background: var(--accent);
+		opacity: .28;
 	}
 	.studio_panel_resizing { cursor: var(--jawnos-cursor-nwse-resize, nwse-resize); }
 	/* A track has its own row height (90px by default); its bottom edge is the
@@ -1207,6 +1227,24 @@
 		border: solid;
 		border-radius: 4px;
 		background-color: var(--accent-soft, var(--panel-2));
+	}
+	/* The chosen plug keeps a stable theme tint and border; the global flashing
+	   .active_background is for alarms, not a selection. */
+	#studio_plug_select .studio_plug_selection {
+		border: 2px solid transparent;
+		border-radius: 6px;
+	}
+	#studio_plug_select .studio_plug_selection.studio_plug_active {
+		background: var(--accent-soft, color-mix(in srgb, var(--accent) 18%, transparent));
+		border-color: var(--accent);
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+		box-shadow: inset 0 0 0 2px var(--accent);
+	}
+	#studio_plug_select .studio_plug_note {
+		padding: 4px 8px;
+		font-size: 12px;
+		color: var(--runway-bad, #b3453f);
 	}
 	/* ---- small context menus -----------------------------------------------
 	   One themed card for the timeline's clip menu and a beat's velocity menu.
@@ -1519,9 +1557,11 @@
 		flex-direction: row;
 		align-items: stretch;
 		gap: 3px;
-		height: 80%;
+		/* the mute/solo row now lives under the whole strip, so the fader group
+		   takes the rest of the control column instead of leaving 20% empty */
+		height: 100%;
 		min-height: 90px;
-		flex: 0 0 80%;
+		flex: 1 1 auto;
 		width: 100%;
 	}
 	.channel_fader {
@@ -1620,6 +1660,7 @@
 		flex: 0 0 22px;
 		height: 22px;
 		width: 100%;
+		box-sizing: border-box;
 		display: flex;
 		gap: 2px;
 		justify-content: center;

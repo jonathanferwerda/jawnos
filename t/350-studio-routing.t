@@ -1,12 +1,14 @@
-# tests-for: public/js/manager/studio.js public/js/manager/studio/05_inputs.js public/js/manager/studio/09_pedals.js public/js/manager/studio/01_transport.js public/js/manager/studio/04_knobs.js t/350-studio-routing.t
+# tests-for: public/js/manager/studio.js public/js/manager/studio/05_inputs.js public/js/manager/studio/09_pedals.js public/js/manager/studio/01_transport.js public/js/manager/studio/04_knobs.js templates/studio/plug_selection.html.ep templates/studio/style.html.ep lib/JawnOS/Controller/manager_misc9.pm t/350-studio-routing.t
 # covers:    Studio's routing around a recording. The drum machine is an input
 #            app: it patches through a channel's tone stack and In pedals and is
 #            detached like the synth. Every channel carries an output chain after
-#            the take (playBus -> outIn -> out inserts -> playPan), the rack
-#            chooses In or Out and the palette follows, and the song keeps both
-#            chains plus the selected one. Mute and solo gate the playback bus
-#            only, and the song keeps them too. Output inserts never reach the
-#            native engine.
+#            the take (playBus -> outIn -> out inserts -> playPan/destination),
+#            the rack chooses In or Out and the palette follows, and the song keeps
+#            both chains plus the selected one. An output may name another channel,
+#            so one track's post-pedal signal feeds another's input chain; the two
+#            jacks remember and highlight the same edge. Mute and solo gate the
+#            playback bus only, and the song keeps them too. Output inserts never
+#            reach the native engine.
 
 use strict;
 use warnings;
@@ -23,6 +25,9 @@ my $inputs   = read_file("$root/public/js/manager/studio/05_inputs.js");
 my $rack     = read_file("$root/public/js/manager/studio/09_pedals.js");
 my $transport = read_file("$root/public/js/manager/studio/01_transport.js");
 my $knobs    = read_file("$root/public/js/manager/studio/04_knobs.js");
+my $picker   = read_file("$root/templates/studio/plug_selection.html.ep");
+my $misc9    = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
+my $style    = read_file("$root/templates/studio/style.html.ep");
 
 # The parts are one concatenated bundle, and the functions are top-level, so a
 # body runs from its opening line to the closing brace in column one.
@@ -40,6 +45,12 @@ my $grab = body($inputs, 'studioInputStreamGrabber');
 ok(length $grab, 'the input grabber is one function');
 like($grab, qr/if \(studioInputIsApp\(plug\)\) \{ return studioAttachAppInput\(ch, plug\); \}/,
 	'the grabber hands every app to the app attach path');
+like($grab, qr/channel_plug\['type'\] === 'channel'/, 'a channel send needs no device to open');
+like($grab, qr/mixer\[ch\]\.media\.in = \(routed && routed\.recDest\) \? routed\.recDest\.stream : null;/,
+	'the take records the destination input chain');
+my $start = body($inputs, 'studioStartTake');
+like($start, qr/routed_plug\['type'\] === 'channel'/, 'an armed channel send has an input');
+like($start, qr/media\.in = routed_channel\.recDest\.stream;/, 'and records its own recDest stream');
 
 my $app = body($inputs, 'studioAttachAppInput');
 ok(length $app, 'the app attach path is one function');
@@ -94,7 +105,58 @@ ok(length $out, 'studioRebuildOutputs rewires one channel’s output chain');
 like($out, qr/c\.outIn\.disconnect\(\)/, 'it starts from the chain input');
 like($out, qr/c\.outInserts\.forEach\(function \(insert\) \{[\s\S]*?node\.connect\(insert\.input\);[\s\S]*?node = insert\.output;/,
 	'each output insert is wired after the one before it');
-like($out, qr/node\.connect\(c\.playPan\);/, 'and the last node feeds the pan');
+like($out, qr/var target = studioChannelOutputTarget\(ch\);/, 'the last node reads the output jack');
+like($out, qr/dest = studioAudio\.channels\[target\] \|\| studioChannelEngine\(target\);/, 'a channel destination is brought up if needed');
+like($out, qr/if \(dest && dest\.trim\) \{ node\.connect\(dest\.trim\); \}/,
+	'a channel send enters the destination input chain');
+like($out, qr/else \{ node\.connect\(c\.playPan\); \}/, 'otherwise the last node feeds the pan');
+
+my $output_info = body($js, 'studioChannelOutputInfo');
+like($output_info, qr/studio_channel_information\[direction="output"\]/, 'the output jack is read from the channel');
+my $output_target = body($js, 'studioChannelOutputTarget');
+like($output_target, qr/plug\['type'\] === 'channel'/, 'a channel output yields its destination');
+my $cycle = body($js, 'studioChannelOutputCycle');
+like($cycle, qr/if \(at === source\) \{ return true; \}/, 'a route back to the source is a cycle');
+like($cycle, qr/if \(seen\[at\]\) \{ return true; \}/, 'a repeated edge is a cycle too');
+
+# --- channel sends from either jack -----------------------------------------
+like($inputs, qr/channels: JSON.stringify\(other_channels\)/, 'the picker is told every other track');
+like($inputs, qr/studioTrackNumbers\(\)\.filter\(function \(n\)/,
+	'a channel list excludes the channel whose jack opened');
+my $highlight = body($inputs, 'studioPlugSelectHighlight');
+like($highlight, qr/studio_plug_active/, 'the saved row wears the stable selection class');
+like($highlight, qr/if \(type === 'app'\)/, 'an app row is matched by app');
+like($highlight, qr/if \(type === 'channel'\)/, 'a channel row is matched by its number');
+like($highlight, qr/chosen\.find\('\.studio_input_channel'\)\.val/, 'the device row restores its Input 1/Input 2 picker');
+my $send = body($inputs, 'studioPlugSendSet');
+like($send, qr/studioChannelOutputCycle\(source, dest\)/, 'a send refuses a feedback loop');
+like($send, qr/studioPlugSetInfo\(source, 'output',/, 'the source output names the destination');
+like($send, qr/sid: dest/, 'the saved edge carries the row sid used for its highlight');
+like($send, qr/sid: source/, 'and the destination input carries the source sid');
+like($send, qr/studioPlugSetInfo\(dest, 'input',/, 'the destination input names the source');
+like($send, qr/studioInputStreamGrabber\(dest, 'off'\)/, 'the old destination capture is released');
+like($send, qr/studioRebuildOutputs\(source\)/, 'the source output chain is rebuilt');
+like($inputs, qr/type === 'channel'\) \{\n\t\tvar source = \(direction === 'output'\)/, 'a channel row becomes an edge from either jack');
+like($inputs, qr/studioPlugSendClearInto\(channel\)/, 'choosing a real input ends an incoming send');
+like($inputs, qr/studioPlugSendClearFrom\(channel\)/, 'choosing a real output ends an outgoing send');
+my $clear_from = body($inputs, 'studioPlugSendClearFrom');
+like($clear_from, qr/studioInputStreamGrabber\(dest, 'off'\)/, 'the old destination input is released too');
+like($inputs, qr/chosen\.addClass\('studio_plug_active'\)/, 'a chosen row takes the stable class');
+unlike($inputs, qr/addClass\('active_background'\)/, 'no picker row uses the flashing alarm class');
+like($picker, qr/type="channel"/, 'the picker renders a row per other channel');
+like($picker, qr/Take another channel\\'s output as this channel\\'s input/, 'the input row says what it does');
+like($picker, qr/Send this channel\\'s output to another channel/, 'the output row says what it does');
+like($style, qr/\.studio_plug_selection\.studio_plug_active\s*\{[^}]*background:/s,
+	'a chosen row keeps a stable theme background');
+like($style, qr/\.studio_plug_selection\.studio_plug_active\s*\{[^}]*outline:\s*2px solid var\(--accent\)/s,
+	'and a border highlight around the whole row');
+like($misc9, qr/decode_json \$c->param\('channels'\)/, 'the controller accepts the channel list');
+like($misc9, qr/channels => \$channels,/, 'and hands it to the picker');
+
+like($knobs, qr/if \(n == 'plugs'\)/, 'the song restores both jacks');
+like($knobs, qr/studio_channel_information\[direction="' \+\s*dir\s*\+ '"\]\[channel="' \+\s*i\s*\+ '"\]/,
+	'each saved plug lands on its own channel and direction');
+like($knobs, qr/studioRebuildOutputs\(ch2\)/, 'every restored output is re-routed after the song loads');
 like($js, qr/\/\/ The output chain sits after the take[\s\S]*?is a wire/,
 	'an empty output chain is documented as a wire');
 

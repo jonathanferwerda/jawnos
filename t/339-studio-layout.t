@@ -102,6 +102,47 @@ unlike($all, qr/Dock the (?:tracks|drums|transport|channel strips)/,
 unlike($all, qr/Float the (?:channel strips|transport|track listing|drums)/,
 	'the old Float labels are gone');
 
+for my $panel (qw(tracks mixer transport)) {
+	like($markup, qr/class="studio_panel_bottom" data-studio-bottom="$panel"/,
+		"$panel has a bottom edge grip");
+}
+like($drums, qr/class="studio_panel_bottom" data-studio-bottom="drums"/,
+	'the drums have a bottom edge grip');
+like($style, qr/\.studio_panel_bottom[\s\S]*?z-index:\s*30/s, 'the edge grip sits above the panel content');
+like($style, qr/\.studio_panel_bottom\s*\{[^}]*ns-resize/s, 'the bottom edge resizes height');
+like($style, qr/\.studio_resize_handle\s*\{[^}]*z-index:\s*31/s,
+	'the corner grip stays above a track bottom grip');
+like($layout, qr/function studioPanelBeginResize\(name, panel, e, axis, handle\)/,
+	'one function begins a panel resize');
+like($layout, qr/'pointerdown', '\.studio_panel_bottom'/, 'the bottom edge is wired');
+like($layout, qr/studioPanelBeginResize\(name, panel, e, 'y', this\)/, 'the bottom edge is height-only');
+like($layout, qr/studioPanelResize\.axis === 'y'/, 'the drag keeps width on a height-only resize');
+
+# --- right-click presets and keyboard shortcuts ----------------------------
+like($layout, qr/function studioCascadeWindows\(persist\)/, 'Cascade is its own preset');
+like($layout, qr/state\.left = left;\n\t\tstate\.top = top;/, 'Cascade steps every window down and right');
+like($layout, qr/function studioPanelToggleAllMinimized\(persist\)/, 'one function toggles every window');
+like($layout, qr/function studioPanelMenu\(x, y\)/, 'the taskbar has its own menu');
+like($layout, qr/data-studio-panel-action/, 'each menu row names its action');
+like($layout, qr/row\('tile', 'Tile all'\)/, 'the menu offers Tile all');
+like($layout, qr/row\('cascade', 'Cascade'\)/, 'the menu offers Cascade');
+like($layout, qr/row\('minimize', studioPanelAnyVisible\(\) \? 'Minimize all' : 'Restore all'\)/,
+	'the menu toggles Minimize all / Restore all');
+like($layout, qr/'contextmenu', '#studio_panel_taskbar'/, 'a right-click on the taskbar opens the menu');
+like($layout, qr/'.studio_panel_menu \.studio_menu_row'/, 'the menu rows are wired');
+like($layout, qr/if \(!e\.ctrlKey \|\| !e\.altKey \|\| e\.metaKey \|\| e\.shiftKey\) \{ return; \}/,
+	'the shortcut handler requires Ctrl+Alt and no other modifier');
+like($layout, qr/'1': 'transport', '2': 'tracks', '3': 'mixer', '4': 'drums'/,
+	'Ctrl+Alt+1..4 name the four panels');
+like($layout, qr/if \(key === '0'\) \{ studioPanelToggleAllMinimized\(true\);/, 'Ctrl+Alt+0 toggles all');
+like($layout, qr/if \(key === 't'\) \{ studioArrangeWindows\(true\);/, 'Ctrl+Alt+T tiles');
+like($layout, qr/if \(key === 'c'\) \{ studioCascadeWindows\(true\);/, 'Ctrl+Alt+C cascades');
+like($layout, qr/function studioPanelShortcutTyping\(e\)/, 'typing in a field does not fire a preset');
+like($help, qr/right-click menu/, 'help names the taskbar menu');
+like($help, qr/Ctrl\+Alt\+1 to Ctrl\+Alt\+4/, 'help names the panel shortcuts');
+like($help, qr/Ctrl\+Alt\+T tiles and Ctrl\+Alt\+C cascades/, 'help names the tile/cascade shortcuts');
+like($help, qr/The bottom edge resizes the window/, 'help names the bottom edge grip');
+
 # --- the stylesheet makes each panel a window on a desk ---------------------
 like($style, qr/\.studio_panel\s*\{[^}]*position:\s*absolute/s, 'a panel is positioned on the desk');
 like($style, qr/\.studio_panel\s*\{[^}]*display:\s*flex/s, 'a panel stacks its title bar over its content');
@@ -111,6 +152,8 @@ like($style, qr/\.studio_grid\s*\{[^}]*position:\s*relative/s, 'the grid is the 
 like($style, qr/\.studio_grid\s*\{[^}]*overflow:\s*hidden/s, 'the desk contains every window');
 like($style, qr/\.studio_panel\.studio_panel_minimized\s*\{\s*display:\s*none/s,
 	'minimizing hides the window');
+like($style, qr/\.studio_panel\s*\{[^}]*padding-bottom:\s*6px/s,
+	'the bottom grip gets its own strip below the content');
 like($style, qr/\.studio_panel\.studio_panel_maximized\s*\{/s, 'a maximized window has its own state');
 like($style, qr/\.studio_panel\.studio_panel_raised\s*\{/s, 'the front window is marked');
 like($style, qr/\.studio_panel_dragging\s*\{[^}]*opacity/s, 'a dragged window reads as moving');
@@ -280,7 +323,8 @@ like($markup, qr/class="studio_strip_body"[\s\S]*class="studio_strip_knobs"/,
 like($markup, qr/control="volume"[\s\S]{0,400}?class="channel_volume studio_strip_volume"/,
 	'the strip fader is the same volume control as the track slider');
 like($style, qr/\.studio_strip_body\s*\{[^}]*flex-direction:\s*row/s, 'the fader sits beside the knobs');
-like($style, qr/\.studio_strip_fader_group\s*\{[^}]*height:\s*80%/s, 'the volume group is 80% of the strip');
+like($style, qr/\.studio_strip_fader_group\s*\{[^}]*height:\s*100%/s, 'the volume group takes the whole control column');
+like($style, qr/\.studio_strip_fader_group\s*\{[^}]*flex:\s*1 1 auto/s, 'and grows into the room the mute/solo row leaves');
 like($knobs, qr/function studioChannelVolumeSet\(ch, value\)/, 'one setter owns the track volume');
 like($style, qr/#studio_mixer\s*\{[^}]*overflow:\s*hidden/s, 'the console contains its own content');
 like($markup, qr/id="studio_mixer_strips"[\s\S]*id="studio_master_rack"[\s\S]*id="studio_transport_panel"/,
@@ -309,6 +353,9 @@ like($help, qr/Maximize fills the desk with that window/, 'help explains maximiz
 like($help, qr/'Minimize this panel'/, 'help lists the Minimize control');
 like($help, qr/'Maximize or restore this panel'/, 'help lists the Maximize control');
 like($help, qr/'Show this panel, or minimize it'/, 'help lists the taskbar control');
+like($help, qr/'Drag the bottom edge to resize this panel\\'s height'/, 'help lists the bottom edge grip');
+like($help, qr/'Take another channel\\'s output as this channel\\'s input'/, 'help lists the input channel send');
+like($help, qr/'Send this channel\\'s output to another channel'/, 'help lists the output channel send');
 like($help, qr/'Drag to resize this panel'/, 'help lists the corner grip');
 like($help, qr/'Drag to move the channel strips'/, 'help lists the drag handle');
 like($help, qr/'Add a track, up to 32'/, 'help names Add track and its cap');

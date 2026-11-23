@@ -43,6 +43,10 @@ like($markup, qr/<button class="studio_strip_solo hover" channel="<%=\s*\$ch\s*%
 # --- the stylesheet paints the two states and the solo dimming -------------
 like($style, qr/\.studio_strip_mute_solo\s*\{[^}]*flex:\s*0 0 22px/s,
 	'the block sits under the strip body');
+like($style, qr/\.studio_strip_mute_solo\s*\{[^}]*width:\s*100%/s,
+	'the block spans the whole channel strip');
+like($style, qr/\.studio_strip_mute_solo\s*\{[^}]*justify-content:\s*center/s,
+	'M and S center across that whole width');
 like($style, qr/\.studio_strip_mute\[aria-pressed="true"\]\s*\{[^}]*background:/s,
 	'a muted strip paints its button');
 like($style, qr/\.studio_strip_solo\[aria-pressed="true"\]\s*\{[^}]*background:/s,
@@ -136,6 +140,18 @@ like($layout, qr/studioCreateTrack[\s\S]*?studioApplyTrackColour\(ch, studioRand
 like($layout, qr/studioCreateTrack[\s\S]*?studioChannelEngine\(ch\)/,
 	'a new track still creates its engine channel');
 
+# --- the strip height is resolved against the mixer window ----------------
+like($strip, qr/function studioMixerRelayout\(\)/, 'one helper resolves the strips box');
+like($strip, qr/strips\.style\.height = available \+ 'px'/, 'it pins the strips to the mixer window');
+like($strip, qr/panel\.clientHeight - \(bar \? bar\.offsetHeight : 0\) - pad/, 'the title bar and bottom padding are measured out');
+like($strip, qr/function studioMixerObserveLayout\(\)/, 'an observer follows the mixer window');
+like($strip, qr/studioMixerLayoutObserver = new ResizeObserver/, 'the observer re-measures on every resize');
+like($strip, qr/studioMixerLayoutPanel === panel/, 'a reopened window gets a fresh observer');
+like($layout, qr/function studioPanelContentRelayout\(name\)/, 'the panel engine asks for a content re-measure');
+like($layout, qr/if \(name !== 'mixer' \|\| typeof studioMixerRelayout !== 'function'\) \{ return; \}/,
+	'only the mixer needs that measure');
+like($layout, qr/studioMixerObserveLayout\(\)/, 'layout setup starts the mixer observer');
+
 # --- the ten-LED level ladder and the dB scale -----------------------------
 like($markup, qr/class="studio_strip_meter" channel="<%=\s*\$ch\s*%>"/,
 	'the strip carries a level meter');
@@ -145,8 +161,8 @@ like($markup, qr/\$led < 5 \? 'led_green' : \(\$led < 8 \? 'led_yellow' : 'led_r
 	'five green, three yellow and two red LEDs');
 like($markup, qr/class="studio_strip_scale"[\s\S]*?0\.0[\s\S]*?-6[\s\S]*?-12[\s\S]*?-24[\s\S]*?infin/,
 	'the fader carries a dB scale with 0.0 at the top');
-like($markup, qr/class="studio_strip_control"[\s\S]*?studio_strip_fader_group[\s\S]*?studio_strip_meter[\s\S]*?studio_strip_mute_solo/,
-	'mute and solo sit under the fader and meter');
+like($markup, qr/class="studio_strip_control"[\s\S]*?studio_strip_meter[\s\S]*?<\/span>\s*<\/span>\s*<\/span>\s*<span class="studio_strip_mute_solo">/,
+	'mute and solo sit under the whole strip, not inside the fader column');
 like($style, qr/\.studio_strip_control\s*\{[^}]*flex:\s*0 0 47px/s,
 	'the fader and meter share one control column');
 like($style, qr/\.studio_strip_led\.led_yellow\.lit\s*\{[^}]*background:/s,

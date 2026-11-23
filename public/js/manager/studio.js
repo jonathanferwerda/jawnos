@@ -256,7 +256,41 @@ function studioRebuildInserts(ch) {
 
 // The output chain sits after the take, between the playback bus and the pan:
 // playBus -> outIn -> [inserts in order] -> playPan -> master. An empty chain
-// is a wire, so a clean take plays exactly as recorded.
+// is a wire, so a clean take plays exactly as recorded. A channel output can
+// name another channel instead of the master: the last node then feeds that
+// channel's input chain, so Channel 1's output runs through Channel 2's pedals.
+function studioChannelOutputInfo(ch) {
+	var info = $('.studio_channel_information[direction="output"][channel="' + ch + '"]');
+	if (!isJson(info.text())) { return null; }
+	var plug;
+	try { plug = JSON.parse(info.text()); }
+	catch (e) { return null; }
+	if (!plug || (!plug['type'] && !plug['app'])) { return null; }
+	return plug;
+}
+
+function studioChannelOutputTarget(ch) {
+	var plug = studioChannelOutputInfo(ch);
+	return (plug && plug['type'] === 'channel' && plug['sid']) ? String(plug['sid']) : '';
+}
+
+// A channel send is an edge in a directed graph. Follow the saved edges from
+// the destination; if they lead back to the source, the new edge would make a
+// silent Web Audio loop, so it is refused.
+function studioChannelOutputCycle(ch, target) {
+	var source = String(ch);
+	var at = String(target || '');
+	var seen = {};
+	while (at) {
+		if (at === source) { return true; }
+		if (seen[at]) { return true; }
+		seen[at] = 1;
+		var plug = studioChannelOutputInfo(at);
+		at = (plug && plug['type'] === 'channel' && plug['sid']) ? String(plug['sid']) : '';
+	}
+	return false;
+}
+
 function studioRebuildOutputs(ch) {
 	var c = studioAudio.channels[ch];
 	if (!c || !c.outIn) { return; }
@@ -269,7 +303,13 @@ function studioRebuildOutputs(ch) {
 		node.connect(insert.input);
 		node = insert.output;
 	});
-	node.connect(c.playPan);
+	var target = studioChannelOutputTarget(ch);
+	var dest = null;
+	if (target && target !== String(ch) && !studioChannelOutputCycle(ch, target)) {
+		dest = studioAudio.channels[target] || studioChannelEngine(target);
+	}
+	if (dest && dest.trim) { node.connect(dest.trim); }
+	else { node.connect(c.playPan); }
 }
 
 // The rack shows one chain at a time. Which one is the channel's own view and

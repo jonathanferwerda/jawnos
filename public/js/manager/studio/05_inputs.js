@@ -103,11 +103,11 @@ $(document).on('click', '.studio_cord', function() {
 
 // The channel's Screen Share plug gains the desktop app's screen and window
 // list. A plain browser has no bridge and keeps getDisplayMedia's own picker.
-function studioScreenSourceFill(panel) {
-	if (!panel || !panel.length) { return; }
+function studioScreenSourceFill(panel, information) {
+	if (!panel || !panel.length) { return null; }
 	var row = panel.find('.studio_plug_selection[type="screen_share"]').first();
-	if (!row.length) { return; }
-	if (typeof JawnScreen === 'undefined' || !JawnScreen.available()) { return; }
+	if (!row.length) { return null; }
+	if (typeof JawnScreen === 'undefined' || !JawnScreen.available()) { return null; }
 	var select = $('<select class="studio_screen_source"></select>')
 		.attr('hint', studioAudioLabel('Which screen or window to share'));
 	// The plug list is a table: the chosen source sits in its own row so the
@@ -117,7 +117,7 @@ function studioScreenSourceFill(panel) {
 			.css({ padding: '4px 0 4px 24px' })
 			.append(select));
 	row.after(holder);
-	JawnScreen.refresh().then(function (rows) {
+	return JawnScreen.refresh().then(function (rows) {
 		var groups = {};
 		(rows || []).forEach(function (source) {
 			var word = (source.kind === 'window') ? 'Windows' : 'Screens';
@@ -133,6 +133,9 @@ function studioScreenSourceFill(panel) {
 		if (!rows || !rows.length) {
 			select.append($('<option></option>').val('')
 				.text(studioAudioLabel('Entire screen')));
+		}
+		if (information && information.type === 'screen_share' && information.screen) {
+			select.val(String(information.screen));
 		}
 	});
 }
@@ -184,6 +187,129 @@ function studioChannelInput(ch) {
 	catch (e) { return null; }
 	if (!plug || (!plug['type'] && !plug['app'])) { return null; }
 	return plug;
+}
+
+// The saved plug on either jack.
+function studioPlugInfo(ch, direction) {
+	var info = $('.studio_channel_information[direction="' + direction + '"][channel="' + ch + '"]');
+	if (!isJson(info.text())) { return null; }
+	var plug;
+	try { plug = JSON.parse(info.text()); }
+	catch (e) { return null; }
+	if (!plug || (!plug['type'] && !plug['app'])) { return null; }
+	return plug;
+}
+
+function studioPlugSetInfo(ch, direction, plug) {
+	$('.studio_channel_information[direction="' + direction + '"][channel="' + ch + '"]')
+		.text(plug ? JSON.stringify(plug) : '');
+}
+
+// Mark the row the saved plug names and set the device's Input 1/Input 2 picker
+// to the number the plug carries. Reopening a jack therefore shows the same
+// choice it showed when it was made.
+function studioPlugSelectHighlight(panel, information) {
+	if (!panel || !panel.length || !information) { return; }
+	var type = information['type'] || (information['app'] ? 'app' : '');
+	if (!type) { return; }
+	var rows = panel.find('.studio_plug_selection');
+	var chosen = $();
+	if (type === 'app') {
+		chosen = rows.filter(function () {
+			return $(this).attr('type') === 'app' && String($(this).attr('app')) === String(information['app'] || '');
+		});
+	}
+	else if (type === 'channel') {
+		var channel_sid = (information['sid'] !== undefined && information['sid'] !== '')
+			? information['sid'] : information['id'];
+		chosen = rows.filter(function () {
+			return $(this).attr('type') === 'channel' && String($(this).attr('sid')) === String(channel_sid || '');
+		});
+	}
+	else if (type === 'screen_share') {
+		chosen = rows.filter('[type="screen_share"]');
+	}
+	else if (type === 'usermedia') {
+		var id = information['id'] || '';
+		var av = information['av'] || 'a';
+		chosen = rows.filter(function () {
+			var row = $(this);
+			if (row.attr('type') !== 'usermedia' || String(row.attr('av')) !== String(av)) { return false; }
+			if (!id) { return true; }
+			return String(row.attr('sid')) === String(id);
+		}).first();
+	}
+	rows.removeClass('studio_plug_active active_background');
+	if (!chosen.length) { return; }
+	chosen.addClass('studio_plug_active');
+	if (type === 'usermedia' && information['av'] === 'a') {
+		var input = Number(information['input']) || 0;
+		if (input < 0) { input = 0; }
+		if (input > 1) { input = 1; }
+		chosen.find('.studio_input_channel').val(String(input));
+	}
+}
+
+function studioPlugSelectNote(text) {
+	var panel = $('#studio_plug_select');
+	if (!panel.length) { return; }
+	panel.find('.studio_plug_note').remove();
+	$('<div class="studio_plug_note"></div>').text(studioAudioLabel(text)).appendTo(panel);
+}
+
+// A channel send is one edge written on both jacks: the source's output names
+// the destination, and the destination's input names the source. Choosing it
+// from either picker therefore means exactly the same thing.
+function studioPlugSendSet(source, dest) {
+	source = String(source);
+	dest = String(dest);
+	if (!source || !dest || source === dest) { return false; }
+	if (typeof studioChannelOutputCycle === 'function' && studioChannelOutputCycle(source, dest)) { return false; }
+	studioPlugSendClearFrom(source);
+	studioPlugSendClearInto(dest);
+	studioPlugSetInfo(source, 'output', {
+		channel: source, direction: 'output', id: dest, sid: dest, type: 'channel', av: 'a', app: ''
+	});
+	studioPlugSetInfo(dest, 'input', {
+		channel: dest, direction: 'input', id: source, sid: source, type: 'channel', av: 'a', app: ''
+	});
+	// The destination now takes the send, not its old device or app. Release
+	// that capture before the new edge becomes its input.
+	if (typeof studioInputStreamGrabber === 'function') { studioInputStreamGrabber(dest, 'off'); }
+	if (typeof studioChannelEngine === 'function') {
+		studioChannelEngine(source);
+		studioChannelEngine(dest);
+	}
+	if (typeof studioRebuildOutputs === 'function') { studioRebuildOutputs(source); }
+	return true;
+}
+
+// Drop a source's old send, including the destination's mirrored input, before
+// the source is given another output.
+function studioPlugSendClearFrom(source) {
+	if (typeof studioChannelOutputInfo !== 'function') { return; }
+	var old = studioChannelOutputInfo(source);
+	if (!old || old['type'] !== 'channel' || !old['sid']) { return; }
+	var dest = String(old['sid']);
+	var input = studioPlugInfo(dest, 'input');
+	if (input && input['type'] === 'channel' && String(input['sid']) === String(source)) {
+		studioPlugSetInfo(dest, 'input', null);
+		if (typeof studioInputStreamGrabber === 'function') { studioInputStreamGrabber(dest, 'off'); }
+	}
+}
+
+// Drop any incoming send into a destination before the destination is given a
+// device or app input of its own.
+function studioPlugSendClearInto(dest) {
+	if (typeof studioChannelOutputInfo !== 'function') { return; }
+	$.each(studioAudio.channels, function (src) {
+		if (String(src) === String(dest)) { return; }
+		var out = studioChannelOutputInfo(src);
+		if (out && out['type'] === 'channel' && String(out['sid']) === String(dest)) {
+			studioPlugSetInfo(src, 'output', null);
+			if (typeof studioRebuildOutputs === 'function') { studioRebuildOutputs(src); }
+		}
+	});
 }
 
 // Marker, Music, Synth and Drums already play in this page, so their post-FX
@@ -238,12 +364,22 @@ async function channelSelect(channel,direction) {
 			information = JSON.parse(sci.text());
 		}
 
+		// Every other track is a possible channel send, whichever way this jack
+		// faces: an output can name a destination, an input can name a source.
+		var other_channels = [];
+		if (typeof studioTrackNumbers === 'function') {
+			other_channels = studioTrackNumbers().filter(function (n) {
+				return String(n) !== String(channel);
+			}).map(String);
+		}
+
 		var data = { 
 			channel: channel, 
 			constraints: JSON.stringify(constraints),
 			screenShare: screenShare,
 			mouse: m,
 			apps: JSON.stringify(eligibleApps),
+			channels: JSON.stringify(other_channels),
 			direction: direction,
 			information: information
 		};
@@ -256,7 +392,9 @@ async function channelSelect(channel,direction) {
 				sis.html(response.html).show();
 				// The screen-share row is part of the panel's height: add it
 				// before measuring so the clamp sees the box that is drawn.
-				studioScreenSourceFill(sis);
+				studioScreenSourceFill(sis, information);
+				// The jack reopens on the row it was left on, not an unmarked list.
+				studioPlugSelectHighlight(sis, information);
 				// Measure the finished panel, then clamp it to the window. It is
 				// position:fixed, so left/top are viewport coordinates; when the
 				// panel is wider or taller than the window it pins to the 8px
@@ -322,13 +460,30 @@ $(document).on('click', '.studio_plug_selection', function() {
 	var sis = $(this);
 	var channel = sis.attr('channel');
 	var direction = sis.attr('direction');
-	var id = sis.attr('sid');
+	var id = String(sis.attr('sid') || '');
 	var type = sis.attr('type');
 	var av = sis.attr('av');
 	var app = sis.attr('app');
 	var screen = (type == 'screen_share')
 		? studioScreenSourceValue(sis.closest('#studio_plug_select')) : { id: '', name: '' };
-	$('.studio_plug_selection[direction="' + direction + '"][channel="' + channel + '"]').removeClass('active_background');
+	$('.studio_plug_selection[direction="' + direction + '"][channel="' + channel + '"]').removeClass('studio_plug_active active_background');
+	// A channel row is one edge between two channels, not a device plug. The
+	// output picker names the destination; the input picker names the source.
+	if (type === 'channel') {
+		var source = (direction === 'output') ? String(channel) : id;
+		var dest = (direction === 'output') ? id : String(channel);
+		if (!studioPlugSendSet(source, dest)) {
+			studioPlugSelectNote('That route would feed a channel back into itself');
+			return;
+		}
+		studioSaver();
+		studioRetriever();
+		return;
+	}
+	// Choosing a real input or output ends any channel send on that jack, so a
+	// device and a send can never feed the same chain together.
+	if (direction == 'input') { studioPlugSendClearInto(channel); }
+	else if (direction == 'output') { studioPlugSendClearFrom(channel); }
 	// The row's own picker names which interface input the channel takes: the
 	// UM2's Input 1 is channel 0 and Input 2 is channel 1. Keep that number with
 	// the plug so Monitor can start the engine on the same input without the
@@ -350,14 +505,12 @@ $(document).on('click', '.studio_plug_selection', function() {
 	if (direction == 'input' && type == 'usermedia' && av == 'a') { data.input = input; }
 	if (screen.id) { data.screen = screen.id; }
 	if (screen.name) { data.screen_name = screen.name; }
-	console.log(data);
 	var jinfo = JSON.stringify(data);
-
 
 	$('.studio_channel_information[direction="' + direction + '"][channel="' + channel + '"]').text(jinfo);
 	var chosen = $('.studio_plug_selection[direction="' + direction + '"][channel="' + channel + '"][type="' + type + '"][sid="' + id + '"][av="' + av + '"][app="' + app + '"]');
-	console.log('length ' + chosen.length);
-	chosen.addClass('active_background');
+	chosen.addClass('studio_plug_active');
+	if (direction == 'output' && typeof studioRebuildOutputs === 'function') { studioRebuildOutputs(channel); }
 	studioInputStreamGrabber(channel,'off')
 	studioSaver();
 	studioRetriever();
@@ -479,6 +632,18 @@ async function studioInputStreamGrabber(channel,state) {
 	}
 
 	if (mixer[ch].media.active) { return; }
+
+	// A channel send is already wired from the source's output into this
+	// channel's tone stack. Nothing opens here; the input chain's own recDest is
+	// what a take records, and Monitor hears the same post-pedal signal.
+	var channel_plug = studioChannelInput(ch);
+	if (channel_plug && channel_plug['type'] === 'channel') {
+		var routed = studioChannelEngine(ch);
+		mixer[ch].media.active = true;
+		mixer[ch].media.video = false;
+		mixer[ch].media.in = (routed && routed.recDest) ? routed.recDest.stream : null;
+		return mixer[ch].media.in;
+	}
 
 	// If the channel has an input plug selected, honour its audio/video kind, but
 	// default to audio only: the camera is requested only when the plug is a
@@ -658,6 +823,17 @@ function studioMonitorDetachApp(ch) {
 
 function studioStartTake(ch, looping, at) {
 	var media = mixer[ch] && mixer[ch].media;
+	if (!media || !media.in) {
+		// A channel send feeds this channel's own recDest, so an armed channel can
+		// take another channel's output with nothing plugged in.
+		var routed_plug = studioChannelInput(ch);
+		if (routed_plug && routed_plug['type'] === 'channel') {
+			var routed_channel = studioAudio.channels[ch];
+			if (media && routed_channel && routed_channel.recDest) {
+				media.in = routed_channel.recDest.stream;
+			}
+		}
+	}
 	if (!media || !media.in) {
 		// The drums feed the selected track's recDest rather than a microphone,
 		// so that track can take them with nothing plugged in. Any other empty

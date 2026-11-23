@@ -54,12 +54,20 @@
 						<td><%== $main_image %></td><td style="font-size:20px;vertical-align:top;"><%= &subs::format_name($app->{'app'}) %></td>
 					</tr>
 				<% } %>
+				<% my @other_channels = ref $channels eq 'ARRAY' ? @{$channels} : (); %>
+				<% foreach my $other (@other_channels) { %>
+					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="channel" <% if ($direction eq 'input') { %>hint="<%= &subs::ui('Take another channel\'s output as this channel\'s input') %>"<% } else { %>hint="<%= &subs::ui('Send this channel\'s output to another channel') %>"<% } %> sid="<%= $other %>" app="" av="a">
+						<td><img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/speaker.png') %>" hint="<%= &subs::ui('Channel') %>"></td>
+						<td style="font-size:20px;vertical-align:top;"><%= &subs::ui('Channel') %> <%= $other %></td>
+					</tr>
+				<% } %>
 				% if ($screen_share && $direction eq 'input') {
 					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="screen_share" hint="<%= &subs::ui('Put another window or a screen share on the channel') %>" av="av" sid="" app=""> 
 						<td><img src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Monitor" class="little_thumb"></td><td style="font-size:20px;vertical-align:top;">Screen Share</td>
 					</tr>
 				% }
-				% if (defined $direction && $direction eq 'input' && ref $sources eq 'ARRAY' && @{$sources}) {
+				% my $show_input_node = defined $direction && $direction eq 'input' && ref $sources eq 'ARRAY' && @{$sources} && (!defined $information->{'type'} || $information->{'type'} ne 'channel');
+				% if ($show_input_node) {
 					<tr class="studio_input_node_row">
 						<td colspan="2" style="padding:6px 0 2px 24px;">
 							<label for="studio_input_node_<%= $channel %>"><%= &subs::ui('This machine\'s input') %></label><br>

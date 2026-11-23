@@ -139,6 +139,7 @@ function studioApplyPanelGeometry(name) {
 	panel.attr('data-studio-name', name);
 	if (state.maximized) {
 		panel.css({ left: '0px', top: '0px', width: '100%', height: '100%' });
+		if (!state.minimized) { studioPanelContentRelayout(name); }
 		return;
 	}
 	var box = studioPanelBox(state.left, state.top, state.width, state.height);
@@ -152,6 +153,16 @@ function studioApplyPanelGeometry(name) {
 		width: box.width + 'px',
 		height: box.height + 'px'
 	});
+	if (!state.minimized) { studioPanelContentRelayout(name); }
+}
+
+// The mixer's fader is a percentage of the strip, so it needs the strip box to
+// be resolved against the window. A hidden or freshly restored panel measures
+// zero, so ask the strip part to re-measure after the box is written.
+function studioPanelContentRelayout(name) {
+	if (name !== 'mixer' || typeof studioMixerRelayout !== 'function') { return; }
+	if (typeof requestAnimationFrame === 'function') { requestAnimationFrame(studioMixerRelayout); }
+	else { setTimeout(studioMixerRelayout, 0); }
 }
 
 function studioApplyPanelGeometries() {
@@ -254,6 +265,118 @@ function studioArrangeWindows(persist) {
 
 $(document).on('click', '#studio_arrange', function () { studioArrangeWindows(true); });
 
+// Cascade is the other preset: every window the same size, stepped down and
+// right so each title bar stays in reach.
+function studioCascadeWindows(persist) {
+	var size = studioPanelDeskSize();
+	var step = Math.max(18, Math.min(36, Math.round(Math.min(size.width, size.height) * 0.045)));
+	var width = Math.max(STUDIO_PANEL_MIN_WIDTH, Math.min(size.width - step * 3, Math.round(size.width * 0.62)));
+	var height = Math.max(STUDIO_PANEL_MIN_HEIGHT, Math.min(size.height - step * 3, Math.round(size.height * 0.62)));
+	var left = 8;
+	var top = 8;
+	$.each(studioPanelNames, function (i, name) {
+		var state = studioPanelStateFor(name);
+		state.left = left;
+		state.top = top;
+		state.width = width;
+		state.height = height;
+		state.minimized = false;
+		state.maximized = false;
+		studioApplyPanelGeometry(name);
+		if (persist) { studioPersistPanelState(name); }
+		left += step;
+		top += step;
+	});
+	studioPanelRaise('tracks');
+	studioPanelTaskbarRefresh();
+}
+
+function studioPanelAnyVisible() {
+	var any = false;
+	$.each(studioPanelNames, function (i, name) {
+		if (!studioPanelStateFor(name).minimized) { any = true; }
+	});
+	return any;
+}
+
+function studioPanelToggleAllMinimized(persist) {
+	var any = studioPanelAnyVisible();
+	$.each(studioPanelNames, function (i, name) {
+		studioPanelSetMinimized(name, any, persist !== false);
+	});
+	if (!any) { studioPanelRaise('tracks'); }
+}
+
+// Right-click the taskbar for the window presets. The menu is the same themed
+// card the timeline uses, so it needs no new chrome.
+function studioPanelMenuPlace(menu, x, y) {
+	$('body').append(menu);
+	var width = menu.outerWidth() || 180;
+	var height = menu.outerHeight() || 100;
+	menu.css({
+		left: Math.max(8, Math.min(x, $(window).width() - width - 8)),
+		top: Math.max(8, Math.min(y, $(window).height() - height - 8))
+	});
+}
+
+function studioPanelMenu(x, y) {
+	$('.studio_menu').remove();
+	var menu = $('<div class="studio_menu studio_panel_menu"></div>').css({ position: 'fixed', left: 0, top: 0 });
+	$('<div class="studio_menu_head"></div>').text(studioLayoutText('Panels')).appendTo(menu);
+	var row = function (action, label) {
+		$('<button type="button" class="studio_menu_row"></button>')
+			.attr('data-studio-panel-action', action)
+			.text(studioLayoutText(label))
+			.appendTo(menu);
+	};
+	row('tile', 'Tile all');
+	row('cascade', 'Cascade');
+	row('minimize', studioPanelAnyVisible() ? 'Minimize all' : 'Restore all');
+	studioPanelMenuPlace(menu, x, y);
+}
+
+$(document).on('contextmenu', '#studio_panel_taskbar', function (e) {
+	e.preventDefault();
+	studioPanelMenu(e.clientX, e.clientY);
+});
+
+$(document).on('click', '.studio_panel_menu .studio_menu_row', function () {
+	var action = $(this).attr('data-studio-panel-action');
+	$('.studio_menu').remove();
+	if (action === 'tile') { studioArrangeWindows(true); }
+	else if (action === 'cascade') { studioCascadeWindows(true); }
+	else if (action === 'minimize') { studioPanelToggleAllMinimized(true); }
+});
+
+// Keyboard: Ctrl+Alt+1..4 raises that panel (or brings it back), 0 toggles all
+// minimized, T tiles and C cascades. The drum key map ignores modifiers, so the
+// same letters still play drums without Ctrl+Alt.
+function studioPanelShortcutTyping(e) {
+	var target = e.target;
+	if (!target) { return false; }
+	if (target.isContentEditable) { return true; }
+	var tag = String(target.tagName || '').toUpperCase();
+	return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+$(document).on('keydown', function (e) {
+	if (!e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey) { return; }
+	if (!$('#studio').is(':visible')) { return; }
+	if (typeof topWindow === 'function' && (topWindow() || '') !== 'studio') { return; }
+	if (studioPanelShortcutTyping(e)) { return; }
+	var key = String(e.key || '').toLowerCase();
+	var panel_keys = { '1': 'transport', '2': 'tracks', '3': 'mixer', '4': 'drums' };
+	if (panel_keys[key]) {
+		studioPanelSetMinimized(panel_keys[key], false, true);
+		studioPanelRaise(panel_keys[key]);
+		e.preventDefault();
+		return;
+	}
+	if (key === '0') { studioPanelToggleAllMinimized(true); e.preventDefault(); return; }
+	if (key === 't') { studioArrangeWindows(true); e.preventDefault(); return; }
+	if (key === 'c') { studioCascadeWindows(true); e.preventDefault(); return; }
+});
+
 // ---- the panel stack and its taskbar ---------------------------------------
 
 function studioPanelFront() {
@@ -302,6 +425,7 @@ function studioPanelSetMinimized(name, minimized, persist) {
 	var state = studioPanelStateFor(name);
 	state.minimized = !!minimized;
 	panel.toggleClass('studio_panel_minimized', state.minimized);
+	if (!state.minimized) { studioPanelContentRelayout(name); }
 	if (persist !== false) { studioPersistPanelState(name); }
 	studioPanelTaskbarRefresh();
 }
@@ -400,11 +524,7 @@ $(document).on('pointerdown', '.studio_drag_handle', function (e) {
 	e.preventDefault();
 });
 
-$(document).on('pointerdown', '.studio_resize_handle', function (e) {
-	if (e.originalEvent && e.originalEvent.button) { return; }
-	var name = $(this).attr('data-studio-resize');
-	var panel = studioPanelElement(name);
-	if (!panel.length) { return; }
+function studioPanelBeginResize(name, panel, e, axis, handle) {
 	var state = studioPanelStateFor(name);
 	if (state.maximized) {
 		// Resize from the full desk box, not from the hidden restore box.
@@ -421,6 +541,7 @@ $(document).on('pointerdown', '.studio_resize_handle', function (e) {
 	studioPanelResize = {
 		name: name,
 		panel: panel,
+		axis: axis || 'xy',
 		x: e.originalEvent.clientX,
 		y: e.originalEvent.clientY,
 		left: parseFloat(panel.css('left')) || 0,
@@ -430,17 +551,37 @@ $(document).on('pointerdown', '.studio_resize_handle', function (e) {
 	};
 	panel.addClass('studio_panel_resizing');
 	studioPanelRaise(name);
-	try { this.setPointerCapture(e.originalEvent.pointerId); } catch (err) {}
+	try { handle.setPointerCapture(e.originalEvent.pointerId); } catch (err) {}
 	e.preventDefault();
 	e.stopPropagation();
+}
+
+$(document).on('pointerdown', '.studio_resize_handle', function (e) {
+	if (e.originalEvent && e.originalEvent.button) { return; }
+	var name = $(this).attr('data-studio-resize');
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	studioPanelBeginResize(name, panel, e, 'xy', this);
+});
+
+$(document).on('pointerdown', '.studio_panel_bottom', function (e) {
+	if (e.originalEvent && e.originalEvent.button) { return; }
+	var name = $(this).attr('data-studio-bottom');
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	studioPanelBeginResize(name, panel, e, 'y', this);
 });
 
 $(document).on('pointermove', function (e) {
 	var original = e.originalEvent || {};
 	if (studioPanelResize) {
 		var sizes = studioPanelNeighbourSizes(studioPanelResize.panel);
-		var w = studioSnapTo(studioPanelResize.width + (original.clientX - studioPanelResize.x), sizes.widths);
-		var h = studioSnapTo(studioPanelResize.height + (original.clientY - studioPanelResize.y), sizes.heights);
+		var w = (studioPanelResize.axis === 'y')
+			? studioPanelResize.width
+			: studioSnapTo(studioPanelResize.width + (original.clientX - studioPanelResize.x), sizes.widths);
+		var h = (studioPanelResize.axis === 'x')
+			? studioPanelResize.height
+			: studioSnapTo(studioPanelResize.height + (original.clientY - studioPanelResize.y), sizes.heights);
 		var box = studioPanelBox(studioPanelResize.left, studioPanelResize.top, w, h);
 		studioPanelResize.panel.css({
 			left: box.left + 'px',
@@ -448,6 +589,9 @@ $(document).on('pointermove', function (e) {
 			width: box.width + 'px',
 			height: box.height + 'px'
 		});
+		if (studioPanelResize.panel.attr('data-studio-name') === 'mixer' && typeof studioMixerRelayout === 'function') {
+			studioMixerRelayout();
+		}
 		e.preventDefault();
 		return;
 	}
@@ -531,6 +675,7 @@ function studioApplyLayoutSettings() {
 	studioPanelRaise(front);
 	studioPanelTaskbarRefresh();
 	studioPanelObserveDesk();
+	if (typeof studioMixerObserveLayout === 'function') { studioMixerObserveLayout(); }
 	studioUpdateTrackCount();
 }
 
@@ -941,6 +1086,20 @@ function studioRemoveTrack(ch, quiet) {
 			}
 		});
 	}
+	// A channel send is an edge on another channel's output. Drop the edges that
+	// name this channel before its nodes go, then re-route those sources to the
+	// master once it is gone.
+	var incoming = [];
+	$.each(studioAudio.channels, function (src) {
+		if (String(src) === ch) { return; }
+		var out = (typeof studioChannelOutputInfo === 'function') ? studioChannelOutputInfo(src) : null;
+		if (out && out['type'] === 'channel' && String(out['sid']) === ch) {
+			$('.studio_channel_information[direction="output"][channel="' + src + '"]').text('');
+			incoming.push(String(src));
+		}
+	});
+	var own_out = (typeof studioChannelOutputInfo === 'function') ? studioChannelOutputInfo(ch) : null;
+	var own_dest = (own_out && own_out['type'] === 'channel' && own_out['sid']) ? String(own_out['sid']) : '';
 	var channel = studioAudio.channels[ch];
 	if (channel) {
 		['trim', 'bass', 'mid', 'treble', 'recGain', 'recAnalyser', 'recDest', 'playBus', 'playPan', 'monGain'].forEach(function (key) {
@@ -957,7 +1116,20 @@ function studioRemoveTrack(ch, quiet) {
 	$('#studio_track_row_' + ch).remove();
 	$('#studio_mixer_strips .channel_' + ch).remove();
 	$('#studio_video_monitor_' + ch).remove();
-	$('#studio_track_container .studio_video[id^="studio_channel_' + ch + '_"]').remove();
+	$('#studio_track_container .studio_video[id^="studio_channel_' + ch + '_\"]').remove();
+	$.each(incoming, function (i, src) {
+		if (studioAudio.channels[src] && typeof studioRebuildOutputs === 'function') { studioRebuildOutputs(src); }
+	});
+	if (own_dest && own_dest !== ch && studioAudio.channels[own_dest]) {
+		var own_input = $('.studio_channel_information[direction="input"][channel="' + own_dest + '"]');
+		if (isJson(own_input.text())) {
+			try {
+				var own_info = JSON.parse(own_input.text());
+				if (own_info['type'] === 'channel' && String(own_info['sid']) === ch) { own_input.text(''); }
+			} catch (e) {}
+		}
+		if (typeof studioInputStreamGrabber === 'function') { studioInputStreamGrabber(own_dest, 'off'); }
+	}
 	if (String(studioSelectedChannel) == ch) {
 		var left = studioTrackNumbers();
 		studioSelectedChannel = left.length ? left[0] : 0;

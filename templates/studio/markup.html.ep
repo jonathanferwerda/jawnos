@@ -160,6 +160,7 @@
 			</span>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="tracks" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+		<span class="studio_panel_bottom" data-studio-bottom="tracks" hint="<%= &subs::ui('Drag the bottom edge to resize this panel\'s height') %>"></span>
 		<%# The ruler sits over the timeline. Its first cell matches a track's panel
 		   column, so a tick lands over the same moment on every canvas below. %>
 		<div id="studio_ruler" class="studio_ruler">
@@ -207,6 +208,7 @@
 			</span>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="mixer" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+		<span class="studio_panel_bottom" data-studio-bottom="mixer" hint="<%= &subs::ui('Drag the bottom edge to resize this panel\'s height') %>"></span>
 		<div id="studio_mixer_strips">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
 				<span class="channel channel_<%= $ch %>">
@@ -249,12 +251,12 @@
 								<% } %>
 							</span>
 						</span>
-						<span class="studio_strip_mute_solo">
-							<button class="studio_strip_mute hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Mute this channel') %>">M</button>
-							<button class="studio_strip_solo hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Solo this channel') %>">S</button>
 						</span>
 					</span>
-				</span>
+					<span class="studio_strip_mute_solo">
+						<button class="studio_strip_mute hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Mute this channel') %>">M</button>
+						<button class="studio_strip_solo hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Solo this channel') %>">S</button>
+					</span>
 				</span>
 			<% } %>
 			<%# The mastering chain is one rack on the mixer's bus, not a pedal on a
@@ -299,6 +301,7 @@
 			</span>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="transport" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+		<span class="studio_panel_bottom" data-studio-bottom="transport" hint="<%= &subs::ui('Drag the bottom edge to resize this panel\'s height') %>"></span>
 		<span id="studio_controls">
 			<div class="studio_transport_row" id="studio_transport_row">
 				<img class="little_thumb record hover" hint="Record" id="studio_record" src="<%= &subs::icon_for('/images/make believe/record.png') %>">

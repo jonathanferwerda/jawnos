@@ -607,6 +607,9 @@ sub action_28457 {
 	my $direction = $c->param('direction');
 	my $information = eval { return decode_json $c->param('information') } || {};
 	$information = {} unless ref $information eq 'HASH';
+	my $channels = eval { return decode_json $c->param('channels') } || [];
+	$channels = [] unless ref $channels eq 'ARRAY';
+	$channels = [ grep { defined $_ && !ref $_ && $_ =~ /\A\d+\z/ } @{$channels} ];
 
 	# An input's picker also offers this machine's capture sources, so a take
 	# can name the microphone it means instead of taking the default. The plan
@@ -636,7 +639,9 @@ sub action_28457 {
 		channel => $channel,
 		screen_share => $screen_share,
 		apps => $apps,
+		channels => $channels,
 		direction => $direction,
+		information => $information,
 		sources => $sources,
 		input => $input,
 		input_node => $input_node,

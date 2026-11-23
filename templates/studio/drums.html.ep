@@ -25,6 +25,7 @@
 		</span>
 	</div>
 	<span class="studio_resize_handle" data-studio-resize="drums" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+	<span class="studio_panel_bottom" data-studio-bottom="drums" hint="<%= &subs::ui('Drag the bottom edge to resize this panel\'s height') %>"></span>
 	<div id="studio_drums_body">
 		<div class="studio_drums_scroll">
 			<div class="studio_drums_head">

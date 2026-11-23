@@ -538,7 +538,24 @@ function studioRetriever() {
 		if (!mixer[i]) { mixer[i] = {}; }
 		if (!mixer[i].armed) { mixer[i].armed = { state: 'off', text: 'O' }; }
 		$.each(v, function(n,w) {
-			if (n == 'plugs' || n == 'mixer' || n == 'fx' || n == 'fx_out' || n == 'fx_chain') { return; }
+			if (n == 'plugs') {
+				// The jacks are part of the song. Restore each direction before the
+				// channel is wired, so the picker reopens on the same row and an
+				// output send points at the channel it names.
+				var plugs = (w && typeof w == 'object') ? w : {};
+				$.each(['input', 'output'], function (_, dir) {
+					var info = plugs[dir];
+					var target = $('.studio_channel_information[direction="' + dir + '"][channel="' + i + '"]');
+					if (info && typeof info == 'object' && (info['type'] || info['app'])) {
+						if (!info['channel']) { info['channel'] = i; }
+						if (!info['direction']) { info['direction'] = dir; }
+						target.text(JSON.stringify(info));
+					}
+					else { target.text(''); }
+				});
+				return;
+			}
+			if (n == 'mixer' || n == 'fx' || n == 'fx_out' || n == 'fx_chain') { return; }
 			if (n == 'monitor') {
 				if (!mixer.monitor) { mixer.monitor = {}; }
 				mixer.monitor[i] = (w == 'yes' || w == 1 || w == '1' || w === true) ? 1 : 0;
@@ -620,6 +637,12 @@ function studioRetriever() {
 	// theme-family one for a row the server rendered without one. The canvases
 	// then paint with it on this first frame.
 	studioApplyTrackColours();
+
+	// The restored jacks now name their destinations; rebuild every output so a
+	// channel send feeds the channel it was saved against, not the master.
+	$.each(studioAudio.channels, function (ch2) {
+		if (typeof studioRebuildOutputs === 'function') { studioRebuildOutputs(ch2); }
+	});
 
 	studioApplyPedals();
 	// A rack's own values win over the shelf's global pedals, so they are pushed
