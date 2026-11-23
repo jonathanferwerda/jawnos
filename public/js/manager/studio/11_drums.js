@@ -312,10 +312,11 @@ function studioDrumsTyping() {
 	return !!el.isContentEditable;
 }
 
+// The drums are one of the interior panel windows now, so the panel stack and
+// its taskbar own their state. This keeps the call sites in the drum code
+// honest: a minimized or raised drums window refreshes the taskbar.
 function studioDrumsGridState() {
-	var panel = $('#studio_drums');
-	var open = panel.length && panel.is(':visible') && !panel.hasClass('studio_panel_floating');
-	$('#studio_grid').toggleClass('studio_drums_open', !!open);
+	if (typeof studioPanelTaskbarRefresh === 'function') { studioPanelTaskbarRefresh(); }
 }
 
 // ---- the bus --------------------------------------------------------------

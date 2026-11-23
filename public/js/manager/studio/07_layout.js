@@ -1,7 +1,7 @@
-// Studio layout: the compact per-track panel, the four hide toggles, floating
-// panels and the dynamic track list. The channel state itself still lives in
-// mixer[] and studioAudio.channels[]; these helpers only move the existing
-// controls around and call the same apply functions.
+// Studio layout: four interior panel windows, their taskbar and the dynamic
+// track list. The channel state itself still lives in mixer[] and
+// studioAudio.channels[]; these helpers only move the existing controls around
+// and call the same apply functions.
 
 var STUDIO_MAX_TRACKS = 32;
 var studioPanelDrag = null;
@@ -12,290 +12,44 @@ function studioLayoutText(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
 }
 
-// ---- panels ----------------------------------------------------------------
+// ---- panel windows ---------------------------------------------------------
+//
+// Every studio panel is an interior window on the desk (#studio_grid): its own
+// title bar, its own box, its own place in the panel stack. A panel can be
+// dragged by its title, resized from its corner, minimized to the taskbar in
+// the layout bar, or maximized to the whole desk and restored. The taskbar is
+// the one place every panel is always reachable, however its window is left.
 
 var studioPanelSelectors = {
-	drums: '#studio_drums',
-	mixer: '#studio_mixer',
 	transport: '#studio_transport_panel',
-	tracks: '#studio_tracks_panel'
+	tracks: '#studio_tracks_panel',
+	mixer: '#studio_mixer',
+	drums: '#studio_drums'
 };
 
-var studioHideSettings = {
-	drums: 'hide_drums',
-	mixer: 'hide_channel_strips',
+var studioPanelNames = ['transport', 'tracks', 'mixer', 'drums'];
+var studioPanelState = {};
+var studioPanelZ = 10;
+var studioPanelObserver = null;
+var studioPanelObservedDesk = null;
+
+// The previous layout stored Hiding as its own setting. A first open after the
+// upgrade reads it once, so a panel the person had hidden stays minimized until
+// they press its taskbar entry; the new state carries `minimized` from then on.
+var studioLegacyHidden = {
 	transport: 'hide_transport',
-	tracks: 'hide_tracks'
+	tracks: 'hide_tracks',
+	mixer: 'hide_channel_strips',
+	drums: 'hide_drums'
 };
+
+var STUDIO_PANEL_MIN_WIDTH = 180;
+var STUDIO_PANEL_MIN_HEIGHT = 90;
 
 function studioPanelElement(name) {
 	var selector = studioPanelSelectors[name];
 	return selector ? $(selector) : $();
 }
-
-// ---- hide / show -----------------------------------------------------------
-
-function studioUpdateHideButton(name, hidden) {
-	$('.studio_hide_toggle[data-panel="' + name + '"]').each(function () {
-		var button = $(this);
-		button.attr('aria-pressed', hidden ? 'true' : 'false');
-		var label = hidden ? button.attr('data-show-label') : button.attr('data-hide-label');
-		if (label) { button.text(studioLayoutText(label)); }
-	});
-}
-
-function studioSetPanelHidden(name, hidden, persist) {
-	hidden = !!hidden;
-	if (studioPanelSelectors[name]) {
-		studioPanelElement(name).toggle(!hidden);
-	}
-	studioUpdateHideButton(name, hidden);
-	// a hidden panel leaves its row, so the rows below take the space
-	studioManualReflow();
-	// a hidden or floated drums panel hands its arranged column back to the
-	// timeline (see .studio_drums_open in style.html.ep)
-	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
-	mixer = mixer || {};
-	mixer.settings = mixer.settings || {};
-	mixer.settings[studioHideSettings[name]] = hidden ? 'yes' : 'no';
-	if (persist) {
-		studioSaveSettings([{ setting: studioHideSettings[name], value: hidden ? 'yes' : 'no' }]);
-	}
-}
-
-function studioApplyHideSettings() {
-	$.each(studioHideSettings, function (name, setting) {
-		var raw = (mixer && mixer.settings) ? mixer.settings[setting] : undefined;
-		studioSetPanelHidden(name, String(raw) == 'yes', false);
-	});
-}
-
-// ---- packing panels --------------------------------------------------------
-//
-// The four docked panels share one grid and no panel owns a cell. Its place is
-// its persisted order (the grid's auto-placement order) and its width is the
-// number of columns it spans. Dropping a docked panel onto another inserts it
-// before that panel, and the ones after it reflow into the gaps. A floated panel
-// leaves the grid but keeps its order and span, so Dock puts it where it was dropped.
-
-// The drum machine is a fourth panel. It has no entry in the Arrange preset
-// below: arranged mode places panels by the stylesheet's named areas, and the
-// drums column exists only while the panel is docked and visible. In manual
-// packing it falls last until moved.
-var studioPanelNames = ['drums', 'tracks', 'mixer', 'transport'];
-var studioPanelOrder = studioPanelNames.slice();
-var studioPanelSpan = { drums: 1, tracks: 1, mixer: 1, transport: 1 };
-var STUDIO_PANEL_MIN_SPAN = 1;
-var STUDIO_PANEL_MAX_SPAN = 2;
-var STUDIO_PANEL_MIN_WIDTH = 180;
-
-// ---- the Arrange preset ----------------------------------------------------
-//
-// A DAW reads top to bottom: the transport keeps its own height across the
-// top, the timeline takes the flexible middle (the drums open a column beside
-// it), and the console gets a compact band at the foot with the master strip at
-// its far right. A narrow window stacks the same areas in one column. The arrangement
-// is a mode on the grid (the stylesheet's named areas, see style.html.ep); the
-// order/span values below are the manual packing it falls back to the moment
-// the person moves a panel.
-var studioArrangeWide = {
-	order: ['transport', 'tracks', 'mixer'],
-	span: { transport: 2, tracks: 2, mixer: 2 }
-};
-var studioArrangeCompact = {
-	order: ['transport', 'tracks', 'mixer'],
-	span: { transport: 2, tracks: 2, mixer: 2 }
-};
-
-function studioIsNarrow() {
-	var width = $('#studio').width() || $(window).width() || 0;
-	return !!(width && width < 720);
-}
-
-function studioArrangePreset() {
-	return studioIsNarrow() ? studioArrangeCompact : studioArrangeWide;
-}
-
-// Arrange is a mode on the grid itself: the stylesheet's named areas replace
-// the manual order/span placement. The manual values stay on the panels (and
-// in the saved settings) for the moment the mode ends, so leaving it never
-// loses the packing the person had.
-function studioSetArranged(on, persist) {
-	var grid = $('#studio_grid');
-	if (!grid.length) { return; }
-	grid.toggleClass('studio_arranged', !!on);
-	grid.toggleClass('studio_arranged_compact', !!on && studioIsNarrow());
-	// Arrange places panels by the stylesheet's areas, so they must be direct
-	// children; leaving it rebuilds the manual rows.
-	if (on) { studioManualUnwrap(); }
-	else { studioManualReflow(); }
-	mixer = mixer || {};
-	mixer.settings = mixer.settings || {};
-	mixer.settings['studio_panel_arranged'] = on ? 'yes' : 'no';
-	if (persist !== false) {
-		studioSaveSettings([{ setting: 'studio_panel_arranged', value: on ? 'yes' : 'no' }]);
-	}
-}
-
-// A manual gesture takes the window out of the arranged grid and back to the
-// packing rules it was using before. Idempotent, so every entry point can call
-// it: a drag, float, Dock, Narrow/Wide or a dropped panel order.
-function studioExitArrange(persist) {
-	if (!$('#studio_grid').hasClass('studio_arranged')) { return; }
-	studioSetArranged(false, persist !== false);
-}
-
-function studioApplyArrange(persist) {
-	var preset = studioArrangePreset();
-	studioPanelOrder = preset.order.slice();
-	// the preset's literal order predates the drum panel; when the window
-	// falls back to manual packing the drums sit beside the tracks, where
-	// Arrange shows them
-	if (studioPanelOrder.indexOf('drums') < 0) {
-		var at = studioPanelOrder.indexOf('tracks');
-		studioPanelOrder.splice(at < 0 ? studioPanelOrder.length : at + 1, 0, 'drums');
-	}
-	$.each(studioPanelNames, function (i, name) {
-		studioPanelSpan[name] = preset.span[name] || STUDIO_PANEL_MIN_SPAN;
-		// Arrange is a clean preset: a height a person dragged is forgotten here.
-		if (persist) { studioPersistPanelHeight(name, 0); }
-		if (mixer && mixer.settings) { delete mixer.settings['studio_panel_height_' + name]; }
-		studioPanelElement(name).css('height', '');
-		// the preset also forgets a width the person dragged
-		if (persist) { studioPersistPanelWidth(name, 0); }
-		if (mixer && mixer.settings) { delete mixer.settings['studio_panel_width_' + name]; }
-		studioPanelElement(name).css({ width: '', flex: '' });
-		// Arrange brings a floated panel home before it applies the preset.
-		if (studioPanelElement(name).hasClass('studio_panel_floating')) {
-			studioDockPanel(name, false);
-		}
-	});
-	studioApplyPanelOrder();
-	$.each(studioPanelNames, function (i, name) { studioApplyPanelSpan(name); });
-	studioSetArranged(true, persist);
-	if (persist) { studioPersistPanelOrder(); }
-}
-
-$(document).on('click', '#studio_arrange', function () { studioApplyArrange(true); });
-
-// The compact areas follow the Studio window, not the desk: the app is a
-// floating window, so the desk's viewport width says nothing about it.
-$(window).on('resize', function () {
-	if ($('#studio_grid').hasClass('studio_arranged')) {
-		$('#studio_grid').toggleClass('studio_arranged_compact', studioIsNarrow());
-	}
-});
-
-function studioPanelOrderIndex(name) {
-	for (var i = 0; i < studioPanelOrder.length; i++) {
-		if (studioPanelOrder[i] == name) { return i; }
-	}
-	return studioPanelOrder.length;
-}
-
-function studioPanelSpanValue(name) {
-	var span = parseInt(studioPanelSpan[name], 10);
-	return (span == STUDIO_PANEL_MAX_SPAN) ? STUDIO_PANEL_MAX_SPAN : STUDIO_PANEL_MIN_SPAN;
-}
-
-// `order` is how the grid's auto-placement sees a panel; the DOM itself is left
-// alone, so docking a float does not have to shuffle its neighbours' nodes.
-function studioApplyPanelOrder() {
-	$.each(studioPanelNames, function (i, name) {
-		var panel = studioPanelElement(name);
-		if (!panel.length) { return; }
-		var index = studioPanelOrderIndex(name);
-		panel.attr('data-studio-order', index).css('order', index);
-	});
-}
-
-function studioApplyPanelSpan(name) {
-	var panel = studioPanelElement(name);
-	if (!panel.length) { return; }
-	var span = studioPanelSpanValue(name);
-	panel.attr('data-studio-span', span).css('grid-column', 'span ' + span);
-	var wide = span > STUDIO_PANEL_MIN_SPAN;
-	$('.studio_span_toggle[data-panel="' + name + '"]').each(function () {
-		var button = $(this);
-		button.attr('aria-pressed', wide ? 'true' : 'false');
-		button.text(studioLayoutText(wide ? 'Narrow' : 'Wide'));
-	});
-}
-
-// A docked panel's height is its own choice, saved like its position. The
-// stylesheet's arranged heights are the default until a person drags the grip.
-function studioApplyPanelHeight(name) {
-	var panel = studioPanelElement(name);
-	if (!panel.length) { return; }
-	var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_height_' + name] : undefined;
-	var h = parseInt(raw, 10);
-	if (h > 0 && !panel.hasClass('studio_panel_floating')) { panel.css('height', h + 'px'); }
-	else { panel.css('height', ''); }
-	// a saved height fixes its row; the others share what is left
-	studioReflowRowHeights();
-}
-
-function studioApplyPanelHeights() {
-	$.each(studioPanelSelectors, function (name) { studioApplyPanelHeight(name); });
-}
-
-function studioPersistPanelHeight(name, h) {
-	mixer = mixer || {};
-	mixer.settings = mixer.settings || {};
-	var key = 'studio_panel_height_' + name;
-	if (h > 0) {
-		mixer.settings[key] = String(h);
-		studioSaveSettings([{ setting: key, value: String(h) }]);
-	}
-	else {
-		delete mixer.settings[key];
-		studioSaveSettings([{ setting: key, value: '' }]);
-	}
-}
-
-// A docked panel's width is its own choice too. The stylesheet's content width
-// (360px for the drums) is the default until a person drags the right edge; the
-// tracks panel then takes whatever is left.
-function studioApplyPanelWidth(name) {
-	var panel = studioPanelElement(name);
-	if (!panel.length) { return; }
-	var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_width_' + name] : undefined;
-	var w = parseInt(raw, 10);
-	if (w > 0 && !panel.hasClass('studio_panel_floating')) {
-		panel.css({ width: w + 'px', flex: '0 0 auto' });
-	}
-	else {
-		panel.css({ width: '', flex: '' });
-	}
-}
-
-function studioApplyPanelWidths() {
-	$.each(studioPanelSelectors, function (name) { studioApplyPanelWidth(name); });
-}
-
-function studioPersistPanelWidth(name, w) {
-	mixer = mixer || {};
-	mixer.settings = mixer.settings || {};
-	var key = 'studio_panel_width_' + name;
-	if (w > 0) {
-		mixer.settings[key] = String(w);
-		studioSaveSettings([{ setting: key, value: String(w) }]);
-	}
-	else {
-		delete mixer.settings[key];
-		studioSaveSettings([{ setting: key, value: '' }]);
-	}
-}
-
-// ---- the manual row flow ---------------------------------------------------
-//
-// In manual packing the grid is a column of flex rows. Each row is exactly as
-// tall as its tallest panel and a row whose panels all have a saved height is
-// fixed; every other row is `1 1 0`, so when a panel is made shorter its row
-// shrinks and the rows below grow into the freed height. The reverse happens
-// when it grows. The rows are rebuilt only when the order, a span, a hide, a
-// dock or Arrange changes; a height drag just re-measures the row, so the
-// pointer never fights a re-parented panel.
 
 function studioPanelNameForElement(element) {
 	var found = '';
@@ -305,102 +59,298 @@ function studioPanelNameForElement(element) {
 	return found;
 }
 
-function studioManualUnwrap() {
-	var grid = $('#studio_grid');
-	if (!grid.length) { return; }
-	grid.children('.studio_grid_row').each(function () {
-		var row = $(this);
-		row.children('div').each(function () { grid.append(this); });
-		row.remove();
+function studioPanelStateFor(name) {
+	if (!studioPanelState[name]) { studioPanelState[name] = {}; }
+	return studioPanelState[name];
+}
+
+function studioPanelDesk() {
+	return $('#studio_grid');
+}
+
+// The desk's own inner size. While the window is still hidden the box can
+// measure zero, so fall back to the Studio window and then to a sane default.
+function studioPanelDeskSize() {
+	var desk = studioPanelDesk()[0];
+	var width = desk ? desk.clientWidth : 0;
+	var height = desk ? desk.clientHeight : 0;
+	if (!width) { width = Math.max(320, ($('#studio').width() || 600) - 20); }
+	if (!height) { height = Math.max(240, ($('#studio').height() || 500) - 60); }
+	return { width: width, height: height };
+}
+
+// Fit a box to the desk: every edge stays inside, and no window is smaller
+// than the grip can be aimed at.
+function studioPanelBox(left, top, width, height, size) {
+	size = size || studioPanelDeskSize();
+	width = Math.max(STUDIO_PANEL_MIN_WIDTH, Math.min(width || STUDIO_PANEL_MIN_WIDTH, Math.max(STUDIO_PANEL_MIN_WIDTH, size.width)));
+	height = Math.max(STUDIO_PANEL_MIN_HEIGHT, Math.min(height || STUDIO_PANEL_MIN_HEIGHT, Math.max(STUDIO_PANEL_MIN_HEIGHT, size.height)));
+	var maxLeft = Math.max(0, size.width - width);
+	var maxTop = Math.max(0, size.height - height);
+	return {
+		left: Math.max(0, Math.min(left, maxLeft)),
+		top: Math.max(0, Math.min(top, maxTop)),
+		width: width,
+		height: height
+	};
+}
+
+// The first-open layout, and what Arrange lays down: the DAW reading order in
+// interior windows. A narrow desk stacks the same panels one above the other.
+function studioDefaultPanelLayout(size) {
+	size = size || studioPanelDeskSize();
+	var gap = 4;
+	var width = size.width;
+	var height = size.height;
+	if (width < 720) {
+		var transportH = Math.max(64, Math.min(104, Math.round(height * 0.18)));
+		var drumsH = Math.max(110, Math.min(190, Math.round(height * 0.24)));
+		var mixerH = Math.max(110, Math.min(170, Math.round(height * 0.24)));
+		var tracksH = Math.max(STUDIO_PANEL_MIN_HEIGHT, height - transportH - drumsH - mixerH - gap * 3);
+		var drumsTop = transportH + gap + tracksH + gap;
+		var mixerTop = drumsTop + drumsH + gap;
+		return {
+			transport: { left: 0, top: 0, width: width, height: transportH },
+			tracks: { left: 0, top: transportH + gap, width: width, height: tracksH },
+			drums: { left: 0, top: drumsTop, width: width, height: drumsH },
+			mixer: { left: 0, top: mixerTop, width: width, height: mixerH }
+		};
+	}
+	var transportHeight = Math.max(64, Math.min(112, Math.round(height * 0.16)));
+	var mixerHeight = Math.max(120, Math.min(220, Math.round(height * 0.28)));
+	var middleTop = transportHeight + gap;
+	var middleHeight = Math.max(STUDIO_PANEL_MIN_HEIGHT, height - transportHeight - mixerHeight - gap * 2);
+	var drumsWidth = Math.max(300, Math.min(380, Math.round(width * 0.36)));
+	var tracksWidth = Math.max(STUDIO_PANEL_MIN_WIDTH, width - drumsWidth - gap);
+	return {
+		transport: { left: 0, top: 0, width: width, height: transportHeight },
+		tracks: { left: 0, top: middleTop, width: tracksWidth, height: middleHeight },
+		drums: { left: tracksWidth + gap, top: middleTop, width: drumsWidth, height: middleHeight },
+		mixer: { left: 0, top: height - mixerHeight, width: width, height: mixerHeight }
+	};
+}
+
+function studioApplyPanelGeometry(name) {
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	var state = studioPanelStateFor(name);
+	panel.toggleClass('studio_panel_minimized', !!state.minimized);
+	panel.toggleClass('studio_panel_maximized', !!state.maximized);
+	panel.attr('data-studio-name', name);
+	if (state.maximized) {
+		panel.css({ left: '0px', top: '0px', width: '100%', height: '100%' });
+		return;
+	}
+	var box = studioPanelBox(state.left, state.top, state.width, state.height);
+	state.left = box.left;
+	state.top = box.top;
+	state.width = box.width;
+	state.height = box.height;
+	panel.css({
+		left: box.left + 'px',
+		top: box.top + 'px',
+		width: box.width + 'px',
+		height: box.height + 'px'
 	});
 }
 
-// The width a panel contributes when the rows are packed: its saved width, or
-// the stylesheet's content width. The tracks panel (and the console) are the
-// flexible ones, so their default is a floor, not a size.
-function studioPackWidth(name) {
-	var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_width_' + name] : undefined;
-	var w = parseInt(raw, 10);
-	if (w > 0) { return w; }
-	if (name === 'drums') { return 360; }
-	return 280;
+function studioApplyPanelGeometries() {
+	$.each(studioPanelNames, function (i, name) { studioApplyPanelGeometry(name); });
 }
 
-function studioManualReflow() {
-	var grid = $('#studio_grid');
-	if (!grid.length) { return; }
-	if (grid.hasClass('studio_arranged')) { studioManualUnwrap(); return; }
-	// lift every panel out of its row before regrouping; a hidden one stays a
-	// direct child (display:none takes no space) and rejoins on Show
-	studioManualUnwrap();
-	var order = studioPanelNames.slice().sort(function (a, b) {
-		return studioPanelOrderIndex(a) - studioPanelOrderIndex(b);
-	});
-	// A row holds as many span-one panels as its width allows, so the tracks
-	// panel can sit beside the instruments and grow into the rest of the line.
-	// A two-column panel always owns its row.
-	var available = Math.max(240, (grid[0].clientWidth || 0) - 8);
-	var rows = [], row = null;
-	$.each(order, function (i, name) {
-		var panel = studioPanelElement(name);
-		if (!panel.length || panel.hasClass('studio_panel_floating') || !panel.is(':visible')) { return; }
-		var span = Math.min(STUDIO_PANEL_MAX_SPAN, studioPanelSpanValue(name));
-		var w = (span >= STUDIO_PANEL_MAX_SPAN) ? available : studioPackWidth(name);
-		if (!row || span >= STUDIO_PANEL_MAX_SPAN || (row.items > 0 && row.width + 6 + w > available)) {
-			row = { items: 0, width: 0, element: $('<div class="studio_grid_row"></div>') };
-			rows.push(row);
-		}
-		panel.attr('data-studio-name', name);
-		row.element.append(panel);
-		row.width += (row.items ? 6 : 0) + w;
-		row.items += 1;
-	});
-	$.each(rows, function (i, r) { grid.append(r.element); });
-	studioApplyPanelWidths();
-	studioReflowRowHeights();
+function studioCapturePanelBox(name) {
+	var panel = studioPanelElement(name);
+	var desk = studioPanelDesk()[0];
+	if (!panel.length || !desk) { return; }
+	var rect = panel[0].getBoundingClientRect();
+	var deskRect = desk.getBoundingClientRect();
+	var state = studioPanelStateFor(name);
+	state.left = Math.round(rect.left - deskRect.left);
+	state.top = Math.round(rect.top - deskRect.top);
+	state.width = Math.round(rect.width);
+	state.height = Math.round(rect.height);
 }
 
-// A row's height is the tallest saved height among its panels; a row with none
-// is flexible, and a transport row keeps only its content height.
-function studioRowFixedHeight(row) {
-	var fixed = 0;
-	row.children('div').each(function () {
-		var name = $(this).attr('data-studio-name') || studioPanelNameForElement(this);
-		var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_height_' + name] : undefined;
-		var h = parseInt(raw, 10);
-		if (!(h > 0)) {
-			var inline = this.style ? parseFloat(this.style.height) : 0;
-			if (inline > 0) { h = inline; }
-		}
-		if (h > fixed) { fixed = h; }
-	});
-	return fixed;
+function studioPersistPanelState(name) {
+	mixer = mixer || {};
+	mixer.settings = mixer.settings || {};
+	var state = studioPanelStateFor(name);
+	var value = {
+		left: Math.round(state.left || 0),
+		top: Math.round(state.top || 0),
+		width: Math.round(state.width || 0),
+		height: Math.round(state.height || 0),
+		minimized: !!state.minimized,
+		maximized: !!state.maximized
+	};
+	var setting = 'studio_panel_position_' + name;
+	var text = JSON.stringify(value);
+	mixer.settings[setting] = text;
+	studioSaveSettings([{ setting: setting, value: text }]);
 }
 
-function studioReflowRowHeights() {
-	$('#studio_grid .studio_grid_row').each(function () {
-		var row = $(this);
-		var h = studioRowFixedHeight(row);
-		if (h > 0) {
-			// a panel the person made short keeps its exact row, even below the
-			// 120px floor the flexible rows use
-			row.css({ 'flex': '0 0 ' + h + 'px', 'min-height': '0' });
-		}
-		else if (row.children('#studio_transport_panel').length) {
-			row.css({ 'flex': '0 0 auto', 'min-height': '0' });
+function studioLoadPanelStates() {
+	var layout = studioDefaultPanelLayout(studioPanelDeskSize());
+	var any_saved = false;
+	$.each(studioPanelNames, function (i, name) {
+		var state = studioPanelStateFor(name);
+		var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_position_' + name] : undefined;
+		var saved = null;
+		if (raw) { try { saved = JSON.parse(raw); } catch (e) { saved = null; } }
+		var base = layout[name];
+		if (saved && typeof saved.left == 'number' && typeof saved.top == 'number') {
+			any_saved = true;
+			state.width = (typeof saved.width == 'number' && saved.width > 0) ? saved.width : base.width;
+			state.height = (typeof saved.height == 'number' && saved.height > 0) ? saved.height : base.height;
+			state.left = saved.left;
+			state.top = saved.top;
+			state.minimized = (typeof saved.minimized == 'boolean')
+				? saved.minimized
+				: (String(((mixer && mixer.settings) || {})[studioLegacyHidden[name]] || '') == 'yes');
+			state.maximized = !!saved.maximized;
 		}
 		else {
-			row.css({ 'flex': '1 1 0', 'min-height': '120px' });
+			// No geometry yet (a first open, or an older saved dock/float record):
+			// the preset gives the panel a place, and the person can move it.
+			state.left = base.left;
+			state.top = base.top;
+			state.width = base.width;
+			state.height = base.height;
+			state.minimized = (saved && typeof saved.minimized == 'boolean')
+				? saved.minimized
+				: (String(((mixer && mixer.settings) || {})[studioLegacyHidden[name]] || '') == 'yes');
+			state.maximized = !!(saved && saved.maximized);
 		}
+		var box = studioPanelBox(state.left, state.top, state.width, state.height);
+		state.left = box.left;
+		state.top = box.top;
+		state.width = box.width;
+		state.height = box.height;
+	});
+	if (!any_saved) {
+		$.each(studioPanelNames, function (i, name) { studioPersistPanelState(name); });
+	}
+}
+
+// Arrange is a one-press preset: every panel comes back visible, unmaximized
+// and laid out in the DAW reading order.
+function studioArrangeWindows(persist) {
+	var layout = studioDefaultPanelLayout(studioPanelDeskSize());
+	$.each(studioPanelNames, function (i, name) {
+		var state = studioPanelStateFor(name);
+		var box = layout[name];
+		state.left = box.left;
+		state.top = box.top;
+		state.width = box.width;
+		state.height = box.height;
+		state.minimized = false;
+		state.maximized = false;
+		studioApplyPanelGeometry(name);
+		if (persist) { studioPersistPanelState(name); }
+	});
+	studioPanelRaise('tracks');
+	studioPanelTaskbarRefresh();
+}
+
+$(document).on('click', '#studio_arrange', function () { studioArrangeWindows(true); });
+
+// ---- the panel stack and its taskbar ---------------------------------------
+
+function studioPanelFront() {
+	var front = '';
+	var top = -1;
+	$.each(studioPanelNames, function (i, name) {
+		var panel = studioPanelElement(name);
+		if (!panel.length || panel.hasClass('studio_panel_minimized') || !panel.is(':visible')) { return; }
+		var z = parseInt(panel.css('z-index'), 10) || 0;
+		if (z >= top) { top = z; front = name; }
+	});
+	return front;
+}
+
+function studioPanelTaskbarRefresh() {
+	var front = studioPanelFront();
+	$('.studio_panel_task').each(function () {
+		var button = $(this);
+		var name = button.attr('data-panel');
+		var state = studioPanelState[name] || {};
+		var minimized = !!state.minimized;
+		button.toggleClass('studio_task_active', !minimized && name === front)
+			.toggleClass('studio_task_minimized', minimized)
+			.attr('aria-pressed', minimized ? 'false' : 'true');
+	});
+	$('.studio_panel_max').each(function () {
+		var name = $(this).attr('data-panel');
+		var state = studioPanelState[name] || {};
+		$(this).attr('aria-pressed', state.maximized ? 'true' : 'false');
 	});
 }
 
-function studioSnapPanelWidth(panel, w) {
-	var sizes = studioPanelNeighbourSizes(panel);
-	var row = panel.closest('.studio_grid_row');
-	var max = row.length ? row[0].clientWidth : ($('#studio_grid')[0] ? $('#studio_grid')[0].clientWidth : w);
-	return Math.max(STUDIO_PANEL_MIN_WIDTH, Math.min(max || w, studioSnapTo(w, sizes.widths)));
+function studioPanelRaise(name) {
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	studioPanelZ += 1;
+	panel.css('z-index', studioPanelZ);
+	$('.studio_panel').removeClass('studio_panel_raised');
+	panel.addClass('studio_panel_raised');
+	studioPanelTaskbarRefresh();
 }
+
+function studioPanelSetMinimized(name, minimized, persist) {
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	var state = studioPanelStateFor(name);
+	state.minimized = !!minimized;
+	panel.toggleClass('studio_panel_minimized', state.minimized);
+	if (persist !== false) { studioPersistPanelState(name); }
+	studioPanelTaskbarRefresh();
+}
+
+function studioPanelToggleMaximized(name, persist) {
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	var state = studioPanelStateFor(name);
+	// Keep the box the panel will come back to before it fills the desk.
+	if (!state.maximized && !state.minimized) { studioCapturePanelBox(name); }
+	state.maximized = !state.maximized;
+	studioApplyPanelGeometry(name);
+	studioPanelRaise(name);
+	if (persist !== false) { studioPersistPanelState(name); }
+}
+
+// A taskbar entry answers for its panel the way the desk's taskbar answers for
+// a window: a minimized panel comes back, the front panel steps down, and any
+// other panel rises.
+$(document).on('click', '.studio_panel_task', function () {
+	var name = $(this).attr('data-panel');
+	var state = studioPanelStateFor(name);
+	if (state.minimized) {
+		studioPanelSetMinimized(name, false, true);
+		studioPanelRaise(name);
+		return;
+	}
+	if (studioPanelFront() === name) { studioPanelSetMinimized(name, true, true); }
+	else { studioPanelRaise(name); }
+});
+
+$(document).on('click', '.studio_panel_min', function (e) {
+	e.stopPropagation();
+	studioPanelSetMinimized($(this).attr('data-panel'), true, true);
+});
+
+$(document).on('click', '.studio_panel_max', function (e) {
+	e.stopPropagation();
+	studioPanelToggleMaximized($(this).attr('data-panel'), true);
+});
+
+// Any press inside a panel window brings it forward, the same way a press on a
+// desk window does. Nested controls keep their own handlers; this only stacks.
+$(document).on('pointerdown', '.studio_panel', function () {
+	var name = $(this).attr('data-studio-name') || studioPanelNameForElement(this);
+	if (name) { studioPanelRaise(name); }
+});
+
+// ---- pointer drag and resize -----------------------------------------------
 
 // Snap a drag to the 8px grid and, within 8px, to a neighbour's edge/size.
 function studioSnapTo(value, candidates) {
@@ -416,7 +366,7 @@ function studioSnapTo(value, candidates) {
 
 function studioPanelNeighbourSizes(panel) {
 	var widths = [], heights = [];
-	$('[data-studio-name], .studio_panel_floating').not(panel).each(function () {
+	$('.studio_panel').not(panel).each(function () {
 		var r = this.getBoundingClientRect();
 		if (r.width < 1 || r.height < 1) { return; }
 		widths.push(Math.round(r.width));
@@ -425,356 +375,27 @@ function studioPanelNeighbourSizes(panel) {
 	return { widths: widths, heights: heights };
 }
 
-function studioSnapPanelHeight(panel, h) {
-	var sizes = studioPanelNeighbourSizes(panel);
-	var content = panel && panel[0] ? panel[0].scrollHeight : 0;
-	if (content) { sizes.heights.push(content); }
-	// the limit is the whole dock, not the row the panel now sits in, or a
-	// taller panel could never grow past its current row
-	var dock = panel && panel.closest('#studio_grid, #studio').length ? panel.closest('#studio_grid, #studio')[0] : null;
-	var limit = dock ? dock.clientHeight : h;
-	return Math.max(64, Math.min(limit || h, studioSnapTo(h, sizes.heights)));
-}
-
-function studioSnapPanelPosition(panel, left, top) {
-	var base = $('#studio')[0].getBoundingClientRect();
-	var xs = [], ys = [];
-	$('[data-studio-name], .studio_panel_floating').not(panel).each(function () {
-		var r = this.getBoundingClientRect();
-		if (r.width < 1 || r.height < 1) { return; }
-		xs.push(r.left - base.left, r.right - base.left);
-		ys.push(r.top - base.top, r.bottom - base.top);
-	});
-	return { left: studioSnapTo(left, xs), top: studioSnapTo(top, ys) };
-}
-
-function studioPersistPanelPosition(name, value) {
-	mixer = mixer || {};
-	mixer.settings = mixer.settings || {};
-	var setting = 'studio_panel_position_' + name;
-	var text = JSON.stringify(value);
-	mixer.settings[setting] = text;
-	studioSaveSettings([{ setting: setting, value: text }]);
-}
-
-function studioPanelSize(panel) {
-	return {
-		width: parseFloat(panel.css('width')) || panel.outerWidth() || 240,
-		height: parseFloat(panel.css('height')) || panel.outerHeight() || 160
-	};
-}
-
-function studioPanelBox(panel) {
-	var size = studioPanelSize(panel);
-	return {
-		left: parseFloat(panel.css('left')) || 0,
-		top: parseFloat(panel.css('top')) || 0,
-		width: size.width,
-		height: size.height
-	};
-}
-
-// A float keeps the order and span it came from, so a reload followed by Dock
-// does not silently send a reordered panel back to its default place.
-function studioFloatState(name, panel) {
-	var state = studioPanelBox(panel);
-	state.order = studioPanelOrderIndex(name);
-	state.span = studioPanelSpanValue(name);
-	return state;
-}
-
-function studioClampPanelBox(panel, left, top, width, height) {
-	var studio = $('#studio')[0];
-	if (!studio) { return { left: left, top: top, width: width, height: height }; }
-	var rect = studio.getBoundingClientRect();
-	var minWidth = 180;
-	var minHeight = 120;
-	width = Math.max(minWidth, Math.min(width || minWidth, Math.max(minWidth, rect.width)));
-	height = Math.max(minHeight, Math.min(height || minHeight, Math.max(minHeight, rect.height)));
-	var maxLeft = Math.max(0, rect.width - width);
-	var maxTop = Math.max(0, rect.height - height);
-	return {
-		left: Math.max(0, Math.min(left, maxLeft)),
-		top: Math.max(0, Math.min(top, maxTop)),
-		width: width,
-		height: height
-	};
-}
-
-function studioClampPanelPosition(panel, left, top) {
-	var size = studioPanelSize(panel);
-	var box = studioClampPanelBox(panel, left, top, size.width, size.height);
-	return { left: box.left, top: box.top };
-}
-
-function studioFloatPanel(name, position, persist) {
-	var panel = studioPanelElement(name);
-	if (!panel.length) { return panel; }
-	if (!panel.hasClass('studio_panel_floating')) {
-		var rect = panel[0].getBoundingClientRect();
-		var studioRect = $('#studio')[0].getBoundingClientRect();
-		panel.addClass('studio_panel_floating');
-		// A panel floated at the window's full width has nowhere to move
-		// sideways; keep it narrower than the desk so both axes are free.
-		var width = Math.min(rect.width > 20 ? rect.width : 320, Math.max(180, studioRect.width * 0.7));
-		var height = rect.height > 20 ? rect.height : 200;
-		var box = studioClampPanelBox(panel,
-			Math.max(0, rect.left - studioRect.left),
-			Math.max(0, rect.top - studioRect.top),
-			width, height);
-		panel.css({
-			left: box.left + 'px',
-			top: box.top + 'px',
-			width: box.width + 'px',
-			height: box.height + 'px'
-		});
-		$('#studio').append(panel);
-		// it left its row: the panels below close the gap
-		studioManualReflow();
-	}
-	if (position && typeof position.left == 'number' && typeof position.top == 'number') {
-		var current = studioPanelSize(panel);
-		var placed = studioClampPanelBox(panel, position.left, position.top,
-			typeof position.width == 'number' ? position.width : current.width,
-			typeof position.height == 'number' ? position.height : current.height);
-		panel.css({
-			left: placed.left + 'px',
-			top: placed.top + 'px',
-			width: placed.width + 'px',
-			height: placed.height + 'px'
-		});
-	}
-	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
-	if (persist) {
-		studioPersistPanelPosition(name, studioFloatState(name, panel));
-	}
-	return panel;
-}
-
-// The docked panel a float is nearest to: the largest overlap wins, then the
-// nearest centre. A float dragged over the grid is asking for that place.
-function studioDockTarget(name, panel) {
-	var rect = panel[0].getBoundingClientRect();
-	var target = null;
-	var bestArea = 0;
-	var bestDistance = Infinity;
-	$.each(studioPanelSelectors, function (other) {
-		if (other == name) { return; }
-		var p = studioPanelElement(other);
-		if (!p.length || p.hasClass('studio_panel_floating') || !p.is(':visible')) { return; }
-		var r = p[0].getBoundingClientRect();
-		var overlapW = Math.max(0, Math.min(rect.right, r.right) - Math.max(rect.left, r.left));
-		var overlapH = Math.max(0, Math.min(rect.bottom, r.bottom) - Math.max(rect.top, r.top));
-		var area = overlapW * overlapH;
-		var dx = (r.left + r.width / 2) - (rect.left + rect.width / 2);
-		var dy = (r.top + r.height / 2) - (rect.top + rect.height / 2);
-		var distance = dx * dx + dy * dy;
-		if (area > bestArea || (area === bestArea && distance < bestDistance)) {
-			target = other;
-			bestArea = area;
-			bestDistance = distance;
-		}
-	});
-	return target;
-}
-
-// Dock the float where it was dropped: before the target when its centre is
-// above or left of the target's, otherwise after it. The saved order is the
-// whole arrangement, so the neighbours reflow around the new place.
-function studioDockPosition(name, panel, target) {
-	var t = studioPanelElement(target);
-	if (!t.length) { return; }
-	var rect = panel[0].getBoundingClientRect();
-	var tr = t[0].getBoundingClientRect();
-	var cx = rect.left + rect.width / 2;
-	var cy = rect.top + rect.height / 2;
-	var tx = tr.left + tr.width / 2;
-	var ty = tr.top + tr.height / 2;
-	var after = (cy > ty + 4) || (Math.abs(cy - ty) <= 4 && cx > tx);
-	var from = studioPanelOrder.indexOf(name);
-	if (from >= 0) { studioPanelOrder.splice(from, 1); }
-	var to = studioPanelOrder.indexOf(target);
-	if (to < 0) { to = studioPanelOrder.length; }
-	if (after) { to++; }
-	studioPanelOrder.splice(to, 0, name);
-}
-
-function studioDockPanel(name, persist) {
-	var panel = studioPanelElement(name);
-	if (!panel.length || !panel.hasClass('studio_panel_floating')) { return; }
-	// A person pressing Dock means "put it where I left it": use the float's
-	// current place to choose its neighbours. Restoring a saved docked panel
-	// (persist === false) keeps the stored order.
-	var dropped = (persist !== false) ? studioDockTarget(name, panel) : null;
-	panel.removeClass('studio_panel_floating studio_panel_dragging studio_panel_resizing')
-		.css({ left: '', top: '', width: '', height: '', position: '', flex: '' });
-	studioApplyPanelHeight(name);
-	studioApplyPanelWidth(name);
-	if (dropped) { studioDockPosition(name, panel, dropped); }
-	// back into the grid; the row flow puts it in its place from the new order
-	$('#studio_grid').append(panel);
-	studioApplyPanelOrder();
-	studioApplyPanelSpan(name);
-	studioManualReflow();
-	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
-	if (persist !== false) {
-		studioPersistPanelPosition(name, {
-			docked: true,
-			order: studioPanelOrderIndex(name),
-			span: studioPanelSpanValue(name)
-		});
-		if (dropped) { studioPersistPanelOrder(); }
-	}
-}
-
-function studioApplyPanelPositions() {
-	var saved = {};
-	var any_saved = false;
-	var arranged = String((mixer && mixer.settings) ? mixer.settings['studio_panel_arranged'] : '') == 'yes';
-	$.each(studioPanelSelectors, function (name) {
-		var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_position_' + name] : undefined;
-		if (!raw) { return; }
-		var position = null;
-		try { position = JSON.parse(raw); } catch (e) { return; }
-		if (!position) { return; }
-		saved[name] = position;
-		any_saved = true;
-		if (typeof position.span == 'number') { studioPanelSpan[name] = position.span; }
-	});
-
-	// A first open has no saved arrangement, so the DAW-informed preset is what
-	// it starts from. Once anything is saved the user's own packing wins.
-	if (!any_saved) {
-		studioApplyArrange(true);
-		return;
-	}
-
-	// Rebuild the shared order from whatever each panel saved, keeping the
-	// default order for a panel that has never been moved (and as the tie-break).
-	var defaultIndex = {};
-	$.each(studioPanelNames, function (i, name) { defaultIndex[name] = i; });
-	studioPanelOrder = studioPanelNames.slice().sort(function (a, b) {
-		var oa = (saved[a] && typeof saved[a].order == 'number') ? saved[a].order : defaultIndex[a];
-		var ob = (saved[b] && typeof saved[b].order == 'number') ? saved[b].order : defaultIndex[b];
-		return (oa - ob) || (defaultIndex[a] - defaultIndex[b]);
-	});
-
-	studioApplyPanelOrder();
-	$.each(studioPanelNames, function (i, name) { studioApplyPanelSpan(name); });
-	$.each(studioPanelNames, function (i, name) {
-		var position = saved[name];
-		if (!position) { return; }
-		if (position.docked) { studioDockPanel(name, false); }
-		else if (typeof position.left == 'number' && typeof position.top == 'number') {
-			studioFloatPanel(name, position, false);
-		}
-	});
-
-	// A saved float is manual packing; otherwise the remembered mode decides.
-	if (arranged && !$('.studio_panel_floating').length) { studioSetArranged(true, false); }
-	else { studioSetArranged(false, false); }
-}
-
-// A window can be smaller than the desk it was floated on; pull a saved panel
-// back so at least its own box stays inside the Studio window.
-$(window).on('resize', function () {
-	$('.studio_panel_floating').each(function () {
-		var panel = $(this);
-		var box = studioPanelBox(panel);
-		var position = studioClampPanelPosition(panel, box.left, box.top);
-		var fitted = studioClampPanelBox(panel, position.left, position.top, box.width, box.height);
-		panel.css({
-			left: fitted.left + 'px',
-			top: fitted.top + 'px',
-			width: fitted.width + 'px',
-			height: fitted.height + 'px'
-		});
-	});
-});
-
-function studioApplyLayoutSettings() {
-	// Positions first: a panel that is about to be hidden has no size to measure.
-	studioApplyPanelPositions();
-	studioApplyPanelHeights();
-	studioApplyPanelWidths();
-	studioApplyHideSettings();
-	// the manual rows are rebuilt from the restored order, spans and heights
-	studioManualReflow();
-	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
-	studioUpdateTrackCount();
-}
-
-// ---- drag, resize and the docked grid --------------------------------------
-
-// The docked panel under the pointer, if any. Used on pointerup: a docked panel
-// dropped on another inserts itself before that panel; dropped anywhere else it
-// stays a float.
-function studioDockedPanelUnder(name, original) {
-	if (!original) { return null; }
-	var target = null;
-	var x = original.clientX;
-	var y = original.clientY;
-	$.each(studioPanelSelectors, function (other) {
-		if (other == name) { return; }
-		var panel = studioPanelElement(other);
-		if (!panel.length || panel.hasClass('studio_panel_floating') || !panel.is(':visible')) { return; }
-		var rect = panel[0].getBoundingClientRect();
-		if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-			target = other;
-			return false;
-		}
-	});
-	return target;
-}
-
-// Insert a dropped panel before the one it landed on and let the rest reflow.
-// The saved order is the whole arrangement, not just the moved panel's place.
-function studioReorderDockedPanel(name, target) {
-	studioExitArrange(true);
-	var from = studioPanelOrderIndex(name);
-	studioPanelOrder.splice(from, 1);
-	var to = studioPanelOrderIndex(target);
-	studioPanelOrder.splice(to, 0, name);
-	studioDockPanel(name, false);
-	studioApplyPanelOrder();
-	studioManualReflow();
-	studioPersistPanelOrder();
-}
-
-// Persist order and span for every panel. A floated panel keeps its box, and its
-// saved order/span so Dock can put it where it was dropped.
-function studioPersistPanelOrder() {
-	$.each(studioPanelNames, function (i, name) {
-		var panel = studioPanelElement(name);
-		if (!panel.length) { return; }
-		var value = panel.hasClass('studio_panel_floating')
-			? studioFloatState(name, panel)
-			: { docked: true, order: studioPanelOrderIndex(name), span: studioPanelSpanValue(name) };
-		studioPersistPanelPosition(name, value);
-	});
-}
-
-// A pointer drag moves a floating panel; pressing the handle on a docked panel
-// detaches it at its current place first, so the drag begins where you grabbed.
 $(document).on('pointerdown', '.studio_drag_handle', function (e) {
 	if (e.originalEvent && e.originalEvent.button) { return; }
 	var name = $(this).attr('data-studio-drag');
 	var panel = studioPanelElement(name);
 	if (!panel.length) { return; }
-	var wasFloating = panel.hasClass('studio_panel_floating');
-	// Grabbing a panel is a manual action: the arranged areas let go first, so
-	// the drag begins from the panel's packing place.
-	studioExitArrange(true);
-	studioFloatPanel(name);
+	var state = studioPanelStateFor(name);
+	// Dragging a maximized panel gives it its old box back first, so the drag
+	// starts where the pointer grabbed rather than at the desk's corner.
+	if (state.maximized) {
+		state.maximized = false;
+		studioApplyPanelGeometry(name);
+	}
 	var rect = panel[0].getBoundingClientRect();
 	studioPanelDrag = {
 		name: name,
 		panel: panel,
-		wasFloating: wasFloating,
 		dx: e.originalEvent.clientX - rect.left,
 		dy: e.originalEvent.clientY - rect.top
 	};
 	panel.addClass('studio_panel_dragging');
+	studioPanelRaise(name);
 	try { this.setPointerCapture(e.originalEvent.pointerId); } catch (err) {}
 	e.preventDefault();
 });
@@ -784,22 +405,31 @@ $(document).on('pointerdown', '.studio_resize_handle', function (e) {
 	var name = $(this).attr('data-studio-resize');
 	var panel = studioPanelElement(name);
 	if (!panel.length) { return; }
-	var floating = panel.hasClass('studio_panel_floating');
-	studioExitArrange(true);
+	var state = studioPanelStateFor(name);
+	if (state.maximized) {
+		// Resize from the full desk box, not from the hidden restore box.
+		var full = panel[0].getBoundingClientRect();
+		var deskRect = studioPanelDesk()[0].getBoundingClientRect();
+		state.left = Math.round(full.left - deskRect.left);
+		state.top = Math.round(full.top - deskRect.top);
+		state.width = Math.round(full.width);
+		state.height = Math.round(full.height);
+		state.maximized = false;
+		studioApplyPanelGeometry(name);
+	}
 	var rect = panel[0].getBoundingClientRect();
 	studioPanelResize = {
 		name: name,
 		panel: panel,
-		floating: floating,
 		x: e.originalEvent.clientX,
 		y: e.originalEvent.clientY,
 		left: parseFloat(panel.css('left')) || 0,
 		top: parseFloat(panel.css('top')) || 0,
 		width: rect.width,
-		height: rect.height,
-		startH: rect.height
+		height: rect.height
 	};
 	panel.addClass('studio_panel_resizing');
+	studioPanelRaise(name);
 	try { this.setPointerCapture(e.originalEvent.pointerId); } catch (err) {}
 	e.preventDefault();
 	e.stopPropagation();
@@ -808,20 +438,10 @@ $(document).on('pointerdown', '.studio_resize_handle', function (e) {
 $(document).on('pointermove', function (e) {
 	var original = e.originalEvent || {};
 	if (studioPanelResize) {
-		if (!studioPanelResize.floating) {
-			var h = studioSnapPanelHeight(studioPanelResize.panel,
-				studioPanelResize.startH + (original.clientY - studioPanelResize.y));
-			studioPanelResize.panel.css({ height: h + 'px' });
-			// the row follows the grip and every row below reflows into the rest
-			studioReflowRowHeights();
-			e.preventDefault();
-			return;
-		}
 		var sizes = studioPanelNeighbourSizes(studioPanelResize.panel);
 		var w = studioSnapTo(studioPanelResize.width + (original.clientX - studioPanelResize.x), sizes.widths);
-		var hh = studioSnapTo(studioPanelResize.height + (original.clientY - studioPanelResize.y), sizes.heights);
-		var box = studioClampPanelBox(studioPanelResize.panel,
-			studioPanelResize.left, studioPanelResize.top, w, hh);
+		var h = studioSnapTo(studioPanelResize.height + (original.clientY - studioPanelResize.y), sizes.heights);
+		var box = studioPanelBox(studioPanelResize.left, studioPanelResize.top, w, h);
 		studioPanelResize.panel.css({
 			left: box.left + 'px',
 			top: box.top + 'px',
@@ -832,88 +452,98 @@ $(document).on('pointermove', function (e) {
 		return;
 	}
 	if (!studioPanelDrag) { return; }
-	var studioRect = $('#studio')[0].getBoundingClientRect();
-	var left = original.clientX - studioRect.left - studioPanelDrag.dx;
-	var top = original.clientY - studioRect.top - studioPanelDrag.dy;
-	var snapped = studioSnapPanelPosition(studioPanelDrag.panel, left, top);
-	var clamped = studioClampPanelPosition(studioPanelDrag.panel, snapped.left, snapped.top);
-	studioPanelDrag.panel.css({ left: clamped.left + 'px', top: clamped.top + 'px' });
+	var desk = studioPanelDesk()[0];
+	if (!desk) { return; }
+	var deskRect = desk.getBoundingClientRect();
+	var state = studioPanelStateFor(studioPanelDrag.name);
+	var left = original.clientX - deskRect.left - studioPanelDrag.dx;
+	var top = original.clientY - deskRect.top - studioPanelDrag.dy;
+	var box = studioPanelBox(left, top, state.width, state.height);
+	studioPanelDrag.panel.css({ left: box.left + 'px', top: box.top + 'px' });
 	e.preventDefault();
 });
 
-$(document).on('pointerup pointercancel', function (e) {
+$(document).on('pointerup pointercancel', function () {
 	if (studioPanelResize) {
 		var resize = studioPanelResize;
 		studioPanelResize = null;
 		resize.panel.removeClass('studio_panel_resizing');
-		if (resize.floating) {
-			studioPersistPanelPosition(resize.name, studioFloatState(resize.name, resize.panel));
-		}
-		else {
-			studioPersistPanelHeight(resize.name, Math.round(resize.panel[0].getBoundingClientRect().height));
-			studioReflowRowHeights();
-		}
+		var state = studioPanelStateFor(resize.name);
+		state.maximized = false;
+		studioCapturePanelBox(resize.name);
+		studioPersistPanelState(resize.name);
 		return;
 	}
 	if (!studioPanelDrag) { return; }
 	var drag = studioPanelDrag;
 	studioPanelDrag = null;
 	drag.panel.removeClass('studio_panel_dragging');
-	if (!drag.wasFloating && e.type == 'pointerup') {
-		var target = studioDockedPanelUnder(drag.name, e.originalEvent);
-		if (target) { studioReorderDockedPanel(drag.name, target); return; }
+	var dragState = studioPanelStateFor(drag.name);
+	dragState.maximized = false;
+	studioCapturePanelBox(drag.name);
+	studioPersistPanelState(drag.name);
+});
+
+// ---- keeping the windows on the desk ---------------------------------------
+
+// The outer window can be resized, which changes the desk under every interior
+// window. Maximized panels follow it; the others are pulled back inside it.
+function studioPanelClampAll() {
+	$.each(studioPanelNames, function (i, name) {
+		var state = studioPanelStateFor(name);
+		if (state.maximized) { studioApplyPanelGeometry(name); return; }
+		var box = studioPanelBox(state.left, state.top, state.width, state.height);
+		if (box.left === state.left && box.top === state.top
+			&& box.width === state.width && box.height === state.height) { return; }
+		state.left = box.left;
+		state.top = box.top;
+		state.width = box.width;
+		state.height = box.height;
+		studioApplyPanelGeometry(name);
+	});
+}
+
+function studioPanelObserveDesk() {
+	if (typeof ResizeObserver !== 'function') { return; }
+	var desk = studioPanelDesk()[0];
+	if (!desk) { return; }
+	// A closed and reopened Studio window brings a new grid; the old observer
+	// must let go of the detached node and watch the desk now on screen.
+	if (studioPanelObserver && studioPanelObservedDesk === desk) { return; }
+	if (studioPanelObserver) { studioPanelObserver.disconnect(); }
+	studioPanelObservedDesk = desk;
+	studioPanelObserver = new ResizeObserver(function () { studioPanelClampAll(); });
+	studioPanelObserver.observe(desk);
+}
+
+$(window).on('resize', function () { studioPanelClampAll(); });
+
+function studioApplyLayoutSettings() {
+	studioLoadPanelStates();
+	studioApplyPanelGeometries();
+	// the timeline is the working surface, so it starts at the front
+	var front = 'tracks';
+	if (studioPanelStateFor('tracks').minimized) {
+		$.each(studioPanelNames, function (i, name) {
+			if (!studioPanelStateFor(name).minimized) { front = name; return false; }
+		});
 	}
-	studioPersistPanelPosition(drag.name, studioFloatState(drag.name, drag.panel));
-});
+	studioPanelRaise(front);
+	studioPanelTaskbarRefresh();
+	studioPanelObserveDesk();
+	studioUpdateTrackCount();
+}
 
-// ---- width grip -------------------------------------------------------------
-
-// The right edge sets a docked panel's width. The width snaps to the 8px grid
-// and to a neighbour's width, and the panel keeps it; the tracks panel (or any
-// panel the person has not sized) takes the rest of its row. The drag leaves
-// Arrange, because a width is manual packing.
-var studioWidthResize = null;
-
-$(document).on('pointerdown', '.studio_width_handle', function (e) {
-	if (e.originalEvent && e.originalEvent.button) { return; }
-	var name = $(this).attr('data-studio-width');
-	var panel = studioPanelElement(name);
-	if (!panel.length || panel.hasClass('studio_panel_floating')) { return; }
-	studioExitArrange(true);
-	var rect = panel[0].getBoundingClientRect();
-	studioWidthResize = {
-		name: name,
-		panel: panel,
-		x: e.originalEvent.clientX,
-		startW: rect.width
-	};
-	panel.addClass('studio_panel_resizing');
-	try { this.setPointerCapture(e.originalEvent.pointerId); } catch (err) {}
-	e.preventDefault();
-	e.stopPropagation();
-});
-
-$(document).on('pointermove', function (e) {
-	if (!studioWidthResize) { return; }
-	var w = studioSnapPanelWidth(studioWidthResize.panel,
-		studioWidthResize.startW + (e.originalEvent.clientX - studioWidthResize.x));
-	studioWidthResize.panel.css({ width: w + 'px', flex: '0 0 auto' });
-	e.preventDefault();
-});
-
-$(document).on('pointerup pointercancel', function () {
-	if (!studioWidthResize) { return; }
-	var resize = studioWidthResize;
-	studioWidthResize = null;
-	resize.panel.removeClass('studio_panel_resizing');
-	studioPersistPanelWidth(resize.name, Math.round(resize.panel[0].getBoundingClientRect().width));
+$(document).on('click', '#studio_pedalboard_close', function () {
+	studioPedalboardOpen(false);
 });
 
 // ---- track row height ------------------------------------------------------
 
-// A track keeps a default row height; its bottom edge drags it taller or
-// shorter. The height belongs to the song (studioSaver writes track_height),
-// the timeline scrolls, and the automation lane keeps its own height.
+// A track keeps a default row height inside the timeline window; its bottom
+// edge drags it taller or shorter. The height belongs to the song
+// (studioSaver writes track_height), the timeline scrolls, and the automation
+// lane keeps its own height.
 var studioTrackResize = null;
 
 function studioTrackHeightClamp(h) {
@@ -953,48 +583,6 @@ $(document).on('pointerup pointercancel', function () {
 	studioTrackResize = null;
 	if (typeof studioDrawChannel === 'function' && ch) { studioDrawChannel(ch); }
 	studioSaver();
-});
-
-$(document).on('click', '.studio_hide_toggle', function () {
-	var name = $(this).attr('data-panel');
-	var hidden = $(this).attr('aria-pressed') == 'true';
-	studioSetPanelHidden(name, !hidden, true);
-});
-
-$(document).on('click', '.studio_float_toggle', function () {
-	var name = $(this).attr('data-panel');
-	var panel = studioPanelElement(name);
-	studioExitArrange(true);
-	if (panel.hasClass('studio_panel_floating')) { studioDockPanel(name); }
-	else { studioFloatPanel(name, null, true); }
-});
-
-// The width control cycles a docked panel between one and two columns. A float is
-// sized by its own box, so the control is hidden while it floats.
-$(document).on('click', '.studio_span_toggle', function () {
-	var name = $(this).attr('data-panel');
-	var panel = studioPanelElement(name);
-	if (!panel.length || panel.hasClass('studio_panel_floating')) { return; }
-	studioExitArrange(true);
-	studioPanelSpan[name] = (studioPanelSpanValue(name) >= STUDIO_PANEL_MAX_SPAN)
-		? STUDIO_PANEL_MIN_SPAN : STUDIO_PANEL_MAX_SPAN;
-	studioApplyPanelSpan(name);
-	studioManualReflow();
-	studioPersistPanelPosition(name, {
-		docked: true,
-		order: studioPanelOrderIndex(name),
-		span: studioPanelSpanValue(name)
-	});
-});
-
-$(document).on('click', '.studio_dock', function () {
-	studioExitArrange(true);
-	studioDockPanel($(this).attr('data-panel'));
-});
-
-
-$(document).on('click', '#studio_pedalboard_close', function () {
-	studioPedalboardOpen(false);
 });
 
 // ---- the dynamic track list ------------------------------------------------

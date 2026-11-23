@@ -134,30 +134,32 @@
 		<button id="studio_pedals" class="hover" aria-pressed="false" hint="<%= &subs::ui('Open or close the pedalboard') %>"><%= &subs::ui('Pedals') %></button>
 		<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
 		<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Loop" class="little_thumb hover" id="studio_loop">
-		<button class="studio_hide_toggle hover" data-panel="mixer" data-setting="hide_channel_strips" data-hide-label="Hide strips" data-show-label="Show strips" aria-pressed="false" hint="<%= &subs::ui('Hide the channel strips') %>"><%= &subs::ui('Hide strips') %></button>
-		<button class="studio_float_toggle hover" data-panel="mixer" hint="<%= &subs::ui('Float the channel strips') %>"><%= &subs::ui('Float strips') %></button>
-		<button class="studio_hide_toggle hover" data-panel="transport" data-setting="hide_transport" data-hide-label="Hide transport" data-show-label="Show transport" aria-pressed="false" hint="<%= &subs::ui('Hide the transport') %>"><%= &subs::ui('Hide transport') %></button>
-		<button class="studio_float_toggle hover" data-panel="transport" hint="<%= &subs::ui('Float the transport') %>"><%= &subs::ui('Float transport') %></button>
-		<button class="studio_hide_toggle hover" data-panel="tracks" data-setting="hide_tracks" data-hide-label="Hide tracks" data-show-label="Show tracks" aria-pressed="false" hint="<%= &subs::ui('Hide the track listing') %>"><%= &subs::ui('Hide tracks') %></button>
-		<button class="studio_float_toggle hover" data-panel="tracks" hint="<%= &subs::ui('Float the track listing') %>"><%= &subs::ui('Float tracks') %></button>
-		<button class="studio_hide_toggle hover" data-panel="drums" data-setting="hide_drums" data-hide-label="Hide drums" data-show-label="Show drums" aria-pressed="false" hint="<%= &subs::ui('Hide the drums') %>"><%= &subs::ui('Hide drums') %></button>
-		<button class="studio_float_toggle hover" data-panel="drums" hint="<%= &subs::ui('Float the drums') %>"><%= &subs::ui('Float drums') %></button>
+		<%# The top bar is the panels' own taskbar: one entry per interior window,
+		   so a minimized panel is still one press away. The panel's own title bar
+		   carries Minimize and Maximize. %>
+		<div id="studio_panel_taskbar" class="studio_panel_taskbar" role="toolbar" aria-label="<%= &subs::ui('Studio panels') %>">
+			<button class="studio_panel_task hover" data-panel="transport" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Transport') %></button>
+			<button class="studio_panel_task hover" data-panel="tracks" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Tracks') %></button>
+			<button class="studio_panel_task hover" data-panel="mixer" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Channels') %></button>
+			<button class="studio_panel_task hover" data-panel="drums" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Drums') %></button>
+		</div>
 		<%# Effects are added from the pedalboard now, so this end of the bar
 		   carries the track action instead of a second effect palette. %>
 		<button id="studio_add_track" class="hover" title="<%= &subs::ui('Add a track, up to 32') %>" hint="<%= &subs::ui('Add a track, up to 32') %>"><%= &subs::ui('Add track') %></button>
 	</div>
 	<div id="studio_grid" class="studio_grid">
-	<%# The drum machine is a docked instrument panel; its own template carries
+	<%# The drum machine is an interior panel window; its own template carries
 	   its data, its markup and its script. %>
 	<%= include 'studio/drums' %>
 	<div id="studio_tracks_panel" class="studio_panel">
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="tracks" hint="<%= &subs::ui('Drag to move the track listing') %>"><%= &subs::ui('Tracks') %></span>
-			<button class="studio_dock hover" data-panel="tracks" hint="<%= &subs::ui('Dock the tracks') %>"><%= &subs::ui('Dock') %></button>
-			<button class="studio_span_toggle hover" data-panel="tracks" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
+			<span class="studio_panel_buttons">
+				<button class="studio_panel_min hover" data-panel="tracks" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
+				<button class="studio_panel_max hover" data-panel="tracks" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
+			</span>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="tracks" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
-		<span class="studio_width_handle" data-studio-width="tracks" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
 		<%# The ruler sits over the timeline. Its first cell matches a track's panel
 		   column, so a tick lands over the same moment on every canvas below. %>
 		<div id="studio_ruler" class="studio_ruler">
@@ -199,11 +201,12 @@
 	<div id="studio_mixer" class="studio_panel">
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="mixer" hint="<%= &subs::ui('Drag to move the channel strips') %>"><%= &subs::ui('Channels') %></span>
-			<button class="studio_dock hover" data-panel="mixer" hint="<%= &subs::ui('Dock the channel strips') %>"><%= &subs::ui('Dock') %></button>
-			<button class="studio_span_toggle hover" data-panel="mixer" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
+			<span class="studio_panel_buttons">
+				<button class="studio_panel_min hover" data-panel="mixer" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
+				<button class="studio_panel_max hover" data-panel="mixer" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
+			</span>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="mixer" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
-		<span class="studio_width_handle" data-studio-width="mixer" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
 		<div id="studio_mixer_strips">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
 				<span class="channel channel_<%= $ch %>">
@@ -290,11 +293,12 @@
 	<div id="studio_transport_panel" class="studio_panel">
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="transport" hint="<%= &subs::ui('Drag to move the transport') %>"><%= &subs::ui('Transport') %></span>
-			<button class="studio_dock hover" data-panel="transport" hint="<%= &subs::ui('Dock the transport') %>"><%= &subs::ui('Dock') %></button>
-			<button class="studio_span_toggle hover" data-panel="transport" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
+			<span class="studio_panel_buttons">
+				<button class="studio_panel_min hover" data-panel="transport" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
+				<button class="studio_panel_max hover" data-panel="transport" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
+			</span>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="transport" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
-		<span class="studio_width_handle" data-studio-width="transport" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
 		<span id="studio_controls">
 			<div class="studio_transport_row" id="studio_transport_row">
 				<img class="little_thumb record hover" hint="Record" id="studio_record" src="<%= &subs::icon_for('/images/make believe/record.png') %>">

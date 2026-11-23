@@ -695,196 +695,50 @@
 		padding: 4px 10px;
 		background-color: var(--panel);
 	}
-	/* The class stands the grid down while Configure is open: the viewer and the
-	   panels behind it are out of the way, and a floated panel cannot overlap
-	   the settings. Removing the class restores whatever the hide toggles set. */
+	/* The class stands the desk down while Configure is open: the viewer and the
+	   interior panel windows are out of the way. */
 	#studio.studio_config_open #studio_viewer { display: none; }
-	#studio.studio_config_open #studio_grid,
-	#studio.studio_config_open > .studio_panel {
+	#studio.studio_config_open #studio_grid {
 		display: none;
 	}
-	/* Manual packing is a column of flex rows. A row holds the panels that share
-	   one line, so it is exactly as tall as its tallest panel: shorten a panel
-	   and its row shrinks, the rows below move up and their flex-grow takes the
-	   freed height. A row whose panels all carry a saved height is fixed; the
-	   rest share what is left. A floated panel leaves the flow (07_layout.js).
-	   Arrange swaps this for the explicit grid below. */
+	/* The desk is the panels' screen: every panel is an interior window,
+	   positioned and stacked inside this box. It never scrolls; a panel's own
+	   content does. */
 	.studio_grid {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
+		position: relative;
 		flex: 1 1 auto;
 		min-height: 0;
-		padding: 4px;
+		padding: 0;
 		box-sizing: border-box;
-		overflow-y: auto;
+		overflow: hidden;
+		background-color: var(--panel-2);
 	}
-	.studio_grid_row {
+	/* An interior panel window: a title bar, its content and a corner grip. The
+	   title bar stays put; each panel's own content is the scroll box. */
+	.studio_panel {
+		position: absolute;
+		box-sizing: border-box;
+		min-width: 180px;
+		min-height: 80px;
 		display: flex;
-		flex-direction: row;
-		align-items: stretch;
-		gap: 6px;
-		flex: 1 1 0;
-		min-width: 0;
+		flex-direction: column;
+		overflow: hidden;
+		background: var(--panel, #eee);
+		border: 2px solid var(--line, #333);
+		border-radius: 8px;
+		box-shadow: var(--shadow-2);
 	}
-	/* A docked panel never paints over its neighbour: each one is a scroll box
-	   (`min-height: 0` + `overflow: auto`) and its own content scrolls inside. */
-	.studio_grid > div,
-	.studio_grid_row > div {
-		min-width: 0;
-		min-height: 0;
-		position: relative;
-		overflow: auto;
-	}
-	.studio_grid > div {
-		grid-column: span 1;
-	}
-	/* the row is a flex box, not one more scroll box */
-	.studio_grid > .studio_grid_row {
-		min-height: 120px;
-		overflow: visible;
-		position: static;
-	}
-	/* Content widths in manual packing: the instruments start at a sensible
-	   width (the drums fit their sixteen steps) and the tracks panel grows into
-	   what is left. A saved width wins. */
-	.studio_grid_row > #studio_drums {
-		flex: 0 1 auto;
-		width: 360px;
-		min-width: 320px;
-	}
-	.studio_grid_row > #studio_tracks_panel {
-		flex: 1 1 280px;
-	}
-	.studio_grid_row > #studio_mixer {
-		flex: 1 1 300px;
-	}
-	.studio_grid_row > #studio_transport_panel {
-		/* the transport sizes to its controls: a narrow window must not get a wide
-		   empty band, and the wide arrangement still lets it start at the left */
-		flex: 0 1 auto;
-		width: fit-content;
-		max-width: 100%;
-		max-height: 104px;
-		align-self: flex-start;
-	}
-	/* ---- arranged mode ------------------------------------------------------
-	   Arrange gives the grid its explicit DAW areas: the transport keeps only
-	   its own height, the timeline takes the flexible middle, and the console
-	   gets a compact band at the foot. The placement is `!important` so the
-	   manual order/span inline styles (kept for when arranged mode ends) cannot
-	   override the named areas. 07_layout.js removes .studio_arranged the moment
-	   a panel is moved, floated, docked, widened or re-ordered, and the manual
-	   packing takes over again. */
-	#studio_grid.studio_arranged {
-		display: grid;
-		/* two equal columns: the timeline takes the whole middle band, and the
-		   drums (when open) take the right one */
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-		grid-auto-flow: dense;
-		grid-auto-rows: minmax(0, 1fr);
-		/* the console row is auto: its own 132px cap sizes the band, and that is
-		   well under 45% of the grid at the target window sizes, so the timeline
-		   keeps the room */
-		/* the timeline keeps a track's worth (90px) even on a short window, and
-		   the console takes at most 45% of the grid rather than sizing its row to
-		   the strip's full height and leaving the timeline at zero */
-		grid-template-rows: auto minmax(90px, 1fr) minmax(120px, 45%);
-		grid-template-areas:
-			"transport transport"
-			"tracks tracks"
-			"mixer mixer";
-		grid-auto-flow: row;
-		/* a very short window scrolls the whole arranged grid rather than
-		   clipping an area; each panel still scrolls inside itself */
-		overflow-y: auto;
-	}
-	#studio_grid.studio_arranged > #studio_transport_panel {
-		grid-area: transport !important;
-		/* one row that grows only when it wraps on a narrow window, and only as
-		   wide as the controls rather than reserving the whole top band */
-		height: auto;
-		min-height: 56px;
-		max-height: 104px;
-		width: fit-content;
-		max-width: 100%;
-		justify-self: start;
-	}
-	#studio_grid.studio_arranged > #studio_tracks_panel {
-		grid-area: tracks !important;
-	}
-	/* The drum machine is a fourth panel. Arrange gives it a column of its own
-	   only while it is docked and visible; hide or float it and the two-column
-	   grid above returns, so the timeline reclaims the width. The timeline keeps
-	   its full height either way. */
-	#studio_grid.studio_arranged.studio_drums_open {
-		/* the drums keep their sixteen steps readable beside a tracks column that
-		   takes the rest */
-		grid-template-columns: minmax(0, 1fr) clamp(320px, 36%, 360px);
-		grid-template-areas:
-			"transport transport"
-			"tracks drums"
-			"mixer mixer";
-	}
-	#studio_grid.studio_arranged.studio_drums_open > #studio_drums {
-		grid-area: drums !important;
-	}
-	#studio_grid.studio_arranged_compact.studio_drums_open {
-		grid-template-rows: auto minmax(0, 1fr) auto auto;
-		grid-template-areas:
-			"transport"
-			"tracks"
-			"mixer"
-			"drums";
-	}
-	#studio_grid.studio_arranged_compact.studio_drums_open > #studio_drums {
-		grid-area: drums !important;
-		height: auto;
-		max-height: 190px;
-	}
-	#studio_grid.studio_arranged > #studio_mixer {
-		grid-area: mixer !important;
-		height: auto;
-		/* the bar plus a whole channel strip (the strips are ~240px of knobs
-		   and jacks under the window's own control sizes); the row's 45% cap
-		   keeps it from starving the timeline, and the grip still trades the
-		   two */
-		height: 100%;
-		max-height: 100%;
-	}
-	/* A phone-width window stacks the same areas: transport, dominant timeline,
-	   then a compact console. The fixed auto-row heights are small so a short
-	   window still leaves the timeline room; every panel scrolls. */
-	#studio_grid.studio_arranged_compact {
-		grid-template-columns: minmax(0, 1fr);
-		grid-template-rows: auto minmax(0, 1fr) auto;
-		grid-template-areas:
-			"transport"
-			"tracks"
-			"mixer";
-		grid-auto-flow: row;
-		overflow-y: auto;
-	}
-	#studio_grid.studio_arranged_compact > #studio_transport_panel {
-		grid-area: transport !important;
-		height: auto;
-		min-height: 56px;
-	}
-	#studio_grid.studio_arranged_compact > #studio_tracks_panel {
-		grid-area: tracks !important;
-	}
-	#studio_grid.studio_arranged_compact > #studio_mixer {
-		grid-area: mixer !important;
-		height: 104px;
-	}
+	.studio_panel.studio_panel_minimized { display: none !important; }
+	.studio_panel.studio_panel_raised { box-shadow: var(--shadow-2), 0 0 0 1px var(--accent); }
+	.studio_panel.studio_panel_maximized { border-radius: 0; }
+	.studio_panel_dragging { opacity: .92; }
 	#studio_mixer {
 		min-width: 0;
 		min-height: 0;
-		width: 100%;
 		background-color: var(--panel-2);
 		display: flex;
 		flex-direction: column;
-		overflow: auto;
+		overflow: hidden;
 	}
 	#studio_mixer_strips {
 		display: flex;
@@ -909,12 +763,14 @@
 		min-height: 0;
 	}
 	#studio_transport_panel {
-		position: relative;
 		min-width: 0;
 		min-height: 0;
-		width: 100%;
-		/* the transport and its video previews scroll inside the window; nothing
-		   in this panel may paint below it */
+		/* the title bar stays put; the control row scrolls inside */
+		overflow: hidden;
+	}
+	#studio_controls {
+		flex: 1 1 auto;
+		min-height: 0;
 		overflow: auto;
 	}
 	#studio_jog_wheel {
@@ -938,13 +794,10 @@
 	#studio_time_display {
 		font-size: 18px;
 	}
-	/* Studio is a desk-wide app. The dock and the taskbar sit at 39997/39998;
-	   raising the Studio window above them keeps the transport clickable at
-	   800x600 without taking the desk's start menu or power menu with it. */
-	@media (min-width: 640px) {
-		.wind[app="studio"] { z-index: 39999 !important; }
-	}
-	/* ---- layout bar, per-track panels and floating panels ------------------ */
+	/* Studio follows the shared window stack. Its old z-index pin
+	   (`39999 !important`) kept it above the dock and taskbar, but it also
+	   stopped the window manager from ever raising it above another window. */
+	/* ---- layout bar, interior panel windows and the track list -------------- */
 	.studio_layout_bar {
 		display: flex;
 		flex-wrap: wrap;
@@ -985,11 +838,12 @@
 		flex-direction: column;
 		min-width: 0;
 		min-height: 0;
-		position: relative;
-		overflow: auto;
+		/* the title bar stays put; the ruler and timeline scroll below it */
+		overflow: hidden;
 	}
 	.studio_panel_bar {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 8px;
 		padding: 2px 4px;
@@ -997,6 +851,25 @@
 		background: color-mix(in srgb, var(--ink) 8%, transparent);
 		position: relative;
 		z-index: 2;
+		touch-action: none;
+		user-select: none;
+	}
+	.studio_panel_buttons {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		margin-left: auto;
+	}
+	.studio_panel_bar button {
+		font-size: 12px;
+		line-height: 1;
+		padding: 2px 6px;
+	}
+	.studio_panel_bar button,
+	.studio_panel_bar select,
+	.studio_panel_bar input,
+	.studio_panel_bar label {
+		cursor: var(--jawnos-cursor-default, default);
 	}
 	.studio_drag_handle {
 		cursor: var(--jawnos-cursor-grab, grab);
@@ -1004,38 +877,39 @@
 		user-select: none;
 		font-weight: bold;
 	}
+	/* the title spans the bar's empty room, so the whole title area drags */
 	.studio_panel_bar .studio_drag_handle {
 		font-size: 12px;
+		flex: 1 1 auto;
+		min-width: 40px;
 	}
-	.studio_dock {
-		display: none;
+	/* The top bar is the panels' taskbar: a small button per interior window. */
+	.studio_panel_taskbar {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow-x: auto;
+		padding: 2px;
+		border: 1px solid var(--line);
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--ink) 8%, transparent);
 	}
-	.studio_panel_floating .studio_dock {
-		display: inline-block;
-	}
-	/* the width toggle belongs to a docked panel; a float is sized by its box */
-	.studio_span_toggle {
+	.studio_panel_taskbar button {
+		flex: 0 0 auto;
 		font-size: 12px;
+		padding: 2px 10px;
+		border-radius: 4px;
 	}
-	.studio_panel_floating .studio_span_toggle {
-		display: none;
+	.studio_panel_taskbar button.studio_task_active {
+		background: var(--accent);
+		color: var(--panel);
 	}
-	.studio_panel_floating {
-		position: absolute !important;
-		z-index: 70000;
-		background: var(--panel, #eee);
-		border: 2px solid var(--line, #333);
-		border-radius: 8px;
-		box-shadow: var(--shadow-2);
-		max-width: 96%;
-		max-height: 92%;
-		overflow: auto;
+	.studio_panel_taskbar button.studio_task_minimized {
+		opacity: .55;
 	}
-	.studio_panel_dragging {
-		opacity: .92;
-		cursor: var(--jawnos-cursor-grabbing, grabbing);
-	}
-	/* a resize grip rides the floated panel's bottom-right corner */
+	/* the resize grip rides every interior window's bottom-right corner */
 	.studio_resize_handle {
 		display: block;
 		position: absolute;
@@ -1043,29 +917,10 @@
 		bottom: 0;
 		width: 18px;
 		height: 18px;
-		/* above the width grip: the corner belongs to the height drag */
 		z-index: 4;
 		cursor: var(--jawnos-cursor-nwse-resize, nwse-resize);
 		touch-action: none;
 		background: linear-gradient(135deg, transparent 0 42%, var(--line, #333) 43% 50%, transparent 51% 62%, var(--line, #333) 63% 70%, transparent 71%);
-	}
-	/* a width grip rides the docked panel's right edge; the corner keeps height */
-	.studio_width_handle {
-		display: block;
-		position: absolute;
-		right: 0;
-		top: 0;
-		bottom: 0;
-		width: 8px;
-		z-index: 3;
-		cursor: var(--jawnos-cursor-ew-resize, ew-resize);
-		touch-action: none;
-	}
-	.studio_width_handle:hover {
-		background: color-mix(in srgb, var(--accent) 35%, transparent);
-	}
-	.studio_panel_floating .studio_width_handle {
-		display: none;
 	}
 	.studio_panel_resizing { cursor: var(--jawnos-cursor-nwse-resize, nwse-resize); }
 	/* A track has its own row height (90px by default); its bottom edge is the
@@ -1599,9 +1454,6 @@
 		.studio_track_panel .channel_volume {
 			width: 56px;
 			flex-basis: 56px !important;
-		}
-		#studio_transport_panel {
-			flex-basis: 300px;
 		}
 	}
 	/* The transport's controls are larger, and the jog wheel is twice their size. */

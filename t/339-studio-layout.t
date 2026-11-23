@@ -1,14 +1,13 @@
-# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/09_pedals.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
-# covers:    The Studio layout: a compact panel beside every track with its five
-#            controls, four remembered hide toggles, a Dock control and pointer
-#            drag/resize handlers, a packing grid where an ordered panel can span
-#            one or two columns, a channel-strips panel that scrolls its faders
-#            into reach, a jog wheel in the transport's button row, a dynamic
-#            track list with Add track / a twice-pressed Delete, and a help topic
-#            that names them. Also the pedalboard as the one FX surface: the
-#            selected track's chain lives in the sheet, never in the track panel.
-#            Also the channel input/output selector: a bounded,
-#            scrollable box clamped to the window by channelSelect().
+# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep templates/studio/drums.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/09_pedals.js public/js/manager/studio/11_drums.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
+# covers:    The Studio layout as four interior panel windows: a taskbar in the
+#            top bar, a title bar with Minimize and Maximize, a drag handle, a
+#            corner resize grip and a remembered box for the transport, the
+#            tracks, the channels and the drums; the panel stack raises on a
+#            press and the taskbar restores or minimizes; the compact per-track
+#            panel with its controls; a dynamic track list with Add track and a
+#            twice-pressed Delete; the pedalboard as the one FX surface; a help
+#            topic that names the new controls; and a Studio window that follows
+#            the shared window stack instead of pinning its own z-index.
 #            Structure only; pixels are not asserted here.
 
 use strict;
@@ -28,21 +27,23 @@ sub slurp {
 
 my $root = $FindBin::Bin;
 $root =~ s{/t$}{};
-my $markup = slurp("$root/templates/studio/markup.html.ep");
-my $drums  = slurp("$root/templates/studio/drums.html.ep");
-my $sheet  = slurp("$root/templates/studio/studio.html.ep");
-my $style  = slurp("$root/templates/studio/style.html.ep");
-my $js     = slurp("$root/public/js/manager/studio.js");
-my $edit   = slurp("$root/public/js/manager/studio/03_editing.js");
-my $knobs  = slurp("$root/public/js/manager/studio/04_knobs.js");
-my $ctrl   = slurp("$root/public/js/manager/studio/06_controls.js");
-my $inputs = slurp("$root/public/js/manager/studio/05_inputs.js");
-my $layout = slurp("$root/public/js/manager/studio/07_layout.js");
-my $pedals = slurp("$root/public/js/manager/studio/09_pedals.js");
-my $winjs  = slurp("$root/public/js/manager/windows.js");
-my $fitjs  = slurp("$root/public/js/manager/windows/02_fit.js");
-my $maker  = slurp("$root/lib/JawnOS/Manager/Part22.pm");
-my $help   = slurp("$root/perl/help/topics_apps.pl");
+my $markup  = slurp("$root/templates/studio/markup.html.ep");
+my $drums   = slurp("$root/templates/studio/drums.html.ep");
+my $sheet   = slurp("$root/templates/studio/studio.html.ep");
+my $style   = slurp("$root/templates/studio/style.html.ep");
+my $js      = slurp("$root/public/js/manager/studio.js");
+my $edit    = slurp("$root/public/js/manager/studio/03_editing.js");
+my $knobs   = slurp("$root/public/js/manager/studio/04_knobs.js");
+my $ctrl    = slurp("$root/public/js/manager/studio/06_controls.js");
+my $inputs  = slurp("$root/public/js/manager/studio/05_inputs.js");
+my $layout  = slurp("$root/public/js/manager/studio/07_layout.js");
+my $pedals  = slurp("$root/public/js/manager/studio/09_pedals.js");
+my $drumsjs = slurp("$root/public/js/manager/studio/11_drums.js");
+my $winjs   = slurp("$root/public/js/manager/windows.js");
+my $fitjs   = slurp("$root/public/js/manager/windows/02_fit.js");
+my $maker   = slurp("$root/lib/JawnOS/Manager/Part22.pm");
+my $help    = slurp("$root/perl/help/topics_apps.pl");
+my $all     = $markup . $drums;
 
 # --- one compact panel per track, with its controls -------------------------
 like($markup, qr/class="studio_track_panel"/, 'the track row carries a compact panel');
@@ -58,42 +59,144 @@ like($markup, qr/class="studio_track_automation hover"/, 'the panel has an autom
 like($markup, qr/class="studio_track_name"/, 'the panel has an editable name');
 like($markup, qr/id="studio_track_row_<%=\s*\$ch\s*%>"/, 'each row is addressable by channel');
 
-# --- four independent hide toggles, each with a setting name ----------------
-my %hide = (
-	hide_channel_strips  => 'mixer',
-	hide_transport       => 'transport',
-	hide_tracks          => 'tracks',
-);
-for my $setting (sort keys %hide) {
-	like($markup, qr/data-setting="$setting"/, "the $setting toggle is in the markup");
+# --- the top bar is the panels' taskbar -------------------------------------
+like($markup, qr/id="studio_panel_taskbar"[^>]*class="studio_panel_taskbar"/,
+	'the layout bar carries the panel taskbar');
+like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_arrange"[\s\S]*id="studio_panel_taskbar"[\s\S]*id="studio_add_track"/,
+	'the taskbar sits between Arrange and Add track');
+for my $panel (qw(transport tracks mixer drums)) {
+	like($markup, qr/class="studio_panel_task hover" data-panel="$panel"/,
+		"$panel has a taskbar entry");
 }
-unlike($markup, qr/hide_synth/, 'the synth panel and its hide toggle are gone');
-unlike($layout, qr/hide_synth/, 'the layout maps no synth hide setting');
-like($markup, qr/data-panel="mixer"[^>]*data-setting="hide_channel_strips"/s,
-	'the channel-strip toggle names its panel');
-like($markup, qr/data-panel="transport"[^>]*data-setting="hide_transport"/s,
-	'the transport toggle names its panel');
-like($markup, qr/data-panel="tracks"[^>]*data-setting="hide_tracks"/s,
-	'the track-listing toggle names its panel');
-like($layout, qr/studioHideSettings\s*=\s*\{/s, 'the layout part maps the toggles to settings');
-like($layout, qr/studioSetPanelHidden/, 'one function hides and shows a panel');
-like($layout, qr/mixer\.settings\[studioHideSettings\[name\]\] = hidden \? 'yes' : 'no'/,
-	'the hide choice is stored as a Studio setting');
+like($markup, qr/class="studio_panel_task hover"[^>]*hint="<%= &subs::ui\('Show this panel, or minimize it'\) %>"/,
+	'the taskbar entry says what a press does');
+like($style, qr/\.studio_panel_taskbar\s*\{[^}]*display:\s*flex/s, 'the taskbar is a flex row');
+like($style, qr/\.studio_panel_taskbar\s*\{[^}]*overflow-x:\s*auto/s, 'a long taskbar scrolls');
+like($style, qr/\.studio_panel_taskbar button\.studio_task_active\s*\{/s,
+	'the front panel wears the active state');
+like($style, qr/\.studio_panel_taskbar button\.studio_task_minimized\s*\{/s,
+	'a minimized panel reads as minimized in the taskbar');
 
-# --- floating panels: a Dock control and pointer drag for each --------------
-for my $panel (qw(mixer transport tracks)) {
-	like($markup, qr/class="studio_dock hover" data-panel="$panel"/,
-		"$panel has a Dock control");
+# --- every panel is an interior window with its own controls ----------------
+for my $panel (qw(tracks mixer transport)) {
+	like($markup, qr/class="studio_panel_min hover" data-panel="$panel"[^>]*hint="<%= &subs::ui\('Minimize this panel'\) %>"/,
+		"$panel has a Minimize button");
+	like($markup, qr/class="studio_panel_max hover" data-panel="$panel"[^>]*hint="<%= &subs::ui\('Maximize or restore this panel'\) %>"/,
+		"$panel has a Maximize button");
 	like($markup, qr/data-studio-drag="$panel"/, "$panel has a drag handle");
+	like($markup, qr/class="studio_resize_handle" data-studio-resize="$panel"/,
+		"$panel has a resize grip");
 }
-unlike($markup, qr/data-panel="synth"/, 'the synth panel has no Dock or drag control');
+like($drums, qr/data-studio-drag="drums"/, 'the drums have a drag handle');
+like($drums, qr/class="studio_panel_min hover" data-panel="drums"/, 'the drums have a Minimize button');
+like($drums, qr/class="studio_panel_max hover" data-panel="drums"/, 'the drums have a Maximize button');
+like($drums, qr/class="studio_resize_handle" data-studio-resize="drums"/,
+	'the drums have a resize grip');
+like($markup, qr/class="studio_panel_buttons"/, 'the title-bar buttons share a group');
+like($style, qr/\.studio_panel_buttons\s*\{[^}]*margin-left:\s*auto/s,
+	'the buttons sit at the far end of the title bar');
+unlike($all, qr/studio_dock|studio_span_toggle|studio_width_handle|studio_hide_toggle|studio_float_toggle/,
+	'the old Dock, Narrow/Wide, width grip, Hide and Float controls are gone');
+unlike($all, qr/Dock the (?:tracks|drums|transport|channel strips)/,
+	'the old Dock labels are gone');
+unlike($all, qr/Float the (?:channel strips|transport|track listing|drums)/,
+	'the old Float labels are gone');
+
+# --- the stylesheet makes each panel a window on a desk ---------------------
+like($style, qr/\.studio_panel\s*\{[^}]*position:\s*absolute/s, 'a panel is positioned on the desk');
+like($style, qr/\.studio_panel\s*\{[^}]*display:\s*flex/s, 'a panel stacks its title bar over its content');
+like($style, qr/\.studio_panel\s*\{[^}]*overflow:\s*hidden/s, 'a panel clips to its own box');
+like($style, qr/\.studio_panel\s*\{[^}]*border-radius:\s*8px/s, 'a panel reads as its own window');
+like($style, qr/\.studio_grid\s*\{[^}]*position:\s*relative/s, 'the grid is the desk');
+like($style, qr/\.studio_grid\s*\{[^}]*overflow:\s*hidden/s, 'the desk contains every window');
+like($style, qr/\.studio_panel\.studio_panel_minimized\s*\{\s*display:\s*none/s,
+	'minimizing hides the window');
+like($style, qr/\.studio_panel\.studio_panel_maximized\s*\{/s, 'a maximized window has its own state');
+like($style, qr/\.studio_panel\.studio_panel_raised\s*\{/s, 'the front window is marked');
+like($style, qr/\.studio_panel_dragging\s*\{[^}]*opacity/s, 'a dragged window reads as moving');
+like($style, qr/\.studio_resize_handle\s*\{[^}]*nwse-resize/s, 'the corner grip resizes both axes');
+like($style, qr/\.studio_drag_handle\s*\{[^}]*cursor:\s*var\(--jawnos-cursor-grab/s,
+	'the title handle shows the grabbing cursor');
+like($style, qr/\.studio_panel_bar \.studio_drag_handle\s*\{[^}]*flex:\s*1 1 auto/s,
+	'the title handle spans the bar so the empty room drags');
+like($style, qr/\.studio_panel_bar\s*\{[^}]*flex-wrap:\s*wrap/s, 'a short panel title bar wraps');
+like($style, qr/#studio_transport_panel\s*\{[^}]*overflow:\s*hidden/s,
+	'the transport title bar stays put');
+like($style, qr/#studio_controls\s*\{[^}]*overflow:\s*auto/s, 'the transport controls scroll inside');
+like($style, qr/#studio_tracks_panel\s*\{[^}]*overflow:\s*hidden/s,
+	'the tracks title bar stays put');
+like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-x:\s*auto/s, 'the strips scroll sideways');
+like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-y:\s*auto/s, 'the strips scroll vertically');
+unlike($style, qr/studio_panel_floating|studio_grid_row|studio_arranged|studio_drums_open|studio_width_handle|studio_dock\b|studio_span_toggle/,
+	'the old packing and float rules are gone');
+
+# --- the Studio window follows the shared z-index stack --------------------
+# The old rule pinned the window at 39999 !important. That kept it above the
+# dock, but it also wrote the value into every restored stack, so every other
+# window rose past it and Studio could never be raised again.
+unlike($style, qr/\.wind\[app="studio"\]/, 'Studio no longer pins its window z-index');
+unlike($style, qr/z-index:\s*39999\s*!important/, 'the sticky z-index override is gone');
+like($maker, qr/%app_default_size\s*=\s*\(\s*studio\s*=>\s*\{\s*width\s*=>\s*1000,\s*height\s*=>\s*760/,
+	'Studio asks the window helper for a 1000x760 default');
+like($maker, qr/default_width="' \. \$default_width \. '" default_height="' \. \$default_height \. '"/,
+	'the window element carries its default size for the tile joiner');
+like($winjs, qr/win\.attr\('default_width'\)\) \|\| windowTileDefaultWidth/,
+	'the tile joiner uses the app default and keeps 480 as the fallback');
+
+# --- one layout engine owns the panel windows -------------------------------
+like($layout, qr/var studioPanelNames = \['transport', 'tracks', 'mixer', 'drums'\]/,
+	'the panels have a fixed taskbar order');
+like($layout, qr/function studioPanelElement\(name\)/, 'one helper finds a panel');
+like($layout, qr/function studioPanelStateFor\(name\)/, 'one helper owns a panel state');
+like($layout, qr/function studioDefaultPanelLayout\(size\)/, 'one preset places the panels');
+like($layout, qr/function studioArrangeWindows\(persist\)/, 'Arrange applies that preset');
+like($layout, qr/'#studio_arrange'/, 'the Arrange button runs the preset');
+like($layout, qr/function studioApplyPanelGeometry\(name\)/, 'one function applies a panel box');
+like($layout, qr/function studioCapturePanelBox\(name\)/, 'a moved window records its box');
+like($layout, qr/function studioPersistPanelState\(name\)/, 'a window box is saved');
+like($layout, qr/'studio_panel_position_' \+ name/, 'the box is one setting per panel');
+like($layout, qr/minimized: !!state\.minimized/, 'the minimized state is saved with the box');
+like($layout, qr/maximized: !!state\.maximized/, 'the maximized state is saved with the box');
+like($layout, qr/function studioLoadPanelStates\(\)/, 'saved states are restored');
+like($layout, qr/studioLegacyHidden/, 'the old Hide setting is read once on upgrade');
+like($layout, qr/function studioRaisePanel|function studioPanelRaise\(name\)/, 'one function raises a panel');
+like($layout, qr/studioPanelZ \+= 1/, 'the panel stack climbs');
+like($layout, qr/function studioPanelFront\(\)/, 'one helper reads the front panel');
+like($layout, qr/function studioPanelTaskbarRefresh\(\)/, 'one helper paints the taskbar');
+like($layout, qr/function studioPanelSetMinimized\(name, minimized, persist\)/,
+	'one function minimizes and restores');
+like($layout, qr/function studioPanelToggleMaximized\(name, persist\)/,
+	'one function maximizes and restores');
+like($layout, qr/click', '\.studio_panel_min'/, 'the Minimize button is wired');
+like($layout, qr/click', '\.studio_panel_max'/, 'the Maximize button is wired');
+like($layout, qr/click', '\.studio_panel_task'/, 'the taskbar is wired');
+like($layout, qr/studioPanelFront\(\) === name/, 'the front panel minimizes from the taskbar');
+like($layout, qr/studioPanelSetMinimized\(name, false, true\);[\s\S]*?studioPanelRaise\(name\);/,
+	'a minimized panel comes back raised');
 like($layout, qr/'pointerdown', '\.studio_drag_handle'/, 'dragging starts on pointerdown');
-like($layout, qr/'pointermove'/, 'the drag follows pointermove');
-like($layout, qr/'pointerup pointercancel'/, 'the drag ends on pointerup');
-like($layout, qr/studio_panel_dragging/, 'a dragged panel carries a class');
-like($layout, qr/studio_panel_floating/, 'a detached panel carries a class');
-like($layout, qr/studio_panel_position_/, 'each panel position is stored as a setting');
-like($layout, qr/#studio'\)\.append\(panel\)/, 'a floating panel is positioned inside the Studio window');
+like($layout, qr/'pointerdown', '\.studio_resize_handle'/, 'resizing starts on pointerdown');
+like($layout, qr/'pointermove'/, 'the drag and resize follow pointermove');
+like($layout, qr/'pointerup pointercancel'/, 'the drag and resize end on pointerup');
+like($layout, qr/'pointerdown', '\.studio_panel'/, 'a press inside a panel raises it');
+like($layout, qr/function studioPanelBox\(/, 'one clamp keeps a window on the desk');
+like($layout, qr/function studioPanelClampAll\(\)/, 'a window is pulled back onto the desk');
+like($layout, qr/studioPanelObserveDesk\(\)/, 'a desk resize re-clamps the windows');
+like($layout, qr/ResizeObserver/, 'the desk resize is observed');
+like($layout, qr/function studioSnapTo\(value, candidates\)/, 'a drag snaps to the grid');
+like($layout, qr/studioSnapTo\(studioPanelResize\.width/, 'a resize snaps both axes');
+like($layout, qr/if \(state\.maximized\) \{\s*state\.maximized = false;/, 'dragging restores a maximized window first');
+unlike($layout, qr/studio_panel_floating|studioManualReflow|studioExitArrange|studioSetPanelHidden|studioFloatPanel|studioDockPanel/,
+	'the old float/dock/packing engine is gone');
+
+# --- Arrange lays the windows in the DAW order ------------------------------
+like($layout, qr/var transportHeight = Math\.max\(64, Math\.min\(112/, 'the transport window keeps a slim top band');
+like($layout, qr/drums: \{ left: tracksWidth \+ gap, top: middleTop/, 'the drums sit beside the timeline');
+like($layout, qr/mixer: \{ left: 0, top: height - mixerHeight/, 'the console sits at the foot');
+like($layout, qr/if \(width < 720\)/, 'a narrow desk stacks the windows');
+like($layout, qr/state\.minimized = false;[\s\S]*?state\.maximized = false;/,
+	'Arrange brings every window back');
+like($help, qr/Arrange, beside the panel taskbar/, 'help describes Arrange beside the taskbar');
+like($help, qr/the drum machine sits beside it/, 'help puts the drums beside the timeline');
 
 # --- dynamic tracks: Add track, Delete twice, cap 32 ------------------------
 like($markup, qr/id="studio_add_track"/, 'the Add track control exists');
@@ -108,11 +211,6 @@ like($layout, qr/studioChannelEngine\(ch\)/, 'a new track creates its engine cha
 like($layout, qr/studioSaveTrackCount/, 'the track count is persisted');
 like($layout, qr/studioEnsureTracksForSong/, 'a loaded song restores its own track rows');
 like($style, qr/studio_track_automation_lane/, 'an automation lane exists for the view toggle');
-like($style, qr/#studio_mixer_strips[\s\S]*overflow-x: auto/, 'the strips scroll instead of clipping');
-like($style, qr/#studio_controls\s*\{[^}]*position:\s*static/s,
-	'the transport controls sit in the panel flow instead of an absolute rail');
-like($style, qr/\.studio_transport_row\s*\{[^}]*width:\s*100%/s,
-	'the transport row uses the panel width');
 
 # --- the pedalboard is a bottom sheet, opened from the layout bar ----------
 like($markup, qr/id="studio_pedalboard_close"/, 'the pedalboard has a close control');
@@ -120,12 +218,10 @@ like($edit, qr/function studioPedalboardOpen\(show\)/, 'one open/close path serv
 like($edit, qr/\$\('#studio_pedals'\)\.attr\('aria-pressed'/, 'the Pedals button follows the sheet');
 like($edit, qr/'#studio_pedals, #pedalboard_hamburger'/, 'the Pedals button and the old burger both toggle it');
 like($layout, qr/'#studio_pedalboard_close'[\s\S]*studioPedalboardOpen\(false\)/, 'the close control hides the sheet');
-like($layout, qr/studioPedalboardOpen\(true\)/,
-	'FX opens the sheet rather than toggling it');
-like($layout, qr/click', '\.studio_track_fx'[\s\S]*?studioRackRender\(ch\);[\s\S]*?studioPedalboardOpen\(true\);/, 
+like($layout, qr/studioPedalboardOpen\(true\)/, 'FX opens the sheet rather than toggling it');
+like($layout, qr/click', '\.studio_track_fx'[\s\S]*?studioRackRender\(ch\)[\s\S]*?studioPedalboardOpen\(true\);/,
 	'FX selects the track, draws its chain and opens the pedalboard');
 unlike($layout, qr/studio_fx_open/, 'FX no longer opens a rack inside the track row');
-like($edit, qr/studioPedalboardOpen\(true\);[\s\S]*studio_rack_tile\[insert=/, 'a channel badge opens the sheet on its chain tile');
 like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_pedals"[^>]*hint="[^"]*Open or close the pedalboard/,
 	'the Pedals button sits in the layout bar');
 like($markup, qr/id="studio_pedals"[^>]*aria-pressed="false"/, 'the Pedals button starts closed');
@@ -135,359 +231,20 @@ like($markup, qr/class="studio_transport_row"[\s\S]*id="pedalboard_hamburger"/,
 	'the old burger stays in the transport row');
 like($style, qr/#pedalboard\s*\{[^}]*position:\s*absolute/s, 'the pedalboard is a sheet, not a flex row');
 like($style, qr/#pedalboard\s*\{[^}]*left:\s*0[^}]*right:\s*0[^}]*bottom:\s*0/s, 'the sheet pins to the window foot');
-like($style, qr/#pedalboard\s*\{[^}]*z-index:\s*70002/s, 'the sheet floats above the panels and floats');
+like($style, qr/#pedalboard\s*\{[^}]*z-index:\s*70002/s, 'the sheet floats above the panels and windows');
 like($style, qr/#pedalboard\s*\{[^}]*background-color:\s*var\(--panel-2\)/s, 'the sheet is opaque');
-like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_pedalboard_close"/,
-	'the close control sits in the sheet\'s own bar');
 like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_palette_effect"/,
 	'the effect palette select sits in the sheet\'s own bar');
 like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_palette_add"/,
 	'the Add button sits beside the palette select');
-like($style, qr/\.studio_pedalboard_bar\s*\{[^}]*justify-content:\s*space-between/s,
-	'the bar puts Close on the left and the palette on the right');
-like($style, qr/\.studio_pedalboard_bar\s*\{[^}]*height:\s*auto/s,
-	'the bar grows with what it holds');
-like($style, qr/#studio_palette_add\s*\{[^}]*font-size:\s*12px/s,
-	'the Add button keeps the bar\'s small size');
-like($style, qr/\.pedal\s*\{[^}]*flex:\s*0 0 auto/s, 'a tile keeps its width in the row');
-like($style, qr/\.pedal\s*\{[^}]*position:\s*relative/s, 'a tile is positioned in the row');
-like($style, qr/\.pedal\s*\{[^}]*left:\s*auto/s, 'the fixed left offset is gone');
-like($style, qr/\.pedal\s*\{[^}]*height:\s*190px/s, 'every tile is 190px tall');
-like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*344px/s, 'the dock fits a shorter window');
-like($style, qr/#pedalboard\s*\{[^}]*flex-direction:\s*column/s, 'the chain and the tiles stack in the sheet');
-like($style, qr/#studio_pedalboard_rack\s*\{[^}]*max-height:\s*240px/s, 'the board keeps a bounded height in the sheet');
-like($style, qr/#studio_pedalboard_rack\s*\{[^}]*overflow-x:\s*auto/s, 'a long board scrolls sideways');
-like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork fits inside the tile');
-unlike($markup, qr/count\s*\*\s*175/, 'no tile is placed by counted pixels');
-
-# --- overflow is contained, never painted over -----------------------------
-like($style, qr/\.studio_grid > div,\s*\n\s*\.studio_grid_row > div\s*\{[^}]*min-height:\s*0/s,
-	'every docked panel may shrink, in a grid or in a row');
-like($style, qr/\.studio_grid > div,\s*\n\s*\.studio_grid_row > div\s*\{[^}]*overflow:\s*auto/s,
-	'every docked panel scrolls its own content');
-like($style, qr/#studio_mixer_strips\s*\{[^}]*min-height:\s*0/s, 'the strips block may shrink');
-like($style, qr/#studio_viewer\s*\{[^}]*min-height:\s*0/s, 'the track area may shrink');
-like($markup, qr/id="studio_mixer_strips"[\s\S]*id="studio_master_rack"[\s\S]*id="studio_transport_panel"/,
-	'the master rack is the last child of the strips row');
-like($style, qr/\.studio_master_rack\s*\{[^}]*flex:\s*0 0 \d+px/s, 'the master rack is a compact strip');
-like($style, qr/\.studio_master_rack\s*\{[^}]*overflow:\s*auto/s, 'the master rack scrolls in place');
-
-# --- Arrange is one button for the DAW-informed arrangement ----------------
-like($markup, qr/id="studio_arrange"[^>]*hint="[^"]*Arrange the panels/,
-	'the Arrange control names its preset');
-like($layout, qr/var studioArrangeWide = \{[\s\S]*?order: \['transport', 'tracks', 'mixer'\]/,
-	'the wide preset runs transport, timeline, console');
-like($layout, qr/var studioArrangeWide = \{[\s\S]*?span: \{ transport: 2, tracks: 2, mixer: 2 \}/,
-	'the wide preset gives every panel the full width');
-like($layout, qr/var studioArrangeCompact = \{[\s\S]*?order: \['transport', 'tracks', 'mixer'\]/,
-	'the compact preset stacks the panels');
-like($layout, qr/var studioArrangeCompact = \{[\s\S]*?span: \{ transport: 2, tracks: 2, mixer: 2 \}/,
-	'the compact preset gives every panel the full width');
-unlike($layout, qr/synth/i, 'the layout no longer names a synth panel');
-like($layout, qr/function studioApplyArrange\(persist\)/, 'one function applies a preset');
-like($layout, qr/\$\(document\)\.on\('click', '#studio_arrange'/, 'the button applies the preset');
-like($layout, qr/if \(!any_saved\) \{[\s\S]*?studioApplyArrange\(true\)/,
-	'a first open with no saved order starts from the preset');
-like($layout, qr/if \(studioPanelElement\(name\)\.hasClass\('studio_panel_floating'\)\) \{[\s\S]*?studioDockPanel\(name, false\)/,
-	'Arrange brings a floated panel home');
-
-# --- arranged mode is an explicit DAW grid, left by any manual move --------
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(90px,\s*1fr\) minmax\(120px,\s*45%\)/s,
-	'the arranged rows are auto, a dominant timeline, then auto');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?"transport transport"[\s\S]*?"tracks tracks"[\s\S]*?"mixer mixer"/s,
-	'the wide areas run transport, the full-width timeline, then the console');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\)/s,
-	'the wide grid is two equal columns, with no synth column');
-like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*grid-area:\s*transport !important/s,
-	'the transport owns the top area');
-like($style, qr/#studio_grid\.studio_arranged > #studio_tracks_panel\s*\{[^}]*grid-area:\s*tracks !important/s,
-	'the timeline owns the middle area');
-like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*grid-area:\s*mixer !important/s,
-	'the console owns the bottom area');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(90px,\s*1fr\) minmax\(120px,\s*45%\)/s,
-	'the console row is auto rather than eating the timeline');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?overflow-y:\s*auto/s,
-	'a very short arranged window scrolls the grid instead of clipping an area');
-like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*height:\s*100%/s,
-	'the console fills its row, which is capped at 45% of the grid');
-like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*min-height:\s*56px/s,
-	'the transport is content height, not a whole equal row');
-like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*max-height:\s*104px/s,
-	'the transport grows only when its single row wraps');
-like($style, qr/#studio_grid\.studio_arranged_compact > #studio_transport_panel\s*\{[^}]*height:\s*auto/s,
-	'the compact transport is content height too');
-like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
-	'the compact arranged grid is one column');
-like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/s,
-	'the compact rows are transport, timeline and console');
-like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?"transport"[\s\S]*?"tracks"[\s\S]*?"mixer"/s,
-	'the compact areas stack in that order');
-
-# --- the transport sizes to its controls, wide or narrow -------------------
-like($style, qr/\.studio_grid_row > #studio_transport_panel\s*\{[^}]*flex:\s*0 1 auto/s,
-	'a manual row lets the transport shrink to its content');
-like($style, qr/\.studio_grid_row > #studio_transport_panel\s*\{[^}]*width:\s*fit-content/s,
-	'a manual row sizes the transport to its controls');
-like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*grid-area:\s*transport !important/s,
-	'the arranged transport still owns the top area');
-like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*width:\s*fit-content/s,
-	'the arranged transport does not reserve an empty band');
-like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*max-width:\s*100%/s,
-	'...but never grows past its column');
-like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*justify-self:\s*start/s,
-	'the arranged transport starts at the left edge');
-unlike($layout, qr/studioApplyNarrowClass/, 'no separate narrow-width class is needed');
-like($layout, qr/function studioSetArranged\(on, persist\)/, 'one function enters and leaves the mode');
-like($layout, qr/function studioExitArrange\(persist\)/, 'leaving the mode has its own helper');
-like($layout, qr/studioExitArrange\(true\);\n\tstudioFloatPanel\(name\);/, 'a drag leaves the mode');
-like($layout, qr/studioExitArrange\(true\);\n\tstudioDockPanel\(\$\(this\)\.attr\('data-panel'\)\);/, 'a Dock leaves the mode');
-
-# --- Dock puts a float where it was dropped -------------------------------
-like($layout, qr/function studioDockTarget\(name, panel\)/,
-	'a float finds the docked panel it was dropped on');
-like($layout, qr/function studioDockPosition\(name, panel, target\)/,
-	'the dropped place becomes the saved order');
-like($layout, qr/var dropped = \(persist !== false\) \? studioDockTarget\(name, panel\) : null;/,
-	'only a person pressing Dock re-orders; restoring keeps the saved order');
-like($layout, qr/if \(dropped\) \{ studioPersistPanelOrder\(\); \}/,
-	'the whole arrangement is saved after a drop');
-my ($dockpos) = $layout =~ /function studioDockPosition\(name, panel, target\) \{(.*?)\n\}/s;
-ok(defined $dockpos, 'the placement helper is found');
-$dockpos = '' unless defined $dockpos;
-like($dockpos, qr/studioPanelOrder\.splice\(to, 0, name\)/,
-	'the panel joins the order at the dropped place');
-like($dockpos, qr/if \(after\) \{ to\+\+; \}/,
-	'a drop below or right of the target lands after it');
-like($layout, qr/studioExitArrange\(true\);\n\tstudioPanelSpan\[name\]/, 'a width change leaves the mode');
-like($layout, qr/function studioReorderDockedPanel\(name, target\) \{\n\tstudioExitArrange\(true\);/, 'a re-order leaves the mode');
-like($layout, qr/studioExitArrange\(true\);\n\tif \(panel\.hasClass\('studio_panel_floating'\)\)/, 'the float control leaves the mode');
-like($layout, qr/mixer\.settings\['studio_panel_arranged'\] = on \? 'yes' : 'no'/, 'the mode is remembered as a setting');
-like($layout, qr/var arranged = String\([\s\S]*?studio_panel_arranged[\s\S]*?== 'yes'/, 'a reopen follows the remembered mode');
-like($layout, qr/if \(arranged && !\$\('\.studio_panel_floating'\)\.length\)/, 'a saved float hands the grid back');
-like($layout, qr/toggleClass\('studio_arranged_compact', studioIsNarrow\(\)\)/, 'a resize re-evaluates the compact mode');
-like($help, qr/Arrange is a mode, not a lock/, 'help says Arrange is a mode that manual moves leave');
-like($help, qr/the transport is a single row across the top/, 'help describes the arranged areas');
-
-# --- the Studio window opens at a desk size and stays inside itself --------
-like($maker, qr/%app_default_size\s*=\s*\(\s*studio\s*=>\s*\{\s*width\s*=>\s*1000,\s*height\s*=>\s*760/,
-	'Studio asks the window helper for a 1000x760 default');
-like($maker, qr/default_width="' \. \$default_width \. '" default_height="' \. \$default_height \. '"/,
-	'the window element carries its default size for the tile joiner');
-like($winjs, qr/win\.attr\('default_width'\)\) \|\| windowTileDefaultWidth/,
-	'the tile joiner uses the app default and keeps 480 as the fallback');
-like($style, qr/\.wind\[app="studio"\]\s*\{\s*z-index:\s*39999 !important/s,
-	'Studio is above the dock and taskbar');
-like($markup, qr/id="studio_tracks_panel"[\s\S]*id="studio_track_container"[\s\S]*id="studio_mixer"/,
-	'the hidden media container lives inside the track area');
-like($style, qr/#studio_track_container\s*\{[^}]*width:\s*1px[^}]*overflow:\s*hidden/s,
-	'the hidden media container is clipped');
-unlike($style, qr/#studio_track_container\s*\{[^}]*right:\s*-130px/s,
-	'the old off-window track container is gone');
-like($style, qr/#studio_transport_panel\s*\{[^}]*overflow:\s*auto/s,
-	'the transport clips or scrolls its own content');
-like($markup, qr/id="studio_transport_panel"[\s\S]*id="studio_controls"[\s\S]*id="studio_time_display"/,
-	'the control row and time display are inside the transport panel');
-like($layout, qr/function studioClampPanelPosition/,
-	'a saved float position has a clamp helper');
-like($layout, qr/studioFloatPanel\(name, position, false\)/,
-	'applying a saved position goes through the clamp');
-like($layout, qr/\$\(window\)\.on\('resize'[\s\S]*studioClampPanelPosition/,
-	'a resize re-clamps floating panels');
-
-# --- the packing grid, scrolling strips, resize grip and jog wheel row -----
-like($markup, qr/id="studio_grid"/, 'the four docked panels share a grid container');
-like($style, qr/grid-auto-flow:\s*dense/, 'auto-flow dense packs the panels into the gaps');
-like($style, qr/grid-column:\s*span/, 'a panel is sized by a column span');
-like($style, qr/grid-auto-rows:\s*minmax\(0,\s*1fr\)/, 'the implicit rows share the desk height');
-unlike($style, qr/\.studio_grid\s*\{[^}]*grid-template-areas/s,
-	'the manual grid still has no fixed named cells');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[^}]*grid-template-areas/s,
-	'the arranged grid names its cells');
-unlike($style, qr/^\s*#studio_mixer\s*\{[^}]*grid-area:/ms,
-	'the channel strips are not pinned to a fixed cell by their own rule');
-unlike($style, qr/^\s*#studio_transport_panel\s*\{[^}]*grid-area:/ms,
-	'the transport is not pinned to a fixed cell by its own rule');
-like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-y:\s*auto/s,
-	'the strips panel scrolls vertically so every fader is reachable');
-like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-x:\s*auto/s,
-	'many strips still scroll sideways');
-like($layout, qr/studioReorderDockedPanel/, 'a docked panel dropped on another is inserted before it');
-like($layout, qr/studioPanelOrder\.splice\(to, 0, name\)/, 'the dropped panel moves into the target position');
-like($layout, qr/function studioApplyPanelOrder/, 'the shared order is applied to the grid items');
-like($layout, qr/order:\s*studioPanelOrderIndex\(name\)/, 'a docked panel saves its order');
-
-# --- the width control gives a docked panel a second column ----------------
-for my $panel (qw(mixer transport tracks)) {
-	like($markup, qr/class="studio_span_toggle hover" data-panel="$panel"/,
-		"$panel has a Narrow/Wide control");
-}
-like($markup, qr/&subs::ui\('Wide'\)/, 'the width control starts in its translatable narrow state');
-like($layout, qr/studioApplyPanelSpan/, 'one function applies a panel span');
-like($layout, qr/studioPanelSpan\[name\] = \(studioPanelSpanValue\(name\) >= STUDIO_PANEL_MAX_SPAN\)/,
-	'the control cycles one and two columns');
-like($layout, qr/grid-column', 'span ' \+ span/, 'the span reaches the grid');
-like($layout, qr/span:\s*studioPanelSpanValue\(name\)/, 'the span is persisted with the order');
-like($style, qr/\.studio_panel_floating \.studio_span_toggle\s*\{\s*display:\s*none/s,
-	'a floated panel hides the width control');
-
-# --- drag moves both axes and keeps the box ---------------------------------
-like($layout, qr/left: clamped\.left \+ 'px', top: clamped\.top \+ 'px'/,
-	'the drag writes both left and top');
-like($layout, qr/function studioPanelBox[\s\S]*left:[\s\S]*top:[\s\S]*width:[\s\S]*height:/s,
-	'the saved box is left, top, width and height');
-like($layout, qr/studioPersistPanelPosition\(drag\.name, studioFloatState/,
-	'the drag persists width and height with the position');
-like($layout, qr/if \(!drag\.wasFloating && e\.type == 'pointerup'\)/,
-	'only a panel that started docked can swap cells');
-
-# --- the resize grip --------------------------------------------------------
-like($markup, qr/class="studio_resize_handle" data-studio-resize="mixer"/,
-	'the channel strips have a resize grip');
-like($markup, qr/data-studio-resize="transport"/, 'the transport has a resize grip');
-like($layout, qr/'pointerdown', '\.studio_resize_handle'/,
-	'a resize starts on the grip');
-like($layout, qr/studioPanelResize/, 'the resize is tracked while the pointer moves');
-like($layout, qr/studioPersistPanelPosition\(resize\.name, studioFloatState/,
-	'the resize persists width and height');
-like($style, qr/\.studio_resize_handle\s*\{[^}]*display:\s*block/s,
-	'a docked panel carries its resize grip too');
-
-# --- the jog wheel shares the transport row --------------------------------
-like($markup, qr/id="studio_controls"[\s\S]*class="studio_transport_row"[\s\S]*id="studio_jog_wheel"/s,
-	'the jog wheel sits in the transport button row');
-like($style, qr/\.studio_transport_row\s*\{[^}]*display:\s*flex/s,
-	'the buttons and wheel share one flex row');
-unlike($style, qr/#studio_jog_wheel\s*\{[^}]*right:/s,
-	'the wheel no longer hangs off the panel\'s right edge');
-
-# --- full screen is the window's shared control, not a Studio gesture -------
-unlike($winjs, qr/studioWindowFullSelector/, 'no double-press is bound to the maximize control');
-unlike($style, qr/window_full_viewport/, 'Studio keeps no full-viewport rule of its own');
-like($fitjs, qr/windowFullViewportEnter/, 'the window keeps its own full-view control');
-like($help, qr/full-screen button - behind the app icon/, 'the help names the shared full-screen button');
-
-# --- the help topic names the new controls ----------------------------------
-like($help, qr/'Add a track, up to 32'/, 'help names Add track and its cap');
-like($help, qr/Arrange the panels/, 'help names the Arrange control');
-like($help, qr/Every docked panel is its own scroll box/, 'help explains the no-overflow rule');
-like($help, qr/the master rack is the strips\\' last strip on the right/, 'help puts the master strip at the far right');
-like($help, qr/Show automation for this track/, 'help names the automation toggle');
-like($help, qr/Delete this track/, 'help names the per-track delete');
-like($help, qr/Hide the channel strips/, 'help names the strip hide toggle');
-like($help, qr/Hide the transport/, 'help names the transport hide toggle');
-like($help, qr/Hide the track listing/, 'help names the track hide toggle');
-like($help, qr/Dock the tracks/, 'help names the Dock control');
-like($help, qr/Close the pedalboard/, 'help names the pedalboard close');
-like($help, qr/Open or close the pedalboard/, 'help names the Pedals button');
-like($help, qr/The Pedals button in the layout bar opens the pedalboard as a sheet/,
-	'help describes the sheet over the console');
-like($help, qr/Open the pedalboard for this track/,
-	'help names the FX button in its on-screen words');
-like($help, qr/never lists effects/, 'help says the track panel keeps its height');
-like($help, qr/Every track has a compact panel/, 'help describes the per-track panel');
-like($help, qr/Drag to resize this panel/, 'help names the floated panel resize grip');
-like($help, qr/pack into a two-column grid/, 'help describes the packing grid');
-like($help, qr/Narrow\/Wide control/, 'help names the width control');
-like($help, qr/Drop a dragged docked panel/, 'help describes dropping a docked panel');
-like($help, qr/sits beside the strips/, 'help describes the transport beside the strips');
-like($help, qr/jog wheel shares the transport/, 'help describes the jog wheel in the button row');
-
-# --- the old fixed count is gone --------------------------------------------
-unlike($sheet, qr/\|\|\s*4\b/, 'the page no longer falls back to four tracks');
-unlike($knobs, qr/channel_count[^\n]*\|\|\s*4\b/, 'the initialiser no longer falls back to four tracks');
-like($sheet, qr/\|\|\s*1\b/, 'the page starts with one track');
-like($markup, qr/data-max-tracks="<%=\s*\$max_tracks\s*%>"/, 'the viewer carries the dynamic cap');
-unlike($markup, qr/channel_count\s*\|\|\s*4\b/, 'the markup no longer fixes the track count at four');
-
-# --- the split manifest names the new part ----------------------------------
-like($js, qr/07_layout\.js/, 'the studio index names the layout part');
-like($ctrl, qr/studioSyncTrackList/, 'loading a song restores the tracks it was saved with');
-like($edit, qr/'channel_count', 'value': '1'/, 'New song asks for a single track');
-
-# --- the console fills its width, master at the far right -------------------
-like($style, qr/#studio_mixer_strips \.channel\s*\{[^}]*flex:\s*1 1/s,
-	'the strips stretch to fill the console instead of leaving a gap');
-like($style, qr/#studio_mixer_strips \.channel\s*\{[^}]*min-width:\s*76px/s,
-	'every strip keeps a readable floor and the row scrolls only past it');
-like($markup, qr/class="studio_strip_body"[\s\S]*class="studio_strip_knobs"/,
-	'the strip puts its knobs and its fader in one row');
-like($markup, qr/class="channel_fader">[\s\S]{0,1200}?studio_strip_volume/,
-	'each strip carries the track volume as a fader');
-like($markup, qr/control="volume"[\s\S]{0,400}?class="channel_volume studio_strip_volume"/,
-	'the strip fader is the same volume control as the track slider');
-like($style, qr/\.studio_strip_body\s*\{[^}]*flex-direction:\s*row/s, 'the fader sits beside the knobs');
-like($style, qr/\.studio_strip_fader_group\s*\{[^}]*height:\s*80%/s, 'the volume group is 80% of the strip');
-like($style, qr/\.channel_fader\s*\{[^}]*height:\s*100%/s, 'the fader fills that group');
-like($knobs, qr/function studioChannelVolumeSet\(ch, value\)/,
-	'one setter owns the track volume');
-like($knobs, qr/\.channel_volume\[channel=[^\n]*\.val\(value\)/,
-	'either fader moves both');
-like($knobs, qr/function studioChannelVolumeSet[\s\S]{0,400}?playBus\.gain\.value = studioVolumeFraction\(value\)/,
-	'moving it applies the playback gain at once');
-like($knobs, qr/\$\(document\)\.on\('input change', '\.channel_volume'/,
-	'the strip fader and the track slider share one handler');
-like($knobs, qr/studioChannelVolumeSet\(\$\(vol\)\.attr\('channel'\)/,
-	'the wheel over either fader uses the same setter');
-like($help, qr/volume fader beside its knobs/,
-	'the help describes the strip fader');
-unlike($style, qr/\.studio_master_rack\s*\{[^}]*margin-left:\s*auto/s,
-	'the master rack is the last strip, not pushed away from the strips');
-like($style, qr/#studio_mixer\s*\{[^}]*overflow:\s*auto/s,
-	'the console contains its own content');
-
-# --- theme colours, never a palette of its own -----------------------------
-unlike($style, qr/\b(?:tan|brown|lightblue|lightgreen)\b/, 'Studio names no colour of its own');
-unlike($style, qr/#04325f/, 'the old navy text is gone');
-like($style, qr/background-color:\s*var\(--panel-2\)/, 'panels take the theme panel');
-like($style, qr/color:\s*var\(--ink\)/, 'text takes the theme ink');
-like($style, qr/color-mix\(in srgb, var\(--accent\)/, 'tints are mixed from the theme accent');
-
-# --- a track keeps its own height, dragged from its bottom edge -------------
-like($style, qr/\.studio_track\s*\{[^}]*height:\s*var\(--studio_track_height, 90px\)/s,
-	'a track has a 90px default row rather than the whole panel');
-like($style, qr/\.studio_track\s*\{[^}]*flex:\s*0 0 auto/s, 'a track never stretches to fill the panel');
-like($style, qr/\.studio_track_resize\s*\{[^}]*cursor:/s, 'the track bottom edge is a resize grip');
-like($style, qr/\.studio_track_automation_lane\s*\{[^}]*flex:\s*0 0 26px/s,
-	'the automation lane keeps its own height');
-like($markup, qr/class="studio_track_resize hover"[^>]*channel="<%=\s*\$ch\s*%>"/,
-	'every track row carries the grip');
-like($layout, qr/'pointerdown', '\.studio_track_resize'/, 'the grip starts a track resize');
-like($layout, qr/function studioTrackHeightClamp/, 'the track height is clamped');
-like($layout, qr/studioTrackResize\.row\.css\('height'/, 'the drag writes the row height');
-like($knobs, qr/song\[ch\]\['track_height'\] = h;/, 'the height is saved with the song');
-like($knobs, qr/if \(n == 'track_height'\)/, 'a saved height is restored');
-like($knobs, qr/if \(h < 64\) \{ return; \}/, 'a hidden track panel cannot save a zero height');
-
-# --- one transport row ------------------------------------------------------
-like($markup, qr/id="studio_transport_row"/, 'the transport row is addressable');
-like($markup, qr/class="studio_transport_field"[^>]*id="studio_bpm"/, 'tempo sits in the row');
-like($markup, qr/class="studio_transport_field"[^>]*id="studio_signature"/, 'the signature sits in the row');
-like($markup, qr/class="studio_transport_time"/, 'the position sits in the row');
-like($style, qr/\.studio_transport_row\s*\{[^}]*flex-wrap:\s*wrap/s,
-	'the row wraps only when the window is genuinely narrow');
-
-# --- the pedalboard is the one FX surface ----------------------------------
 my @racks = $markup =~ /class="studio_channel_rack"/g;
 is(scalar(@racks), 1, 'the markup carries exactly one chain container');
 like($markup, qr/id="pedalboard"[\s\S]*?class="studio_pedalboard_bar"[\s\S]*?id="studio_palette_add"[\s\S]*?id="studio_pedalboard_rack"/,
 	'the Add palette sits in the bar above the chain it adds to');
-unlike($markup, qr/studio_track_panel[\s\S]*?studio_channel_rack/,
-	'the track panel carries no effect list at all');
-like($markup, qr/class="studio_track_fx hover" channel="<%=\s*\$ch\s*%>" hint="<%=\s*&subs::ui\('Open the pedalboard for this track'\) %>"/,
-	'the FX hint names what the press does');
 like($pedals, qr/var holder = \$\('#studio_pedalboard_rack'\);/, 'the rack renders into the pedalboard');
-like($pedals, qr/holder\.attr\('channel', ch\);/, 'the container is stamped with the track it shows');
-like($pedals, qr/\$\('#studio_pedalboard_rack \.studio_rack_tile'\)/,
-	'reorder and move read the pedalboard tiles');
-like($pedals, qr/studioRackRender\(studioPaletteChannel\(\)\)/,
-	'the chain follows the selected track');
 for my $action (qw(studio_rack_led studio_rack_bypass studio_rack_up studio_rack_down studio_rack_remove)) {
 	like($pedals, qr/'\.$action/, "the rack keeps its $action action");
 }
-like($edit, qr/if \(show && typeof studioRackRender === 'function'\) \{ studioRackRender\(studioPaletteChannel\(\)\); \}/,
-	'opening the sheet draws the selected track\'s chain');
-unlike($style, qr/studio_fx_open/, 'no rule opens a rack inside the track row');
-unlike($pedals, qr/studio_fx_open/, 'the chain code no longer marks a track row open');
 
 # --- the track panel never bleeds over the canvas ---------------------------
 like($markup, qr/class="studio_track_line studio_track_actions"/,
@@ -499,135 +256,94 @@ like($style, qr/\.studio_track_actions\s*\{[^}]*overflow:\s*hidden/s,
 like($style, qr/\@media \(max-width: 800px\)[\s\S]*?\.studio_track_panel\s*\{[^}]*flex-basis:\s*118px/s,
 	'a phone width narrows the panel instead of overlaying the canvas');
 
-# --- docked resize, snapping to the grid and to neighbours -----------------
-like($layout, qr/function studioApplyPanelHeight/, 'a saved panel height is applied');
-like($layout, qr/function studioPersistPanelHeight/, 'a dragged panel height is saved');
-like($layout, qr/'studio_panel_height_' \+ name/, 'the height is stored as its own setting');
-like($layout, qr/function studioSnapTo/, 'one helper snaps a value');
-like($layout, qr/function studioSnapPanelHeight/, 'a docked height snaps to its neighbours');
-like($layout, qr/if \(!studioPanelResize\.floating\)/, 'a docked panel resizes by height');
-like($layout, qr/studioPersistPanelHeight\(resize\.name/, 'the docked resize persists on release');
-like($help, qr/snaps to the eight-pixel grid/, 'help explains the snap');
-like($help, qr/Drag a track\\'s bottom edge/, 'help explains the track resize');
+# --- tracks keep their own height and the transport keeps its row ----------
+like($style, qr/\.studio_track\s*\{[^}]*height:\s*var\(--studio_track_height, 90px\)/s,
+	'a track has a 90px default row rather than the whole panel');
+like($style, qr/\.studio_track_resize\s*\{[^}]*cursor:/s, 'the track bottom edge is a resize grip');
+like($markup, qr/class="studio_track_resize hover"[^>]*channel="<%=\s*\$ch\s*%>"/,
+	'every track row carries the grip');
+like($layout, qr/'pointerdown', '\.studio_track_resize'/, 'the grip starts a track resize');
+like($layout, qr/function studioTrackHeightClamp/, 'the track height is clamped');
+like($knobs, qr/song\[ch\]\['track_height'\] = h;/, 'the height is saved with the song');
+like($markup, qr/id="studio_transport_row"/, 'the transport row is addressable');
+like($markup, qr/class="studio_transport_field"[^>]*id="studio_bpm"/, 'tempo sits in the row');
+like($style, qr/\.studio_transport_row\s*\{[^}]*flex-wrap:\s*wrap/s,
+	'the row wraps only when the window is genuinely narrow');
 
-# --- the instruments start at their content width, tracks take the rest ----
-like($style, qr/\.studio_grid_row > #studio_drums\s*\{[^}]*width:\s*360px/s,
-	'the drums start wide enough for sixteen steps');
-like($style, qr/\.studio_grid_row > #studio_drums\s*\{[^}]*min-width:\s*320px/s,
-	'the drums keep a sensible minimum width');
-like($style, qr/\.studio_grid_row > #studio_tracks_panel\s*\{[^}]*flex:\s*1 1 280px/s,
-	'the tracks panel takes the rest of its row');
-unlike($style, qr/#studio_synth/, 'the stylesheet carries no synth panel rule');
-like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) clamp\(320px,\s*36%,\s*360px\)/s,
-	'arranged gives the drums a content-sized column and the tracks the rest');
-like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[^}]*"tracks drums"/s,
-	'the drums column sits beside the timeline');
+# --- the console fills its width, master at the far right -------------------
+like($style, qr/#studio_mixer_strips \.channel\s*\{[^}]*flex:\s*1 1/s,
+	'the strips stretch to fill the console instead of leaving a gap');
+like($style, qr/#studio_mixer_strips \.channel\s*\{[^}]*min-width:\s*76px/s,
+	'every strip keeps a readable floor and the row scrolls only past it');
+like($markup, qr/class="studio_strip_body"[\s\S]*class="studio_strip_knobs"/,
+	'the strip puts its knobs and its fader in one row');
+like($markup, qr/control="volume"[\s\S]{0,400}?class="channel_volume studio_strip_volume"/,
+	'the strip fader is the same volume control as the track slider');
+like($style, qr/\.studio_strip_body\s*\{[^}]*flex-direction:\s*row/s, 'the fader sits beside the knobs');
+like($style, qr/\.studio_strip_fader_group\s*\{[^}]*height:\s*80%/s, 'the volume group is 80% of the strip');
+like($knobs, qr/function studioChannelVolumeSet\(ch, value\)/, 'one setter owns the track volume');
+like($style, qr/#studio_mixer\s*\{[^}]*overflow:\s*hidden/s, 'the console contains its own content');
+like($markup, qr/id="studio_mixer_strips"[\s\S]*id="studio_master_rack"[\s\S]*id="studio_transport_panel"/,
+	'the master rack is the last child of the strips row');
 
-# --- every docked panel has a width grip ------------------------------------
-for my $panel (qw(drums tracks mixer transport)) {
-	my $file = $panel eq 'drums' ? $drums : $markup;
-	like($file, qr/class="studio_width_handle" data-studio-width="$panel"/,
-		"$panel has a width grip");
-}
-like($style, qr/\.studio_width_handle\s*\{[^}]*right:\s*0/s, 'the width grip rides the right edge');
-like($style, qr/\.studio_width_handle\s*\{[^}]*ew-resize/s, 'the width grip has a sideways cursor');
-like($style, qr/\.studio_panel_floating \.studio_width_handle\s*\{\s*display:\s*none/s,
-	'a floated panel keeps its corner grip instead');
-like($layout, qr/'pointerdown', '\.studio_width_handle'/, 'a width drag starts on the grip');
-like($layout, qr/function studioApplyPanelWidth/, 'a saved width is applied');
-like($layout, qr/function studioPersistPanelWidth/, 'a dragged width is saved');
-like($layout, qr/'studio_panel_width_' \+ name/, 'the width is its own setting');
-like($layout, qr/function studioSnapPanelWidth/, 'the width snaps like the height');
-like($layout, qr/studioPersistPanelWidth\(resize\.name/, 'the width persists on release');
-like($layout, qr/STUDIO_PANEL_MIN_WIDTH/, 'a width has a floor');
-like($layout, qr/studioApplyPanelWidths\(\)/, 'every panel reapplies its width');
-like($layout, qr/studioApplyArrange[\s\S]*?studioPersistPanelWidth\(name, 0\)/,
-	'Arrange forgets a dragged width, as it forgets a height');
+# --- theme colours, never a palette of its own -----------------------------
+unlike($style, qr/\b(?:tan|brown|lightblue|lightgreen)\b/, 'Studio names no colour of its own');
+like($style, qr/background-color:\s*var\(--panel-2\)/, 'panels take the theme panel');
+like($style, qr/color:\s*var\(--ink\)/, 'text takes the theme ink');
+like($style, qr/color-mix\(in srgb, var\(--accent\)/, 'tints are mixed from the theme accent');
 
-# --- manual packing is rows, and later rows take the freed height -----------
-like($style, qr/\.studio_grid\s*\{[^}]*display:\s*flex/s, 'manual packing is a flex column');
-like($style, qr/\.studio_grid\s*\{[^}]*flex-direction:\s*column/s, 'its rows run down the window');
-like($style, qr/\.studio_grid_row\s*\{[^}]*display:\s*flex/s, 'a row lays its panels side by side');
-like($style, qr/\.studio_grid_row\s*\{[^}]*flex:\s*1 1 0/s, 'a row without a set height shares the leftover');
-like($layout, qr/function studioManualReflow/, 'one function rebuilds the manual rows');
-like($layout, qr/function studioReflowRowHeights/, 'one function re-measures the row heights');
-like($layout, qr/function studioManualUnwrap/, 'Arrange lifts the panels back onto the grid');
-like($layout, qr/function studioRowFixedHeight/, 'a row is fixed by its tallest saved panel');
-like($layout, qr/'flex': '0 0 ' \+ h \+ 'px'/, 'a set height fixes its row');
-like($layout, qr/'flex': '1 1 0'/, 'the unset rows take the rest');
-like($layout, qr/function studioPackWidth/, 'rows pack by the panels\' widths');
-like($layout, qr/row\.width \+ 6 \+ w > available/, 'a row breaks when the next panel will not fit');
-like($layout, qr/studioSnapTo\(w, sizes\.widths\)/, 'a width snaps to the grid and to a neighbour');
-like($layout, qr/the rows below grow into the freed height/, 'the source states the reflow rule');
-like($layout, qr/studioExitArrange\(true\);\n\tvar rect = panel\[0\]\.getBoundingClientRect\(\);\n\tstudioWidthResize/,
-	'a width drag measures after it has left Arrange');
-like($layout, qr/studioManualReflow\(\);/,
-	'the row flow is rebuilt after an order, span, hide, dock or float change');
+# --- full screen is the window's shared control, not a Studio gesture -------
+unlike($winjs, qr/studioWindowFullSelector/, 'no double-press is bound to the maximize control');
+unlike($style, qr/window_full_viewport/, 'Studio keeps no full-viewport rule of its own');
+like($fitjs, qr/windowFullViewportEnter/, 'the window keeps its own full-view control');
+like($help, qr/full-screen button - behind the app icon/, 'the help names the shared full-screen button');
 
-# --- the new hints are in the topic's controls list ------------------------
-for my $control ('Drag the bottom edge to resize this track', 'Drag to move the channel strips',
-	'Tempo in beats per minute', 'Time signature') {
-	like($help, qr/'\Q$control\E'/, "help lists $control as a control");
-}
-like($help, qr/Drag the right edge to resize this panel\\'s width/, 'help names the width grip');
-like($help, qr/the rows below move up and grow into the freed height/, 'help explains the reflow');
+# --- the help topic names the window controls -------------------------------
+like($help, qr/an interior window of the Studio desk/, 'help calls each panel an interior window');
+like($help, qr/Minimize and Maximize buttons/, 'help names the title-bar buttons');
+like($help, qr/its taskbar entry brings it back/, 'help explains the taskbar restore');
+like($help, qr/The taskbar entry for the panel at the front minimizes it/,
+	'help explains the taskbar toggle');
+like($help, qr/Every panel is an interior window of its own/, 'help explains moving and resizing');
+like($help, qr/Maximize fills the desk with that window/, 'help explains maximizing');
+like($help, qr/'Minimize this panel'/, 'help lists the Minimize control');
+like($help, qr/'Maximize or restore this panel'/, 'help lists the Maximize control');
+like($help, qr/'Show this panel, or minimize it'/, 'help lists the taskbar control');
+like($help, qr/'Drag to resize this panel'/, 'help lists the corner grip');
+like($help, qr/'Drag to move the channel strips'/, 'help lists the drag handle');
+like($help, qr/'Add a track, up to 32'/, 'help names Add track and its cap');
+like($help, qr/'Arrange the panels'/, 'help names the Arrange control');
+like($help, qr/Every panel window is its own scroll box/, 'help explains the scroll rule');
+like($help, qr/the master rack is the strips\\' last strip on the right/, 'help puts the master strip at the far right');
+like($help, qr/'Show automation for this track'/, 'help names the automation toggle');
+like($help, qr/'Delete this track'/, 'help names the per-track delete');
+like($help, qr/'Open the pedalboard for this track'/, 'help names the FX button');
+like($help, qr/'Close the pedalboard'/, 'help names the pedalboard close');
+like($help, qr/'Open or close the pedalboard'/, 'help names the Pedals button');
+like($help, qr/never lists effects/, 'help says the track panel keeps its height');
+like($help, qr/Every track has a compact panel/, 'help describes the per-track panel');
+like($help, qr/panel window of its own/, 'help describes the drum window');
+like($help, qr/jog wheel shares the transport/, 'help describes the jog wheel in the button row');
+unlike($help, qr/Float the (?:channel strips|transport|track listing|drums)/,
+	'help no longer names Float');
+unlike($help, qr/Dock the (?:channel strips|transport|tracks|drums)/,
+	'help no longer names Dock');
+unlike($help, qr/Narrow\/Wide control/, 'help no longer names the width control');
+unlike($help, qr/pack into a two-column grid/, 'help no longer describes the packing grid');
 
-# --- one clear insertion point for the drum machine -----------------------
-my @drums = $markup =~ /include 'studio\/drums'/g;
-is(scalar(@drums), 1, 'the markup names exactly one place for the drums panel');
-like($markup, qr/include 'studio\/drums'[\s\S]*id="studio_tracks_panel"/,
-	'the drums panel would join the grid before the tracks panel');
+# --- the old fixed count is gone --------------------------------------------
+unlike($sheet, qr/\|\|\s*4\b/, 'the page no longer falls back to four tracks');
+unlike($knobs, qr/channel_count[^\n]*\|\|\s*4\b/, 'the initialiser no longer falls back to four tracks');
+like($sheet, qr/\|\|\s*1\b/, 'the page starts with one track');
+like($markup, qr/data-max-tracks="<%=\s*\$max_tracks\s*%>"/, 'the viewer carries the dynamic cap');
+unlike($markup, qr/channel_count\s*\|\|\s*4\b/, 'the markup no longer fixes the track count at four');
+like($js, qr/07_layout\.js/, 'the studio index names the layout part');
+like($ctrl, qr/studioSyncTrackList/, 'loading a song restores the tracks it was saved with');
+like($edit, qr/'channel_count', 'value': '1'/, 'New song asks for a single track');
 
-# --- the track volume and the Monitor button --------------------------------
-like($style, qr/\.studio_track_panel \.channel_volume \{[^}]*width:\s*100%/s,
-	'the track volume fills the track panel');
-like($style, qr/\.studio_track_panel \.channel_volume \{[^}]*flex:\s*1 1 auto !important/s,
-	'rather than sitting at a fixed 80px');
-like($markup, qr/class="studio_track_monitor/,
-	'every track carries a Monitor button');
-like($knobs, qr/song\[channel\]\['monitor'\]/, 'the per-track Monitor choice is saved with the song');
-like($knobs, qr/mixer\.monitor\[i\] =/, 'and restored per track');
-like($knobs, qr/studioApplyMonitor\(true\)/, 'the restored monitor is applied on load');
-
-# --- Configure scrolls inside the window ------------------------------------
-like($style, qr/#studio_config\s*\{[^}]*flex:\s*1 1 auto/s, 'Configure takes the free height');
-like($style, qr/#studio_config\s*\{[^}]*min-height:\s*0/s, 'and may shrink to the window');
-like($style, qr/#studio_config\s*\{[^}]*overflow-y:\s*auto/s,
-	'so the settings table and the engine panel scroll instead of clipping');
-like($style, qr/#studio_config\s*\{[^}]*overflow-x:\s*hidden/s, 'and never scroll sideways');
-like($style, qr/#studio_config\s*\{[^}]*background-color:\s*var\(--panel\)/s,
-	'the colour comes from the theme token, not inline style');
-like($style, qr/#studio\.studio_config_open #studio_viewer\s*\{\s*display:\s*none/s,
-	'the open class hides the viewer');
-like($ctrl, qr/addClass\('studio_config_open'\)/, 'the Configure handler sets the open class');
-like($ctrl, qr/removeClass\('studio_config_open'\)/, 'and clears it on close');
-unlike($markup, qr/id="studio_config"\s+style="[^"]*width:/, 'the inline width moved into the stylesheet');
-
-# --- the input/output selector is a bounded, scrollable box ----------------
-like($markup, qr/id="studio_plug_select_container"/, 'the selector container is in the markup');
-unlike($markup, qr/id="studio_plug_select_container"\s+style="/,
-	'and its box is not a bare inline style any more');
-like($style, qr/#studio_plug_select_container\s*\{[^}]*position:\s*fixed/s,
-	'the selector still floats over the console');
-like($style, qr/#studio_plug_select_container\s*\{[^}]*z-index:\s*50009/s,
-	'and keeps its stacking above the panels');
-like($style, qr/#studio_plug_select_container\s*\{[^}]*max-height:\s*calc\(100vh - 16px\)/s,
-	'the selector may never grow past the window');
-like($style, qr/#studio_plug_select_container\s*\{[^}]*overflow-y:\s*auto/s,
-	'so a long device list scrolls inside it');
-like($style, qr/#studio_plug_select_container\s*\{[^}]*overflow-x:\s*hidden/s,
-	'and never scrolls sideways');
-like($style, qr/#studio_plug_select_container\s*\{[^}]*max-width:\s*calc\(100vw - 16px\)/s,
-	'nor wider than the window');
-like($style, qr/#studio_plug_select_container\s*\{[^}]*box-sizing:\s*border-box/s,
-	'the cap includes the border');
-like($inputs, qr/sis\.html\(response\.html\)\.show\(\);[\s\S]*?outerWidth\(\)[\s\S]*?outerHeight\(\)/,
-	'channelSelect() measures the finished panel');
-like($inputs, qr/Math\.max\(8,\s*Math\.min\(x \+ 20,\s*\$\(window\)\.width\(\) - width - 8\)\)/,
-	'and clamps left to the window with an 8px margin');
-like($inputs, qr/Math\.max\(8,\s*Math\.min\(y,\s*\$\(window\)\.height\(\) - height - 8\)\)/,
-	'and clamps top the same way, for input and output alike');
-unlike($inputs, qr/sis\.css\(\s*'(?:right|bottom)'\s*\)/,
-	'the clamp no longer reads the right/bottom it just cleared');
+# --- the drum panel is one window, so its grid class is gone ---------------
+like($drumsjs, qr/function studioDrumsGridState\(\)/, 'the drums keep their state hook');
+like($drumsjs, qr/studioPanelTaskbarRefresh/, 'the hook refreshes the taskbar');
+unlike($drumsjs, qr/studio_panel_floating|studio_drums_open/, 'the old docked-grid state is gone');
 
 done_testing();

@@ -355,21 +355,20 @@ like($inputs, qr/media\.in = drums_channel\.recDest\.stream/,
 like($code, qr/studioContext\(\)/, 'the drums ride the studio context');
 like($code, qr/mastering rack/, 'the panel names the master path');
 
-# --- the panel system and the arranged grid --------------------------------
+# --- the panel system and the interior drum window --------------------------
 like($layout, qr/drums: '#studio_drums'/, 'the drums are a registered panel');
-like($layout, qr/drums: 'hide_drums'/, 'the drums have their own hide setting');
-like($layout, qr/var studioPanelNames = \['drums', 'tracks', 'mixer', 'transport'\]/,
-	'the drums are in the manual packing order');
-like($layout, qr/studioPanelSpan = \{ drums: 1,/, 'the drums have a span');
-like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[\s\S]*?"transport transport"[\s\S]*?"tracks drums"[\s\S]*?"mixer mixer"/,
-	'arranged mode gives the drums a column beside the timeline');
-like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open > #studio_drums\s*\{[^}]*grid-area:\s*drums !important/s,
-	'the drums own that area');
-like($style, qr/#studio_grid\.studio_arranged_compact\.studio_drums_open\s*\{[\s\S]*?"transport"[\s\S]*?"tracks"[\s\S]*?"mixer"[\s\S]*?"drums"/s,
-	'a narrow window stacks the drums last');
-like($layout, qr/studioDrumsGridState/, 'hiding or floating the panel hands its column back');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?"tracks tracks"/s,
-	'the drum-free two-column arrangement is unchanged');
+like($layout, qr/var studioPanelNames = \['transport', 'tracks', 'mixer', 'drums'\]/,
+	'the drums are last in the panel taskbar');
+like($layout, qr/function studioDefaultPanelLayout/, 'the drums take a place in the preset');
+like($layout, qr/drums: \{ left: tracksWidth \+ gap, top: middleTop/,
+	'the preset puts the drums beside the timeline');
+like($drums, qr/class="studio_panel_min hover" data-panel="drums"/, 'the drums can be minimized');
+like($drums, qr/class="studio_panel_max hover" data-panel="drums"/, 'the drums can be maximized');
+like($drums, qr/data-studio-drag="drums"/, 'the drums can be moved by their title bar');
+like($style, qr/\.studio_panel\.studio_panel_minimized\s*\{\s*display:\s*none/s,
+	'minimizing hides the drum window');
+like($code, qr/studioDrumsGridState/, 'the drum state hook still exists');
+like($code, qr/studioPanelTaskbarRefresh/, 'the drum hook refreshes the taskbar');
 like($style, qr/#studio_drums\s*\{[^}]*display:\s*flex/s, 'the panel is a flex column');
 like($style, qr/\.studio_drums_scroll\s*\{[^}]*overflow:\s*auto/s, 'the chart scrolls inside the panel');
 like($style, qr/\.studio_drums_head,[\s\S]*?repeat\(16, minmax\(12px, 1fr\)\)/s,
@@ -395,7 +394,7 @@ ok(defined $controls, 'the studio help topic was found');
 $controls = '' unless defined $controls;
 $controls =~ s/\\'/'/g;
 for my $label (
-	'Drag to move the drums', 'Dock the drums', 'Float the drums', 'Hide the drums',
+	'Drag to move the drums', 'Minimize this panel', 'Maximize or restore this panel',
 	'Computer keys follow the Studio window', 'Repeat the drum chart each bar',
 	'Clear the drum chart', 'Play this drum', 'Assign a computer key to this drum',
 	'Mute this drum', 'Click to place a beat, hold Shift for an accent, right-click to set its velocity',
