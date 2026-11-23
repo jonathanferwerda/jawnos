@@ -119,24 +119,49 @@ sub remote_relay_request($c, $extra_params = {}) {
 					# address is a blackhole, not a verdict on the peer: try its other
 					# known addresses and remember the route that answered.
 					my @routes = &remote_relay_routes($rm);
-					my ($answered, $attempt) = ('', 0);
+					my ($answered, $attempt, $failure) = ('', 0, 'no route');
 					my $connect = eval { $rm->{'ua'}->connect_timeout };
 					foreach my $route ( @routes ) {
 						$attempt++;
 						eval { $rm->{'ua'}->connect_timeout(4) } if $attempt > 1;
+						my ($response, $error);
 						if (($extra_params->{'type'} || '') eq 'post') {
 							my $url = $route . $extra_params->{'url'};
-							$res = eval { $rm->{'ua'}->post($url => form => $params)->result };
+							$response = eval { $rm->{'ua'}->post($url => form => $params)->result };
+							$error = $@;
 						} else {
 							my $query = Mojo::Parameters->new(%{$params})->to_string;
 							my $url = $route . $extra_params->{'url'} . '?' . $query;
-							$res = eval { $rm->{'ua'}->get($url)->result };
+							$response = eval { $rm->{'ua'}->get($url)->result };
+							$error = $@;
 						}
-						next unless $res && eval { $res->is_success };
-						$answered = $route;
-						last;
+						# A dead route is not a verdict on the peer: record why it
+						# failed and try the next address.
+						if (length $error) {
+							$failure = 'transport: ' . ($error =~ s/\s+/ /gr);
+						}
+						elsif (!$response) {
+							$failure = 'no answer';
+						}
+						elsif (!eval { $response->is_success }) {
+							$failure = 'HTTP ' . ($response->code || '?');
+						}
+						else {
+							$answered = $route;
+							last;
+						}
 					}
 					eval { $rm->{'ua'}->connect_timeout($connect) } if defined $connect;
+					# A change made for another machine that reaches no route is a
+					# silent loss: the schedule never lands there and nothing says
+					# why. Name the peer and the path, never the params.
+					unless (length $answered) {
+						my $peer = $rm->{'hostname'} || '';
+						$peer = substr($rm->{'signatorial'} || '', 0, 8) unless length $peer;
+						$peer = 'unknown peer' unless length $peer;
+						my $path = $extra_params->{'url'} || '?';
+						eval { &subs::log_writer('relay: manual delivery to ' . $peer . ' ' . $path . ' failed: ' . $failure) };
+					}
 					if (length $answered && $answered ne ($rm->{'manager'} || '')) {
 						eval { &subs::peer_manager_remember($rm, $answered) };
 					}

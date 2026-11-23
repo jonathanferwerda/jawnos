@@ -12,6 +12,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use Mojo::URL ();
 use RepoSource;
 use JawnOSTest;
 
@@ -19,7 +20,8 @@ use JawnOSTest;
 	subs::preload(qw(network_interface_reporter peer_literal_addresses peer_probe_candidates
 	peer_literal_manager peer_live_manager peer_manager_host peer_manager_url
 	peer_presence_probe peer_manager_remember peer_on_our_lan remote_relay_routes db_update
-	peer_data_hydrate peer_secure_url));
+	peer_data_hydrate peer_secure_url remote_relay_request remote_useragent_maker
+	remote_machine_lister signatorial_designer log_writer));
 
 # Run one assertion inside a known local network. This is the only input that
 # decides whether a peer's LAN literal is a route or a leftover.
@@ -216,5 +218,126 @@ like($remote, qr/peer_live_manager\(\$rm\).*?peer_manager_remember/s,
 	is($known->{'data'}->{'database'}, '/old/jawnos.db', 'and is not overwritten');
 	is(subs::peer_data_hydrate({ data => {} }, {}), 0, 'a handshake with no database changes nothing');
 }
+
+# --- a manual relay that reaches no route is logged -------------------------
+# A Configure change made for another machine used to vanish when every known
+# route was a dead address: the schedule never landed there and no line said
+# why. Drive the real remote_relay_request with a fake agent; only the
+# transport, the peer row, the log and the remember write are local.
+{
+	package RelayFakeTx;
+	sub new { my ($class, %arg) = @_; bless \%arg, $class }
+	sub result {
+		my $self = shift;
+		die $self->{'error'} if defined $self->{'error'};
+		return $self->{'response'};
+	}
+
+	package RelayFakeResponse;
+	sub new { my ($class, $code) = @_; bless { code => $code }, $class }
+	sub is_success { my $self = shift; return $self->{'code'} >= 200 && $self->{'code'} < 300 }
+	sub code { $_[0]->{'code'} }
+
+	package RelayFakeUA;
+	sub new { my ($class, $answer) = @_; bless { answer => $answer, connect => 4, tried => [] }, $class }
+	sub connect_timeout {
+		my $self = shift;
+		return $self->{'connect'} unless @_;
+		$self->{'connect'} = $_[0];
+		return $self;
+	}
+	sub _try {
+		my ($self, $url) = @_;
+		push @{$self->{'tried'}}, $url;
+		return $self->{'answer'}->($url, scalar @{$self->{'tried'}});
+	}
+	sub post { my ($self, $url) = @_; return $self->_try($url) }
+	sub get  { my ($self, $url) = @_; return $self->_try($url) }
+
+	package RelayFakeReq;
+	sub new { my ($class, $method, $path) = @_; bless { method => $method, url => Mojo::URL->new($path) }, $class }
+	sub method { $_[0]->{'method'} }
+	sub url { $_[0]->{'url'} }
+
+	package RelayFakeController;
+	sub new {
+		my ($class, %param) = @_;
+		return bless {
+			param => { %param },
+			req   => RelayFakeReq->new('POST', '/manager/configure'),
+		}, $class;
+	}
+	sub param {
+		my ($self, $name, $value) = @_;
+		return $self->{'param'}->{$name} unless @_ > 2;
+		$self->{'param'}->{$name} = $value;
+		return $self;
+	}
+	sub req { $_[0]->{'req'} }
+}
+
+my $peer_row = {
+	uuid        => 'laptop-uuid',
+	signatorial => 'laptop-sig',
+	hostname    => 'laptop',
+	manager     => 'https://127.0.0.1:56138',
+	port        => 45545,
+	additions   => '[]',
+};
+my ($relay_log, $relay_remembered, $relay_ua);
+my $run_relay = sub {
+	my ($answer, $params) = @_;
+	$relay_log = [];
+	$relay_remembered = [];
+	$relay_ua = RelayFakeUA->new($answer);
+	my $c = RelayFakeController->new(remote_uuid => 'laptop-uuid');
+	my $ua = $relay_ua;
+	no warnings qw(redefine once);
+	local *subs::signatorial_designer = sub { return 'this-machine' };
+	local *subs::remote_machine_lister = sub { return [ { %{$peer_row} } ] };
+	local *subs::remote_useragent_maker = sub { return { %{ $_[0]->{'rm'} }, ua => $ua } };
+	local *subs::remote_relay_routes = sub { return 'https://192.0.2.10:45545', 'https://192.0.2.11:45545' };
+	local *subs::peer_manager_remember = sub { push @{$relay_remembered}, [@_]; return 1 };
+	local *subs::log_writer = sub { push @{$relay_log}, $_[0]; return $_[0] };
+	&subs::remote_relay_request($c, {
+		override      => 'manual',
+		url           => '/manager/configure/utility_controller/peer',
+		type          => 'post',
+		remote_uuid   => 'laptop-uuid',
+		dissemination => 'yes',
+		server_time   => 1770000000000,
+		params        => $params,
+	});
+	return $relay_ua;
+};
+
+my $ua = $run_relay->(sub {
+	my ($url, $n) = @_;
+	return RelayFakeTx->new(error => "Connection refused\n") if $n == 1;
+	return RelayFakeTx->new(response => RelayFakeResponse->new(503));
+}, { device => 'laptop-uuid', setting => 'relay-secret-9f3', value => 'x' });
+
+is(scalar @{$relay_log}, 1, 'a manual relay that reaches no route logs one line');
+like($relay_log->[0] // '', qr/laptop/, 'the line names the peer by its hostname');
+like($relay_log->[0] // '', qr{/manager/configure/utility_controller/peer},
+	'and the request path');
+like($relay_log->[0] // '', qr/HTTP 503/, 'and the last route failure');
+unlike($relay_log->[0] // '', qr/relay-secret-9f3/, 'but never the request params');
+is(scalar @{$relay_remembered}, 0, 'nothing is remembered for a route that never answered');
+is(scalar @{$ua->{'tried'}}, 2, 'every route is tried after a transport failure');
+like($ua->{'tried'}->[1], qr{^https://192\.0\.2\.11:45545/manager/configure/utility_controller/peer$},
+	'and the fallback route is the one that reported the last failure');
+
+my $ok_ua = $run_relay->(sub {
+	my ($url, $n) = @_;
+	return RelayFakeTx->new(error => "Connection refused\n") if $n == 1;
+	return RelayFakeTx->new(response => RelayFakeResponse->new(200));
+}, { device => 'laptop-uuid' });
+
+is(scalar @{$relay_log}, 0, 'a route that answers logs nothing');
+is(scalar @{$relay_remembered}, 1, 'and a new winning route is remembered');
+is($relay_remembered->[0]->[1], 'https://192.0.2.11:45545',
+	'the route that answered is the one remembered');
+is(scalar @{$ok_ua->{'tried'}}, 2, 'the dead route short-circuits at the answer');
 
 done_testing();
