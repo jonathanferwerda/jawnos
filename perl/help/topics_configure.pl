@@ -183,8 +183,8 @@ $topic{'box_office'} = {
 $topic{'handbook'} = {
 		title => 'Handbook', category => 'apps', app => 'handbook',
 		templates => [ 'templates/handbook/handbook.html.ep', 'templates/handbook/today.html.ep', 'templates/handbook/evaluation.html.ep' ],
-		controls => [ 'Chapters', 'Explode', 'Home', 'Next day', 'Previous day', 'The day as a journal', 'Type a day and press Enter' ],
-		verified => '2026-11-15',
+		controls => [ 'Chapters', 'Explode', 'Home', 'Next day', 'Previous day', 'The day as a journal', 'Turn this device on or off', 'Type a day and press Enter' ],
+		verified => '2026-11-23',
 		summary => 'The day as a journal, and chaptered notes about the system itself.',
 		body => [
 			'Handbook opens on Today: the day read as a journal. It gathers what the house already knows - what money moved and what bills are due, the shape of the day, the latest measures and notes, the projects that have moved recently, and the people named in the day\'s plans - so the day can be read in one place.',
@@ -192,12 +192,14 @@ $topic{'handbook'} = {
 			'The Journal box writes an entry for the day being read. Save entry writes it into the Journal app for that day, as an encrypted note like that app\'s own entries, so the journal is reachable outside Handbook too; Today reads the Journal app and any older Handbook notes together. Plant with the Guide asks the configured Guide model to read the journal (the last 30 days and the entry you just typed) and to plant the ideas, plans and dreams that point forward: each becomes a quiet Journal appointment on the day it belongs to, marked planted, so it appears when you turn Today to that day. Nothing is invented - the Guide quotes the entry - and a planted entry can be opened, edited or deleted like any other appointment.',
 			'Predicted by your records is the ghost appointments\' view of the day: the times an app\'s own history says it is likely to happen, drawn faded and without writing anything. They are the same predictions the desktop timeline, calendar and clockface draw, read here for the one day.',
 			'Everything is the whole-house evaluation: a manual briefing that reads every app through category totals, the money that moved, the projects that ran, a count of people, and the moon, weather and geomagnetic conditions the house lives under. The prompt is fitted automatically, so the report can span everything without sending every app. It runs only when you press Evaluate.',
+			'Devices, under Money on today\'s page, lists the apps a house microcontroller relay or LED actually switches. Each row reads On or Off from the same toggle the app itself uses; press the On/Off button to switch it, and every relay and LED wired to that app follows at once. The card is shown for today only: a past or future day is a record, not a claim about what is on now.',
 			'Below Today, Handbook is still the reference shelf: chaptered pages about how JawnOS works, with diagrams. It is the longer-form cousin of this Help app.'
 		],
 		steps => [
 			'Open Handbook; Today is the first entry and the default page.',
 			'Type a day in the header and press Enter, or press the arrows to move a day at a time.',
 			'Read Money for what went out, what came in and which bills are due.',
+			'Read Devices under Money for what a house relay is switching now, and press its On/Off button to change it.',
 			'Read State of life for the day\'s timeline, predictions, measures and journal entries.',
 			'Write in the Journal box and press Save entry to keep the day\'s note.',
 			'Press Plant with the Guide to have the journal read and its forward-looking ideas, plans and dreams placed on their days.',

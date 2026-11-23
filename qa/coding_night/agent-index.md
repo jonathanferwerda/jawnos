@@ -27,7 +27,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - folders (topic folders): 11 file(s), 37 route(s)
 - gallery (topic gallery): 2 file(s), 6 route(s)
 - games (topic games): 4 file(s), 18 route(s)
-- handbook (topic handbook): 3 file(s), 4 route(s)
+- handbook (topic handbook): 3 file(s), 5 route(s)
 - help (topic help_app): 5 file(s), 29 route(s)
 - ide (topic ide): 8 file(s), 9 route(s)
 - information (no topic): 1 file(s), 3 route(s)
@@ -116,15 +116,15 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 
 ## routes
 
-1053 routes in 83 modules.
-By controller: Root_misc (3), apps_misc (3), box_office_misc (2), crest_misc (1), download_program_misc (1), embedded_misc (1), file_open_misc (1), gate_misc (1), i18n_misc (1), js_misc (3), mail_misc (2), mail_ws (1), manager_box_office (9), manager_budget (7), manager_budget2 (7), manager_clock (5), manager_configure (36), manager_configure2 (33), manager_configure3 (22), manager_configure4 (26), manager_configure5 (23), manager_controllers (13), manager_crypto (8), manager_device (15), manager_embedded (25), manager_folders (15), manager_folders2 (22), manager_gallery (5), manager_games (2), manager_help (29), manager_mail (28), manager_mail2 (10), manager_mapping (2), manager_market (20), manager_market2 (10), manager_misc (23), manager_misc10 (32), manager_misc11 (45), manager_misc12 (24), manager_misc13 (36), manager_misc14 (9), manager_misc2 (46), manager_misc3 (24), manager_misc4 (24), manager_misc5 (17), manager_misc6 (25), manager_misc7 (16), manager_misc8 (25), manager_misc9 (51), manager_packages (11), manager_people (21), manager_people2 (3), manager_phone (11), manager_power (10), manager_relational (9), manager_scan (5), manager_sco (12), manager_security (30), manager_security2 (13), manager_security3 (5), manager_silence (2), manager_sound (14), manager_store (36), manager_store2 (3), manager_transaction (5), manager_transaction2 (2), manager_travel (12), manager_vacation_keep (2), manager_vacation_notices (1), manager_watch (11), manager_weather (15), manager_ws (3), manifest_json_misc (1), mugshot_misc (1), observer_misc (1), passkey_misc (3), pay_misc (4), privacy_misc (1), public_view_misc (1), sesh_check (1), store_misc (13), teletype_misc (1), watch_misc (1).
-By first path segment: / (1), /apps (3), /box_office (2), /crest (1), /device (1), /download_program (1), /embedded (1), /file_open (1), /gate (1), /house (1), /i18n (1), /js (3), /mail (3), /manager (1004), /manifest.json (1), /mugshot (1), /observer (1), /passkey (3), /pay (4), /privacy (1), /public_view (1), /sesh_check (1), /store (13), /teletype (1), /watch (1), /ws (1).
+1054 routes in 83 modules.
+By controller: Root_misc (3), apps_misc (3), box_office_misc (2), crest_misc (1), download_program_misc (1), embedded_misc (1), file_open_misc (1), gate_misc (1), i18n_misc (1), js_misc (3), mail_misc (2), mail_ws (1), manager_box_office (9), manager_budget (7), manager_budget2 (7), manager_clock (5), manager_configure (36), manager_configure2 (33), manager_configure3 (22), manager_configure4 (26), manager_configure5 (23), manager_controllers (13), manager_crypto (8), manager_device (15), manager_embedded (25), manager_folders (15), manager_folders2 (22), manager_gallery (5), manager_games (2), manager_help (29), manager_mail (28), manager_mail2 (10), manager_mapping (2), manager_market (20), manager_market2 (10), manager_misc (23), manager_misc10 (33), manager_misc11 (45), manager_misc12 (24), manager_misc13 (36), manager_misc14 (9), manager_misc2 (46), manager_misc3 (24), manager_misc4 (24), manager_misc5 (17), manager_misc6 (25), manager_misc7 (16), manager_misc8 (25), manager_misc9 (51), manager_packages (11), manager_people (21), manager_people2 (3), manager_phone (11), manager_power (10), manager_relational (9), manager_scan (5), manager_sco (12), manager_security (30), manager_security2 (13), manager_security3 (5), manager_silence (2), manager_sound (14), manager_store (36), manager_store2 (3), manager_transaction (5), manager_transaction2 (2), manager_travel (12), manager_vacation_keep (2), manager_vacation_notices (1), manager_watch (11), manager_weather (15), manager_ws (3), manifest_json_misc (1), mugshot_misc (1), observer_misc (1), passkey_misc (3), pay_misc (4), privacy_misc (1), public_view_misc (1), sesh_check (1), store_misc (13), teletype_misc (1), watch_misc (1).
+By first path segment: / (1), /apps (3), /box_office (2), /crest (1), /device (1), /download_program (1), /embedded (1), /file_open (1), /gate (1), /house (1), /i18n (1), /js (3), /mail (3), /manager (1005), /manifest.json (1), /mugshot (1), /observer (1), /passkey (3), /pay (4), /privacy (1), /public_view (1), /sesh_check (1), /store (13), /teletype (1), /watch (1), /ws (1).
 One route: `perl scripts/where.pl /manager/pen`.
 
 ## helpers
 
 664 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-2834 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+2835 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware

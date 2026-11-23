@@ -150,6 +150,68 @@ sub embedded_internal_jobs {
 	return $op_d;
 }
 
+# The apps a house relay actually switches, read from the wiring map each app
+# keeps (`ia`) rather than from a hand-kept list. Only a binary output on an
+# embedded microcontroller that follows the app's start/stop state counts: a
+# relay or LED is on or off, while a servo, an input pin, or a relay driven by
+# a measurement has no state a person reads as on. Each app appears once
+# however many relays and LEDs it drives, because the card switches the app
+# and the settings fan-out reaches every one of them.
+#
+# `$rows` lets a test hand in settings rows; the query is the same shapes a
+# board writes when a pin is attached (see Boardpins.pm).
+sub embedded_relay_devices {
+	my ($rows) = @_;
+	$rows ||= eval {
+		&db_query("select app, value from settings where setting = 'ia' and app is not null and app != ''")->hashes
+	} || [];
+	my (@devices, %seen);
+	foreach my $row ( @{$rows} ) {
+		next unless ref $row eq 'HASH';
+		my $app = $row->{'app'} // '';
+		next unless length $app && !$seen{$app};
+		my $ia = eval { decode_json($row->{'value'} // '') };
+		next unless ref $ia eq 'HASH';
+		my ($primary, $outputs);
+		foreach my $chip ( sort keys %{$ia} ) {
+			my $pins = $ia->{$chip};
+			next unless ref $pins eq 'HASH';
+			foreach my $numero ( sort keys %{$pins} ) {
+				my $pin = $pins->{$numero};
+				next unless ref $pin eq 'HASH';
+				next unless ($pin->{'direction'} // '') eq 'output';
+				next unless ($pin->{'edt'} // '') eq 'microcontroller';
+				next unless ($pin->{'movement'} // '') eq 'start';
+				my $component = $pin->{'component'} // '';
+				next unless $component eq 'relay' || $component eq 'led';
+				my $number = $pin->{'pin'} // $numero;
+				next unless defined $number && length $number;
+				$outputs++;
+				$primary ||= {
+					chip_id => $chip,
+					edt => $pin->{'edt'},
+					ip => $pin->{'ip'} // '',
+					component => $component,
+					pin => $number,
+				};
+			}
+		}
+		next unless $primary;
+		$seen{$app} = 1;
+		my $settings = &settings_grabber({ app => $app, settings => ['toggle'] });
+		my $value = $settings->{'toggle'};
+		push @devices, {
+			app => $app,
+			name => &format_name($app),
+			state => ((defined $value && ($value eq 'on' || $value eq '1')) ? 'on' : 'off'),
+			outputs => $outputs,
+			%{$primary},
+		};
+	}
+	@devices = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @devices;
+	return \@devices;
+}
+
 sub intelligent_automation_toggle {
 	my $data = shift;
 	my $app = $data->{'app'};

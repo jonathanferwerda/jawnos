@@ -455,6 +455,12 @@ sub handbook_today {
 		push @journal, sprintf(&subs::ui('%s people are named in the day.'), scalar @people);
 	}
 
+	# --- house devices ------------------------------------------------------
+	# A relay's state is a live fact, not a record of the day: only today may
+	# show it. Turning the page to a past or future day reads a record and must
+	# not claim what a device is doing now.
+	my $devices = $is_today ? &subs::embedded_relay_devices() : [];
+
 	return {
 		start => $start,
 		end => $end,
@@ -481,6 +487,7 @@ sub handbook_today {
 		projects => \@projects,
 		projects_active => $projects_active,
 		people => \@people,
+		devices => $devices,
 		journal_lines => \@journal,
 	};
 }

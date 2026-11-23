@@ -29,6 +29,7 @@ sub routes {
 	[34484, 'get', '/manager/handbook/:chapter', 'action_34484'],
 	[34525, 'post', '/manager/handbook/journal', 'action_34525'],
 	[34548, 'post', '/manager/handbook/plant', 'action_34548'],
+	[34560, 'post', '/manager/handbook/device', 'action_34560'],
 	[34739, 'post', '/manager/dictate', 'action_34739'],
 	[34966, 'post', '/manager/translate', 'action_34966'],
 	[34997, 'get', '/manager/translate/languages', 'action_34997'],

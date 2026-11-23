@@ -25,6 +25,7 @@
 	</div>
 
 	<div class="handbook_today_grid">
+		<div class="handbook_today_column">
 		<section class="handbook_today_card handbook_today_money">
 			<h3><%= &subs::ui('Money') %></h3>
 			<div class="handbook_today_big"><%= &subs::price_formatter($headline) %></div>
@@ -67,7 +68,34 @@
 			</div>
 		</section>
 
-		<section class="handbook_today_card handbook_today_life">
+		<% if ($t->{'is_today'}) { %>
+		<section class="handbook_today_card handbook_today_devices">
+			<h3>
+				<%= &subs::ui('Devices') %>
+				<span id="handbook_today_device_status" class="handbook_today_device_status" role="status"></span>
+			</h3>
+			<div class="handbook_today_caption"><%= &subs::ui('House relays and the devices they switch.') %></div>
+			<% my $devices = $t->{'devices'} || []; %>
+			<% if (scalar @{$devices}) { %>
+				<ul class="handbook_today_list">
+					<% foreach my $device ( @{$devices} ) { %>
+						<% my $is_on = $device->{'state'} eq 'on'; %>
+						<li class="handbook_today_row handbook_today_device" app="<%= $device->{'app'} %>">
+							<span class="handbook_today_row_name"><%= $device->{'name'} %></span>
+							<span class="handbook_today_row_note"><%= $device->{'component'} eq 'led' ? &subs::ui('LED') : &subs::ui('Relay') %> <%= $device->{'pin'} %></span>
+							<button class="handbook_today_device_toggle<% if ($is_on) { %> on<% } %>" app="<%= $device->{'app'} %>" state="<%= $is_on ? 'on' : 'off' %>" aria-pressed="<%= $is_on ? 'true' : 'false' %>" hint="<%= &subs::ui('Turn this device on or off') %>"><%= $is_on ? &subs::ui('On') : &subs::ui('Off') %></button>
+						</li>
+					<% } %>
+				</ul>
+			<% } else { %>
+				<div class="handbook_today_empty"><%= &subs::ui('No device is wired to a house relay yet.') %></div>
+			<% } %>
+		</section>
+		<% } %>
+	</div>
+
+	<div class="handbook_today_column">
+	<section class="handbook_today_card handbook_today_life">
 			<h3><%= &subs::ui('State of life') %></h3>
 			<div class="handbook_today_journal">
 				<% foreach my $line ( @{$t->{'journal_lines'}} ) { %>
@@ -221,4 +249,5 @@
 			</div>
 		</section>
 	</div>
+</div>
 </div>

@@ -647,6 +647,38 @@ sub action_34548 {
 	$c->render(json => { ok => 1, planted => \@made, skipped => $skipped });
 }
 
+# Switch one house device from Today. The card is a control surface for the
+# fleet, not a second settings editor, so the app must be one an embedded
+# microcontroller already switches. The write is the same `toggle` setting the
+# app window writes, with an explicit on/off rather than a flip so a double
+# press cannot land twice; the settings layer fans it out to every relay and LED
+# wired to that app.
+# POST /manager/handbook/device
+sub action_34560 {
+	my $c = shift;
+	my $app = &subs::unformat_name($c->param('app') // '');
+	my $state = (($c->param('state') // '') eq 'on') ? 'on' : 'off';
+	my $devices = &subs::embedded_relay_devices();
+	my ($device) = grep { ($_->{'app'} // '') eq $app } @{$devices};
+	unless ($device) {
+		$c->render(json => { ok => 0, error => &subs::ui('That device is not wired to a house relay.') });
+		return;
+	}
+	&subs::setting_setter({
+		app => $app,
+		setting => 'toggle',
+		value => $state,
+		source => 'panel',
+		timestamp => &subs::rightNow(),
+	});
+	$c->render(json => {
+		ok => 1,
+		app => $app,
+		state => ($state eq 'on' ? 1 : 0),
+		formatted_state => $state,
+	});
+}
+
 # The on-screen keyboard's microphone. Unlike the Guide's own listen route this
 # one is for dictation: the phrase is transcribed by the house's transcription
 # role and then lightly punctuated by the Guide's model, and the word guard in

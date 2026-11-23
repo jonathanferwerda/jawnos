@@ -2291,11 +2291,17 @@ html.jawnos_webview #admin_console_toggle {
 }
 .handbook_today_grid {
 	display: grid;
-	/* money is the narrow column; the journal gets the wider one, with projects
-	   and people under them. One column when the window is phone-sized. */
+	/* money and the house devices share the narrow column; the journal, projects
+	   and people get the wider one. One column when the window is phone-sized. */
 	grid-template-columns: minmax(240px, .85fr) minmax(320px, 1.15fr);
 	gap: 12px;
 	align-items: start;
+}
+.handbook_today_column {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
 }
 .handbook_today_card {
 	min-width: 0;
@@ -2444,6 +2450,33 @@ html.jawnos_webview #admin_console_toggle {
 #handbook_today_journal_status { font-size: 12px; opacity: .75; }
 #handbook_today_journal_status.error { color: #d33; opacity: 1; }
 .handbook_today_hint { margin-top: 6px; font-size: 11px; opacity: .6; }
+.handbook_today_device_status { margin-left: 8px; font-size: 11px; font-weight: normal; opacity: .75; }
+.handbook_today_device_status.error { color: #d33; opacity: 1; }
+.handbook_today_device_toggle {
+	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--panel);
+	color: inherit;
+	font-size: 12px;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+.handbook_today_device_toggle::before {
+	content: '';
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: #777;
+	box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+}
+.handbook_today_device_toggle.on { border-color: #2a2; color: #2a2; }
+.handbook_today_device_toggle.on::before { background: #2a2; box-shadow: 0 0 6px #2a2; }
+.handbook_today_device_toggle:hover:not(:disabled) { background: var(--line); }
+.handbook_today_device_toggle:disabled { opacity: .5; cursor: var(--jawnos-cursor-wait, wait); }
 .handbook_today_planted_result { margin-top: 8px; }
 .handbook_today_planted_list { font-size: 12px; }
 .handbook_today_planted_list ul { margin: 4px 0 0 18px; padding: 0; }

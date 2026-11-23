@@ -346,6 +346,42 @@ $(document).on('click', '.handbook_today_people_open', function() {
 	if (typeof peopleOpener == 'function') { peopleOpener(); }
 });
 
+// A house device on Today is the app's own toggle, reached without opening the
+// app: the manager writes the same `toggle` setting the app window writes, so
+// the settings fan-out reaches every relay and LED wired to that device.
+function handbookDeviceStatus(text, is_error) {
+	$('#handbook_today_device_status').text(text || '').toggleClass('error', !!is_error);
+}
+
+$(document).on('click', '.handbook_today_device_toggle', function(e) {
+	e.stopPropagation();
+	var b = $(this);
+	if (b.prop('disabled')) { return; }
+	var state = (b.attr('state') === 'on') ? 'off' : 'on';
+	handbookDeviceStatus('');
+	b.prop('disabled', true);
+	$.ajax({
+		url: '/manager/handbook/device',
+		type: 'POST',
+		dataType: 'json',
+		data: { app: b.attr('app'), state: state, timestamp: Date.now() }
+	}).done(function(response) {
+		if (!response || !response.ok) {
+			handbookDeviceStatus((response && response.error) || handbookTodayT('Could not switch the device.'), true);
+			return;
+		}
+		var now = response.formatted_state === 'on' ? 'on' : 'off';
+		b.attr('state', now)
+			.toggleClass('on', now === 'on')
+			.attr('aria-pressed', now === 'on' ? 'true' : 'false')
+			.text(now === 'on' ? handbookTodayT('On') : handbookTodayT('Off'));
+	}).fail(function() {
+		handbookDeviceStatus(handbookTodayT('Could not switch the device.'), true);
+	}).always(function() {
+		b.prop('disabled', false);
+	});
+});
+
 // The journal writes into the notes store tagged for the Handbook. The Guide's
 // plant action reads those entries and writes ideas/plans/dreams as appointments
 // on their future days, so they appear when the daily page is turned to them.
