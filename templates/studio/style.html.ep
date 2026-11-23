@@ -1246,6 +1246,111 @@
 		font-size: 12px;
 		color: var(--runway-bad, #b3453f);
 	}
+	/* ---- the House patch in the input picker -------------------------------
+	   The plan's other sources (a voice, the deck) cannot own a track take, so
+	   their monitor, effects and bus take live under the channel's plug list. */
+	#studio_house_patch {
+		margin-top: 8px;
+		padding: 6px 8px;
+		border-top: 1px solid var(--line);
+		font-size: 12px;
+	}
+	#studio_house_patch h3 {
+		margin: 0 0 4px;
+		font-size: 15px;
+	}
+	.studio_house_patch_engine,
+	.studio_house_patch_note {
+		margin: 2px 0;
+		font-size: 11px;
+		opacity: .7;
+	}
+	.studio_house_source {
+		padding: 5px 0;
+		border-top: 1px solid var(--line);
+	}
+	.studio_house_source_head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 6px;
+	}
+	.studio_house_source_name {
+		font-weight: 600;
+	}
+	.studio_house_source_kind {
+		font-size: 11px;
+		opacity: .65;
+	}
+	.studio_house_source_state {
+		margin-left: auto;
+		font-size: 11px;
+		text-transform: lowercase;
+	}
+	.studio_house_state_bound { color: var(--accent-strong, var(--accent)); }
+	.studio_house_state_silent { color: var(--danger, #c33); }
+	.studio_house_state_pending { opacity: .6; }
+	.studio_house_monitor,
+	.studio_house_mute_label {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-right: 10px;
+	}
+	.studio_house_monitor_value {
+		min-width: 32px;
+		font-variant-numeric: tabular-nums;
+		font-size: 11px;
+		opacity: .75;
+	}
+	.studio_house_inserts {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px;
+		margin-top: 4px;
+	}
+	.studio_house_inserts_head,
+	.studio_house_no_inserts,
+	.studio_house_no_route {
+		font-size: 11px;
+		opacity: .65;
+	}
+	.studio_house_no_route { margin: 2px 0 0; }
+	.studio_house_insert {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		padding: 1px 4px;
+		border: 1px solid var(--line);
+		border-radius: 4px;
+	}
+	.studio_house_insert_remove {
+		padding: 0 3px;
+		border: 0;
+		background: none;
+		cursor: var(--jawnos-cursor-pointer, pointer);
+	}
+	.studio_house_take {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 5px;
+		margin-top: 8px;
+		padding-top: 6px;
+		border-top: 1px solid var(--line);
+	}
+	.studio_house_take_head {
+		font-weight: 600;
+	}
+	.studio_house_take_seconds {
+		width: 64px;
+	}
+	.studio_house_take_status {
+		flex-basis: 100%;
+		font-size: 11px;
+		opacity: .75;
+	}
 	/* ---- small context menus -----------------------------------------------
 	   One themed card for the timeline's clip menu and a beat's velocity menu.
 	   The caller positions it in viewport coordinates and removes it on the

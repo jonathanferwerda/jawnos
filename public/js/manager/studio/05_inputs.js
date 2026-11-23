@@ -395,24 +395,33 @@ async function channelSelect(channel,direction) {
 				studioScreenSourceFill(sis, information);
 				// The jack reopens on the row it was left on, not an unmarked list.
 				studioPlugSelectHighlight(sis, information);
-				// Measure the finished panel, then clamp it to the window. It is
-				// position:fixed, so left/top are viewport coordinates; when the
-				// panel is wider or taller than the window it pins to the 8px
-				// margin and the stylesheet's overflow does the scrolling.
-				sis.css({ 'width': '', 'height': '' });
-				var width = sis.outerWidth();
-				var height = sis.outerHeight();
-				sis.css({
-					'left': Math.max(8, Math.min(x + 20, $(window).width() - width - 8)),
-					'top': Math.max(8, Math.min(y, $(window).height() - height - 8)),
-					'right': '',
-					'bottom': ''
-				});
+				studioPlugClamp(sis, x, y);
+				// The House patch loads its sources from the saved plan; when
+				// it lands it re-clamps the panel around its own rows.
+				studioHouseFill(sis, x, y);
 
 				appointment_chron();
 			}
 		});
 	}
+}
+
+// Measure the finished panel, then clamp it to the window. It is
+// position:fixed, so left/top are viewport coordinates; when the panel is wider
+// or taller than the window it pins to the 8px margin and the stylesheet's
+// overflow does the scrolling. The House patch calls this again after its rows
+// arrive, because its async load changes the height after the first measure.
+function studioPlugClamp(sis, x, y) {
+	if (!sis || !sis.length) { return; }
+	sis.css({ 'width': '', 'height': '' });
+	var width = sis.outerWidth();
+	var height = sis.outerHeight();
+	sis.css({
+		'left': Math.max(8, Math.min(x + 20, $(window).width() - width - 8)),
+		'top': Math.max(8, Math.min(y, $(window).height() - height - 8)),
+		'right': '',
+		'bottom': ''
+	});
 }
 
 $(document).on('click', '.close_plug_select', function() {

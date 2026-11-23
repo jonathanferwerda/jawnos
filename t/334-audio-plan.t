@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Audio/Plan.pm engine/src/session.rs
+# tests-for: lib/JawnOS/Audio/Plan.pm engine/src/session.rs engine/src/effect.rs
 # covers:    the saved audio plan (docs/studio-audio-roadmap.md §7): a default plan validates, the
 #            read path drops what cannot exist and clamps gain/pan, a bus send chain survives while a
 #            cycle is refused, and the declared latency adds up along a path.
@@ -9,8 +9,11 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Test::More;
+use File::Slurp qw(read_file);
 
 use JawnOS::Audio::Plan;
+
+my $root = "$FindBin::Bin/..";
 
 # The module is deliberately plain Perl (no exporter): the UI, the manager and
 # the tests all say its full name, which is also what a reader greps for.
@@ -427,6 +430,113 @@ sub route {
 		'a missing field is a blank one');
 	is(JawnOS::Audio::Plan::audio_plan_on_this_machine('table', ''), 0,
 		'without a host, only a blank machine is local');
+}
+
+# --- a source's own effect chain ---------------------------------------------
+# A voice or a deck may carry pedals without owning a Studio track. The chain is
+# the source's `inserts` array in order; the names are the engine's vocabulary,
+# so a browser-only effect or a master-rack name has no place in it.
+{
+	my $raw = {
+		sources => [ source('voice', inserts => [
+			{ name => 'reverb', bypass => 0, controls => { mix => 0.35, model => 2, bogus => 1 } },
+			{ name => 'stereowidener' },
+			{ name => 'delay', controls => { time => 250, feedback => 0.3, vol => 0.4 } },
+		] ) ],
+		buses  => [ { id => 'mix' } ],
+		sinks  => [ sink('um2') ],
+		routes => [ route('voice', 'mix'), route('mix', 'um2') ],
+	};
+
+	my $clean = normalize($raw);
+	my $inserts = $clean->{sources}[0]{inserts};
+	is( scalar @$inserts, 2, 'the read path keeps only effects the engine can build' );
+	is( $inserts->[0]{name}, 'reverb', 'the chain keeps its array order' );
+	is( $inserts->[0]{bypass}, 0, 'an insert with no bypass is on' );
+	is( $inserts->[0]{controls}{mix}, 0.35, 'a known control keeps its native value' );
+	is( $inserts->[0]{controls}{model}, 2, 'and a whole index stays whole' );
+	ok( !exists $inserts->[0]{controls}{bogus}, 'a control the effect does not have is dropped' );
+	is( $inserts->[1]{name}, 'delay', 'the next insert follows in the chain' );
+	is_deeply( $inserts->[1]{controls}, { time => 250, feedback => 0.3, vol => 0.4 },
+		'a sparse control map keeps exactly what it names' );
+
+	my $plain = normalize({
+		sources => [ source('gtr') ], buses => [], sinks => [ sink('um2') ], routes => [],
+	});
+	is_deeply( $plain->{sources}[0]{inserts}, [],
+		'a source from before the field has an empty board, not a missing one' );
+	ok( !exists $plain->{sinks}[0]{inserts}, 'a sink carries no inserts' );
+
+	# The write path: a known name and its controls are accepted, including the
+	# empty board the page writes when it adds an effect.
+	my $with = sub {
+		my ($inserts) = @_;
+		return { sources => [ source('voice', inserts => $inserts) ], buses => [], sinks => [], routes => [] };
+	};
+	ok( valid($with->([ { name => 'reverb' } ])), 'a known effect is valid' );
+	ok( valid($with->([ { name => 'reverb', bypass => 1, controls => { mix => 0.5, model => 3 } } ])),
+		'a bypassed insert with known controls is valid' );
+	ok( valid($with->([])), 'an empty board is valid' );
+	ok( !valid($with->([ { name => 'stereowidener' } ])),
+		'a browser-only effect is refused' );
+	ok( !valid($with->([ { name => 'master_comp' } ])),
+		'a master-rack name is not a source insert' );
+	ok( !valid($with->([ { name => 'reverb', controls => { bogus => 1 } } ])),
+		'an unknown control is refused' );
+	ok( !valid($with->([ { name => 'reverb', controls => { mix => 'loud' } } ])),
+		'a word where a number belongs is refused' );
+	ok( !valid($with->([ { name => 'reverb', controls => { model => 2.5 } } ])),
+		'a fractional reverb model is refused' );
+	ok( !valid($with->([ { name => 'reverb', bypass => 'yes' } ])),
+		'a word where a bypass belongs is refused' );
+	ok( !valid({ sources => [ source('voice', inserts => [ map { { name => 'reverb' } } 1 .. 17 ] ) ],
+		buses => [], sinks => [], routes => [] }), 'a chain past the bound is refused' );
+
+	# The source's own trim is the engine's 0..4 recording gain, not the 0..1
+	# route fader. It runs before the inserts, so the plan keeps it on a source
+	# and a sink has none.
+	my $trim = sub {
+		my ($gain) = @_;
+		return { sources => [ source('gtr', gain => $gain) ], buses => [], sinks => [ sink('um2') ], routes => [] };
+	};
+	is( normalize($trim->(2.5))->{sources}[0]{gain}, 2.5, 'an in-range source trim is kept' );
+	is( normalize($trim->(9))->{sources}[0]{gain}, 4, 'a trim past +12 dB is clamped on read' );
+	is( normalize({ sources => [ source('gtr') ], buses => [], sinks => [], routes => [] })
+		->{sources}[0]{gain}, 1, 'a source with no trim is unity' );
+	ok( !exists normalize($trim->(1))->{sinks}[0]{gain}, 'a sink has no trim of its own' );
+	ok( valid($trim->(0)), 'a silent trim is valid' );
+	ok( valid($trim->(4)), 'and the top of the engine range is valid' );
+	ok( !valid($trim->(4.5)), 'a trim past the engine range is refused' );
+	ok( !valid({ sources => [ source('gtr') ], buses => [], sinks => [ sink('um2', gain => 1) ], routes => [] }),
+		'a trim on a sink is refused' );
+
+	ok( JawnOS::Audio::Plan::audio_plan_insert_valid('autotune'),
+		'the engine\'s own name for JawnPitch is a source effect' );
+	ok( !JawnOS::Audio::Plan::audio_plan_insert_valid('reverb2'),
+		'an old alias is not written into a plan' );
+
+	# The plan's vocabulary is the engine's. One list, two implementations; a
+	# new InsertKind or control that lands on only one side fails here.
+	my $engine = read_file("$root/engine/src/effect.rs");
+	my ($name_block) = $engine =~ /(pub const fn name\(self\).*?\n\s{4}\})/s;
+	my @engine_names = ($name_block // '') =~ /InsertKind::\w+ => "([a-z0-9_]+)"/g;
+	is_deeply( \@engine_names, \@JawnOS::Audio::Plan::audio_plan_insert_names,
+		'the plan names every InsertKind the engine builds, in its own order' );
+
+	my ($controls_block) = $engine =~ /(pub const fn controls\(self\).*?\n\s{4}\})/s;
+	my %engine_controls;
+	if (defined $controls_block) {
+		while ($controls_block =~ /InsertKind::(\w+) => &\[(.*?)\],/gs) {
+			my ($kind, $list) = ($1, $2);
+			my @controls = $list =~ /"([a-z0-9_]+)"/g;
+			$engine_controls{lc $kind} = \@controls;
+		}
+	}
+	my %plan_controls = map {
+		$_ => [ @{ $JawnOS::Audio::Plan::audio_plan_insert_controls{$_} } ]
+	} keys %JawnOS::Audio::Plan::audio_plan_insert_controls;
+	is_deeply( \%engine_controls, \%plan_controls,
+		'and every effect control list is the same on both sides' );
 }
 
 done_testing();

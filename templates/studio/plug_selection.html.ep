@@ -83,4 +83,13 @@
 				% }
 			</tbody>
 		</table>
+	% if (defined $direction && $direction eq 'input') {
+		<div class="studio_house_patch" id="studio_house_patch">
+			<h3><%= &subs::ui('House patch') %></h3>
+			<p class="studio_house_patch_engine" id="studio_house_patch_engine"></p>
+			<div class="studio_house_patch_sources"></div>
+			<div class="studio_house_patch_take"></div>
+			<p class="studio_house_patch_note" id="studio_house_patch_note"></p>
+		</div>
+	% }
 </div>

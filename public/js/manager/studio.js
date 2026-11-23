@@ -14,6 +14,7 @@
      12_export.js - render each track through its output chain and attach it to the song
      13_strip.js  - the channel strip's mute and solo buttons
      14_audio_file.js - encode an AudioBuffer as a 16-bit WAV blob
+     15_house_patch.js - the plan's other sources in the input picker: monitor, mute, inserts, bus take
      12_tuner.js  - the chromatic tuner on Jtune: listening, pitch, note, arrows
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */

@@ -50,6 +50,11 @@ our $audio_plan_gain_max = 1;
 our $audio_plan_pan_min  = -1;
 our $audio_plan_pan_max  = 1;
 
+# A source's own trim runs before its inserts and every route, so it is the
+# engine's +12 dB recording gain rather than a mix level: `docs/studio-effects.md`
+# says `0..=4`. The route gain above stays the 0..1 mix fader it always was.
+our $audio_plan_source_gain_max = 4;
+
 # The engine refuses a peer source whose declared latency is above 2 000 ms;
 # the bound is a sanity limit, not a placement guarantee. Keep the read path's
 # clamp and the write path's refusal on this one number.
@@ -61,6 +66,52 @@ our $audio_plan_max_peer_latency = 2_000;
 # page shows what the engine will do instead of an empty field.
 our $audio_plan_peer_buffer_default = 85;
 our $audio_plan_max_peer_buffer = 2_000;
+
+# A source may carry a pedal board of its own: the effects the engine builds on
+# the source before any route, so a voice or a deck can be coloured without
+# owning a Studio track. The names are the engine's `InsertKind` vocabulary
+# (engine/src/effect.rs, docs/studio-effects.md); `stereowidener` is deliberately
+# absent because the native engine has no such effect, and the `master_` names
+# belong to the master rack rather than a source. Chain order is array order.
+#
+# One insert is `{ name, bypass, controls }`. `bypass` keeps the insert in the
+# chain but passes the signal through. `controls` is a sparse map of the
+# effect's own control names to native units (the contract's dB, milliseconds,
+# 0..1 mixes and whole indexes), never the UI's 0..100 slider; an absent control
+# means the effect's own default, and the engine clamps a value it receives.
+# The read path keeps only a known name and its known controls, while the write
+# path refuses either mistake instead of dropping it.
+our @audio_plan_insert_names = qw(
+	tone distortion delay compressor reverb flanger
+	fuzz amp limiter autotune equalizer maximizer
+);
+
+our %audio_plan_insert_controls = (
+	tone       => [qw(bass mid treble gain)],
+	distortion => [qw(drive)],
+	delay      => [qw(time feedback vol)],
+	compressor => [qw(thresh attack ratio release knee mix)],
+	reverb     => [qw(mix volume model)],
+	flanger    => [qw(rate depth feedback mix)],
+	fuzz       => [qw(gain tone level)],
+	amp        => [qw(gain bass mid treble cabinet)],
+	limiter    => [qw(ceiling release)],
+	autotune   => [qw(speed amount key scale)],
+	equalizer  => [qw(low mid high)],
+	maximizer  => [qw(ceiling loudness)],
+);
+
+# These controls are an index, not a level: a fractional reverb model or amp
+# cabinet has no meaning. The read path truncates one, the write path refuses it.
+our %audio_plan_insert_whole = (
+	reverb   => { model   => 1 },
+	amp      => { cabinet => 1 },
+	autotune => { key     => 1, scale => 1 },
+);
+
+# A source's board is a chain, not a rack: enough pedals for a treated voice
+# without letting a hand-edited plan make the engine's work unbounded.
+our $audio_plan_max_inserts = 16;
 
 # An empty plan is valid and means "nothing routed", which is not the same as
 # "no plan": the engine sees four empty lists and leaves the interface alone
@@ -125,6 +176,42 @@ sub _audio_plan_kind {
 	my ($kind, $allowed) = @_;
 	return 0 unless defined $kind;
 	return (grep { $_ eq $kind } @$allowed) ? 1 : 0;
+}
+
+# Is this one of the engine's source-effect names? Exported so the page can
+# offer the same list the write path accepts, and the engine agent has one
+# stable vocabulary to compile.
+sub audio_plan_insert_valid {
+	my ($name) = @_;
+	return 0 unless defined $name && !ref $name;
+	return (grep { $_ eq $name } @audio_plan_insert_names) ? 1 : 0;
+}
+
+# One insert, repaired for the read path. An unknown effect is dropped whole;
+# a control the effect does not have is dropped from the map; a fractional
+# index control is truncated. A missing bypass is the inserted state.
+sub _audio_plan_insert {
+	my ($entry) = @_;
+	return undef unless ref $entry eq 'HASH';
+	my $name = _audio_plan_text($entry->{name});
+	return undef unless defined $name && audio_plan_insert_valid($name);
+
+	my %allowed = map { $_ => 1 } @{ $audio_plan_insert_controls{$name} || [] };
+	my $given = ref $entry->{controls} eq 'HASH' ? $entry->{controls} : {};
+	my %controls;
+	foreach my $control (sort keys %$given) {
+		next unless $allowed{$control};
+		my $value = _audio_plan_number($given->{$control});
+		next unless defined $value;
+		$value = int($value) if $audio_plan_insert_whole{$name}{$control};
+		$controls{$control} = $value;
+	}
+
+	return {
+		name     => $name,
+		bypass   => $entry->{bypass} ? 1 : 0,
+		controls => \%controls,
+	};
 }
 
 # Is this a capture node name a plan may carry? Exported because the picker and
@@ -195,6 +282,27 @@ sub _audio_plan_node {
 		$buffer = $audio_plan_max_peer_buffer
 			if $buffer > $audio_plan_max_peer_buffer;
 	}
+	# The source's own pedal board, in chain order. Only a source has one: a
+	# sink takes what the buses send it, and inserts on that edge belong to the
+	# route, not the sink. A plan from before this field has an empty board.
+	my $inserts;
+	if ($type eq 'source') {
+		$inserts = [];
+		foreach my $insert (@{ _audio_plan_list($entry->{inserts}) }) {
+			last if scalar(@$inserts) >= $audio_plan_max_inserts;
+			my $clean = _audio_plan_insert($insert);
+			push @$inserts, $clean if $clean;
+		}
+	}
+	# The source's own trim, before its inserts. A plan from before this field
+	# is a wire; a value past the engine's +12 dB range is clamped here and
+	# refused on the write path, exactly as a route gain is.
+	my $source_gain;
+	if ($type eq 'source') {
+		$source_gain = _audio_plan_number($entry->{gain});
+		$source_gain = 1 unless defined $source_gain;
+		$source_gain = _audio_plan_clamp($source_gain, 0, $audio_plan_source_gain_max);
+	}
 	return {
 		id         => $id,
 		label      => $label,
@@ -206,6 +314,8 @@ sub _audio_plan_node {
 		node       => defined $node ? $node : '',
 		latency_ms => $latency,
 		(defined $buffer ? (buffer_ms => $buffer) : ()),
+		(defined $source_gain ? (gain => $source_gain) : ()),
+		(defined $inserts ? (inserts => $inserts) : ()),
 	};
 }
 
@@ -412,6 +522,48 @@ sub _audio_plan_valid_node {
 		$node = '' unless defined $node;
 		if (length "$node") {
 			return 0 unless $kind eq 'input' && audio_plan_node_valid($node);
+		}
+	}
+	# The source's own trim, before its inserts. A sink has no trim of its own.
+	if (exists $entry->{gain}) {
+		return 0 unless $type eq 'source';
+		my $number = _audio_plan_number($entry->{gain});
+		return 0 unless defined $number
+			&& $number >= 0 && $number <= $audio_plan_source_gain_max;
+	}
+	# A source's pedal board. The read path drops an unknown effect or control;
+	# the write path refuses it, because a plan that names an effect the engine
+	# cannot build is a writer's bug rather than an older plan.
+	if (exists $entry->{inserts}) {
+		return 0 unless $type eq 'source';
+		return 0 unless ref $entry->{inserts} eq 'ARRAY';
+		return 0 if scalar(@{ $entry->{inserts} }) > $audio_plan_max_inserts;
+		foreach my $insert (@{ $entry->{inserts} }) {
+			return 0 unless ref $insert eq 'HASH';
+			my $name = _audio_plan_text($insert->{name});
+			return 0 unless defined $name && audio_plan_insert_valid($name);
+
+			if (exists $insert->{bypass}) {
+				my $bypass = $insert->{bypass};
+				if (ref $bypass) {
+					return 0 unless blessed($bypass);
+				}
+				else {
+					my $number = _audio_plan_number($bypass);
+					return 0 unless defined $number && ($number == 0 || $number == 1);
+				}
+			}
+			if (exists $insert->{controls}) {
+				return 0 unless ref $insert->{controls} eq 'HASH';
+				my %allowed = map { $_ => 1 } @{ $audio_plan_insert_controls{$name} || [] };
+				foreach my $control (keys %{ $insert->{controls} }) {
+					return 0 unless $allowed{$control};
+					my $value = _audio_plan_number($insert->{controls}{$control});
+					return 0 unless defined $value;
+					return 0 if $audio_plan_insert_whole{$name}{$control}
+						&& int($value) != $value;
+				}
+			}
 		}
 	}
 

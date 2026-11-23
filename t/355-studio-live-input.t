@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Audio/Engine.pm docs/studio-effects.md public/js/manager/studio.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js
+# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Audio/Engine.pm docs/studio-effects.md public/js/manager/studio.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/15_house_patch.js templates/studio/plug_selection.html.ep
 # covers:    the live-input contract on the manager side - audio_engine_record
 #            puts `monitor_input` and `monitor_gain` on the record wire and
 #            leaves them out when off or undefined, a take's per-track plan
@@ -538,6 +538,56 @@ like($inputs_js, qr/if \(plug\['type'\] == 'usermedia' && plug\['av'\] == 'a'\) 
 	'and an audio interface asks for both interface channels');
 like($inputs_js, qr/audio\.channelCount = Math\.max\(2, channels \|\| 0\);/,
 	'and asks for both interface channels');
+
+# --- the House patch section -------------------------------------------------
+# The input picker also carries the plan's other sources: a voice and a deck
+# cannot own a track take, so their monitor, effects and the bus take live here.
+my $house_js = read_file("$root/public/js/manager/studio/15_house_patch.js");
+my $plan_pm = read_file("$root/lib/JawnOS/Audio/Plan.pm");
+
+like($template, qr/id="studio_house_patch"/, 'the input picker has a House patch section');
+like($template, qr/<%= &subs::ui\('House patch'\) %>/, 'named House patch');
+like($template, qr/defined \$direction && \$direction eq 'input'/, 'only an input panel shows it');
+like($template, qr/studio_house_patch_take/, 'and the bus take has its own box');
+like($inputs_js, qr/studioHouseFill\(sis, x, y\)/, 'the picker fills it after it is shown');
+like($inputs_js, qr/function studioPlugClamp\(/, 'the panel is clamped again when the rows arrive');
+
+like($house_js, qr#url: '/manager/sound/plan'#, 'the section reads the saved plan');
+like($house_js, qr#url: '/manager/sound/param'#, 'a monitor move is a live fader');
+like($house_js, qr/target: 'patch_source', source: index, name: name/, 'addressed to the source');
+like($house_js, qr/source\.gain = value/, 'the source trim moves in the plan');
+like($house_js, qr/studioHouseSourceParam\(id, 'mute', on\)/, 'the mute is a live footswitch');
+like($house_js, qr/function studioHouseSourceEffects\(/, 'the engine reports each source');
+like($house_js, qr/engine\.source_effects/, 'the page reads the live trim and mute');
+like($house_js, qr#url: '/manager/sound/plan',\s*type: 'POST'#s, 'a plan fact is saved through the plan');
+like($house_js, qr/studioHouseTakeBus/, 'the bus take chooses a bus');
+like($house_js, qr/if \(\$\.inArray\('mix', ids\) >= 0\) \{ return 'mix'; \}/, 'the mix bus is offered first');
+like($house_js, qr/action: 'start',\s*bus: bus,\s*seconds: seconds,\s*click_json:/s, 'Record house mix sends the bus take');
+like($house_js, qr/data: \{ action: 'status' \}/, 'and polls the engine status');
+like($house_js, qr/data: \{ action: 'stop' \}/, 'Stop ends the bus take');
+like($house_js, qr/function studioHouseClick\(/, 'the click comes from the transport');
+like($house_js, qr/mixer\['time'\]\['bpm'\]/, 'with its tempo');
+like($house_js, qr/mixer\['time'\]\['sig'\]/, 'and signature');
+like($house_js, qr/function studioHouseSourceState\(/, 'a source has a state');
+like($house_js, qr/engine\.silent/, 'silent comes from the engine');
+like($house_js, qr/engine\.inputs/, 'bound comes from the bound inputs');
+like($house_js, qr/studio_house_state_/, 'and the state is drawn');
+like($house_js, qr/studio_house_insert_select/, 'an effect can be chosen');
+like($house_js, qr/source\.inserts\.push\(\{ name: name, bypass: 0, controls: \{\} \}\)/, 'adding an insert writes the plan shape');
+
+# The page offers exactly the names the plan accepts, in the same order.
+my ($plan_names) = $plan_pm =~ /our \@audio_plan_insert_names = qw\((.*?)\);/s;
+my @plan_names = grep { length } split /\s+/, ($plan_names || '');
+my ($js_names) = $house_js =~ /var studioHouseInsertNames = \[(.*?)\];/s;
+my @js_names = ($js_names || '') =~ /'([^']+)'/g;
+is_deeply(\@js_names, \@plan_names, 'the page offers exactly the engine effect names the plan accepts');
+
+# The insert shape the engine agent compiles is documented here.
+my $effects = read_file("$root/docs/studio-effects.md");
+like($effects, qr/A source's inserts in the house plan/, 'the docs name the source inserts');
+like($effects, qr/"inserts":\s*\[/s, 'and show the array');
+like($effects, qr/"name": "reverb", "bypass": 0, "controls"/, 'with name, bypass and controls');
+like($effects, qr/Order is the chain/, 'and chain order');
 
 # --- the input picker opens on the saved source ------------------------------
 # A plan may name this machine explicitly: Sound's source form writes it and

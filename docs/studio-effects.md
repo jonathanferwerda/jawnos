@@ -100,6 +100,57 @@ In Rust, `master_*` maps to the same effect implementations as the channel
 versions; the prefix exists so the socket and the song document can say where
 the insert belongs.
 
+## A source's inserts in the house plan
+
+The house plan (`docs/studio-audio-roadmap.md` §8) is one document for every
+source, bus and sink, and a **source** may carry its own pedal board. This is
+how a voice, a deck or the guitar is coloured without owning a Studio track:
+the engine builds the chain on the source's signal, before any route's gain and
+pan, so the effect belongs to the source rather than to one destination.
+
+The field is `inserts` on a source in `lib/JawnOS/Audio/Plan.pm`. Its shape is
+stable and is what the engine compiles:
+
+```json
+{
+  "id": "voice", "kind": "peer", "machine": "table", "gain": 0.8,
+  "inserts": [
+    { "name": "reverb", "bypass": 0, "controls": { "mix": 0.35, "model": 2 } },
+    { "name": "delay",  "bypass": 0, "controls": { "time": 250, "feedback": 0.3, "vol": 0.4 } }
+  ]
+}
+```
+
+| field | meaning |
+| --- | --- |
+| `gain` | the source's own trim, before its inserts and every route: the engine's `0..=4` recording gain, default unity |
+| `name` | one canonical `InsertKind::parse` name from the table above; never a `master_` prefix and never `stereowidener`, which the native engine does not build |
+| `bypass` | whole `0` or `1`; `1` keeps the insert in the chain and passes the signal through |
+| `controls` | sparse map of that effect's own control names to **native units** (the dB, millisecond, 0..1 and index scales above), never the UI's 0..100 slider; an absent control is the effect's default |
+
+Rules:
+
+1. **Order is the chain.** The first array entry hears the source first; the last
+   feeds the first route. Two entries may name the same effect.
+2. **Only a source has inserts.** A sink takes what the buses send it; an insert
+   on that edge belongs to the route, not the sink, and the write path refuses
+   one.
+3. **The manager owns the shape.** `audio_plan_normalize` keeps a known name and
+   that effect's known controls, dropping an unknown name whole and a typo'd
+   control from the map; `audio_plan_valid` refuses both instead of repairing a
+   write. A chain is bounded at sixteen.
+4. **The engine clamps a control.** Rule 3 of this document applies: a control
+   thread may send anything, and the effect clamps it to its own range. The
+   engine applies a plan's `controls` in each insert's own slot before the chain
+   is prepared, so an effect starts at the declared value, not at its web
+   default.
+5. **A source with no `inserts` is an empty board.** Every plan written before
+   this field normalises to `inserts: []`, so the engine reads one shape. A
+   source with no `gain` is unity.
+6. **The footswitch is live, not a plan field.** A `patch_source` param named
+   `mute` moves the source's own mute gain without touching its trim; `status`
+   reports the result in `source_effects[].mute`.
+
 ## Rules both sides obey
 
 1. **Prepare allocates, process does not.** The audio thread has one period
@@ -143,26 +194,11 @@ track; `master_*` names resolve to the same effect implementations.
 
 ### Patch sources
 
-A patchbay source may carry its own `gain` and `inserts`, and they run before
-that source's routes and sends. The bus a take records is therefore the
-effected source, and the mix hears the same thing. `inserts` is an array of
-engine effect names, or objects with a `name` and an optional `bypass` (the
-pedal stays in the rack, exactly as a footswitch does):
-
-```json
-{"id":"gtr","kind":"input","channel":0,"gain":0.8,
- "inserts":["distortion",{"name":"delay","bypass":true,
-            "controls":{"time":250,"feedback":0.3,"vol":0.4}}]}
-```
-
-The trim is the engine's +12 dB recording range (`0..=4`); an out-of-range gain,
-an unknown insert, or an insert object with no name is a refusal when the plan
-compiles. An insert may also carry a sparse `controls` map of that effect's own
-names to the contract's native units; the engine applies them in the insert's
-own slot before the chain is prepared, so a pedal starts where the player left
-it. An unknown control is a refusal. A stereo source (`device`, `handset`) runs
-one independent instance of each effect per side, because an effect is a mono
-processor.
+A patchbay source's `gain` and `inserts` are the plan shape above: the chain
+runs before that source's routes and sends, so the bus a take records is the
+effected source and the mix hears the same signal. A stereo source (`device`,
+`handset`) runs one independent instance of each effect per side, because an
+effect is a mono processor.
 
 A live knob is addressed to the source, not to a route:
 

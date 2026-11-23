@@ -476,8 +476,47 @@ browser click is suppressed while an engine take owns the clock.) Everything els
 owns — `tracks`, `inputs`, `master`, monitor files, `monitor_input`, `align_samples`, `calibrate` —
 is refused by name on a bus take, because the patch owns the output and the capture. The Studio
 route (`POST /manager/studio/take`, action `start`) accepts `bus` as one plan node name (Plan.pm's
-charset), validates it before dialling the engine and refuses those combinations there too; the
-page has no control for it yet, so the gate sends the one form field itself.
+charset), validates it before dialling the engine and refuses those combinations there too; Studio's
+**House patch** section is the page control for it (below).
+
+**The House patch in Studio (2026-11-23, in the tree).** The Channel input panel's plug list now ends
+with a **House patch** section: the surface for the sources that cannot own a track take. The guitar
+is Input 1/2 and already a track input; a voice and the deck are peer sources, so their monitor,
+effects and recording live here. It reads `GET /manager/sound/plan` and lists every plan source with
+its `kind`, its `machine` and one of three states: **bound** (the engine reports the node in
+`engine.inputs`, or a peer/handset is `capturing`), **silent** (the engine names it in
+`engine.silent`, or a peer/handset cannot bind), or **pending** (the mixer is off, the engine is not
+running, the plan is not patched, or the source belongs to another machine). A bus take's status line
+drops the patch's fields, so the section keeps the labels the last patching answer gave.
+
+A routed source has a **Monitor** fader and a **Mute** switch. The fader is the
+source's own trim (the engine's `0..4` recording gain, before its inserts), so a
+quieter source also drives its pedals less; a move is the live fader the Sound
+matrix uses: `POST /manager/sound/param` with `target=patch_source`, the
+source's 0-based index and `name=gain`. The plan's source `gain` is saved on
+release so the position survives a reload. Mute is the engine's source
+footswitch, the same route with `name=mute` and value `1` or `0`; the plan keeps
+the trim, so unmuting restores what was set, and `engine.source_effects[].mute`
+is what the box reflects. Neither move re-patches. A source's insert bypass and
+its effect chain stay plan facts and are saved with the whole plan, which
+re-patches the engine.
+
+A source's effects are its `inserts` array in the plan (the shape is
+`docs/studio-effects.md`, "A source's inserts in the house plan"): the section shows the chain in
+order with a bypass box and a remove cross, and **Add** appends the chosen engine effect. The names
+are the twelve `InsertKind` names, so the native engine can build every one; `stereowidener` is not
+offered because the engine has no such effect. The write path refuses an unknown effect or control.
+
+**Record house mix** is the bus take's UI: it sends
+`POST /manager/studio/take` with `action=start`, the chosen bus (the plan's `mix` bus by default, then
+`house`, then the first bus), `seconds` and `click_json` built from the transport's BPM, its
+signature's top number and the metronome's volume. The engine renders the click on the patch's output
+after the tap, so it is heard and never enters the WAV. **Stop** sends `action=stop`; the section polls
+`action=status` and reports the WAV's path when the take ends. The source fader
+and footswitch are the two live `patch_source` params above; the mix already
+sums every routed source, so the multi-monitor case needs no new command. An
+atomic move of several routes at once would be
+`{"cmd":"param","target":"patch","routes":[{"route":N,"name":"gain","value":V},...]}`.
 
 This is the answer to item 5: one table, on any device, for every input and output in the house.
 
@@ -1036,12 +1075,13 @@ unknown bus refused by name; `t/336` covers the client key and the route's valid
 
 **What remains for the gate:** the run itself — ten minutes on the house LAN with a person on the
 UM2 and the phone's peer, plus the deck's own live take. Start the patch (the plan's `house` bus
-carrying the UM2 input and the peer), then send the take as
-`POST /manager/studio/take` with `action=start&bus=house&seconds=600` and the `click_json` the page
-builds (the page has no button for `bus` yet, so this one request is sent by hand or from the
-console); stop it with the Studio stop or `record action=stop`. What is deliberately not in this
-step: a bus take has no monitor files or mastering rack of its own (the patch owns the output), no
-per-bus trim on the take, and no UI control; those are Studio features, not the gate's.
+carrying the UM2 input and the peer), then start it from Studio's House patch section with **Record
+house mix** (the plan's `mix` bus is offered first, then `house`, then the first bus) or send the
+same request by hand as `POST /manager/studio/take` with `action=start&bus=house&seconds=600` and the
+`click_json` the page builds; stop it with the Stop control, Studio's stop or `record action=stop`.
+What is deliberately not in this step: a bus take has no monitor files or mastering rack of its own
+(the patch owns the output) and no per-bus trim on the take; those are Studio features, not the
+gate's.
 
 **Still to come:** the gate above; the tailnet's opening minute (28.7% late before the fit is
 trusted); the deck's handshake retry (a take can open with `no session` before the first WELCOME
