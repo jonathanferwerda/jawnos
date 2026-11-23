@@ -92,6 +92,31 @@
 			<% } %>
 		</section>
 		<% } %>
+		<section class="handbook_today_card handbook_today_projects">
+			<h3><%= &subs::ui('Projects') %></h3>
+			<% if (scalar @{$t->{'projects'}}) { %>
+				<ul class="handbook_today_list">
+					<% foreach my $project ( @{$t->{'projects'}} ) { %>
+						<li class="handbook_today_row handbook_today_open_app hover" app="<%= $project->{'app'} %>">
+							<span class="handbook_today_row_name"><%= $project->{'name'} %></span>
+							<span class="handbook_today_row_note">
+								<% if ($project->{'count'}) { %><%= $project->{'count'} %> <%= &subs::ui('today') %><% } elsif ($project->{'last'}) { %><%= &subs::ui('last touched') %> <span class="time" timestamp="<%= $project->{'last'} %>"></span><% } else { %><%= &subs::ui('not started') %><% } %>
+								<% if ($project->{'members'}) { %> &middot; <%= $project->{'members'} %> <%= &subs::ui('people') %><% } %>
+							</span>
+							<% if (scalar @{$project->{'member_names'}}) { %>
+								<span class="handbook_today_row_extra"><%= join(', ', @{$project->{'member_names'}}) %></span>
+							<% } %>
+						</li>
+					<% } %>
+				</ul>
+			<% } else { %>
+				<div class="handbook_today_empty"><%= &subs::ui('No project has been made yet.') %></div>
+			<% } %>
+			<div class="handbook_today_actions">
+				<button class="handbook_today_relational"><%= &subs::ui('Open Relational') %></button>
+			</div>
+		</section>
+
 	</div>
 
 	<div class="handbook_today_column">
@@ -203,30 +228,6 @@
 			<% } %>
 		</section>
 
-		<section class="handbook_today_card handbook_today_projects">
-			<h3><%= &subs::ui('Projects') %></h3>
-			<% if (scalar @{$t->{'projects'}}) { %>
-				<ul class="handbook_today_list">
-					<% foreach my $project ( @{$t->{'projects'}} ) { %>
-						<li class="handbook_today_row handbook_today_open_app hover" app="<%= $project->{'app'} %>">
-							<span class="handbook_today_row_name"><%= $project->{'name'} %></span>
-							<span class="handbook_today_row_note">
-								<% if ($project->{'count'}) { %><%= $project->{'count'} %> <%= &subs::ui('today') %><% } elsif ($project->{'last'}) { %><%= &subs::ui('last touched') %> <span class="time" timestamp="<%= $project->{'last'} %>"></span><% } else { %><%= &subs::ui('not started') %><% } %>
-								<% if ($project->{'members'}) { %> &middot; <%= $project->{'members'} %> <%= &subs::ui('people') %><% } %>
-							</span>
-							<% if (scalar @{$project->{'member_names'}}) { %>
-								<span class="handbook_today_row_extra"><%= join(', ', @{$project->{'member_names'}}) %></span>
-							<% } %>
-						</li>
-					<% } %>
-				</ul>
-			<% } else { %>
-				<div class="handbook_today_empty"><%= &subs::ui('No project has been made yet.') %></div>
-			<% } %>
-			<div class="handbook_today_actions">
-				<button class="handbook_today_relational"><%= &subs::ui('Open Relational') %></button>
-			</div>
-		</section>
 
 		<section class="handbook_today_card handbook_today_people">
 			<h3><%= &subs::ui('People') %></h3>

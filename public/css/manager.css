@@ -2291,7 +2291,7 @@ html.jawnos_webview #admin_console_toggle {
 }
 .handbook_today_grid {
 	display: grid;
-	/* money and the house devices share the narrow column; the journal, projects
+	/* money, the house devices and projects share the narrow column; the journal
 	   and people get the wider one. One column when the window is phone-sized. */
 	grid-template-columns: minmax(240px, .85fr) minmax(320px, 1.15fr);
 	gap: 12px;
@@ -2492,6 +2492,14 @@ html.jawnos_webview #admin_console_toggle {
 @media (max-width: 760px) {
 	.handbook_today_bar { position: static; }
 	.handbook_today_grid { grid-template-columns: 1fr; }
+	/* the columns become one list again, in the order the cards are read:
+	   Money, Devices, the day, then projects and people */
+	.handbook_today_column { display: contents; }
+	.handbook_today_money { order: 1; }
+	.handbook_today_devices { order: 2; }
+	.handbook_today_life { order: 3; }
+	.handbook_today_projects { order: 4; }
+	.handbook_today_people { order: 5; }
 	.handbook_today_big { font-size: 28px; }
 	#handbook_today_date { width: 100%; }
 }

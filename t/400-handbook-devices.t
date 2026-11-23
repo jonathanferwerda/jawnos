@@ -109,6 +109,18 @@ subtest 'the Today page, its route and its script are wired together' => sub {
 		'the switch has a fixed, translatable hint');
 	like($template, qr/\$t->\{'is_today'\}/, 'the card is drawn for today only');
 
+	my @cards = qw(handbook_today_money handbook_today_devices handbook_today_projects handbook_today_life handbook_today_people);
+	my @at = map { index($template, $_) } @cards;
+	is_deeply(\@at, [ sort { $a <=> $b } @at ],
+		'Money, Devices and Projects keep the left column, in that order');
+	is(scalar(() = $template =~ /handbook_today_column/g), 2, 'the grid is two columns');
+
+	my $css = read_file("$root/public/css/manager.css");
+	like($css, qr/\.handbook_today_column \{ display: contents; \}/,
+		'the phone view flattens the columns');
+	like($css, qr/\.handbook_today_devices \{ order: 2; \}/,
+		'and keeps Devices second, under Money');
+
 	my $js = read_file("$root/public/js/manager/manager/08_handbook.js");
 	like($js, qr#url: '/manager/handbook/device'#, 'the switch posts to the Handbook device route');
 	like($js, qr/handbook_today_device_toggle/, 'and it handles the card\'s button');
