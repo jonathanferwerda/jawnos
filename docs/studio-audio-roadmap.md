@@ -1237,6 +1237,16 @@ chosen one opens the first card that can play (the kernel's own `pcm0p` probe, s
 by card id, instead of a compiled `hw:1,0`. The P2 gate's auto-detect still prefers the UM2 by name;
 that is a developer tool, and it is the one place left to generalize.
 
+**App PCM on the engine (2026-11-24, in the tree; inert).** Studio's synth and drum machine
+can now be carried by the engine instead of played only by the browser. A `player` source is a real
+plan node: stereo, no interface channel, mixed through two independent insert chains exactly as a
+`device` source is, and `pending` until the local audio input attaches its ring - so a player that
+is not fed costs no ring and mixes silence. The plan writes the two placement facts the reader
+needs: `lead_ms` (how far ahead of arrival the first frame is anchored; default 100 ms) and
+`buffer_ms` (how far behind the clock it is read; the same one-window default and 2 s bound a peer
+declares). `t/411` pins the compile, the stereo mix and the plan fields; the manager's forwarder and
+the browser tap are the next step.
+
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
 turning `manage` off returns the machine to today's behaviour with nothing stranded.

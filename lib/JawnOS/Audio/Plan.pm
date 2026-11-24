@@ -67,6 +67,18 @@ our $audio_plan_max_peer_latency = 2_000;
 our $audio_plan_peer_buffer_default = 85;
 our $audio_plan_max_peer_buffer = 2_000;
 
+# A `player` source is a Studio app's own audio, carried to the engine by this
+# machine's local audio input instead of the uplink. `lead_ms` is how far ahead
+# of its arrival the first frame is placed on the master timeline: enough that
+# the sender's own jitter never starves the reader, small enough to feel live.
+# `buffer_ms` is the same read-head fact a peer declares. Both keep the peer
+# sanity bound, and both are written into the plan so the page shows what the
+# engine will do instead of an empty field.
+our $audio_plan_player_lead_default = 100;
+our $audio_plan_max_player_lead = 2_000;
+our $audio_plan_player_buffer_default = $audio_plan_peer_buffer_default;
+our $audio_plan_max_player_buffer = 2_000;
+
 # A source may carry a pedal board of its own: the effects the engine builds on
 # the source before any route, so a voice or a deck can be coloured without
 # owning a Studio track. The names are the engine's `InsertKind` vocabulary
@@ -272,15 +284,28 @@ sub _audio_plan_node {
 	$latency = $audio_plan_max_peer_latency
 		if $type eq 'source' && $kind eq 'peer'
 			&& $latency > $audio_plan_max_peer_latency;
-	# How far behind the clock the uplink reads a peer. Only a peer is read by
-	# the uplink, so only a peer carries the field; anything shorter than one
-	# jitter window is raised to it by the engine, whose report says which
-	# buffer it actually ran.
+	# How far behind the clock the reader reads a stream of its own. A peer is
+	# read by the uplink and a player by the local audio input, so those two
+	# carry the field; anything shorter than one jitter window is raised to it
+	# by the engine, whose report says which buffer it actually ran.
 	my $buffer;
 	if ($type eq 'source' && $kind eq 'peer') {
 		$buffer = _audio_plan_nonnegative($entry->{buffer_ms}, $audio_plan_peer_buffer_default);
 		$buffer = $audio_plan_max_peer_buffer
 			if $buffer > $audio_plan_max_peer_buffer;
+	}
+	elsif ($type eq 'source' && $kind eq 'player') {
+		$buffer = _audio_plan_nonnegative($entry->{buffer_ms}, $audio_plan_player_buffer_default);
+		$buffer = $audio_plan_max_player_buffer
+			if $buffer > $audio_plan_max_player_buffer;
+	}
+	# A player's lead: how far ahead of arrival the local reader anchors its
+	# first frame. No other kind declares one.
+	my $lead;
+	if ($type eq 'source' && $kind eq 'player') {
+		$lead = _audio_plan_nonnegative($entry->{lead_ms}, $audio_plan_player_lead_default);
+		$lead = $audio_plan_max_player_lead
+			if $lead > $audio_plan_max_player_lead;
 	}
 	# The source's own pedal board, in chain order. Only a source has one: a
 	# sink takes what the buses send it, and inserts on that edge belong to the
@@ -314,6 +339,7 @@ sub _audio_plan_node {
 		node       => defined $node ? $node : '',
 		latency_ms => $latency,
 		(defined $buffer ? (buffer_ms => $buffer) : ()),
+		(defined $lead ? (lead_ms => $lead) : ()),
 		(defined $source_gain ? (gain => $source_gain) : ()),
 		(defined $inserts ? (inserts => $inserts) : ()),
 	};
@@ -513,6 +539,14 @@ sub _audio_plan_valid_node {
 		return 0 unless defined $number && $number >= 0;
 		return 0 if $type eq 'source' && $kind eq 'peer'
 			&& $number > $audio_plan_max_peer_buffer;
+		return 0 if $type eq 'source' && $kind eq 'player'
+			&& $number > $audio_plan_max_player_buffer;
+	}
+	if (exists $entry->{lead_ms}) {
+		my $number = _audio_plan_number($entry->{lead_ms});
+		return 0 unless defined $number && $number >= 0;
+		return 0 if $type eq 'source' && $kind eq 'player'
+			&& $number > $audio_plan_max_player_lead;
 	}
 	if (exists $entry->{node}) {
 		# Only an `input` captures from a node; a node on any other kind is a

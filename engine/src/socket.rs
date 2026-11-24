@@ -8606,6 +8606,7 @@ break"}"#).is_err());
                         handset: "off",
                         mode: "playback",
                         peer: "off",
+                        player: "off",
                     },
                     system: capture.to_string(),
                     error: String::new(),

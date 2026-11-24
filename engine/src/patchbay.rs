@@ -17,10 +17,12 @@
 //!   capture channel, a `device` source is the machine's own system mix (Music,
 //!   video, notifications, calls), a `handset` source is the reception mixer's
 //!   screened-call monitor (`jawn_call_in.monitor`), a `peer` source is another
-//!   machine's input carried over the uplink (`uplink.rs`), and an
+//!   machine's input carried over the uplink (`uplink.rs`), a `player` source is
+//!   a Studio app's own PCM carried by this machine's local audio input, and an
 //!   `interface`/`speakers` sink is the local output; the rest are reported in
-//!   [`PatchSummary::silent`] and their routes contribute nothing. A peer that
-//!   is on this machine is `pending` until a receiver is attached, not silent.
+//!   [`PatchSummary::silent`] and their routes contribute nothing. A peer or a
+//!   player that is on this machine is `pending` until a receiver is attached,
+//!   not silent.
 //!   A plan is one document for the whole house; applying it on one machine
 //!   must not fail because the rest of the house is elsewhere.
 //!
@@ -60,8 +62,10 @@ use crate::system_capture::DEFAULT_INPUT;
 
 /// The source kinds a saved plan may name. `input` is a capture channel,
 /// `device` is this machine's system mix, `handset` is the reception mixer's
-/// screened call, and `peer` is another machine's input on the uplink;
-/// `player` is declared but silent here.
+/// screened call, `peer` is another machine's input on the uplink, and
+/// `player` is a Studio app's own PCM carried by this machine's local audio
+/// input. Each kind asks for a different capture, and none of them borrows an
+/// interface channel unless it is an `input`.
 const SOURCE_KINDS: &[&str] = &["input", "player", "peer", "handset", "device"];
 
 /// The sink kinds a saved plan may name. `interface` and `speakers` are the
@@ -88,7 +92,9 @@ enum SourceRoute {
 /// own and mixes like a `parec` input, without borrowing an interface channel.
 /// `input` is the source's own `parec` ring on a PipeWire machine, where the
 /// card is never opened for capture: its samples land in the plan's `channel`
-/// each block.
+/// each block. `player` marks a Studio app's own stereo PCM, which the local
+/// audio input (`local.rs`) carries in a ring of its own and the block mixes
+/// like a stereo `parec` input.
 #[derive(Debug)]
 struct Source {
     id: String,
@@ -119,6 +125,15 @@ struct Source {
     /// uplink fills a stereo ring of its own, which the block mixes like a
     /// `parec` input, and it asks for no card capture and no `parec`.
     peer: bool,
+    /// A Studio app's own PCM on this machine. It has no interface channel:
+    /// the local audio input fills a stereo ring of its own, so a plan whose
+    /// inputs take every channel can still carry a player. It asks for no card
+    /// capture and no `parec`.
+    player: bool,
+    /// A `player`'s declared lead, in milliseconds: how far ahead of its
+    /// arrival the first frame is placed on the master timeline. Zero for
+    /// every other kind, whose placement belongs to the uplink or the card.
+    lead_ms: f64,
     /// The peer's declared capture/pipeline latency, in milliseconds. A
     /// positive value means its audio is late, so the uplink places it that
     /// much earlier on the master timeline. Zero for every source that is not
@@ -231,6 +246,11 @@ pub struct PatchSummary {
     /// `off` when the plan declares no peer source on this machine. A peer on
     /// another machine is `silent` instead (see [`PatchSummary::silent`]).
     pub peer: &'static str,
+    /// `pending` while a routed `player` source on this machine has no local
+    /// audio input attached, `capturing` once the forwarder's ring is attached,
+    /// and `off` when the plan declares no player source on this machine. A
+    /// player on another machine is `silent` instead, like a peer.
+    pub player: &'static str,
 }
 
 impl PatchSummary {
@@ -275,7 +295,7 @@ impl PatchSummary {
             .collect::<Vec<String>>()
             .join(",");
         format!(
-            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"inputs\":[{}],\"source_effects\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\",\"peer\":\"{}\"",
+            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"inputs\":[{}],\"source_effects\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\",\"peer\":\"{}\",\"player\":\"{}\"",
             self.sources,
             self.buses,
             self.sinks,
@@ -288,7 +308,8 @@ impl PatchSummary {
             self.system,
             self.handset,
             self.mode,
-            self.peer
+            self.peer,
+            self.player
         )
     }
 }
@@ -335,6 +356,11 @@ pub struct Patchbay {
     /// block, so a peer never borrows an interface channel; empty for every
     /// source that is not a peer.
     peer_blocks: Vec<Vec<f32>>,
+    /// One stereo block per `player` source, indexed like `peer_blocks`. A
+    /// Studio app's PCM is already interleaved stereo, so the local audio input
+    /// pops it into a block of its own and the block mixes it like a stereo
+    /// `parec` input; empty for every source that is not a player.
+    player_blocks: Vec<Vec<f32>>,
     /// Interleaved stereo f32 system mix, one block. Empty when the block did
     /// not carry one; the same length as `input`'s frames otherwise.
     system: Vec<f32>,
@@ -547,6 +573,10 @@ impl Patchbay {
             let system = kind == "device" && on_this_machine;
             let handset = kind == "handset" && on_this_machine;
             let peer = kind == "peer" && on_this_machine;
+            // A `player` is a Studio app's own PCM, carried by this machine's
+            // local audio input. It is bound here only when the plan places it
+            // on this machine, exactly like a peer; elsewhere it is silent.
+            let player = kind == "player" && on_this_machine;
             // Only a `peer` source's declaration is placed by this engine. The
             // manager writes `latency_ms` on every source, so a number on a
             // local `input` (or any other kind) is kept for the plan and
@@ -557,11 +587,23 @@ impl Patchbay {
             } else {
                 0.0
             };
-            // How far behind the master clock this peer is read. Only a peer's
-            // declaration is honoured: the buffer is the uplink's read head,
-            // and no other kind is fed by the uplink.
+            // A player's lead is the one placement this engine makes for an
+            // app's PCM: it tells the local reader how far ahead of arrival to
+            // anchor the first frame. Only a `player` carries one; a number on
+            // any other kind is kept for the plan and ignored here.
+            let lead_ms = if kind == "player" {
+                player_lead_ms(entry, &id)?.unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            // How far behind the master clock this source is read. Only a
+            // `peer` (the uplink's read head) and a `player` (the local audio
+            // input's read head) are fed by a ring of their own, so only they
+            // declare a buffer.
             let buffer_ms = if kind == "peer" {
                 peer_buffer_ms(entry, &id)?
+            } else if kind == "player" {
+                player_buffer_ms(entry, &id)?
             } else {
                 None
             };
@@ -572,11 +614,12 @@ impl Patchbay {
             if reachable && node.as_deref().is_some_and(|name| probe(name) == Some(false)) {
                 reachable = false;
             }
-            if !reachable && !system && !handset && !peer {
+            if !reachable && !system && !handset && !peer && !player {
                 // A plan saved for a wider interface (or a phone, or a route
                 // delegated elsewhere) is a declared node this machine cannot
-                // reach, not a broken plan. A `peer` on this machine is not in
-                // this list: it is pending until the uplink attaches its ring.
+                // reach, not a broken plan. A `peer` or a `player` on this
+                // machine is not in this list: it is pending until its ring is
+                // attached.
                 silent.push(id.clone());
             }
             // A source runs its own trim and inserts before any route, so the
@@ -587,7 +630,9 @@ impl Patchbay {
             // so two pedals of one kind can start at different settings.
             let planned = source_inserts(entry, &id)?;
             let gain = source_gain(entry, &id)?;
-            let chains_per_source = if system || handset { 2 } else { 1 };
+            // A stereo source runs one independent mono chain per side. A
+            // player is stereo: its PCM arrives already interleaved.
+            let chains_per_source = if system || handset || player { 2 } else { 1 };
             let mut chains = Vec::with_capacity(chains_per_source);
             for _ in 0..chains_per_source {
                 let mut chain = EffectChain::new();
@@ -608,6 +653,8 @@ impl Patchbay {
                 system,
                 handset,
                 peer,
+                player,
+                lead_ms,
                 latency_ms,
                 buffer_ms,
                 input: None,
@@ -732,11 +779,7 @@ impl Patchbay {
 
             let executable = match (from_ref, to_ref) {
                 (NodeRef::Source(source), NodeRef::Bus(bus)) => {
-                    if sources[source].channel.is_some()
-                        || sources[source].system
-                        || sources[source].handset
-                        || sources[source].peer
-                    {
+                    if source_feeds(&sources[source]) {
                         sources[source].routes.push(SourceRoute::Bus {
                             index: bus,
                             strip: route_index,
@@ -747,12 +790,7 @@ impl Patchbay {
                     }
                 }
                 (NodeRef::Source(source), NodeRef::Sink(sink)) => {
-                    if (sources[source].channel.is_some()
-                        || sources[source].system
-                        || sources[source].handset
-                        || sources[source].peer)
-                        && sinks[sink].bound
-                    {
+                    if source_feeds(&sources[source]) && sinks[sink].bound {
                         sources[source].routes.push(SourceRoute::Sink {
                             index: sink,
                             strip: route_index,
@@ -808,6 +846,18 @@ impl Patchbay {
         } else {
             "off"
         };
+        let player_state = if sources.iter().any(|source| source.player) {
+            if sources
+                .iter()
+                .any(|source| source.player && source.input.is_some())
+            {
+                "capturing"
+            } else {
+                "pending"
+            }
+        } else {
+            "off"
+        };
         let source_effects = sources
             .iter()
             .map(|source| SourceEffects {
@@ -826,12 +876,7 @@ impl Patchbay {
             buses: buses.len(),
             sinks: sinks.len(),
             routes: route_count,
-            bound_sources: sources
-                .iter()
-                .filter(|source| {
-                    source.channel.is_some() || source.system || source.handset || source.peer
-                })
-                .count(),
+            bound_sources: sources.iter().filter(|source| source_feeds(source)).count(),
             bound_sinks: sinks.iter().filter(|sink| sink.bound).count(),
             silent,
             source_effects,
@@ -844,6 +889,7 @@ impl Patchbay {
             },
             mode,
             peer: peer_state,
+            player: player_state,
         };
 
         let bus_count = buses.len();
@@ -865,6 +911,7 @@ impl Patchbay {
             input: Vec::new(),
             capture_block: Vec::new(),
             peer_blocks: (0..source_count).map(|_| Vec::new()).collect(),
+            player_blocks: (0..source_count).map(|_| Vec::new()).collect(),
             system: Vec::new(),
             handset: None,
             handset_block: Vec::new(),
@@ -908,6 +955,33 @@ impl Patchbay {
                     index,
                     source.id.clone(),
                     source.latency_ms,
+                    source.buffer_ms,
+                )
+            })
+            .collect()
+    }
+
+    /// Every routed `player` source on this machine, as (index, id, declared
+    /// lead in ms, declared read buffer in ms). The caller makes one ring per
+    /// entry and the local audio input feeds it, anchoring its first frame that
+    /// far ahead of arrival and reading it that far behind the clock; the block
+    /// pops it into that source's own stereo block, so a player that is not
+    /// routed costs no ring. A buffer of `None` takes the reader's default,
+    /// the same one-window slack a peer starts with.
+    // The caller is the local audio input, which attaches one ring per entry
+    // and feeds it from the manager's forwarder. Until that reader is wired, a
+    // compiled player is `pending` on this machine and costs no ring.
+    #[allow(dead_code)]
+    pub fn wants_player(&self) -> Vec<(usize, String, f64, Option<f64>)> {
+        self.sources
+            .iter()
+            .enumerate()
+            .filter(|(_index, source)| source.player && !source.routes.is_empty())
+            .map(|(index, source)| {
+                (
+                    index,
+                    source.id.clone(),
+                    source.lead_ms,
                     source.buffer_ms,
                 )
             })
@@ -998,6 +1072,54 @@ impl Patchbay {
         }
     }
 
+    /// Attach the local audio input's ring to a `player` source. A Studio app's
+    /// PCM has already been mixed to stereo by the sender, so the block pops it
+    /// into a stereo block of its own and mixes it like a `parec` input; the
+    /// source moves from `pending` to `capturing`.
+    // Attached by the local audio input, the way `attach_input` attaches a
+    // peer's uplink ring.
+    #[allow(dead_code)]
+    pub fn attach_player(&mut self, index: usize, consumer: Consumer) {
+        let Some(source) = self.sources.get_mut(index) else {
+            return;
+        };
+        if !source.player {
+            return;
+        }
+        source.input = Some(consumer);
+        let needed = self.period.saturating_mul(2);
+        if let Some(block) = self.player_blocks.get_mut(index) {
+            if block.len() < needed {
+                *block = vec![0.0; needed];
+            }
+        }
+        self.summary.player = "capturing";
+    }
+
+    /// A `player`'s forwarder is gone (the sender stopped, or the app closed).
+    /// The source stays declared and routed, so its fader and inserts still
+    /// exist, but a block pops silence until a new ring is attached.
+    // Called by the local audio input when its forwarder goes away.
+    #[allow(dead_code)]
+    pub fn silence_player(&mut self, index: usize) {
+        let Some(source) = self.sources.get_mut(index) else {
+            return;
+        };
+        if !source.player {
+            return;
+        }
+        source.input = None;
+        self.summary.player = if self
+            .sources
+            .iter()
+            .any(|source| source.player && source.input.is_some())
+        {
+            "capturing"
+        } else {
+            "pending"
+        };
+    }
+
     /// An input's capture could not start. Only that source is silenced: the
     /// machine's ordinary audio and every other route keep playing, and the
     /// source's id is named in `silent` so the status can say why.
@@ -1016,9 +1138,7 @@ impl Patchbay {
         self.summary.bound_sources = self
             .sources
             .iter()
-            .filter(|source| {
-                source.channel.is_some() || source.system || source.handset || source.peer
-            })
+            .filter(|source| source_feeds(source))
             .count();
         self.summary.inputs = bound_inputs(&self.sources);
     }
@@ -1056,7 +1176,7 @@ impl Patchbay {
         self.summary.bound_sources = self
             .sources
             .iter()
-            .filter(|source| source.channel.is_some() || source.system || source.peer)
+            .filter(|source| source_feeds(source))
             .count();
         self.handset = None;
     }
@@ -1185,14 +1305,26 @@ impl Patchbay {
         if self.handset.is_some() {
             self.handset_block = vec![0.0; period.saturating_mul(2)];
         }
-        // A peer's uplink ring arrives after `prepared` on the socket's own
-        // schedule, so its block is allocated now and `attach_input` only grows
-        // it if it is still too short. A non-peer source gets no block.
+        // A peer's uplink ring and a player's local ring arrive after
+        // `prepared` on the socket's own schedule, so their blocks are
+        // allocated now and the attach calls only grow them if they are still
+        // too short. Any other source gets no block.
         self.peer_blocks = self
             .sources
             .iter()
             .map(|source| {
                 if source.peer {
+                    vec![0.0; period.saturating_mul(2)]
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
+        self.player_blocks = self
+            .sources
+            .iter()
+            .map(|source| {
+                if source.player {
                     vec![0.0; period.saturating_mul(2)]
                 } else {
                     Vec::new()
@@ -1384,12 +1516,20 @@ impl Patchbay {
         // share is written twice, the same as one card channel feeding both.
         // A `peer` has no channel: its uplink ring is popped into a stereo
         // block of its own, which the source loop mixes like a `parec` input.
+        // A `player`'s local ring is popped the same way, into a block of its
+        // own, because a Studio app's PCM is already stereo.
         for (index, source) in self.sources.iter().enumerate() {
             let Some(consumer) = source.input.as_ref() else {
                 continue;
             };
             if source.peer {
                 if let Some(block) = self.peer_blocks.get_mut(index) {
+                    if block.len() >= stereo {
+                        consumer.pop(&mut block[..stereo]);
+                    }
+                }
+            } else if source.player {
+                if let Some(block) = self.player_blocks.get_mut(index) {
                     if block.len() >= stereo {
                         consumer.pop(&mut block[..stereo]);
                     }
@@ -1505,6 +1645,58 @@ impl Patchbay {
                 for frame in 0..frames {
                     self.source_left[frame] = self.handset_block[frame * 2] * gain;
                     self.source_right[frame] = self.handset_block[frame * 2 + 1] * gain;
+                }
+                if source.chains.len() >= 2 {
+                    let (left_chain, right_chain) = source.chains.split_at_mut(1);
+                    left_chain[0]
+                        .process(&mut self.source_left[..frames])
+                        .map_err(|error| format!("source {index} inserts (left): {error:?}"))?;
+                    right_chain[0]
+                        .process(&mut self.source_right[..frames])
+                        .map_err(|error| format!("source {index} inserts (right): {error:?}"))?;
+                }
+                for frame in 0..frames {
+                    self.source_stereo[frame * 2] = self.source_left[frame];
+                    self.source_stereo[frame * 2 + 1] = self.source_right[frame];
+                }
+                for route in &source.routes {
+                    match route {
+                        SourceRoute::Bus { index, strip } => {
+                            let Some(strip) = &self.strips[*strip] else {
+                                continue;
+                            };
+                            mix_stereo_into_stereo(
+                                &mut self.buses[*index][..stereo],
+                                &self.source_stereo[..stereo],
+                                strip,
+                            );
+                        }
+                        SourceRoute::Sink { index, strip } => {
+                            let Some(strip) = &self.strips[*strip] else {
+                                continue;
+                            };
+                            mix_stereo_into_stereo(
+                                &mut self.sink_buffers[*index][..stereo],
+                                &self.source_stereo[..stereo],
+                                strip,
+                            );
+                        }
+                    }
+                }
+            } else if source.player {
+                // A player's PCM is already interleaved stereo, so both sides
+                // run an independent mono chain, exactly as a `device` source
+                // does, and the routes read the processed pair.
+                let Some(block) = self.player_blocks.get(index) else {
+                    continue;
+                };
+                if block.len() < stereo {
+                    continue;
+                }
+                let gain = source.gain.get() * source.mute.get();
+                for frame in 0..frames {
+                    self.source_left[frame] = block[frame * 2] * gain;
+                    self.source_right[frame] = block[frame * 2 + 1] * gain;
                 }
                 if source.chains.len() >= 2 {
                     let (left_chain, right_chain) = source.chains.split_at_mut(1);
@@ -1711,6 +1903,18 @@ fn balance(gain: f32, pan: f32) -> (f32, f32) {
     let left = if pan <= 0.0 { 1.0 } else { 1.0 - pan };
     let right = if pan >= 0.0 { 1.0 } else { 1.0 + pan };
     (gain * left, gain * right)
+}
+
+/// Whether a source has a stream of its own to route on this machine: a bound
+/// interface channel, the system mix, the reception handset, an uplink peer or
+/// a local player. A source declared for another machine has none, so its
+/// routes contribute nothing and it is named in the summary's `silent`.
+fn source_feeds(source: &Source) -> bool {
+    source.channel.is_some()
+        || source.system
+        || source.handset
+        || source.peer
+        || source.player
 }
 
 /// Whether any local `input` source is both bound and routed. The one fact
@@ -1998,22 +2202,7 @@ const PEER_LATENCY_MAX_MS: f64 = 2_000.0;
 /// by name (the source and the field), so a bad declaration is visible rather
 /// than silently treated as zero.
 fn peer_latency_ms(object: &Object, id: &str) -> Result<Option<f64>, String> {
-    match get(object, "latency_ms") {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::Num(value)) if !value.is_finite() => Err(format!(
-            "the peer source {id} has a \"latency_ms\" that is not finite; a latency is a finite number of milliseconds"
-        )),
-        Some(Value::Num(value)) if *value < 0.0 => Err(format!(
-            "the peer source {id} has \"latency_ms\": {value}; a latency cannot be negative"
-        )),
-        Some(Value::Num(value)) if *value > PEER_LATENCY_MAX_MS => Err(format!(
-            "the peer source {id} has \"latency_ms\": {value}; the engine places at most {PEER_LATENCY_MAX_MS} ms"
-        )),
-        Some(Value::Num(value)) => Ok(Some(*value)),
-        Some(_) => Err(format!(
-            "the peer source {id} has a \"latency_ms\" that is not a number; a latency is milliseconds"
-        )),
-    }
+    declared_ms(object, id, "peer", "latency_ms", "a latency", PEER_LATENCY_MAX_MS)
 }
 
 /// The longest declared peer buffer the engine will read with: two seconds,
@@ -2028,20 +2217,59 @@ const PEER_BUFFER_MAX_MS: f64 = 2_000.0;
 /// non-negative number no larger than [`PEER_BUFFER_MAX_MS`] is accepted;
 /// anything else is refused by name, like the latency.
 fn peer_buffer_ms(object: &Object, id: &str) -> Result<Option<f64>, String> {
-    match get(object, "buffer_ms") {
+    declared_ms(object, id, "peer", "buffer_ms", "a buffer", PEER_BUFFER_MAX_MS)
+}
+
+/// The longest lead a `player` may declare: two seconds, the same bound as a
+/// peer's placement. A player's lead is how far ahead of its arrival the local
+/// audio input anchors its first frame, so a larger number is a plan that would
+/// buffer more than a person can play along with.
+const PLAYER_LEAD_MAX_MS: f64 = 2_000.0;
+
+/// A `player` source's optional `"lead_ms"`: how far ahead of its arrival the
+/// first frame is placed on the master timeline. The manager writes a small
+/// lead (about a tenth of a second) so the forwarder's own jitter never starves
+/// the reader; a value outside the bound is refused by name, like a peer's.
+fn player_lead_ms(object: &Object, id: &str) -> Result<Option<f64>, String> {
+    declared_ms(object, id, "player", "lead_ms", "a lead", PLAYER_LEAD_MAX_MS)
+}
+
+/// The longest read buffer a `player` may declare: two seconds, like a peer's.
+const PLAYER_BUFFER_MAX_MS: f64 = 2_000.0;
+
+/// A `player` source's optional `"buffer_ms"`: how far behind the clock the
+/// local audio input reads this source. It is the same fact a peer declares,
+/// with the same bound, because both are rings read by a reader of their own.
+fn player_buffer_ms(object: &Object, id: &str) -> Result<Option<f64>, String> {
+    declared_ms(object, id, "player", "buffer_ms", "a buffer", PLAYER_BUFFER_MAX_MS)
+}
+
+/// One source's optional millisecond declaration. A finite, non-negative
+/// number no larger than `max` is accepted; anything else is refused by name
+/// (the role, the source and the field), so a bad declaration is visible
+/// rather than silently treated as zero.
+fn declared_ms(
+    object: &Object,
+    id: &str,
+    role: &str,
+    field: &str,
+    what: &str,
+    max: f64,
+) -> Result<Option<f64>, String> {
+    match get(object, field) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Num(value)) if !value.is_finite() => Err(format!(
-            "the peer source {id} has a \"buffer_ms\" that is not finite; a buffer is a finite number of milliseconds"
+            "the {role} source {id} has a \"{field}\" that is not finite; {what} is a finite number of milliseconds"
         )),
         Some(Value::Num(value)) if *value < 0.0 => Err(format!(
-            "the peer source {id} has \"buffer_ms\": {value}; a buffer cannot be negative"
+            "the {role} source {id} has \"{field}\": {value}; {what} cannot be negative"
         )),
-        Some(Value::Num(value)) if *value > PEER_BUFFER_MAX_MS => Err(format!(
-            "the peer source {id} has \"buffer_ms\": {value}; the engine reads at most {PEER_BUFFER_MAX_MS} ms behind the clock"
+        Some(Value::Num(value)) if *value > max => Err(format!(
+            "the {role} source {id} has \"{field}\": {value}; the engine accepts at most {max} ms"
         )),
         Some(Value::Num(value)) => Ok(Some(*value)),
         Some(_) => Err(format!(
-            "the peer source {id} has a \"buffer_ms\" that is not a number; a buffer is milliseconds"
+            "the {role} source {id} has a \"{field}\" that is not a number; {what} is milliseconds"
         )),
     }
 }
@@ -2489,6 +2717,92 @@ mod tests {
         );
         assert_eq!(patchbay.summary().bound_sources, 1);
         assert!(patchbay.wants_peer().is_empty());
+    }
+
+    #[test]
+    fn a_player_source_is_pending_not_silent() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"synth","kind":"player","lead_ms":100}],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"synth","to":"house"},{"from":"house","to":"out"}]
+            }"#,
+        );
+        let summary = patchbay.summary();
+        assert_eq!(summary.bound_sources, 1);
+        assert!(summary.silent.is_empty(), "{:?}", summary.silent);
+        assert_eq!(summary.player, "pending");
+        assert_eq!(summary.peer, "off");
+        assert_eq!(
+            patchbay.wants_player(),
+            vec![(0, "synth".to_string(), 100.0, None)],
+            "a routed player carries its lead and takes the default buffer"
+        );
+        assert!(!patchbay.wants_input(), "a player is not a card capture");
+    }
+
+    #[test]
+    fn a_player_on_another_machine_is_silent() {
+        let patchbay = bay_for(
+            r#"{
+                "sources":[{"id":"synth","kind":"player","machine":"elsewhere"}],
+                "buses":[], "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"synth","to":"out"}]
+            }"#,
+            "local",
+        );
+        assert_eq!(patchbay.summary().silent, vec!["synth".to_string()]);
+        assert_eq!(patchbay.summary().player, "off");
+        assert!(patchbay.wants_player().is_empty());
+        assert!(patchbay.wants_peer().is_empty());
+    }
+
+    #[test]
+    fn a_player_lead_outside_the_bounds_is_refused() {
+        for declaration in ["-1", "2001", "\"100\""] {
+            let object = parse_object(&format!(
+                r#"{{
+                    "sources":[{{"id":"synth","kind":"player","lead_ms":{declaration}}}],
+                    "buses":[], "sinks":[{{"id":"out","kind":"interface"}}],
+                    "routes":[{{"from":"synth","to":"out"}}]
+                }}"#
+            ))
+            .expect("parse");
+            let error = Patchbay::from_object(&object, 2, "local").expect_err("refused");
+            assert!(error.contains("lead_ms"), "{error}");
+            assert!(
+                error.contains("synth"),
+                "the refusal names the source: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_player_ring_mixes_stereo_like_a_parec_input() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"synth","kind":"player","lead_ms":100}],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"synth","to":"house"},{"from":"house","to":"out"}]
+            }"#,
+        );
+        let (producer, consumer) = jawn_audio::monbus::new(jawn_audio::monbus::MIN_FRAMES);
+        patchbay.attach_player(0, consumer);
+        assert_eq!(patchbay.summary().player, "capturing");
+        // Four stereo frames: left 0.5, right 0.25.
+        producer.push(&[0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25]);
+
+        let input = [0.0f32; 8];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+        // A stereo source keeps its image: a centred route is unity in both
+        // speakers, not an equal-power pan of one mono channel.
+        for frame in output.chunks(2) {
+            assert!((frame[0] - 0.5).abs() < 1e-5, "{frame:?}");
+            assert!((frame[1] - 0.25).abs() < 1e-5, "{frame:?}");
+        }
     }
 
     #[test]
