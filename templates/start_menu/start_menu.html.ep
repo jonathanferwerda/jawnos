@@ -229,7 +229,11 @@
 						} elsif ($menu eq 'exp') {
 							$query = &subs::db_query('select * from appointments where cast(warranty as integer) >= cast(? as integer) order by cast(warranty as integer) asc limit 20', &subs::rightNow())->hashes;
 						} else { 
-							$query = &subs::db_query('select * from appointments where timestamp >= ? order by timestamp asc limit 20', &subs::rightNow())->hashes;
+							# A daily measurement (the moon, space weather, the magnetometer)
+							# is a reading, not an event: it belongs in the charts, not in a
+							# list of things still to come. Keeping `measure` out also stops a
+							# row dated later today from appearing as a future appointment.
+							$query = &subs::db_query("select * from appointments where timestamp >= ? and coalesce(type, '') <> 'measure' order by timestamp asc limit 20", &subs::rightNow())->hashes;
 						} %>
 						<% my $private_open = &subs::private_reachable_now() && &subs::private_revealed(); %>
 						<% foreach my $app ( grep { !&subs::app_hidden_now($_->{'app'}) && (!&subs::appointment_private_now($_) || $private_open) } @{$query} ) { %>

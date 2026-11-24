@@ -439,6 +439,7 @@ for my $lon (0 .. 359) {
 	local *subs::device_setter = sub { return 'test-device' };
 	local *subs::setting_grabber = sub { return undef };
 	local *subs::setting_setter = sub { };
+	local *subs::clock_zone_house = sub { return 'UTC' };
 	my @inserted;
 	my @updated;
 	local *subs::db_insert = sub { push @inserted, [ @_ ] };

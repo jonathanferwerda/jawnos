@@ -887,7 +887,13 @@ sub astronomy_measure_write ($app, $values, $timestamp = undef, $opts = {}) {
 	$timestamp = &rightNow() unless defined $timestamp && $timestamp =~ /^[0-9]+$/;
 	$opts ||= {};
 	&astronomy_measure_defaults($app);
+	# The day is the person's day, not the box's. The box keeps UTC on purpose, so
+	# a reading taken after 7pm Eastern would otherwise be filed under tomorrow,
+	# and today's row would be anchored at noon UTC (7am Eastern). Adopt the house
+	# zone for the bounds, daylight saving included, then put it back at once.
+	my $restore_zone = eval { &subs::clock_zone_adopt(&subs::clock_zone_house()) } || sub { };
 	my ($day_begin, $day_end) = &period_bounds('day', $timestamp, 0);
+	$restore_zone->();
 	my $rows = eval {
 		&db_query(
 			"select uuid, timestamp, measures from appointments where app = ? and type = 'measure'"

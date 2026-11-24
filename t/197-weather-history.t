@@ -19,6 +19,7 @@ my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Weather.pm";
 require "$root/lib/JawnOS/Domain/WeatherHistory.pm";
 require "$root/lib/JawnOS/Domain/WeatherRadar.pm";
+require "$root/lib/JawnOS/Domain/Clock.pm";
 
 # A query result is only ever asked for its rows here; the history reader wraps
 # each query in eval, so a missing method would quietly look like "no rows".
@@ -297,6 +298,7 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	my $now = 1794010000000;
 	no warnings 'redefine';
 	local *subs::rightNow = sub { $now };
+	local *subs::clock_zone_house = sub { return 'UTC' };
 	local *subs::db_query = sub {
 		my ($query, @args) = @_;
 		return bless { rows => [] }, 'FakeResult' unless ($query // '') =~ /app = 'space_weather'/;
@@ -317,6 +319,24 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	is($days->[0]{'dst'}, -18, 'Dst is read');
 	is($days->[0]{'sunspots'}, 60, 'the sunspot number is read');
 	is($days->[1]{'f107'}, 110, 'F10.7 is read');
+}
+
+# --- the space chart's day is the person's day -----------------------------
+{
+	# 2026-11-24 04:30 UTC is still the evening of the 23rd in Eastern time.
+	my $now = 1795494600000;
+	local *subs::rightNow = sub { $now };
+	local *subs::clock_zone_house = sub { return 'America/New_York' };
+	local *subs::db_query = sub {
+		my ($query) = @_;
+		return bless { rows => [] }, 'FakeResult' unless ($query // '') =~ /app = 'space_weather'/;
+		return bless { rows => [
+			{ timestamp => $now, measures => Mojo::JSON::encode_json([ { ts => $now, kp => 3, uuid => 'late' } ]) },
+		] }, 'FakeResult';
+	};
+	my $days = subs::weather_history_space_days($now - 86400000, $now + 86400000);
+	is(scalar @{$days}, 1, 'the late reading is still one day');
+	is($days->[0]{'date'}, '2026-11-23', 'a late-evening Eastern reading stays on the Eastern day');
 }
 
 # --- rainfall comes from Open-Meteo and is cached ----------------------------

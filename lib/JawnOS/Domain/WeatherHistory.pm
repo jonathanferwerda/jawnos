@@ -616,6 +616,10 @@ sub weather_history_space_days($from, $to) {
 			$begin, $end
 		)->hashes;
 	} || [];
+	# The day is the person's day: the box keeps UTC, so a reading after 7pm
+	# Eastern would otherwise be keyed to tomorrow and drift away from the rainfall
+	# days, which Open-Meteo returns as the place's own dates.
+	my $restore_zone = eval { &subs::clock_zone_adopt(&subs::clock_zone_house()) } || sub { };
 	my %by_day;
 	foreach my $row (@{$rows}) {
 		next unless ref $row eq 'HASH';
@@ -632,6 +636,7 @@ sub weather_history_space_days($from, $to) {
 			}
 		}
 	}
+	$restore_zone->();
 	return [ map { $by_day{$_} } sort keys %by_day ];
 }
 

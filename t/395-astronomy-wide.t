@@ -20,6 +20,7 @@ my $root = root();
 
 require "$root/lib/JawnOS/Domain/Schedule.pm";
 require "$root/lib/JawnOS/Domain/Astronomy.pm";
+require "$root/lib/JawnOS/Domain/Clock.pm";
 require "$root/lib/JawnOS/Domain/Budget2.pm";
 require "$root/lib/JawnOS/Domain/Evaluation.pm";
 
@@ -236,6 +237,7 @@ sub utc_ms {
 	local *subs::setting_setter = sub { my ($d) = @_; $set{ $d->{'setting'} } = $d->{'value'}; };
 	local *subs::db_insert = sub { push @inserted, [ @_ ] };
 	local *subs::db_update = sub { push @updated, [ @_ ] };
+	local *subs::clock_zone_house = sub { return 'UTC' };
 
 	local *subs::db_query = sub { return FakeResult->new([]) };
 	my $uuid = &subs::astronomy_measure_write('moon', {
@@ -271,6 +273,27 @@ sub utc_ms {
 	is($merged->{'sun_angle'}, '0.54', 'the other measure is kept');
 	is($merged->{'moon_phase'}, 0.4, 'the new phase is merged in');
 	is($merged->{'illumination'}, 90, 'and the reading is replaced');
+}
+
+# --- the daily row is the person's day, not the box's -----------------------
+{
+	my (@inserted, %set, $zone_seen);
+	local *subs::clock_zone_house = sub { return 'America/New_York' };
+	local *subs::period_bounds = sub {
+		$zone_seen = $ENV{'TZ'};
+		return (1000, 2000);
+	};
+	local *subs::rightNow = sub { return 1500 };
+	local *subs::device_setter = sub { return 'test-device' };
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::setting_setter = sub { my ($d) = @_; $set{ $d->{'setting'} } = $d->{'value'}; };
+	local *subs::db_insert = sub { push @inserted, [ @_ ] };
+	local *subs::db_query = sub { return FakeResult->new([]) };
+	my $before = $ENV{'TZ'};
+	&subs::astronomy_measure_write('moon', { illumination => 50 }, 1200);
+	is($zone_seen, 'America/New_York', 'the day bounds are computed in the house zone');
+	is($ENV{'TZ'}, $before, 'and the process zone is put back afterwards');
+	is($inserted[0][1]{'timestamp'}, 1000 + 12 * 3600 * 1000, 'the row is anchored at noon of that day');
 }
 
 # --- the backfill walks local days and writes each one ----------------------

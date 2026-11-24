@@ -60,6 +60,14 @@ my @apps = map { $_->[0] } @{ $rows || [] };
 is_deeply(\@apps, ['brushing'],
 	'only the session still running is listed; a sealed start row is not');
 
+my ($up_sql) = $template =~ /db_query\("([^"]*coalesce\(type[^"]*)"/;
+ok(defined $up_sql, 'the upcoming list has its own query');
+$insert->execute('space_weather', 'measure', $now + 120_000, undef);
+my $up_rows = $dbh->selectall_arrayref($up_sql, undef, $now);
+my @up_apps = map { $_->[0] } @{ $up_rows || [] };
+ok(!(grep { $_ eq 'space_weather' } @up_apps), 'a daily measurement stays off the upcoming list');
+ok((grep { $_ eq 'later' } @up_apps), 'a real future appointment is still listed');
+
 
 like($template, qr/id="keyboard_toggle"/, 'the keyboard is a start-menu app');
 like($template, qr/id="calculator_toggle"/, 'and the calculator');
