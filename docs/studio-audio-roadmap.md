@@ -117,7 +117,35 @@ trip. The client xruns at quantum 64 may be the 48-frame period mismatch or sche
 measurement already decides the block size.
 
 **The verdict: the machine holding the interface takes raw ALSA at 64 frames; every other machine
-stays a PipeWire client at 128.** That is the number D9 was waiting for.
+stays a PipeWire client at 128.** That is the number D9 was waiting for. (The 64 was a quiet machine's
+number — §2b below moved the duplex pair to 96/384 once the desktop was busy.)
+
+### §2b — the block, once the machine is busy — 2026-11-24
+
+A month later the same interface, the same cable and the same 48 kHz produced a **digital-sounding
+buzz that came and went** while Monitor was armed on `table`. It was the playback path, not the input:
+
+| Check | Result |
+|---|---|
+| Listen gain set to 0 live (`param target=listen name=gain value=0`) | buzz continued — the output loop is still writing |
+| Monitor stopped | buzz stopped |
+| Guitar unplugged, every insert off (`inserts=` empty), a new song | no change |
+| `/proc/asound/card1/pcm0c/sub0/status` (capture) | `RUNNING`, delay 0–96, no resets |
+| `/proc/asound/card1/pcm0p/sub0/status` (playback), sampled every 200 ms for 8 s | **5 of 40 samples in `XRUN`** — about 1.6 underruns a second |
+| `hw_params` | `S16_LE, 2 ch, 48000, period_size 64, buffer_size 256` |
+| Machine | load average 3.2 on 4 cores, QtWebEngine renderer at 41%, engine thread `TS` nice 0, **`ulimit -r` 0** |
+
+The 2026-11-17 run was clean because it was measured on an idle machine. On a loaded one the duplex
+loop has 5.33 ms of slack, cannot ask for real-time priority, and the device is full-speed USB whose
+transfers are 48-frame packets — a 64-frame period straddles them. The result is an underrun every
+half second or so; `snd_pcm_recover` discards the buffer each time, and the person hears a buzz, not
+a click.
+
+**The fix: the studio pair is 96/384** — two USB frames per period, eight per buffer, 8 ms and 500
+callbacks a second instead of 750. It keeps the near-zero promise (the 128/512 run above measured
+3.79 ms) and leaves 64/256 reachable with `JAWNOS_AUDIO_PERIOD` / `JAWNOS_AUDIO_BUFFER` for a quiet
+machine. The supervisor's un-pinned pair, `plan_block()` and the test that pins both live in
+`perl/Audio.pl` and `t/337-audio-supervisor.t`.
 
 ### The round trip, with the patch cable — 2026-11-17
 
@@ -269,7 +297,7 @@ can cross in one or two frames (~3 ms).
 | D6 | **48 kHz inside, always.** 44.1 k material and 16 kHz devices are resampled at the edge, once. | The UM2 cannot do 44.1, the handset is already 48 k, and a second rate buys nothing. |
 | D7 | **Latency is compensated, never hidden.** Each node declares its buffer and rate; the engine places every take by that number. | This is what lets a 30 ms phone mic be a multitrack source. |
 | D8 | **PCM on a wired LAN, Opus for the phone and Wi-Fi.** | PCM is free on a gigabit; Opus at 10 ms frames keeps a phone's uplink honest. Chosen per peer and stream. |
-| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The machine holding the interface uses raw ALSA at 64 frames; every other machine stays a PipeWire client at 128.** The WirePlumber rule follows the engine's **mode**: `playback` disables only the playback node, leaving the microphone with PipeWire so an app can still record and the privacy indicator follows that app's own use; `duplex` disables both nodes because the plan routes a local input and the engine captures the microphone too (this is what `table`'s hand-written rule already does). | Measured on `table` (§2): raw ALSA held 64/256 for 180 s duplex with no xruns and the patch cable times its round trip at 2.7 ms, against 52 ms through PipeWire. Exclusive ownership costs that one machine its ordinary mixer, and PipeWire only frees the card when it is stopped, so `manage` needs a WirePlumber rule rather than a suspend. A playback-only plan must not disable the microphone (it would take recording from every app), while a duplex plan must, or PipeWire would fight the engine for the capture PCM. |
+| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The machine holding the interface uses raw ALSA at 96 frames (64 until §2b); every other machine stays a PipeWire client at 128.** The WirePlumber rule follows the engine's **mode**: `playback` disables only the playback node, leaving the microphone with PipeWire so an app can still record and the privacy indicator follows that app's own use; `duplex` disables both nodes because the plan routes a local input and the engine captures the microphone too (this is what `table`'s hand-written rule already does). | Measured on `table` (§2): raw ALSA held 64/256 for 180 s duplex with no xruns and the patch cable times its round trip at 2.7 ms, against 52 ms through PipeWire. Exclusive ownership costs that one machine its ordinary mixer, and PipeWire only frees the card when it is stopped, so `manage` needs a WirePlumber rule rather than a suspend. A playback-only plan must not disable the microphone (it would take recording from every app), while a duplex plan must, or PipeWire would fight the engine for the capture PCM. |
 | D10 | **Zones are declared-latency nodes, not promises.** An amp node is a speaker, never a booth. | Keeps the low-latency path honest; a zone with a 60 ms buffer is correct, not a failure. |
 | D11 | **Graceful fallback, always.** No engine → today's WebAudio and PipeWire paths, unchanged. | A machine that cannot build it is a machine with the audio it has now. |
 | D12 | **The engine is a node, not a silo.** The handset's `jawn_call_in` / `jawn_prompt`, the Music player and the browser's own inputs are sources. | One graph for the house, not a fourth stack beside PipeWire, WebRTC and Sco. |

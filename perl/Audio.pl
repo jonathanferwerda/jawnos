@@ -170,11 +170,11 @@ adopted engine to quit, so no engine is left behind.
 Options:
   --backend NAME   audio backend: null, alsa, pipewire or jack (default alsa)
   --device NAME    ALSA PCM name (default hw:1,0)
-  --period N       period/block size in frames (default 64 for a duplex plan,
+  --period N       period/block size in frames (default 96 for a duplex plan,
                    256 when the saved plan only plays back)
-  --buffer N       buffer size in frames (default 256 for a duplex plan, 1024
+  --buffer N       buffer size in frames (default 384 for a duplex plan, 1024
                    when the saved plan only plays back; naming either one keeps
-                   the 64/256 pair for the one you did not name)
+                   the 96/384 pair for the one you did not name)
   --socket PATH    control socket (default ~/.president/audio.sock)
   --binary PATH    engine binary (default perl/audio/jawn-audio under this tree)
   --plan PATH      the saved-plan wrapper the engine restores from at startup
@@ -309,11 +309,24 @@ my $system_device = pick($given{'system-device'}, 'JAWNOS_AUDIO_SYSTEM_DEVICE', 
 my $handset_device = pick($given{'handset-device'}, 'JAWNOS_AUDIO_HANDSET_DEVICE', '');
 
 # The block is a latency choice, and only a take's monitor hears it. A studio
-# round-trip needs 64/256 (1.33 ms at 48 kHz, 750 callbacks a second); a plan
-# that only plays out is inaudible at 256/1024 and wakes a quarter as often.
-# The plan's own mode says which it is: a duplex plan is capturing a routed
-# input, which is the armed state a recorded or monitored take needs, and a
-# playback plan is not.
+# round-trip wants the smallest block that still holds under load; a plan that
+# only plays out is inaudible at 256/1024 and wakes a quarter as often. The
+# plan's own mode says which it is: a duplex plan is capturing a routed input,
+# which is the armed state a recorded or monitored take needs, and a playback
+# plan is not.
+#
+# The studio pair is 96/384, not the 64/256 the first measurement liked. The
+# interface class this house targets (PCM2902 and its relatives) is a
+# full-speed USB device: one 48-frame packet per USB frame, which a 64-frame
+# period straddles and a 256-frame buffer holds only five of. That is 5.3 ms of
+# slack for a duplex loop that cannot ask for real-time priority - `ulimit -r`
+# is 0 on a stock machine, and the studio page itself runs in QtWebEngine on
+# the same cores. Measured on `table` (2026-11-24): on a loaded desktop the
+# playback PCM underran about 1.6 times a second at 64/256, heard as a digital
+# buzz; 96 is two USB frames and 384 is eight. The round trip stays near 3 ms -
+# still an order of magnitude under the PipeWire path (docs/studio-audio-roadmap.md
+# §2b). 64/256 is still reachable with JAWNOS_AUDIO_PERIOD/JAWNOS_AUDIO_BUFFER
+# for a card and a machine that hold it.
 #
 # A PipeWire engine is the exception, whatever the mode: it opens the ALSA
 # `default` PCM, which is a stream on the server's graph, not a claim on a
@@ -323,7 +336,7 @@ my $handset_device = pick($given{'handset-device'}, 'JAWNOS_AUDIO_HANDSET_DEVICE
 # answering, so the supervisor never respawns it and the house goes unrouted.
 # The relaxed block is a quantum the server can keep. ALSA owns the card
 # directly and keeps the studio pair.
-my @STUDIO_BLOCK  = ( 64,  256 );
+my @STUDIO_BLOCK  = ( 96,  384 );
 my @RELAXED_BLOCK = ( 256, 1024 );
 
 # The backend the next spawn will use, without the side effects of

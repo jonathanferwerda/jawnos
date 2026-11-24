@@ -29,7 +29,7 @@
 #            none does, and the choice is logged once. The plan defaults to
 #            the durable audio state dir, not the wiped ~/.president, and the
 #            system-mix state follows the plan beside it. The block the engine
-#            is spawned with follows the saved plan's mode and backend: 64/256
+#            is spawned with follows the saved plan's mode and backend: 96/384
 #            for an ALSA duplex plan, 256/1024 for a PipeWire one (its block is
 #            the server graph's quantum, not the card's), 256/1024 for playback
 #            only, and an operator period or buffer still wins. A plan that
@@ -3012,11 +3012,11 @@ ENGINE
 	is($status->{'buffer'}, 1024, 'with the relaxed buffer') if $status;
 
 	my ($duplex_args) = block_for_plan($duplex);
-	like($duplex_args, qr/--period 64 --buffer 256/,
+	like($duplex_args, qr/--period 96 --buffer 384/,
 		'a duplex plan keeps the studio block') or diag("args: $duplex_args");
 
 	# A PipeWire engine writes through pipewire-alsa into the server's graph,
-	# not the card. At 64/256 the graph runs a 64-frame quantum and a server
+	# not the card. At the studio block the graph runs a 96-frame quantum and a server
 	# reconfiguration loses the stream with EIO; the relaxed block is stable.
 	my ($pw_duplex_args) = block_for_plan( $duplex, backend => 'pipewire' );
 	like($pw_duplex_args, qr/--period 256 --buffer 1024/,
@@ -3024,7 +3024,7 @@ ENGINE
 		or diag("args: $pw_duplex_args");
 
 	my ($alsa_duplex_args) = block_for_plan( $duplex, backend => 'alsa' );
-	like($alsa_duplex_args, qr/--period 64 --buffer 256/,
+	like($alsa_duplex_args, qr/--period 96 --buffer 384/,
 		'while an ALSA duplex plan still keeps the studio block')
 		or diag("args: $alsa_duplex_args");
 
@@ -3034,12 +3034,12 @@ ENGINE
 		or diag("args: $pinned_args");
 
 	my ($one_knob_args) = block_for_plan( $playback, buffer => 512 );
-	like($one_knob_args, qr/--period 64 --buffer 512/,
+	like($one_knob_args, qr/--period 96 --buffer 512/,
 		'one pinned knob keeps the studio period, so the pair stays valid')
 		or diag("args: $one_knob_args");
 
 	my ($bare_args) = block_for_plan(undef);
-	like($bare_args, qr/--period 64 --buffer 256/,
+	like($bare_args, qr/--period 96 --buffer 384/,
 		'with no saved plan at all the studio pair stays')
 		or diag("args: $bare_args");
 }
@@ -3103,7 +3103,7 @@ ENGINE
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the flipping supervisor stops cleanly');
 	like(read_text("$dir/supervisor.log"),
-		qr/the engine runs 256\/1024; the saved plan asks for 64\/256/,
+		qr/the engine runs 256\/1024; the saved plan asks for 96\/384/,
 		'and the log names the pair the plan asks for');
 }
 
