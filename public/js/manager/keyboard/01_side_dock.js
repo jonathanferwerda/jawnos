@@ -189,16 +189,10 @@ function jawnosDockElement(el) {
 		|| el.closest('#pseudonym_home').length > 0;
 }
 
-// Where the pointer is, kept on every move. The hider runs from a timer, and
-// mouse_position() reads window.event, which is not set outside an event, so it
-// could hand back an older point and tuck the dock while the pointer was
-// resting on it.
-var pseudonymPointerX = null;
-var pseudonymPointerY = null;
-$(document).on('mousemove', function (e) {
-	pseudonymPointerX = e.clientX;
-	pseudonymPointerY = e.clientY;
-});
+// mouse_position() keeps the live pointer itself (a capture-phase native
+// listener in the universal script), so the hider can ask it from its timer and
+// get the current point. The dock used to keep a second copy on its own
+// mousemove handler, which was the same two numbers recorded twice.
 
 // Is the point over the dock in either of its places? The home's box covers the
 // showing row and the tucked strip that stays on screen, while the faces cover
@@ -348,10 +342,9 @@ function pseudonymHomeShower(x,y,interval) {
 // leaving, and the row tucks again. The pointer is moved to the tap first so the
 // hider does not read an earlier point on the dock as still resting there.
 function pseudonymHomeTapper(x, y) {
-	if (isFinite(x) && isFinite(y)) {
-		pseudonymPointerX = x;
-		pseudonymPointerY = y;
-	}
+	// a tap has no mousemove behind it; move the shared pointer so the hider does
+	// not read an earlier point on the dock as still resting there
+	mouse_position_set(x, y);
 	if (typeof pseudonymDockPointOnDock == 'function' && pseudonymDockPointOnDock(x, y)) {
 		// only the strip the tucked dock keeps on screen calls it back: a tap on
 		// the background where the row would have been is a tap on the background
@@ -392,15 +385,11 @@ function pseudonymHomeHider(interval) {
 	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
 	pseudonymFreeSpaceFinder();
 	// The pointer hider and the shower share one answer to "is this the dock?"
-	// The tracked pointer is the current one; mouse_position() is only the
-	// fallback before the first move (it reads window.event).
-	var x = pseudonymPointerX;
-	var y = pseudonymPointerY;
-	if (x === null || y === null) {
-		var m = mouse_position();
-		x = m.x;
-		y = m.y;
-	}
+	// The universal recorder keeps the current point, so the timer can read it
+	// directly; a tap moves that same point first.
+	var m = mouse_position();
+	var x = m.x;
+	var y = m.y;
 	// a desk whose mouse has never moved has no position yet; it counts as away
 	// from the dock rather than crashing elementsFromPoint on a non-finite
 	var was = 0;

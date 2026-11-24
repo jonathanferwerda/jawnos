@@ -3,14 +3,9 @@ function debrief_setter() {
 }
 
 
-$(document).on('mousemove', function(m) {
-	mouse = m;
-	var x = m.originalEvent.clientX;
-	var y = m.originalEvent.clientY;
-});
-
+// A pointer over the dock calls the row back out. The global document mousemove
+// that used to sit beside this one only copied the event to an unused global.
 $(document).on('mousemove', '#pseudonym_home', function(m) {
-	mouse = m;
 	var x = m.originalEvent.clientX;
 	var y = m.originalEvent.clientY;
 	pseudonymHomeShower(x,y);

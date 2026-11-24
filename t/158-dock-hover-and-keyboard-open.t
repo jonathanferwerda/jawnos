@@ -4,8 +4,10 @@
 #            which sat at their closed translateY(100%) until a refresh. And the
 #            dock's hider read the pointer through window.event, which is unset
 #            in the timer that runs it, so it could tuck the dock while the
-#            pointer was resting on it. The hider now keeps the live pointer and
-#            tests the dock's showing box, its faces and the tucked strip. A
+#            pointer was resting on it. The hider now reads the shared pointer
+#            the universal recorder keeps (a capture-phase native listener),
+#            and a tap moves that pointer to the tap point; it then tests the
+#            dock's showing box, its faces and the tucked strip. A
 #            dock with only widgets or pins used to be unreachable while its
 #            strip was the search row: an idle empty search row now opens the
 #            dock menu (a search with text or focus keeps paste). An empty dock
@@ -37,10 +39,8 @@ unlike($dock_open, qr/dock\.prop\('hidden', false\)\.attr\('aria-hidden', 'false
 	'the bug - unhiding without sliding - is gone');
 
 # --- the hider knows where the pointer is -----------------------------------
-like($dock, qr/var pseudonymPointerX = null;/, 'the live pointer x is kept');
-like($dock, qr/var pseudonymPointerY = null;/, 'the live pointer y is kept');
-like($dock, qr/\$\(document\)\.on\('mousemove', function \(e\) \{\s*pseudonymPointerX = e\.clientX;/s,
-	'every move updates the pointer');
+unlike($dock, qr/\$\(document\)\.on\('mousemove'/, 'the dock keeps no second pointer listener');
+unlike($dock, qr/pseudonymPointerX/, 'and no separate copy of the point');
 
 # --- the hider knows both dock geometries -----------------------------------
 like($dock, qr/function pseudonymDockPointOnDock\(x, y\)/,
@@ -54,12 +54,11 @@ like($dock, qr/pseudonymDockStrip\(\)/, 'the tucked strip is measured too');
 like($dock, qr/jawnosDockTop\(\)/, 'the top edge has its own strip');
 like($dock, qr/jawnosSideDock\(\)/, 'a side dock has its own strip');
 
-# --- the hider uses them, not a stale window.event --------------------------
+# --- the hider uses them, through the shared pointer -----------------------
 my ($hider) = $dock =~ /function pseudonymHomeHider\(interval\) \{(.*?)\n\}/s;
 ok(defined $hider && length $hider, 'the hider is found');
-like($hider, qr/var x = pseudonymPointerX;/, 'the hider reads the live pointer');
-like($hider, qr/if \(x === null \|\| y === null\) \{\s*var m = mouse_position\(\);/s,
-	'mouse_position is only the before-first-move fallback');
+like($hider, qr/var m = mouse_position\(\);\s*var x = m\.x;\s*var y = m\.y;/, 'the hider reads the live pointer');
+unlike($hider, qr/pseudonymPointerX/, 'there is no separate copy to fall back to');
 like($hider, qr/pseudonymDockPointOnDock\(x, y\)/,
 	'a point inside either dock position counts as on the dock');
 my ($shower) = $dock =~ /function pseudonymHomeShower\(x,y,interval\) \{(.*?)\n\}/s;
@@ -115,8 +114,7 @@ unlike($dock, qr/if \(home\.hasClass\('dock_empty'\)\)/,
 # --- a background tap tucks the dock on a touch screen -----------------------
 like($dock, qr/function pseudonymHomeTapper\(x, y\) \{/,
 	'one handler answers a tap on the background');
-like($dock, qr/pseudonymPointerX = x;\s*pseudonymPointerY = y;/s,
-	'the tap moves the pointer away from the dock');
+like($dock, qr/mouse_position_set\(x, y\);/, 'the tap moves the shared pointer away from the dock');
 like($dock, qr/if \(typeof pseudonymDockPointOnDock == 'function' && pseudonymDockPointOnDock\(x, y\)\)/,
 	'a tap on the strip still calls the row out');
 like($dock, qr/pseudonymHomeHider\(1\);/,

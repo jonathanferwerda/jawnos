@@ -1,27 +1,38 @@
+// The pointer is kept here, from the last real move, instead of being read
+// back out of window.event. A native capture-phase listener runs before the
+// element's own handlers, so a handler that asks mid-event gets this move and
+// not the one before it; the seek preview used to trail the pointer by a move
+// because it read window.event from a delegated handler that ran first.
+// Native and passive, too: the old delegated jQuery handler normalised an
+// event on every move just to copy it into a global nothing else reads.
 var mLastX = 0;
 var mLastY = 0;
 var mLastTs = Date.now();
-$(document).on('mousemove', function(e) {
-	window.event = e;
-	mouse = e;
-});
+// The point the previous caller saw, so the theatre's idle check can ask
+// whether the pointer moved since the last beat; x/y/ts are the live pointer
+// and when it last moved.
+var mPrevX = 0;
+var mPrevY = 0;
+var mPrevTs = mLastTs;
+function mouse_position_set(x, y) {
+	// A timer or an init handler can ask, and a touch tap has no mousemove to
+	// record. Only a real pair is kept: copying an undefined clientX/clientY
+	// used to corrupt every later read, and the theatre's idle check then
+	// threw in elementsFromPoint and never slid the player bar away after a
+	// reload.
+	if (!isFinite(x) || !isFinite(y)) { return; }
+	mLastX = x;
+	mLastY = y;
+	mLastTs = Date.now();
+}
+document.addEventListener('mousemove', function (e) {
+	mouse_position_set(e.clientX, e.clientY);
+}, { capture: true, passive: true });
 function mouse_position() {
-	var e = window.event;
-	var data = { 'lastX': mLastX, 'lastY': mLastY, lastTs: mLastTs };
-	// A timer or an init handler can ask while some other event is the last one
-	// dispatched (a resize, a load), and only a pointer event carries a usable
-	// clientX/clientY. Copying the undefined pair into mLastX/mLastY corrupted
-	// every later read: the theatre's idle check then threw in elementsFromPoint
-	// and never slid the player bar away after a reload. Keep the last real
-	// pointer instead.
-	if (e && isFinite(e.clientX) && isFinite(e.clientY)) {
-		mLastX = e.clientX;
-		mLastY = e.clientY;
-		mLastTs = Date.now();
-	}
-	data['x'] = mLastX;
-	data['y'] = mLastY;
-	data['ts'] = Date.now();
+	var data = { 'lastX': mPrevX, 'lastY': mPrevY, lastTs: mPrevTs, x: mLastX, y: mLastY, ts: Date.now() };
+	mPrevX = mLastX;
+	mPrevY = mLastY;
+	mPrevTs = mLastTs;
 	return data;
 }
 
