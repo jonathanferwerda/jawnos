@@ -403,6 +403,42 @@ sub alarm_haircut() {
 	# one handle on purpose: analysis_limit is a connection setting.
 	eval { $dber->query('PRAGMA analysis_limit=400;'); };
 	eval { $dber->query('PRAGMA optimize;'); };
+
+	# Once a month, prove the sealed archives still open and pass the Doctor.
+	# The setting is house-wide so every worker agrees on the due date; the
+	# check runs in a subprocess because decrypting a snapshot is not a ten-minute
+	# haircut's business.
+	my $last_verify = &subs::setting_grabber({ app => '__president', setting => 'backup_verify_at', device => 'all' });
+	unless (defined $last_verify && $last_verify =~ /^\d+$/ && $last_verify + (30 * 24 * 60 * 60 * 1000) > $timestamp) {
+		&subs::setting_setter({ app => '__president', setting => 'backup_verify_at', value => $timestamp, device => 'all' });
+		&subs::subprocessor(sub {
+			my $report = eval { &subs::backup_verify_retained() } || { ok => 0, error => $@ };
+			my $when = scalar localtime;
+			my $note;
+			if ($report->{'ok'}) {
+				$note = &subs::ui('Backup verification passed') . ' - ' . ($report->{'checked'} || 0) . ' - ' . $when;
+			}
+			else {
+				my $why = $report->{'error'} || '';
+				if (!length $why && ref $report->{'reports'} eq 'ARRAY' && ref $report->{'reports'}->[0] eq 'HASH') {
+					$why = $report->{'reports'}->[0]->{'error'} || '';
+				}
+				$why =~ s/\s+/ /g;
+				$why = substr($why, 0, 200);
+				$note = &subs::ui('Backup verification FAILED') . ($why ne '' ? ' - ' . $why : '') . ' - ' . $when;
+				eval { &Manager::notification_sender({
+					app => 'configure',
+					role => 'all',
+					type => 'warning',
+					title => 'Backup verification',
+					message => $note,
+					dedupe => 'backup-verify-' . int($timestamp / 86400000),
+				}) };
+			}
+			&subs::setting_setter({ app => '__president', setting => 'backup_verify_note', value => $note, device => 'all' });
+			&subs::log_writer('backup verify: ' . $note) if $log;
+		}, { name => 'backup verify' });
+	}
 }
 
 # A budget notification filter is a JSON array written by Configure's multiple

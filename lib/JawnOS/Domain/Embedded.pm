@@ -704,10 +704,10 @@ sub levels_snapshot {
 
 sub restore_list {
 	my $returner = [];
-	my @backups;
 	# One database, one backup directory: it no longer varies by caller (start_dir
 	# is gone from this path), so the install's own backups dir is the list.
 	my $directory = &subs::backups_dir() . '/';
+	my @local;
 	if ($directory && $directory =~ /\/$/) {
 		my @names;
 		if (opendir(my $dh, $directory)) {
@@ -716,20 +716,51 @@ sub restore_list {
 		}
 		# newest first, as `ls -t` ordered them
 		@names = sort { ((stat($directory . $b))[9] || 0) <=> ((stat($directory . $a))[9] || 0) } @names;
-		@backups = map { $directory . $_ } @names;
+		@local = map { $directory . $_ } @names;
+	}
+	# The card keeps the retained mirrors. A card file whose name is still in the
+	# local directory is not listed twice: the local one is the primary.
+	my %local_name = map { my $n = $_; $n =~ s{.*/}{}; $n => 1 } @local;
+	my @card;
+	my $card_dir = &subs::backup_archive_dir();
+	if ($card_dir) {
+		# A card that names another machine is not ours to restore.
+		my $owner = &subs::backup_archive_owner($card_dir);
+		my $mine = &subs::signatorial_designer() || '';
+		undef $card_dir if defined $owner && length $owner && length $mine && $owner ne $mine;
+	}
+	if ($card_dir) {
+		my @names;
+		if (opendir(my $dh, $card_dir)) {
+			@names = grep { /^jawnos(?:_\d+)?\.enc\z/ } readdir($dh);
+			closedir $dh;
+		}
+		@names = sort { ((stat($card_dir . '/' . $b))[9] || 0) <=> ((stat($card_dir . '/' . $a))[9] || 0) } @names;
+		@card = map { $card_dir . '/' . $_ } grep { !$local_name{$_} } @names;
 	}
 
-	foreach my $b (@backups) {
-		my @stat = stat $b ;
+	foreach my $b (@local, @card) {
+		my @stat = stat $b;
+		my $on_card = grep { defined $_ && $_ eq $b } @card;
 		# one fixed database: the decrypted copy no longer sits beside its backup,
 		# so "open" marks the current snapshot (initial.enc), not a sibling .db
 		my $archive = $b =~ /_\d+\.enc$/ ? 'archive' : 'current';
-		my $status = $archive eq 'current' ? 'open' : 'closed';
+		my $status = $on_card ? 'card copy' : ($archive eq 'current' ? 'open' : 'closed');
 
 		my $size = sprintf('%.2f', ( $stat[7] / 1024 )) . 'kb';
 		my $created = localtime($stat[9] )->strftime('%A %B %d %Y - %I:%M:%S%P %Z');
 		(my $name = $b) =~ s{.*/}{};
-		push @{$returner}, { archive => $archive, status => $status, directory => $directory, filename => $b, name => $name, size => $size, created => $created, blocks => $stat[12] };
+		push @{$returner}, {
+			archive => $archive,
+			status => $status,
+			directory => ($on_card ? $card_dir . '/' : $directory),
+			filename => $b,
+			name => $name,
+			size => $size,
+			created => $created,
+			blocks => $stat[12],
+			source => ($on_card ? 'card' : 'local')
+		};
 	}
 
 	return $returner;

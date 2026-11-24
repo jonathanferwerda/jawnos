@@ -57,6 +57,24 @@ is( limit_with({ mobile => { max_backups => 0 } }),
 is( limit_with({ mobile => { max_backups => 'lots' } }),
 	7, 'a non-numeric row is not a limit' );
 
+# The four Enc fields resolve the same way: this machine's own row wins, then
+# the device class, then the default.
+{
+	local *subs::misc_setting_list = sub {
+		return {
+			mobile => { backup_weeks => 6, backup_months => 5, backup_years => 2 },
+			e397332d => { backup_weeks => 8 },
+		};
+	};
+	local *subs::signatorial_designer = sub { 'e397332d' };
+	local *subs::device_setter = sub { 'mobile' };
+	my $tiers = subs::backup_retention_settings();
+	is( $tiers->{'weeks'}, 8, 'the machine override wins for weeks' );
+	is( $tiers->{'months'}, 5, 'the device class supplies months' );
+	is( $tiers->{'years'}, 2, 'the device class supplies years' );
+	is( $tiers->{'days'}, 7, 'days falls back to seven when max_backups is unset' );
+}
+
 # The prune keeps the GFS plan, never the current snapshot, and removes the
 # rest. Fixtures in a temp dir; no database is touched.
 {
@@ -87,6 +105,7 @@ my $result;
 	local *subs::backups_dir = sub { $dir };
 	local *subs::database_grabber = sub { (undef, "$dir/jawnos.db", undef) };
 	local *subs::backup_limit = sub { 2 };
+	local *subs::backup_retention_settings = sub { { days => 2, weeks => 4, months => 12, years => 3 } };
 	local *subs::db_select = sub { FakeRows->new([]) };
 	local *subs::db_delete = sub { 1 };
 	local *subs::deletion_registration = sub { 1 };

@@ -712,3 +712,26 @@ $(document).on('click', '#database_doctor_confirm', function() {
 	});
 });
 
+
+// The Enc panel's monthly proof, run now. The route decrypts the newest and
+// oldest local snapshots plus the newest card copy, runs the Doctor, and
+// returns a short note that is also stored for the next visit.
+$(document).on('click', '#backup_verify_now', function() {
+	var button = $(this).prop('disabled', true);
+	var note = $('#backup_verify_note').text('Verifying...');
+	$.ajax({
+		url: '/manager/configure/backup_verify',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			button.prop('disabled', false);
+			var said = (response && response.note) ? String(response.note) : 'The verification did not answer.';
+			note.text(said).css('color', (response && response.ok) ? '' : 'red');
+		},
+		error: function() {
+			button.prop('disabled', false);
+			note.text('The verification did not answer.').css('color', 'red');
+		}
+	});
+});

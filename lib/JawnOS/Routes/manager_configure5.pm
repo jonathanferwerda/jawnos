@@ -14,6 +14,7 @@ sub routes {
 	[19703, 'get', '/manager/configure/vacuum_app', 'action_19703'],
 	[19713, 'post', '/manager/configure/vacuum_app_confirm', 'action_19713'],
 	[19724, 'post', '/manager/configure/merge_database', 'action_19724'],
+	[19725, 'post', '/manager/configure/backup_verify', 'action_19725'],
 	[24799, 'post', '/manager/configure/notification_sound', 'action_24799'],
 	[25152, 'get', '/manager/configure/backup_now', 'action_25152'],
 	[25173, 'post', '/manager/configure/delete_backup', 'action_25173'],

@@ -325,22 +325,34 @@ sub backup_compression_tier($stamp, $reason) {
 	return ($saw_week && $saw_month && $saw_year) ? 'fast' : 'best';
 }
 
-# Return { keep => [paths], newest => path, daily => n } for a list of dated
-# archives. $daily_limit is the number of days in the daily tier; the weekly,
-# monthly and yearly tiers are kept in addition.
+# Return { keep => [paths], newest => path, daily => n, plan => {...} } for a
+# list of dated archives. $tiers is either a number (the daily tier, for older
+# callers) or a hash of days/weeks/months/years. The weekly, monthly and yearly
+# tiers keep the first snapshot of each period; 0 turns a tier off.
 sub backup_retention_keep {
-	my ($files, $daily_limit) = @_;
+	my ($files, $tiers) = @_;
 	my @files = grep { defined $_ && length $_ && -f $_ } @{ $files || [] };
-	return { keep => [], newest => undef } unless @files;
+	return { keep => [], newest => undef, daily => 0 } unless @files;
+	my $plan = ref $tiers eq 'HASH' ? $tiers : { days => $tiers };
+	my $count = sub {
+		my ($key, $default) = @_;
+		my $value = $plan->{$key};
+		return (defined $value && $value =~ /^\d+$/) ? $value + 0 : $default;
+	};
+	my $limit = $count->('days', 7);
+	my $week_limit = $count->('weeks', 4);
+	my $month_limit = $count->('months', 12);
+	my $year_limit = $count->('years', 3);
 	my @newest_first = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) } @files;
 	my $newest = $newest_first[0];
-	my $limit = (defined $daily_limit && $daily_limit =~ /^\d+$/) ? $daily_limit + 0 : 7;
 	my (%day_seen, @daily);
-	foreach my $file (@newest_first) {
-		my $k = &backup_period_keys(&backup_file_stamp($file));
-		next if $day_seen{ $k->{'day'} }++;
-		push @daily, $file;
-		last if scalar @daily >= $limit;
+	if ($limit > 0) {
+		foreach my $file (@newest_first) {
+			my $k = &backup_period_keys(&backup_file_stamp($file));
+			next if $day_seen{ $k->{'day'} }++;
+			push @daily, $file;
+			last if scalar @daily >= $limit;
+		}
 	}
 	my (@week_order, %week_oldest, @month_order, %month_oldest, @year_order, %year_oldest);
 	foreach my $file (reverse @newest_first) {
@@ -349,16 +361,27 @@ sub backup_retention_keep {
 		if (!exists $month_oldest{ $k->{'month'} }) { $month_oldest{ $k->{'month'} } = $file; push @month_order, $k->{'month'}; }
 		if (!exists $year_oldest{ $k->{'year'} }) { $year_oldest{ $k->{'year'} } = $file; push @year_order, $k->{'year'}; }
 	}
-	my @week_keys = scalar(@week_order) > 4 ? @week_order[-4 .. -1] : @week_order;
-	my @month_keys = scalar(@month_order) > 12 ? @month_order[-12 .. -1] : @month_order;
-	my @year_keys = scalar(@year_order) > 3 ? @year_order[-3 .. -1] : @year_order;
+	my @week_keys = $week_limit > 0
+		? (scalar(@week_order) > $week_limit ? @week_order[-$week_limit .. -1] : @week_order)
+		: ();
+	my @month_keys = $month_limit > 0
+		? (scalar(@month_order) > $month_limit ? @month_order[-$month_limit .. -1] : @month_order)
+		: ();
+	my @year_keys = $year_limit > 0
+		? (scalar(@year_order) > $year_limit ? @year_order[-$year_limit .. -1] : @year_order)
+		: ();
 	my @weekly = map { $week_oldest{$_} } @week_keys;
 	my @monthly = map { $month_oldest{$_} } @month_keys;
 	my @yearly = map { $year_oldest{$_} } @year_keys;
 	my @ordered = ($newest, @yearly, @monthly, @weekly, @daily);
 	my %seen;
 	@ordered = grep { defined $_ && !$seen{$_}++ } @ordered;
-	return { keep => \@ordered, newest => $newest, daily => scalar @daily };
+	return {
+		keep => \@ordered,
+		newest => $newest,
+		daily => scalar @daily,
+		plan => { days => $limit, weeks => $week_limit, months => $month_limit, years => $year_limit }
+	};
 }
 
 # ---- the archive card's Backups folder --------------------------------------
@@ -394,6 +417,18 @@ sub backup_archive_dir {
 # The percentage of the archive card backups may use. The controller row wins,
 # then a misc setting, then ten percent. Zero means no copies on the card; the
 # local backups still run.
+# The card folder names the machine that wrote it. A card moved from another
+# machine must not be offered as a local restore, whatever its path says.
+sub backup_archive_owner($dir) {
+	return undef unless defined $dir && length $dir;
+	my $file = $dir . '/.jawnos_signatorial';
+	return undef unless -e $file;
+	my $owner = eval { &subs::read_file($file) };
+	return undef unless defined $owner && length $owner;
+	$owner =~ s/\s+//g;
+	return length $owner ? $owner : undef;
+}
+
 sub backup_quota_percent {
 	my $quota;
 	my $sig = &subs::signatorial_designer() || '';
@@ -439,6 +474,9 @@ sub backup_mirror_archive($path) {
 	return 0 if &backup_quota_percent() <= 0;
 	my $dir = &backup_archive_dir();
 	return 0 unless $dir;
+	my $owner = &backup_archive_owner($dir);
+	my $mine = &subs::signatorial_designer() || '';
+	return 0 if defined $owner && length $owner && length $mine && $owner ne $mine;
 	my ($name) = $path =~ m{([^/]+)\z};
 	return 0 unless defined $name && $name =~ /^jawnos(?:_\d+)?\.enc\z/;
 	my $dest = $dir . '/' . $name;
@@ -456,6 +494,19 @@ sub backup_mirror_archive($path) {
 		return 0;
 	}
 	chmod 0600, $dest;
+	# Leave the machine's name beside the copies. A card that moves to another
+	# machine is refused by backup_path_allowed rather than restored under the
+	# wrong identity.
+	my $sig = &subs::signatorial_designer() || '';
+	my $owner_file = $dir . '/.jawnos_signatorial';
+	if (length $sig) {
+		my $current = -e $owner_file ? eval { &subs::read_file($owner_file) } : undef;
+		$current =~ s/\s+//g if defined $current;
+		unless (defined $current && $current eq $sig) {
+			&subs::write_file($owner_file, $sig . "\n");
+			chmod 0600, $owner_file;
+		}
+	}
 	return 1;
 }
 
@@ -464,11 +515,16 @@ sub backup_mirror_archive($path) {
 sub backup_archive_prune {
 	my $dir = &backup_archive_dir();
 	return { enabled => 0, reason => 'no archive folder' } unless $dir;
+	my $owner = &backup_archive_owner($dir);
+	my $mine = &subs::signatorial_designer() || '';
+	return { enabled => 0, reason => 'card belongs to another machine' }
+		if defined $owner && length $owner && length $mine && $owner ne $mine;
 	my $quota = &backup_quota_percent();
 	return { enabled => 0, reason => 'backup quota is off', quota => $quota } if $quota <= 0;
 	my @backups = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) }
 		grep { -f $_ } glob($dir . '/jawnos_*.enc');
-	my $plan = &backup_retention_keep(\@backups, &backup_limit());
+	my $tiers = &backup_retention_settings();
+	my $plan = &backup_retention_keep(\@backups, $tiers);
 	my %keep = map { $_ => 1 } @{ $plan->{'keep'} || [] };
 	my $removed = 0;
 	foreach my $file (@backups) {
@@ -505,6 +561,151 @@ sub backup_archive_prune {
 		seen => scalar @backups,
 		kept => scalar(grep { -e $_ } keys %keep),
 		removed => $removed
+	};
+}
+
+# ---- a second host or external medium ---------------------------------------
+#
+# The archive card is one second medium. A machine may also name a folder on a
+# second host or a removable disk; the newest sealed file is copied there after
+# each local backup, verified by SHA-256, and pruned with the same GFS plan.
+
+sub backup_sha256($path) {
+	return undef unless defined $path && length $path && -f $path;
+	require Digest::SHA;
+	return Digest::SHA->new(256)->addfile($path)->hexdigest;
+}
+
+sub backup_offsite_dir {
+	my $dir = eval { &subs::setting_grabber({ app => 'misc', setting => 'backup_offsite' }) };
+	return undef unless defined $dir && length $dir && lc($dir) ne 'null';
+	$dir = &subs::home($dir);
+	$dir =~ s{/+$}{} unless $dir eq '/';
+	return undef unless -d $dir;
+	return $dir;
+}
+
+sub backup_offsite_copy($path) {
+	return 0 unless defined $path && length $path && -e $path;
+	return 0 unless &backup_sealed_ok($path);
+	my $dir = &backup_offsite_dir();
+	return 0 unless $dir;
+	my $archive = &backup_archive_dir();
+	return 0 if defined $archive && length $archive && $dir eq $archive;
+	my ($name) = $path =~ m{([^/]+)\z};
+	return 0 unless defined $name && $name =~ /^jawnos(?:_\d+)?\.enc\z/;
+	my $dest = $dir . '/' . $name;
+	my $wanted = &backup_sha256($path);
+	return 0 unless defined $wanted;
+	return 1 if -e $dest && (&backup_sha256($dest) // '') eq $wanted;
+	my $staged = $dest . '.new.' . $$;
+	File::Copy::copy($path, $staged) or do { unlink $staged if -e $staged; return 0; };
+	chmod 0600, $staged;
+	unless (-e $staged && (&backup_sha256($staged) // '') eq $wanted) {
+		unlink $staged;
+		return 0;
+	}
+	unlink $dest if -e $dest;
+	unless (rename $staged, $dest) {
+		unlink $staged;
+		return 0;
+	}
+	chmod 0600, $dest;
+	return 1;
+}
+
+sub backup_offsite_prune {
+	my $dir = &backup_offsite_dir();
+	return { enabled => 0, reason => 'no offsite folder' } unless $dir;
+	my @files = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) }
+		grep { -f $_ } glob($dir . '/jawnos_*.enc');
+	my $plan = &backup_retention_keep(\@files, &backup_retention_settings());
+	my %keep = map { $_ => 1 } @{ $plan->{'keep'} || [] };
+	my $removed = 0;
+	foreach my $file (@files) {
+		next if $keep{$file};
+		$removed++ if &backup_prune_remove($file);
+	}
+	return { enabled => 1, seen => scalar @files, kept => scalar(keys %keep), removed => $removed };
+}
+
+# The two folders a restore or merge may name: the local backups and this
+# machine's archive card. A path outside both is refused before it is opened.
+sub backup_path_allowed($path) {
+	return 0 unless defined $path && length $path;
+	return 1 if &subs::path_is_within($path, &subs::backups_dir());
+	my $archive = &backup_archive_dir();
+	if (defined $archive && length $archive && &subs::path_is_within($path, $archive)) {
+		my $owner = &backup_archive_owner($archive);
+		my $mine = &subs::signatorial_designer() || '';
+		return 0 if defined $owner && length $owner && length $mine && $owner ne $mine;
+		return 1;
+	}
+	return 0;
+}
+
+# ---- the monthly proof -------------------------------------------------------
+#
+# A sealed archive is only a backup if it still opens and the database inside
+# passes its integrity check. This decrypts to a scratch file, asks the Doctor
+# to check it, and removes the scratch. The caller decides how often.
+
+sub backup_verify_file($path, $secret) {
+	return { ok => 0, path => $path, error => 'no snapshot' } unless defined $path && length $path && -e $path;
+	return { ok => 0, path => $path, error => 'no credential' } unless defined $secret && length $secret;
+	my $dir = &subs::home('~/.president/');
+	File::Path::make_path($dir) unless -d $dir;
+	my $dest = $dir . &subs::random_string_creator(20) . '.verify.db';
+	my $opened = &backup_open_sealed($path, $secret, $dest, 0);
+	unless ($opened) {
+		&backup_sensitive_remove($dest);
+		return { ok => 0, path => $path, error => 'could not open the sealed snapshot' };
+	}
+	my $scan = eval { &subs::doctor_scan($dest) } || {};
+	&backup_sensitive_remove($dest);
+	&backup_sensitive_remove($dest . '-wal');
+	&backup_sensitive_remove($dest . '-shm');
+	my $ok = ($scan->{'ok'} && !$scan->{'error'}) ? 1 : 0;
+	return {
+		ok => $ok,
+		path => $path,
+		size => (-s $path || 0),
+		integrity => $scan->{'integrity'},
+		error => $scan->{'error'} || ($ok ? undef : 'integrity check failed')
+	};
+}
+
+# The newest and the oldest local snapshot, plus the newest card copy. That
+# proves both ends of the retained history and the second medium without
+# decrypting every monthly archive on a phone.
+sub backup_verify_retained {
+	my $secret = eval { &subs::suds_grabber() } || '';
+	my @local = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) }
+		grep { -f $_ } glob(&subs::backups_dir() . '/jawnos_*.enc');
+	my @pick;
+	push @pick, $local[0] if scalar @local;
+	push @pick, $local[-1] if scalar @local > 1;
+	my $card = &backup_archive_dir();
+	if ($card) {
+		my $owner = &backup_archive_owner($card);
+		my $mine = &subs::signatorial_designer() || '';
+		undef $card if defined $owner && length $owner && length $mine && $owner ne $mine;
+	}
+	if ($card) {
+		my @copies = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) }
+			grep { -f $_ } glob($card . '/jawnos_*.enc');
+		push @pick, $copies[0] if scalar @copies;
+	}
+	my %seen;
+	@pick = grep { defined $_ && !$seen{$_}++ } @pick;
+	return { ok => 0, checked => 0, error => 'no snapshots to verify' } unless scalar @pick;
+	my @reports = map { &backup_verify_file($_, $secret) } @pick;
+	my $ok = scalar(grep { !$_->{'ok'} } @reports) ? 0 : 1;
+	return {
+		ok => $ok,
+		checked => scalar @reports,
+		reports => \@reports,
+		time => &subs::rightNow()
 	};
 }
 
@@ -960,6 +1161,11 @@ sub backup_now {
 			&backup_mirror_archive($keep);
 		}
 		&backup_archive_prune();
+		# The second host or removable disk gets the newest sealed file; its
+		# own GFS plan keeps the history it has received.
+		if (&backup_offsite_copy($archive_enc)) {
+			&backup_offsite_prune();
+		}
 	}
 	my $raw_data;
 	if ($size < 2000000) {
@@ -1076,21 +1282,32 @@ sub durable_settings_where {
 		. " and setting not like 'remote\\_%' escape '\\'";
 }
 
-# How many days of daily snapshots this machine keeps.
-#
-# The Misc setting is stored per device class (mobile, server, computer) and may
-# also carry an override for this machine's own signatorial. A machine with
-# neither keeps seven. Weekly, monthly and yearly archives are kept in addition
-# by backup_retention_keep; this number is the daily tier, not a total cap.
-sub backup_limit {
-	my $misc = &subs::misc_setting_list();
-	foreach my $key ( &subs::signatorial_designer(), &subs::device_setter() ) {
-		next unless defined $key && length $key;
-		my $value = $misc->{$key}->{'max_backups'};
+# One resolved retention plan for this machine: days, weeks, months, years.
+# The Misc setting is stored per device class and may carry a signatorial
+# override; a missing or non-numeric value falls through to the class and then
+# to the default. `max_backups` is the historical key for the daily tier.
+sub backup_retention_value($misc, $key, $default) {
+	foreach my $who ( &subs::signatorial_designer(), &subs::device_setter() ) {
+		next unless defined $who && length $who;
+		my $row = $misc->{$who};
+		next unless ref $row eq 'HASH';
+		my $value = $row->{$key};
 		return $value + 0 if defined $value && $value =~ /^\d+$/;
 	}
-	return 7;
+	return $default;
 }
+
+sub backup_retention_settings {
+	my $misc = &subs::misc_setting_list();
+	return {
+		days => &backup_retention_value($misc, 'max_backups', 7),
+		weeks => &backup_retention_value($misc, 'backup_weeks', 4),
+		months => &backup_retention_value($misc, 'backup_months', 12),
+		years => &backup_retention_value($misc, 'backup_years', 3)
+	};
+}
+
+sub backup_limit { return &backup_retention_settings()->{'days'}; }
 
 # Delete dated archives the GFS plan does not keep. Shared by backup_now (after
 # the new archive is built) and by an operator run, so the panel, the schedule
@@ -1110,10 +1327,11 @@ sub backup_prune {
 	$databaser =~ s/_\d+$//;
 	my $path = &subs::backups_dir() . '/' . $databaser;
 	my $enc_file = $path . '.enc';
-	my $limit = &backup_limit();
+	my $tiers = &backup_retention_settings();
+	my $limit = $tiers->{'days'};
 	my @backups = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) }
 		grep { $_ ne $enc_file } glob($path . '_*.enc');
-	my $plan = &backup_retention_keep(\@backups, $limit);
+	my $plan = &backup_retention_keep(\@backups, $tiers);
 	my @keep = @{ $plan->{'keep'} || [] };
 	# The archive just written is protected even when a caller named an older
 	# timestamp: the post-write prune must never delete the backup it is part of.

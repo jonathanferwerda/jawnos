@@ -40,7 +40,7 @@ require "$root/scripts/agent_help.pl";
 	# the app adds its own name to the end of the list. The keep-list and
 	# held-notice tests are two more names under Configure.
 	cmp_ok(length $text, '<', 9_000, 'the default brief stays small');
-	like($text, qr/^routes \(136\)$/m, 'it counts every route');
+	like($text, qr/^routes \(137\)$/m, 'it counts every route');
 	like($text, qr/brace form: .*means/, 'and explains the shorthand');
 	like($text, qr{^  get\s+/manager/configure$}m, 'a parent route is printed whole');
 	like($text, qr{^  get\s+/manager\{/configure/\{}m,

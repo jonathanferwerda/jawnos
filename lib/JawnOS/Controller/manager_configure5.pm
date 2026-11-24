@@ -164,7 +164,7 @@ sub action_19489 {
 	my $c = shift;
 	my $filename = $c->param('filename') // '';
 	my $path = $filename;
-	unless (&subs::path_is_within($path, &subs::backups_dir())) {
+	unless (&subs::backup_path_allowed($path)) {
 		$c->render(json => { status => 'fail', error => 'not a backup file' });
 		return;
 	}
@@ -187,6 +187,13 @@ sub action_19489 {
 			# that identity. A row with no destination predates the check.
 			my $here = &subs::database_path();
 			my $bak = &subs::db_select('backups', undef, { enc_file => $path })->hashes->[0];
+			unless ($bak) {
+				# A card mirror may have no row of its own; the local copy of the
+				# same name still names the machine the backup belongs to.
+				my ($leaf) = $path =~ m{([^/]+)\z};
+				$bak = &subs::db_select('backups', undef, { enc_file => &subs::backups_dir() . '/' . $leaf })->hashes->[0]
+					if defined $leaf && length $leaf;
+			}
 			if ($bak && ($bak->{'destination'} // '') =~ /\S/ && $bak->{'destination'} ne $here) {
 				system('shred', '-u', $t_database) if -e $t_database;
 				$c->render(json => { status => 'fail', error => 'that backup belongs to another machine' });
@@ -456,7 +463,7 @@ sub action_19724 {
 
 	my $filename = $c->param('filename') // '';
 	my $action = $c->param('action');
-	unless (&subs::path_is_within($filename, &subs::backups_dir())) {
+	unless (&subs::backup_path_allowed($filename)) {
 		$c->render(json => { status => 'fail', error => 'not a backup file' });
 		return;
 	}
@@ -549,12 +556,41 @@ sub action_25152 {
 	$c->render(json => $disposition);
 }
 
+# POST /manager/configure/backup_verify
+# Decrypt the newest and oldest local snapshots plus the newest card copy,
+# run the Doctor's integrity check and record a short note for the Enc panel.
+sub action_19725 {
+	my $c = shift;
+	my $report = eval { &subs::backup_verify_retained() } || { ok => 0, error => $@ };
+	my $when = scalar localtime;
+	my $note;
+	if ($report->{'ok'}) {
+		$note = &subs::ui('Backup verification passed') . ' - ' . ($report->{'checked'} || 0) . ' - ' . $when;
+	}
+	else {
+		my $why = $report->{'error'} || '';
+		if (!length $why && ref $report->{'reports'} eq 'ARRAY' && ref $report->{'reports'}->[0] eq 'HASH') {
+			$why = $report->{'reports'}->[0]->{'error'} || '';
+		}
+		$why =~ s/\s+/ /g;
+		$why = substr($why, 0, 200);
+		$note = &subs::ui('Backup verification FAILED') . ($why ne '' ? ' - ' . $why : '') . ' - ' . $when;
+	}
+	&subs::setting_setter({ app => '__president', setting => 'backup_verify_note', value => $note, device => 'all' });
+	$c->render(json => {
+		ok => $report->{'ok'} ? 1 : 0,
+		note => $note,
+		checked => ($report->{'checked'} || 0),
+		reports => ($report->{'reports'} || [])
+	});
+}
+
 # POST /manager/configure/delete_backup
 sub action_25173 {
 	my $c = shift;
 
 	my $backup = $c->param('filename') // '';
-	unless (&subs::path_is_within($backup, &subs::backups_dir())) {
+	unless (&subs::backup_path_allowed($backup)) {
 		$c->render(text => 'not a backup file', status => 403);
 		return;
 	}

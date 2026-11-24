@@ -271,7 +271,7 @@ sub power_action($action) {
 sub misc_setting_list {
     my ($db, $database, $sql) = &subs::database_grabber();
 		my @locations = &subs::location_types();
-    my @settings = qw/max_files thumbnail_size photo_size max_backups scan_size encryption_standard archive_dir say_voice language/;
+    my @settings = qw/max_files thumbnail_size photo_size max_backups backup_weeks backup_months backup_years backup_offsite scan_size encryption_standard archive_dir say_voice language/;
 		foreach my $l ( @locations ) {
 			push @settings, $l . '_location';
 			push @settings, $l . '_archive';

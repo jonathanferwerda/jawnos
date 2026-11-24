@@ -204,7 +204,9 @@ $topic{'backup'} = {
 		body => [
 			'Backup packs the database and the media into an archive that can be moved or stored elsewhere; restore puts one back. A "Backup now" button lives in the start menu, and the same machinery carries data between machines.',
 			'Snapshots are sealed, and the latest are kept in database/backups. A daily snapshot uses fast compression; the first snapshot of each week, month and year is sealed with the strongest compression and is the one kept as that period\'s archive. The daily, weekly, monthly and yearly sets are kept together, so a bad row noticed today can still be compared with the house a year ago.',
-			'When an archive folder is set, the sealed files are also copied to a Backups folder on that card. The controller\'s Storage section sets Backup space, the percentage of the card those copies may use; the local snapshots stay in database/backups. A card that is unmounted simply receives no new copies, and a failed copy never fails the local backup.'
+			'When an archive folder is set, the sealed files are also copied to a Backups folder on that card. The controller\'s Storage section sets Backup space, the percentage of the card those copies may use; the local snapshots stay in database/backups. A card that is unmounted simply receives no new copies, and a failed copy never fails the local backup.',
+			'Enc sets how many daily, weekly, monthly and yearly snapshots to keep. 0 turns a tier off, and the newest snapshot is always kept. A second-copy folder copies the newest sealed file to another host or removable disk; leaving it blank turns that copy off.',
+			'Once a month, and whenever Verify now is pressed, the house decrypts the newest and oldest local snapshots and the newest card copy and runs the Doctor\'s integrity check. The result appears in Enc and is logged; a failure also raises a notification.'
 		],
 		related => [ 'devices_and_mesh', 'folders' ]
 	};

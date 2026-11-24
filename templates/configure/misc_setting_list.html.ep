@@ -393,7 +393,6 @@
 				[ 'scan_size', 'Scan Size', [ '', @{$photo_sizes} ] ],
 				[ 'thumbnail_size', 'Thumb Size', [ '', @{$thumbnail_sizes} ] ],
 				[ 'encryption_standard', 'Encryption Standard', [ '', @{$encryption_standards} ] ],
-				[ 'max_backups', 'Backup Days', [ 0..100 ] ],
 			); %>
 			<% foreach my $g ( @general ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>

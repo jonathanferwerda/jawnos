@@ -11,10 +11,41 @@
 #backup_list .bk_status { font-size:12px; opacity:.85; }
 #backup_list .bk_meta { font-size:12px; opacity:.7; margin:4px 0 8px; }
 #backup_list .bk_actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+#backup_verify_note { font-size:12px; opacity:.85; margin:6px 0; }
 </style>
 <div class="cfg">
 	<h2>Enc</h2>
 	<p class="cfg-note">Restore or merge a database backup, or start a new one. Each backup is an encrypted <code>.enc</code> file.</p>
+	<% my $dt = &subs::device_setter(); %>
+	<% my $tiers = &subs::backup_retention_settings(); %>
+	<% my $offsite = &subs::setting_grabber({ app => 'misc', setting => 'backup_offsite' }) || ''; %>
+	<% my $verify_note = &subs::setting_grabber({ app => '__president', setting => 'backup_verify_note', device => 'all' }) || ''; %>
+
+	<div class="cfg-card">
+		<h3 style="margin-top:0;">Retention</h3>
+		<p class="cfg-note">How many daily, weekly, monthly and yearly snapshots to keep. 0 turns a tier off; the newest snapshot is always kept. The first snapshot of each week, month and year uses the strongest compression.</p>
+		<div class="cfg-grid">
+			<div class="cfg-row"><label>Days</label><input type="number" min="0" max="100" step="1" id="backup_days" class="misc_setting" setting="max_backups" device="<%= $dt %>" value="<%= $tiers->{'days'} %>" /></div>
+			<div class="cfg-row"><label>Weeks</label><input type="number" min="0" max="52" step="1" id="backup_weeks" class="misc_setting" setting="backup_weeks" device="<%= $dt %>" value="<%= $tiers->{'weeks'} %>" /></div>
+			<div class="cfg-row"><label>Months</label><input type="number" min="0" max="24" step="1" id="backup_months" class="misc_setting" setting="backup_months" device="<%= $dt %>" value="<%= $tiers->{'months'} %>" /></div>
+			<div class="cfg-row"><label>Years</label><input type="number" min="0" max="20" step="1" id="backup_years" class="misc_setting" setting="backup_years" device="<%= $dt %>" value="<%= $tiers->{'years'} %>" /></div>
+		</div>
+	</div>
+
+	<div class="cfg-card">
+		<h3 style="margin-top:0;">Second copy</h3>
+		<p class="cfg-note">A folder on another host or a removable disk. The newest sealed file is copied there after each backup; leave it blank to turn the copy off.</p>
+		<div class="cfg-grid">
+			<div class="cfg-row"><label>Folder</label><input type="text" id="backup_offsite" class="misc_setting" setting="backup_offsite" device="<%= $dt %>" value="<%= $offsite %>" placeholder="/mnt/backup" /></div>
+		</div>
+	</div>
+
+	<div class="cfg-card">
+		<h3 style="margin-top:0;">Verification</h3>
+		<p class="cfg-note">Once a month the house decrypts the newest and oldest local backups and the newest card copy, then runs the Doctor's integrity check.</p>
+		<div id="backup_verify_note"><%= $verify_note %></div>
+		<div class="cfg-actions"><button type="button" id="backup_verify_now">Verify now</button></div>
+	</div>
 
 	<div class="cfg-card">
 		<div class="cfg-grid">
@@ -63,7 +94,7 @@
 						<span class="bk_name"><%= $b->{'filename'} %></span>
 						<span class="bk_status"><%= $b->{'status'} %></span>
 					</div>
-					<div class="bk_meta"><%= $b->{'size'} %> · <%= $b->{'blocks'} %> · <%= $b->{'created'} %></div>
+					<div class="bk_meta"><%= $b->{'size'} %> · <%= $b->{'blocks'} %> · <%= $b->{'created'} %> · <%= ($b->{'source'} // '') eq 'card' ? &subs::ui('Card copy') : &subs::ui('Local') %></div>
 					<div class="bk_actions">
 						<button class="restore_database" filename="<%= $b->{'filename'} %>" type="button">Restore</button>
 						<button class="merge_database" action="merge" filename="<%= $b->{'filename'} %>" type="button">Merge</button>

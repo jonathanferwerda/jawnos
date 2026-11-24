@@ -13,11 +13,13 @@ use Test::More;
 use File::Temp qw(tempdir);
 use File::Slurp qw(write_file read_file);
 use Time::Piece;
+use DBI;
 use JawnOSTest;
 
-subs::preload('backup_retention_keep backup_period_keys backup_compress backup_decompress '
+subs::preload('backup_retention_keep backup_retention_settings backup_period_keys backup_compress backup_decompress '
 	. 'backup_codec backup_open_sealed backup_archive_prune backup_archive_usage '
-	. 'encrypter_legacy openssl_file_crypt');
+	. 'backup_path_allowed backup_archive_owner backup_mirror_archive backup_offsite_dir backup_offsite_copy backup_offsite_prune '
+	. 'backup_verify_file backup_sha256 encrypter_legacy openssl_file_crypt');
 
 sub stamp_for {
 	my ($date) = @_;
@@ -63,6 +65,15 @@ ok( $keep{$file_for{'2025-01-01'}}, 'the previous year is kept' );
 ok( $keep{$file_for{'2024-01-01'}}, 'the third year is kept' );
 ok( $keep{$file_for{'2023-01-01'}}, 'a sparse older month still fills the twelve-month tier' );
 
+# A custom plan from the Enc panel: each tier can be zeroed independently.
+my $custom = subs::backup_retention_keep(\@files, { days => 0, weeks => 2, months => 1, years => 1 });
+my %custom_keep = map { $_ => 1 } @{ $custom->{'keep'} || [] };
+ok( $custom_keep{$file_for{'2026-12-01'}}, 'custom plan: the newest is always kept' );
+ok( !$custom_keep{$file_for{'2026-11-05'}}, 'custom plan: zero days keeps no daily' );
+ok( $custom_keep{$file_for{'2026-11-02'}}, 'custom plan: two weeks keeps the previous week first' );
+ok( $custom_keep{$file_for{'2026-01-01'}}, 'custom plan: one year keeps the year first' );
+ok( !$custom_keep{$file_for{'2025-01-01'}}, 'custom plan: one year drops the earlier year' );
+
 # --- compression -------------------------------------------------------------
 my $sample = "$dir/sample.bin";
 my $text = join '', map { chr(($_ * 31 + 7) & 255) } 1 .. 40000;
@@ -91,7 +102,7 @@ is( subs::backup_codec($secret, subs::encrypter_legacy(undef, 'brotli-1')), unde
 
 SKIP: {
 	my $openssl = grep { -x "$_/openssl" } split /:/, ($ENV{'PATH'} || '');
-	skip 'no openssl binary', 4 unless $openssl;
+	skip 'no openssl binary', 7 unless $openssl;
 	my ($coded, $codec) = subs::backup_compress($sample, 'fast');
 	my $sealed = "$dir/sealed.enc";
 	ok( subs::openssl_file_crypt('e', 'aes-256-ctr', $secret, $coded, $sealed, 0, 1),
@@ -109,6 +120,27 @@ SKIP: {
 	ok( subs::backup_open_sealed($sealed, $secret, $out, 0), 'the sealed snapshot opens' );
 	is( read_file($out), $text, 'and decompresses to the original bytes' );
 	is( scalar( () = glob($scratch . '*.coded') ), 0, 'the decrypted scratch is removed' );
+
+	# The monthly drill: a real database passes, a sealed non-database fails.
+	my $tiny = "$dir/tiny.db";
+	my $dbh = DBI->connect("dbi:SQLite:dbname=$tiny", '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table probe (x text)');
+	$dbh->do("insert into probe values ('ok')");
+	$dbh->disconnect;
+	my ($tiny_coded, $tiny_codec) = subs::backup_compress($tiny, 'fast');
+	my $tiny_sealed = "$dir/tiny.enc";
+	ok( subs::openssl_file_crypt('e', 'aes-256-ctr', $secret, $tiny_coded, $tiny_sealed, 0, 1),
+		'the tiny database is sealed' );
+	my $tiny_footer = $gb::universal_splitter . subs::encrypter_legacy(undef, 'aes-256-ctr')
+		. $gb::universal_splitter . subs::encrypter_legacy(undef, $tiny_codec);
+	open(my $tf, '>>', $tiny_sealed) or die "append $tiny_sealed: $!";
+	print $tf $tiny_footer;
+	close $tf;
+	my $good = subs::backup_verify_file($tiny_sealed, $secret);
+	ok( $good->{'ok'}, 'a real database passes the verification' );
+	is( scalar( () = glob($scratch . '*.verify.db*') ), 0, 'the verification scratch is removed' );
+	my $bad = subs::backup_verify_file($sealed, $secret);
+	ok( !$bad->{'ok'}, 'a sealed non-database fails the verification' );
 	$gb::universal_splitter = $old_split;
 }
 
@@ -135,7 +167,7 @@ my $prune;
 	local *subs::backup_archive_dir = sub { $card };
 	local *subs::backup_quota_percent = sub { 10 };
 	local *subs::backup_archive_capacity = sub { 1000 };   # 10% = 100 bytes
-	local *subs::backup_limit = sub { 2 };
+	local *subs::backup_retention_settings = sub { { days => 1, weeks => 0, months => 0, years => 0 } };
 	local *subs::backup_prune_remove = sub { unlink $_[0]; 1 };
 	local *subs::log_writer = sub { };
 	$prune = subs::backup_archive_prune();
@@ -144,5 +176,64 @@ is( $prune->{'enabled'}, 1, 'the card prune runs when a quota is set' );
 is( $prune->{'cap'}, 100, 'the cap is the quota share of the card' );
 ok( $prune->{'removed'} >= 2, 'the quota removes older copies' );
 is( scalar( () = glob("$card/jawnos_*.enc") ), 1, 'only the newest copy stays' );
+
+# --- the second medium and the path gate -------------------------------------
+my $offsite = tempdir(CLEANUP => 1);
+my $stamp_new = 1795478403416;
+my $stamp_old = 1795392003353;
+my $source = "$dir/jawnos_$stamp_new.enc";
+write_file($source, 'x' x 6000);
+my ($copied, $again);
+{
+	local *subs::backup_offsite_dir = sub { $offsite };
+	local *subs::backup_archive_dir = sub { undef };
+	$copied = subs::backup_offsite_copy($source);
+	$again = subs::backup_offsite_copy($source);
+}
+ok( $copied, 'the newest sealed file is copied to the second medium' );
+is( read_file("$offsite/jawnos_$stamp_new.enc"), 'x' x 6000, 'the offsite bytes match' );
+ok( $again, 'a second copy of the same bytes succeeds without rewriting' );
+write_file("$offsite/jawnos_$stamp_old.enc", 'y' x 6000);
+my $offsite_prune;
+{
+	local *subs::backup_offsite_dir = sub { $offsite };
+	local *subs::backup_retention_settings = sub { { days => 1, weeks => 0, months => 0, years => 0 } };
+	local *subs::backup_prune_remove = sub { unlink $_[0]; 1 };
+	$offsite_prune = subs::backup_offsite_prune();
+}
+ok( $offsite_prune->{'enabled'}, 'the offsite prune runs' );
+ok( !-e "$offsite/jawnos_$stamp_old.enc", 'the offsite history follows the same plan' );
+ok( -e "$offsite/jawnos_$stamp_new.enc", 'and the newest offsite copy stays' );
+
+my $local_dir = tempdir(CLEANUP => 1);
+my $card_dir = tempdir(CLEANUP => 1);
+write_file("$local_dir/jawnos.enc", 'x');
+write_file("$card_dir/jawnos.enc", 'x');
+{
+	local *subs::backups_dir = sub { $local_dir };
+	local *subs::backup_archive_dir = sub { $card_dir };
+	ok( subs::backup_path_allowed("$local_dir/jawnos.enc"), 'a local restore path is allowed' );
+	ok( subs::backup_path_allowed("$card_dir/jawnos.enc"), 'a card restore path is allowed' );
+	ok( !subs::backup_path_allowed('/tmp/not-a-backup.enc'), 'a path outside both is refused' );
+}
+
+# --- the card names its machine ----------------------------------------------
+my $owned = tempdir(CLEANUP => 1);
+my $owned_name = "jawnos_$stamp_new.enc";
+{
+	local *subs::backup_archive_dir = sub { $owned };
+	local *subs::backup_quota_percent = sub { 10 };
+	local *subs::signatorial_designer = sub { 'machine-a' };
+	ok( subs::backup_mirror_archive($source), 'the machine writes its card' );
+	is( subs::backup_archive_owner($owned), 'machine-a', 'the card names the machine' );
+	ok( subs::backup_path_allowed("$owned/$owned_name"), 'its own card path is allowed' );
+}
+{
+	local *subs::backup_archive_dir = sub { $owned };
+	local *subs::backup_quota_percent = sub { 10 };
+	local *subs::signatorial_designer = sub { 'machine-b' };
+	ok( !subs::backup_path_allowed("$owned/$owned_name"), 'another machine refuses the card path' );
+	ok( !subs::backup_mirror_archive($source), 'and does not write to the card' );
+}
 
 done_testing();
