@@ -406,7 +406,7 @@ like(
 );
 like(
 	$controller,
-	qr/update needs "clips", "master", "master_values" or "drums": the change for the running transport/,
+	qr/update needs "clips", "sends", "master", "master_values" or "drums": the change for the running transport/,
 	'an update must carry a change, and a knob turn need not re-send the clips'
 );
 like($controller, qr/sub action_44034/, 'the clip staging action exists');
@@ -462,7 +462,7 @@ like($engine_pm, qr/sub audio_engine_transport/, 'the Perl client speaks the com
 like($engine_pm, qr/audio_engine_transport_fields/, 'the client has a field whitelist');
 like(
 	$engine_pm,
-	qr/qw\(\s*position bpm beats_per_bar gain loop_start loop_end clips master master_values drums\s*\)/,
+	qr/qw\(\s*position bpm beats_per_bar gain loop_start loop_end clips sends master master_values drums\s*\)/,
 	'only the promised fields, including the clip plan, master rack and values, are forwarded'
 );
 like(

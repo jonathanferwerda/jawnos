@@ -318,6 +318,7 @@ function studioEngineClipsPost(seq) {
 		if (seq != studioEngineClipsSeq) { return; }
 		if (!mixer['time'] || !mixer['time']['engine_transport']) { return; }
 		var fields = { clips_json: JSON.stringify(clips) };
+		fields.sends_json = JSON.stringify(studioEngineSends());
 		var master = studioEngineMasterList();
 		fields.master_json = JSON.stringify(master);
 		// A chart edit is part of the same plan, so the engine hears it without
@@ -473,6 +474,7 @@ function studioEngineClipPlan() {
 			}
 			clips.push({
 				take: take,
+				channel: Number(ch),
 				start: take.startTime,
 				offset: take.offset || 0,
 				duration: dom,
@@ -515,9 +517,25 @@ function studioEngineAppRouting(app) {
 				inserts.push(studioEffectKind(ins.name));
 			});
 		}
-		routing.push({ gain: gain, pan: pan, inserts: inserts });
+		routing.push({ channel: Number(ch), gain: gain, pan: pan, inserts: inserts });
 	});
 	return routing;
+}
+
+// The channel send graph in the engine's wire shape. A send is one directed
+// edge, already refused for a self-loop or a cycle when it is picked, so the
+// engine can apply it without re-checking. A jack that names a device, an app
+// or another copy of its own channel is not a send and is left out.
+function studioEngineSends() {
+	var sends = [];
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch)) { return; }
+		var target = studioChannelOutputTarget(ch);
+		if (!target || !/^[0-9]+$/.test(target)) { return; }
+		if (Number(target) === Number(ch)) { return; }
+		sends.push({ from: Number(ch), to: Number(target) });
+	});
+	return sends;
 }
 
 // A take's audio as an AudioBuffer, decoded once and kept. The engine needs a
@@ -597,6 +615,7 @@ function studioEngineClipStageAll(plan) {
 		return staged.map(function (clip) {
 			return {
 				file: clip.file,
+				channel: clip.channel,
 				start: clip.start,
 				offset: clip.offset,
 				duration: clip.duration,
@@ -746,6 +765,7 @@ function studioEngineTransportStart(pos, ready, exact) {
 		// The plan rides as one JSON string: jQuery's own array encoding is not
 		// the shape the route reads.
 		fields.clips_json = JSON.stringify(clips);
+		fields.sends_json = JSON.stringify(studioEngineSends());
 		var drums = studioEngineDrumPlan();
 		if (drums) { fields.drums_json = JSON.stringify(drums); }
 		// The master rack is the same for every take. It rides this first `start`

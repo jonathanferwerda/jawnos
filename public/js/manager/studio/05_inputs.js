@@ -487,6 +487,11 @@ $(document).on('click', '.studio_plug_selection', function() {
 		}
 		studioSaver();
 		studioRetriever();
+		// A cord is part of the engine's plan while it owns the transport, so a
+		// picked send must reach it at once rather than at the next take edit.
+		if (typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) {
+			studioEngineClipsChanged();
+		}
 		return;
 	}
 	// Choosing a real input or output ends any channel send on that jack, so a
@@ -533,6 +538,11 @@ $(document).on('click', '.studio_plug_selection', function() {
 	else { studioInputStreamGrabber(channel, 'off'); }
 	studioSaver();
 	studioRetriever();
+	// A device plugged into a jack can clear a cord; the engine must hear that
+	// too, exactly as it hears a picked one.
+	if (typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) {
+		studioEngineClipsChanged();
+	}
 });
 
 // A native engine opens a real device itself. While it monitors that device,

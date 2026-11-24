@@ -1304,6 +1304,21 @@ routing change rebuilds them. Inter-channel output cords are still not modelled,
 for the takes: that is the remaining routing seam. `t/414` pins the taps, the manager's bounds and
 the engine's strip count.
 
+**Channel cords on the engine, and ramped app faders (2026-11-24, in the tree).** The transport
+now carries the page's channel output cords: `sends` is one destination per source, with a self edge
+and a loop refused by name on both sides, and every clip and app tap carries the channel it belongs
+to. A source channel's post-fader, post-pan block runs through the destination channel's fader and
+Out pedals before the master rack, keeping its own pan image; a chain A -> B -> C runs in topological
+order, and a channel with no cord sums straight to the master. The browser's cord is a record-path
+send (the destination's In chain and monitor), so this is a deliberate divergence: on the page a
+corded channel is heard through the destination only when it monitors, while in the engine it is
+heard through the destination's strip; the guide says so. A take's live monitor input is never sent,
+and the click stays after the master. A cord picked while the transport runs reaches the engine at
+once through the plan update. Separately, the app strip's insert chain is now rebuilt only when the
+insert list changes: a fader or pan move updates the strip in place and ramps across the block, so a
+drag no longer resets a reverb tail or steps the level. `t/414` pins the cords, the manager's bounds,
+the ramp and both send points.
+
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
 turning `manage` off returns the machine to today's behaviour with nothing stranded.

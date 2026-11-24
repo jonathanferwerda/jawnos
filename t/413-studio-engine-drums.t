@@ -60,7 +60,7 @@ like( $socket, qr/drums\.steps\.\{name\}\[\{index\}\] must be a whole number fro
 	'a velocity outside 0..100 is refused by name' );
 like( $socket, qr/\\"drums\\":\{\},\\"drum_kit\\":\\"\{\}\\"/, 'status reports the chart and the loaded kit' );
 like( $socket, qr/\\"drums\\":0,\\"drum_kit\\":\\"off\\"/, 'the resting transport reports no chart' );
-like( $socket, qr/update needs \\"clips\\", \\"master\\", \\"master_values\\" or \\"drums\\"/,
+like( $socket, qr/update needs \\"clips\\", \\"master\\", \\"master_values\\", \\"drums\\" or \\"sends\\"/,
 	'a chart alone is a valid update' );
 
 # --- the manager forwards and validates it ----------------------------------
@@ -70,7 +70,7 @@ like( $controller, qr/sub studio_transport_drums/, 'the route validates the char
 like( $controller, qr/transport drums needs "length"/, 'a chart must name its length' );
 like( $controller, qr/row \\"\$name\\" holds a value that is not a velocity 0\.\.100/,
 	'a velocity is a whole number from 0 to 100' );
-like( $controller, qr/update needs "clips", "master", "master_values" or "drums"/,
+like( $controller, qr/update needs "clips", "sends", "master", "master_values" or "drums"/,
 	'and the route accepts a chart-only update' );
 
 # --- the page sends the chart and stops its own scheduler -------------------

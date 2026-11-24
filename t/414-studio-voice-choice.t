@@ -28,6 +28,8 @@ my $routes     = read_file("$root/lib/JawnOS/Routes/manager_misc9.pm");
 my $transport  = read_file("$root/public/js/manager/studio/01_transport.js");
 my $drums      = read_file("$root/public/js/manager/studio/11_drums.js");
 my $synth      = read_file("$root/public/js/manager/synth/01_engine.js");
+my $mixer      = read_file("$root/engine/src/mixer.rs");
+my $inputs_js  = read_file("$root/public/js/manager/studio/05_inputs.js");
 my $drums_tpl  = read_file("$root/templates/studio/drums.html.ep");
 my $synth_tpl  = read_file("$root/templates/synth.html.ep");
 my $help       = read_file("$root/perl/help/topics_apps.pl");
@@ -37,7 +39,7 @@ like( $playback, qr/pub synth: Option<SynthPlan>/, 'the transport plan carries a
 like( $playback, qr/fn apply_synth_plan\(/, 'a patch is applied at the plan edge' );
 like( $playback, qr/render\.synth|self\.synth/, 'the synth renders on the transport' );
 like( $playback, qr/fn render_synth\(/, 'one block of synth audio' );
-like( $playback, qr/app_stereo/, 'drums and synth share one pre-master bus' );
+like( $playback, qr/pre_master/, 'drums and synth share one pre-master bus' );
 like( $playback, qr/set_patch/, 'a live patch keeps the sounding voices' );
 like( $playback, qr/fn apply_note\(/, 'note events reach the synth' );
 like( $playback, qr/fn apply_hit\(/, 'an auditioned drum hit reaches the machine' );
@@ -128,6 +130,34 @@ like( $controller, qr/gain must be a number from 0 to 1/, 'a gain is bounded' );
 like( $controller, qr/pan must be a number from -1 to 1/, 'a pan is bounded' );
 like( $controller, qr/\$action eq 'routing'/, 'the synth route accepts routing' );
 like( $engine_pm, qr/\@audio_engine_synth_fields = qw\([^)]*\brouting\b/s, 'and forwards it' );
+
+# --- a channel cord is an audible send, and app faders ramp -----------------
+like( $playback, qr/pub sends: Option<Vec<\(usize, usize\)>>/, 'the plan carries the cords' );
+like( $playback, qr/fn rebuild_send_strips/, 'destination strips are built at a plan edge' );
+like( $playback, qr/struct SendStrip/, 'one strip per destination channel' );
+like( $playback, qr/struct Ramp/, 'a fader and pan ramp across a block' );
+like( $playback, qr/fn an_app_tap_on_a_channel_follows_its_output_cord/, 'the app cord is tested' );
+like( $playback, qr/fn a_send_plays_the_source_through_the_destinations_fader/, 'the send fader is tested' );
+like( $playback, qr/fn a_send_preserves_the_sources_pan_image/, 'the pan image is tested' );
+like( $playback, qr/fn a_send_chain_applies_every_destination_in_order/, 'a chain is tested' );
+like( $playback, qr/fn an_app_fader_change_ramps_across_the_block_without_a_step/, 'the ramp is tested' );
+like( $playback, qr/fn an_app_gain_change_keeps_a_reverb_tail/, 'and a fader move keeps a tail' );
+like( $mixer, qr/pub fn run_master\(/, 'the master runs once over the routed sum' );
+like( $socket, qr/fn parse_sends\(/, 'the socket parses the cords' );
+like( $socket, qr/closes a send loop/, 'a loop is refused by name' );
+like( $controller, qr/sub studio_transport_sends/, 'the manager validates the cords' );
+like( $controller, qr/cannot send a channel to itself/, 'a self edge is refused' );
+like( $controller, qr/already sends to another channel/, 'one destination per source' );
+like( $controller, qr/transport sends loop/, 'a loop is refused before the engine' );
+like( $controller, qr/a transport clip "channel" must be a whole number from 1 to 32/, 'a clip names its channel' );
+like( $controller, qr/channel must be a whole number from 1 to 32/, 'and an app tap does' );
+like( $transport, qr/function studioEngineSends\(\)/, 'the page builds the cords' );
+is( scalar( () = $transport =~ /fields\.sends_json = JSON\.stringify\(studioEngineSends\(\)\)/g ), 2,
+	'the cords ride the start and every update' );
+like( $transport, qr/channel: Number\(ch\)/, 'a clip and a tap name their channel' );
+like( $transport, qr/channel: clip\.channel/, 'the staged clip keeps it' );
+like( $inputs_js, qr/studioEnginePlanTouched\(\)/, 'a picked cord reaches the engine at once' );
+like( $inputs_js, qr/studioEngineClipsChanged\(\)/, 'through the plan update path' );
 
 # --- the guide explains the choice ------------------------------------------
 like( $help, qr/Play the kit on the engine or in the browser/, 'the Studio guide names the drum choice' );

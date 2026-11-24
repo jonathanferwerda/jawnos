@@ -1693,6 +1693,15 @@ sub studio_transport_clips {
 			unless defined $file && !ref $file && File::Spec->file_name_is_absolute($file);
 
 		my %out = (file => $file);
+		# The Studio channel the take plays on, so the engine can apply that
+		# channel's output cord. Absent on an older plan, which simply has no
+		# send.
+		if (defined $clip->{'channel'}) {
+			my $channel = $clip->{'channel'};
+			return ('a transport clip "channel" must be a whole number from 1 to 32', undef)
+				unless !ref $channel && $channel =~ /\A\s*\d+\s*\z/ && $channel >= 1 && $channel <= 32;
+			$out{'channel'} = int($channel);
+		}
 		for my $key (qw(start offset duration gain pan fade_in fade_out)) {
 			next unless defined $clip->{$key};
 			my $value = &studio_transport_decimal($clip->{$key});
@@ -1729,6 +1738,55 @@ sub studio_transport_clips {
 	return (undef, \@clips);
 }
 
+# The channel output cords: one destination per source, no self edge and no
+# loop. The page refuses a loop before it is saved, and the engine refuses one
+# again; this checks the shape so a hand-made request cannot smuggle a bad edge
+# into the plan. An empty array is a real request to clear every cord.
+sub studio_transport_sends {
+	my ($c) = @_;
+
+	my $raw = $c->param('sends_json');
+	$raw = $c->param('sends') unless defined $raw && length $raw;
+	return (undef, undef) unless defined $raw && length $raw;
+
+	my $data = eval { decode_json $raw };
+	return ('transport sends must be a JSON array', undef) unless ref $data eq 'ARRAY';
+	return ('transport sends may name at most 32 cords', undef) if @{$data} > 32;
+
+	my (@sends, %dest_of);
+	for my $i (0 .. $#{$data}) {
+		my $entry = $data->[$i];
+		return ("transport sends\[$i\] must be an object", undef) unless ref $entry eq 'HASH';
+		my ($from, $to) = ($entry->{'from'}, $entry->{'to'});
+		for my $pair ([from => $from], [to => $to]) {
+			my ($name, $value) = @{$pair};
+			return ("transport sends\[$i\] $name must be a whole number from 1 to 32", undef)
+				unless defined $value && !ref $value
+					&& $value =~ /\A\s*\d+\s*\z/ && $value >= 1 && $value <= 32;
+		}
+		$from = int($from);
+		$to = int($to);
+		return ("transport sends\[$i\] cannot send a channel to itself", undef) if $from == $to;
+		return ("transport sends\[$i\]: channel $from already sends to another channel", undef)
+			if exists $dest_of{$from};
+		$dest_of{$from} = $to;
+		push @sends, { from => $from, to => $to };
+	}
+
+	# A cycle is a silent loop once the engine runs it: follow every chain and
+	# name the edge that closes it.
+	for my $send (@sends) {
+		my (%seen, $at) = ((), $send->{'to'});
+		while (defined $at && exists $dest_of{$at}) {
+			return ("transport sends loop: channel $at feeds itself through another cord", undef)
+				if $seen{$at}++;
+			$at = $dest_of{$at};
+		}
+	}
+
+	return (undef, \@sends);
+}
+
 # One app's channel taps: the Studio channels the app is patched into, each as
 # the fader, pan and enabled Out inserts the engine builds a strip from. An
 # empty list is "not patched": unity, centre, dry, which is how the app sounded
@@ -1746,6 +1804,12 @@ sub studio_app_routing_data {
 		my $entry = $data->[$i];
 		return ("$label\[$i\] must be an object", undef) unless ref $entry eq 'HASH';
 		my %out;
+		if (defined $entry->{'channel'}) {
+			my $channel = $entry->{'channel'};
+			return ("$label\[$i\] channel must be a whole number from 1 to 32", undef)
+				unless !ref $channel && $channel =~ /\A\s*\d+\s*\z/ && $channel >= 1 && $channel <= 32;
+			$out{'channel'} = int($channel);
+		}
 		if (defined $entry->{'gain'}) {
 			my $value = &studio_transport_decimal($entry->{'gain'});
 			return ("$label\[$i\] gain must be a number from 0 to 1", undef)
@@ -1927,6 +1991,9 @@ sub studio_transport_fields {
 
 	my ($clips_error, $clips) = &studio_transport_clips($c);
 	return ($clips_error, undef) if defined $clips_error;
+	my ($sends_error, $sends) = &studio_transport_sends($c);
+	return ($sends_error, undef) if defined $sends_error;
+	$fields{'sends'} = $sends if defined $sends;
 	# The native drum chart: its own shape, sent beside the takes so the engine
 	# plays the Studio kit from the transport's clock.
 	my ($drums_error, $drums) = &studio_transport_drums($c);
@@ -1968,10 +2035,11 @@ sub studio_transport_fields {
 
 	if ($action eq 'update'
 		&& !exists $fields{'clips'}
+		&& !exists $fields{'sends'}
 		&& !exists $fields{'master'}
 		&& !exists $fields{'master_values'}
 		&& !exists $fields{'drums'}) {
-		return ('update needs "clips", "master", "master_values" or "drums": the change for the running transport', undef);
+		return ('update needs "clips", "sends", "master", "master_values" or "drums": the change for the running transport', undef);
 	}
 
 	return (undef, \%fields);

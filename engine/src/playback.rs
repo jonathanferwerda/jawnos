@@ -15,6 +15,29 @@
 //! All files share one timeline and one sample rate. They are assumed to have
 //! been recorded from the same transport, and `--start-at` skips the same
 //! number of frames in every one of them.
+//!
+//! ## Channel sends (the Studio output cord)
+//!
+//! A clip or an app routing tap may name a Studio `channel` (1..=32), and the
+//! plan may carry `sends` — one destination per source, no self edge and no
+//! cycle. A channel's sources are summed after their own fader, inserts and
+//! pan, which is the post-fader, post-pan stereo block a cord carries. When
+//! channel `A` sends to channel `B`, that block is added to `B`'s input and
+//! runs through `B`'s **fader and inserts, not its pan**, so the source's pan
+//! image is preserved; if `B` also sends, its total (its own sources plus
+//! everything sent to it) travels on to `B`'s destination. A channel with no
+//! send sums into the master bus, and a clip or tap with no channel is summed
+//! there directly, exactly as before sends existed. A destination channel's
+//! fader and inserts are the ones its own sources carry; a channel named only
+//! by a send is a unity wire with no inserts. The send graph is a function
+//! (one destination per source), so it is evaluated once in topological order
+//! per block and costs nothing for a channel no source or send names.
+//!
+//! The take's live monitor input and the click are deliberately outside this
+//! graph: the live input joins the pre-master sum at its armed gain and is
+//! never sent, and the click is added after the master rack. The browser routes
+//! a Studio output cord into the destination's record path instead; this is the
+//! engine's playback meaning of the same cord.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
@@ -24,8 +47,8 @@ use jawn_drums::{Kit, Machine, Voice};
 use jawn_synth::{Patch, Synth};
 
 use crate::effect::{Channel, EffectChain, InsertKind};
-use crate::graph::{mix_mono_into_stereo_with_gains, pan_coefficients, Strip};
-use crate::mixer::{Mixer, ParamQueue};
+use crate::graph::pan_coefficients;
+use crate::mixer::{send_order, Mixer, ParamQueue};
 use crate::monbus::Consumer;
 use crate::wav_read::{read_wav, WavAudio};
 
@@ -512,6 +535,10 @@ pub struct TransportClip {
     pub fade_out: u64,
     /// The insert chain, in the order the caller gave it.
     pub inserts: Vec<InsertKind>,
+    /// The Studio channel this take belongs to, 1..=32. Its post-fader,
+    /// post-pan block follows that channel's output cord; `None` sums straight
+    /// into the master bus, which is how every clip sounded before sends.
+    pub channel: Option<usize>,
 }
 
 impl TransportClip {
@@ -580,6 +607,7 @@ impl TransportClip {
             fade_in,
             fade_out,
             inserts,
+            channel: None,
         })
     }
 
@@ -791,13 +819,16 @@ impl TransportControl {
 
 /// One routing tap on the pre-master app bus: the three facts a Studio
 /// channel puts between an app and the mix — a fader gain, an equal-power pan
-/// and an insert chain.
+/// and an insert chain — plus the channel it belongs to.
 ///
 /// A patched app follows its channel's OUT chain. The browser's one-output
 /// model lets one app fan out to several channels, so the routing is a list:
 /// each entry is one strip and the app is heard through every one of them,
 /// summed. An empty list means the app is not patched into a channel and is
 /// summed straight into the bus, exactly as the engine sounded before routing.
+/// A tap that names a `channel` follows that channel's output cord; the same
+/// channel number on several taps means one channel, and its fader and inserts
+/// (as carried by those taps) shape whatever a send hands it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppRoute {
     /// Fader gain, `0..=1` (the socket refuses anything outside that range).
@@ -806,15 +837,19 @@ pub struct AppRoute {
     pub pan: f32,
     /// The channel's inserts, in the order the page gave them.
     pub inserts: Vec<InsertKind>,
+    /// The Studio channel this tap belongs to, 1..=32. `None` sums straight
+    /// into the app bus with no cord to follow.
+    pub channel: Option<usize>,
 }
 
 impl AppRoute {
-    /// A wire: unity gain, centre pan and no inserts.
+    /// A wire: unity gain, centre pan, no inserts and no channel.
     pub fn wire() -> Self {
         AppRoute {
             gain: 1.0,
             pan: 0.0,
             inserts: Vec::new(),
+            channel: None,
         }
     }
 }
@@ -875,14 +910,111 @@ impl DrumChart {
     }
 }
 
-/// One prepared app-bus strip: the fader and pan pair plus the channel's
-/// inserts. Built only at a plan edge (an insert's `prepare` allocates);
-/// [`route_app_source`] runs it in the steady-state block with no allocation.
+/// A value that moves linearly across one block from where it is to where a
+/// plan put it.
+///
+/// The step a raw assignment makes is a click, and a filter or a reverb fed a
+/// step rings with it. One block is 1.33 ms at the house's 64 frames, which is
+/// short enough to be inaudible as a slide and long enough to remove the step.
+/// The ramp lives beside the strip, so a plan that moves a fader every few
+/// milliseconds keeps starting from the value actually heard.
+#[derive(Clone, Copy, Debug)]
+struct Ramp {
+    current: f32,
+    target: f32,
+}
+
+impl Ramp {
+    fn new(value: f32) -> Self {
+        Ramp {
+            current: value,
+            target: value,
+        }
+    }
+
+    /// Where this control is heading. Read at the next block, never applied at
+    /// the moment it is written.
+    fn set_target(&mut self, value: f32) {
+        self.target = value;
+    }
+
+    /// The value at frame `frame` of a `frames`-frame block. Frame zero is
+    /// still the previous block's value, so the join makes no jump.
+    fn value(&self, frame: usize, frames: usize) -> f32 {
+        if frames <= 1 {
+            return self.target;
+        }
+        let t = frame as f32 / (frames - 1) as f32;
+        self.current + (self.target - self.current) * t
+    }
+
+    /// Arrive. The next block starts where this one ended.
+    fn finish(&mut self) {
+        self.current = self.target;
+    }
+}
+
+/// Add one interleaved stereo block into another. Nothing here allocates or
+/// panics; the caller owns both shapes.
+fn add_stereo(out: &mut [f32], input: &[f32]) {
+    for (out, sample) in out.iter_mut().zip(input.iter()) {
+        *out += sample;
+    }
+}
+
+/// Build an insert chain and size it. Allocation happens here, at a setup or
+/// plan edge, never in a block.
+fn build_chain(inserts: &[InsertKind], rate: u32, period: usize) -> EffectChain {
+    let mut chain = EffectChain::new();
+    for kind in inserts {
+        chain.push(*kind);
+    }
+    chain.prepare(rate, period);
+    chain
+}
+
+/// One prepared app-bus strip: ramped fader and pan, plus the channel's
+/// inserts. Built at a plan edge (an insert's `prepare` allocates), then
+/// reconciled in place when only the fader or pan moved, so a fader drag does
+/// not reset a reverb tail. [`route_app_source`] runs it in the steady-state
+/// block with no allocation.
 struct AppStrip {
-    strip: Strip,
+    gain: Ramp,
+    pan: Ramp,
+    /// The insert list the chain was built from. A change rebuilds the chain
+    /// (and therefore its tails); a gain or pan move does not.
+    inserts: Vec<InsertKind>,
     chain: EffectChain,
+    /// The Studio channel this tap follows, if any.
+    channel: Option<usize>,
     /// One mono block, sized when the strip is built.
     scratch: Vec<f32>,
+}
+
+impl AppStrip {
+    fn new(route: &AppRoute, rate: u32, period: usize) -> Self {
+        AppStrip {
+            gain: Ramp::new(route.gain.clamp(0.0, 1.0)),
+            pan: Ramp::new(route.pan.clamp(-1.0, 1.0)),
+            inserts: route.inserts.clone(),
+            chain: build_chain(&route.inserts, rate, period),
+            channel: route.channel,
+            scratch: vec![0.0; period],
+        }
+    }
+
+    /// Follow a new tap. Only an insert-list change rebuilds the chain: a
+    /// gain or pan move writes a ramp target, so a running reverb keeps its
+    /// tail across a fader drag.
+    fn reconcile(&mut self, route: &AppRoute, rate: u32, period: usize) {
+        self.gain.set_target(route.gain.clamp(0.0, 1.0));
+        self.pan.set_target(route.pan.clamp(-1.0, 1.0));
+        self.channel = route.channel;
+        if self.inserts != route.inserts {
+            self.inserts = route.inserts.clone();
+            self.chain = build_chain(&self.inserts, rate, period);
+        }
+    }
 }
 
 /// Build the strips for a routing list. Everything here allocates, so it runs
@@ -890,38 +1022,151 @@ struct AppStrip {
 fn build_app_strips(routing: &[AppRoute], rate: u32, period: usize) -> Vec<AppStrip> {
     routing
         .iter()
-        .map(|route| {
-            let mut chain = EffectChain::new();
-            for kind in &route.inserts {
-                chain.push(*kind);
-            }
-            chain.prepare(rate, period);
-            AppStrip {
-                strip: Strip::new(route.gain, route.pan.clamp(-1.0, 1.0)),
-                chain,
-                scratch: vec![0.0; period],
-            }
-        })
+        .map(|route| AppStrip::new(route, rate, period))
         .collect()
 }
 
-/// Add one rendered app source into the pre-master bus.
+/// Bring existing strips up to a new routing without rebuilding the ones
+/// whose insert list did not change. A changed entry count is a new routing
+/// shape and rebuilds the list, exactly as before.
+fn reconcile_app_strips(
+    strips: &mut Vec<AppStrip>,
+    routing: &[AppRoute],
+    rate: u32,
+    period: usize,
+) {
+    if strips.len() != routing.len() {
+        *strips = build_app_strips(routing, rate, period);
+        return;
+    }
+    for (strip, route) in strips.iter_mut().zip(routing.iter()) {
+        strip.reconcile(route, rate, period);
+    }
+}
+
+/// One destination channel of the output cord: the fader and inserts applied
+/// to what a send hands it, and the two blocks it is built from.
+///
+/// `own` holds the channel's own sources after their strips (post-fader,
+/// post-pan), which is the block the cord carries. `incoming` holds what other
+/// channels sent here, still unshaped; it runs through this channel's fader
+/// and inserts but never its pan, so the sources keep their pan images. `next`
+/// is the destination's index in the strip list, or `None` for the master bus.
+/// Built at a plan edge and never per block.
+struct SendStrip {
+    channel: usize,
+    gain: Ramp,
+    /// The insert list both chains were built from.
+    inserts: Vec<InsertKind>,
+    /// One chain per side, like the master rack: a stereo send has two images,
+    /// and a reverb run left-then-right on one chain would bleed one into the
+    /// other and lose the pan image.
+    left_chain: EffectChain,
+    right_chain: EffectChain,
+    own: Vec<f32>,
+    incoming: Vec<f32>,
+    /// Deinterleaved halves the inserts run over, sized at build.
+    left: Vec<f32>,
+    right: Vec<f32>,
+    /// The destination strip this channel feeds, or `None` for the master bus.
+    next: Option<usize>,
+}
+
+impl SendStrip {
+    fn new(channel: usize, gain: f32, inserts: &[InsertKind], rate: u32, period: usize) -> Self {
+        SendStrip {
+            channel,
+            gain: Ramp::new(gain),
+            inserts: inserts.to_vec(),
+            left_chain: build_chain(inserts, rate, period),
+            right_chain: build_chain(inserts, rate, period),
+            own: vec![0.0; period * 2],
+            incoming: vec![0.0; period * 2],
+            left: vec![0.0; period],
+            right: vec![0.0; period],
+            next: None,
+        }
+    }
+
+    /// Take a new fader value and insert list. Only the insert list rebuilds
+    /// the chains, so a fader move on a destination keeps its reverb tail.
+    fn reconcile(
+        &mut self,
+        channel: usize,
+        gain: f32,
+        inserts: &[InsertKind],
+        rate: u32,
+        period: usize,
+    ) {
+        self.channel = channel;
+        self.gain.set_target(gain);
+        if self.inserts != inserts {
+            self.inserts = inserts.to_vec();
+            self.left_chain = build_chain(&self.inserts, rate, period);
+            self.right_chain = build_chain(&self.inserts, rate, period);
+        }
+    }
+
+    /// Start a block: both blocks are silent before a source or a send fills
+    /// them.
+    fn clear(&mut self, frames: usize) {
+        let samples = frames * 2;
+        self.own[..samples].fill(0.0);
+        self.incoming[..samples].fill(0.0);
+    }
+
+    /// Run the ramped fader and the inserts over what arrived from upstream.
+    /// The fader is linear across the block; the inserts see the ramped signal
+    /// on each side separately, so a stereo send keeps its two images apart.
+    fn shape_incoming(&mut self, frames: usize) -> Result<(), String> {
+        for frame in 0..frames {
+            let gain = self.gain.value(frame, frames);
+            self.left[frame] = self.incoming[frame * 2] * gain;
+            self.right[frame] = self.incoming[frame * 2 + 1] * gain;
+        }
+        self.left_chain
+            .process(&mut self.left[..frames])
+            .map_err(|error| format!("send channel {}: {error:?}", self.channel))?;
+        self.right_chain
+            .process(&mut self.right[..frames])
+            .map_err(|error| format!("send channel {}: {error:?}", self.channel))?;
+        for frame in 0..frames {
+            self.incoming[frame * 2] = self.left[frame];
+            self.incoming[frame * 2 + 1] = self.right[frame];
+        }
+        self.gain.finish();
+        Ok(())
+    }
+
+    /// The channel's total for this block: its own sources plus the shaped
+    /// incoming sum. `total` is overwritten.
+    fn total_into(&self, frames: usize, total: &mut [f32]) {
+        let samples = frames * 2;
+        for (index, sample) in total[..samples].iter_mut().enumerate() {
+            *sample = self.own[index] + self.incoming[index];
+        }
+    }
+}
+
+/// Add one rendered app source into its channels and the pre-master bus.
 ///
 /// An empty routing is the unpatched wire: the source's dual-mono block is
 /// summed as it is, exactly as before routing existed. Otherwise the source's
-/// left sample is the mono signal; it takes the strip's fader trim, runs the
-/// channel's inserts, then fans out through the equal-power pan. Each entry is
-/// one strip, so an app patched into several channels is summed through all of
-/// them. Nothing here allocates.
+/// left sample is the mono signal; it takes the strip's ramped fader, runs the
+/// channel's inserts, then fans out through the ramped equal-power pan. A tap
+/// that names a channel adds into that channel's own block so the send graph
+/// can carry it; a tap with no channel adds straight to the pre-master bus.
+/// Nothing here allocates.
 fn route_app_source(
     strips: &mut [AppStrip],
     stereo: &[f32],
     frames: usize,
-    app: &mut [f32],
+    master: &mut [f32],
+    channels: &mut [SendStrip],
 ) -> Result<(), String> {
     let samples = frames * 2;
     if strips.is_empty() {
-        for (out, sample) in app[..samples].iter_mut().zip(stereo[..samples].iter()) {
+        for (out, sample) in master[..samples].iter_mut().zip(stereo[..samples].iter()) {
             *out += sample;
         }
         return Ok(());
@@ -929,22 +1174,41 @@ fn route_app_source(
     for strip in strips.iter_mut() {
         let scratch = &mut strip.scratch[..frames];
         for (frame, sample) in scratch.iter_mut().enumerate() {
-            *sample = stereo[frame * 2];
-        }
-        // The channel order is trim -> inserts -> pan, so the fader is applied
-        // before the chain. The output then needs only the pan coefficients,
-        // or the gain would be counted a second time.
-        let gain = strip.strip.gain.get();
-        for sample in scratch.iter_mut() {
-            *sample *= gain;
+            *sample = stereo[frame * 2] * strip.gain.value(frame, frames);
         }
         strip
             .chain
             .process(scratch)
             .map_err(|error| format!("app routing: {error:?}"))?;
-        let (left, right) = pan_coefficients(strip.strip.pan.get());
-        mix_mono_into_stereo_with_gains(&mut app[..samples], scratch, left, right)
-            .map_err(|error| format!("app routing: {error:?}"))?;
+        // The destination is resolved once per strip, not per frame.
+        let destination = match strip.channel {
+            None => None,
+            Some(channel) => Some(
+                channels
+                    .iter()
+                    .position(|bus| bus.channel == channel)
+                    .ok_or_else(|| format!("app routing names channel {channel}, which has no strip"))?,
+            ),
+        };
+        match destination {
+            Some(index) => {
+                let out = &mut channels[index].own[..samples];
+                for frame in 0..frames {
+                    let (left, right) = pan_coefficients(strip.pan.value(frame, frames));
+                    out[frame * 2] += scratch[frame] * left;
+                    out[frame * 2 + 1] += scratch[frame] * right;
+                }
+            }
+            None => {
+                for frame in 0..frames {
+                    let (left, right) = pan_coefficients(strip.pan.value(frame, frames));
+                    master[frame * 2] += scratch[frame] * left;
+                    master[frame * 2 + 1] += scratch[frame] * right;
+                }
+            }
+        }
+        strip.gain.finish();
+        strip.pan.finish();
     }
     Ok(())
 }
@@ -1015,6 +1279,10 @@ pub struct TransportPlan {
     /// transport that already has a synth retunes it in place, so held notes
     /// keep sounding; otherwise the render thread builds one here.
     pub synth: Option<SynthPlan>,
+    /// A replacement output-cord plan, as `(from, to)` channel pairs. `None`
+    /// leaves the current graph alone; the socket has already refused a self
+    /// edge, a second destination for one source and a cycle.
+    pub sends: Option<Vec<(usize, usize)>>,
 }
 
 /// A patch and/or routing for the transport's native synth, applied at a
@@ -1159,10 +1427,21 @@ pub struct TransportSource {
     /// The same block interleaved for the app bus. The synth writes planar
     /// halves; this is the only per-block copy, and it allocates nothing.
     synth_stereo: Vec<f32>,
-    /// The app bus: the drums and the synth summed before the master chain. It
-    /// is zeroed every block and handed to the mixer as its extra stereo input,
-    /// so one mastering pass covers both native sources.
-    app_stereo: Vec<f32>,
+    /// The pre-master bus: every source with no channel, and every channel with
+    /// no send, summed before the master chain. The drums and the synth land
+    /// here when they are unpatched, and the take's live input joins them. One
+    /// mastering pass covers all of it.
+    pre_master: Vec<f32>,
+    /// One stereo block for a clip's panned output before it is added to its
+    /// channel or to the pre-master bus.
+    clip_stereo: Vec<f32>,
+    /// The output-cord edges as `(from, to)`, already validated by the socket.
+    sends: Vec<(usize, usize)>,
+    /// One destination strip per channel the sources or sends name. Only used
+    /// channels are built, so an unused channel costs no buffer at all.
+    send_strips: Vec<SendStrip>,
+    /// The order the destination strips run in: upstream before downstream.
+    send_order: Vec<usize>,
     /// Note edges from the control thread, drained at a block edge.
     note_rx: Option<Receiver<TransportNote>>,
     /// One-shot drum hits from the control thread, drained at a block edge.
@@ -1205,7 +1484,11 @@ impl TransportSource {
             synth: None,
             synth_block: Vec::new(),
             synth_stereo: Vec::new(),
-            app_stereo: Vec::new(),
+            pre_master: Vec::new(),
+            clip_stereo: Vec::new(),
+            sends: Vec::new(),
+            send_strips: Vec::new(),
+            send_order: Vec::new(),
             note_rx: None,
             hit_rx: None,
             rate: 0,
@@ -1225,6 +1508,15 @@ impl TransportSource {
     /// `transport start`, never a silent gap in the audio.
     pub fn with_clips(mut self, clips: Vec<TransportClip>) -> Self {
         self.clips = clips;
+        self
+    }
+
+    /// The output-cord graph this transport follows, as `(from, to)` Studio
+    /// channel pairs. The socket refuses a malformed graph before a device
+    /// opens; this stores what it validated. Without a send every source sums
+    /// into the master bus.
+    pub fn with_sends(mut self, sends: Vec<(usize, usize)>) -> Self {
+        self.sends = sends;
         self
     }
 
@@ -1333,16 +1625,44 @@ impl TransportSource {
             master_values,
             drums,
             synth,
+            sends,
         } = plan;
+        // The destination strips and the source-to-channel map are rebuilt once
+        // here when either half of the routing moved; a values-only or
+        // placement-only plan leaves their tails alone.
+        let mut routing_dirty = false;
+        if let Some(sends) = sends {
+            if sends != self.sends {
+                self.sends = sends;
+                routing_dirty = true;
+            }
+        }
         // A patch change retunes a loaded synth (its voices keep sounding) or
         // builds one here, at the block edge; the device stays open.
         if let Some(synth) = synth {
+            let before = self.synth_routes.clone();
             self.apply_synth_plan(synth);
+            if self.synth_routes != before {
+                routing_dirty = true;
+            }
         }
         // A chart or kit change builds (or reloads) the machine here, at the
         // block edge; the device stays open and the clip strips are untouched.
         if let Some(chart) = drums {
+            let before = self
+                .drums
+                .as_ref()
+                .map(|chart| chart.routing.clone())
+                .unwrap_or_default();
             self.apply_drum_chart(chart);
+            let after = self
+                .drums
+                .as_ref()
+                .map(|chart| chart.routing.clone())
+                .unwrap_or_default();
+            if before != after {
+                routing_dirty = true;
+            }
         }
         if let Some(master) = master {
             if master != self.master {
@@ -1359,7 +1679,16 @@ impl TransportSource {
             self.apply_master_values();
         }
         // A values-only plan carries no placement: the takes keep playing.
-        let Some(clips) = clips else { return };
+        let Some(clips) = clips else {
+            if routing_dirty {
+                self.rebuild_send_strips();
+            }
+            return;
+        };
+        // The channel a take names is part of the routing, so any replacement
+        // placement reconciles the send strips even when every strip is
+        // unchanged; reconciliation keeps the tails.
+        routing_dirty = true;
         let placement_only = clips.len() == self.clips.len()
             && clips
                 .iter()
@@ -1379,6 +1708,9 @@ impl TransportSource {
         } else {
             self.clips = clips;
             self.rebuild_strips();
+        }
+        if routing_dirty {
+            self.rebuild_send_strips();
         }
     }
 
@@ -1406,9 +1738,14 @@ impl TransportSource {
             self.synth_patch = Some(patch);
         }
         if let Some(routing) = plan.routing {
-            if routing != self.synth_routes {
-                self.synth_routes = routing;
-                self.rebuild_synth_strips();
+            self.synth_routes = routing;
+            if self.period > 0 {
+                reconcile_app_strips(
+                    &mut self.synth_strips,
+                    &self.synth_routes,
+                    self.rate,
+                    self.period,
+                );
             }
         }
     }
@@ -1485,9 +1822,10 @@ impl TransportSource {
             // switch begins on a downbeat rather than at a stale phase.
             let relength = render.chart.length != chart.length;
             // A step-only edit keeps the same routing, so the strips (and their
-            // tails) stay; only a genuine routing change rebuilds them.
+            // tails) stay; a routing change reconciles them, which moves a
+            // fader or pan in place and rebuilds only a changed insert list.
             if render.chart.routing != chart.routing {
-                render.strips = build_app_strips(&chart.routing, rate, period);
+                reconcile_app_strips(&mut render.strips, &chart.routing, rate, period);
             }
             render.chart = chart.clone();
             if relength {
@@ -1581,15 +1919,6 @@ impl TransportSource {
         }
     }
 
-    /// Rebuild the synth's routing strips after a routing plan. A plan-edge
-    /// call, never a steady-state one: building an insert allocates.
-    fn rebuild_synth_strips(&mut self) {
-        if self.period == 0 {
-            return;
-        }
-        self.synth_strips = build_app_strips(&self.synth_routes, self.rate, self.period);
-    }
-
     /// Rebuild the clip strips and voices for the current plan. Called from
     /// `prepared` and from a plan update that changes the clip count or insert
     /// set; the short buffer is reused when only the master rack changed.
@@ -1606,6 +1935,89 @@ impl TransportSource {
         );
         self.mixer = mixer;
         self.voices = voices;
+    }
+
+    /// Recompute the output-cord destination strips from the current clips,
+    /// app taps and sends. A plan-edge call only: an insert allocates, and the
+    /// buffers are sized for the prepared block. Strips are matched by channel
+    /// number and reconciled, so a fader or pan move keeps its insert tail; a
+    /// removed channel's strip is dropped.
+    fn rebuild_send_strips(&mut self) {
+        if self.period == 0 {
+            return;
+        }
+        let empty: &[AppRoute] = &[];
+        let drum_routing = self
+            .drums
+            .as_ref()
+            .map(|chart| chart.routing.as_slice())
+            .unwrap_or(empty);
+        let specs = channel_specs(&self.clips, drum_routing, &self.synth_routes, &self.sends);
+        let mut old: Vec<Option<SendStrip>> = std::mem::take(&mut self.send_strips)
+            .into_iter()
+            .map(Some)
+            .collect();
+        let mut fresh = Vec::with_capacity(specs.len());
+        for (channel, gain, inserts) in specs {
+            let position = old.iter().position(|strip| {
+                strip
+                    .as_ref()
+                    .map(|strip| strip.channel == channel)
+                    .unwrap_or(false)
+            });
+            match position.and_then(|position| old[position].take()) {
+                Some(mut strip) => {
+                    strip.reconcile(channel, gain, &inserts, self.rate, self.period);
+                    fresh.push(strip);
+                }
+                None => fresh.push(SendStrip::new(
+                    channel, gain, &inserts, self.rate, self.period,
+                )),
+            }
+        }
+        // One destination per source, so each strip's `next` is a single
+        // position in the fresh list.
+        let next_positions: Vec<Option<usize>> = fresh
+            .iter()
+            .map(|strip| {
+                self.sends
+                    .iter()
+                    .find(|(from, _)| *from == strip.channel)
+                    .and_then(|(_, to)| fresh.iter().position(|dest| dest.channel == *to))
+            })
+            .collect();
+        for (strip, next) in fresh.iter_mut().zip(next_positions) {
+            strip.next = next;
+        }
+        // Evaluate upstream before downstream. The socket refused a cycle; a
+        // direct caller that still hands one in gets numeric order rather than
+        // a spinner.
+        let mut by_destination = vec![None; 32];
+        for &(from, to) in &self.sends {
+            if (1..=32).contains(&from) && (1..=32).contains(&to) {
+                by_destination[to - 1] = Some(from - 1);
+            }
+        }
+        let mut used = [false; 32];
+        for strip in &fresh {
+            if (1..=32).contains(&strip.channel) {
+                used[strip.channel - 1] = true;
+            }
+        }
+        let order = match send_order(&by_destination) {
+            Ok(order) => order,
+            Err(_) => (0..32).collect(),
+        };
+        self.send_order = order
+            .into_iter()
+            .filter(|channel| used[*channel])
+            .filter_map(|channel| {
+                fresh
+                    .iter()
+                    .position(|strip| strip.channel == channel + 1)
+            })
+            .collect();
+        self.send_strips = fresh;
     }
 
     /// Push the stored master knob positions into the current rack. A setup or
@@ -1659,6 +2071,56 @@ fn build_clip_mixer(
     (mixer, voices)
 }
 
+/// The fader and inserts each channel number carries, in first-seen order.
+///
+/// A Studio channel's settings travel on its sources — every clip and every
+/// app tap names the channel and repeats its fader and Out inserts, exactly as
+/// the page already sent gain, pan and inserts. The first source that names a
+/// channel therefore defines the strip a send into that channel runs through.
+/// A channel named only by a send is a unity wire with no inserts. The pan is
+/// deliberately not taken: a destination never re-pans what a source already
+/// placed.
+fn channel_specs(
+    clips: &[TransportClip],
+    drums: &[AppRoute],
+    synth: &[AppRoute],
+    sends: &[(usize, usize)],
+) -> Vec<(usize, f32, Vec<InsertKind>)> {
+    let mut specs: Vec<(usize, f32, Vec<InsertKind>)> = Vec::new();
+    for clip in clips {
+        note_channel(&mut specs, clip.channel, clip.gain, &clip.inserts);
+    }
+    for route in drums.iter().chain(synth.iter()) {
+        note_channel(&mut specs, route.channel, route.gain, &route.inserts);
+    }
+    for &(from, to) in sends {
+        note_channel(&mut specs, Some(from), 1.0, &[]);
+        note_channel(&mut specs, Some(to), 1.0, &[]);
+    }
+    specs
+}
+
+/// Add one channel definition if it is in range and not already known.
+fn note_channel(
+    specs: &mut Vec<(usize, f32, Vec<InsertKind>)>,
+    channel: Option<usize>,
+    gain: f32,
+    inserts: &[InsertKind],
+) {
+    let Some(channel) = channel else { return };
+    if !(1..=32).contains(&channel) {
+        return;
+    }
+    if specs.iter().any(|(known, _, _)| *known == channel) {
+        return;
+    }
+    specs.push((
+        channel,
+        gain.clamp(0.0, Channel::MAX_GAIN),
+        inserts.to_vec(),
+    ));
+}
+
 impl RenderSource for TransportSource {
     fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
         if period == 0 {
@@ -1709,7 +2171,8 @@ impl RenderSource for TransportSource {
         // app bus, so every block below is allocation-free.
         self.synth_block = vec![0.0; period.saturating_mul(2)];
         self.synth_stereo = vec![0.0; period.saturating_mul(2)];
-        self.app_stereo = vec![0.0; period.saturating_mul(2)];
+        self.pre_master = vec![0.0; period.saturating_mul(2)];
+        self.clip_stereo = vec![0.0; period.saturating_mul(2)];
         self.synth = self.synth_patch.map(|patch| {
             let mut synth = Synth::new(patch, rate as f32);
             synth.prepare(period);
@@ -1720,6 +2183,12 @@ impl RenderSource for TransportSource {
         // A routing that arrived before the device opened builds its strips
         // here, where an insert's `prepare` is allowed to allocate.
         self.synth_strips = build_app_strips(&self.synth_routes, rate, period);
+        // The output-cord destination strips are built from the clips and taps
+        // that arrived before the device opened. Their blocks are sized for the
+        // prepared period, so a re-prepare rebuilds them rather than reusing a
+        // different-sized buffer.
+        self.send_strips.clear();
+        self.rebuild_send_strips();
         self.clip_position = self.control.seek_frames();
         self.clip_loop = self.loop_bounds;
         Ok(())
@@ -1855,10 +2324,16 @@ impl RenderSource for TransportSource {
             click.position()
         };
 
-        // Clips first: `mix_with_live_and_extra` overwrites the bus and adds
-        // the take's live input and the drum bus before the master chain so all
-        // three hear one mastering pass. The click is added after the master
-        // chain, exactly as it is for a take's monitor.
+        // Sources are summed here rather than by `mix_with_live_and_extra`,
+        // because a clip or an app tap may name a Studio channel with an output
+        // cord. Each source's panned stereo block goes to its channel's own
+        // block (post-fader, post-pan, after its inserts) or straight to the
+        // pre-master bus. The destination graph then runs upstream first: a
+        // channel's incoming sum takes its fader and inserts — never its pan —
+        // and its total either moves to the next channel or joins the
+        // pre-master bus. The take's live input joins that bus at its armed
+        // gain and is never sent. One master pass covers the whole sum, and the
+        // click is added after it, exactly as it is for a take's monitor.
         let has_clips = !self.clips.is_empty();
         let has_live = self.live.is_some();
         let has_drums = self.drum_render.is_some();
@@ -1886,7 +2361,10 @@ impl RenderSource for TransportSource {
                 drum_stereo,
                 synth_strips,
                 synth_stereo,
-                app_stereo,
+                pre_master,
+                clip_stereo,
+                send_strips,
+                send_order,
                 ..
             } = self;
             if has_clips {
@@ -1928,20 +2406,45 @@ impl RenderSource for TransportSource {
                 None => None,
             };
             let samples = frames * 2;
-            // One app bus carries both native sources into the mixer's extra
-            // input: zeroed here so a source that stops cannot leave a stale
-            // block behind, then each present source summed in. A mastering
-            // insert therefore scales the drums and the synth alike.
-            app_stereo[..samples].fill(0.0);
-            // Each source follows the Studio channel strips it is patched into;
-            // an empty routing is the unpatched wire and sums exactly as before.
+            // The pre-master bus and every channel block start silent, so a
+            // source that stops cannot leave last block's material behind.
+            pre_master[..samples].fill(0.0);
+            for strip in send_strips.iter_mut() {
+                strip.clear(frames);
+            }
+            // Each clip's strip writes its panned block, which follows its
+            // channel's cord or joins the master directly.
+            if has_clips {
+                for (index, clip) in clips.iter().enumerate() {
+                    mixer.tracks_mut()[index]
+                        .channel
+                        .process(&voices[index][..frames], &mut clip_stereo[..samples])
+                        .map_err(|error| format!("track {index}: {error:?}"))?;
+                    match clip.channel {
+                        Some(channel) => {
+                            let strip = send_strips
+                                .iter_mut()
+                                .find(|strip| strip.channel == channel)
+                                .ok_or_else(|| {
+                                    format!("clip {index} names channel {channel}, which has no strip")
+                                })?;
+                            add_stereo(&mut strip.own[..samples], &clip_stereo[..samples]);
+                        }
+                        None => add_stereo(&mut pre_master[..samples], &clip_stereo[..samples]),
+                    }
+                }
+            }
+            // Each app source follows the taps it is patched into; a tap with a
+            // channel feeds that channel's own block, a tap without one joins
+            // the pre-master bus, and an empty routing is the unpatched wire.
             if has_drums {
                 if let Some(render) = drum_render.as_mut() {
                     route_app_source(
                         &mut render.strips,
                         &drum_stereo[..samples],
                         frames,
-                        &mut app_stereo[..samples],
+                        &mut pre_master[..samples],
+                        send_strips,
                     )?;
                 }
             }
@@ -1950,21 +2453,32 @@ impl RenderSource for TransportSource {
                     synth_strips,
                     &synth_stereo[..samples],
                     frames,
-                    &mut app_stereo[..samples],
+                    &mut pre_master[..samples],
+                    send_strips,
                 )?;
             }
-            let app_samples = if has_drums || has_synth {
-                Some(&app_stereo[..samples])
-            } else {
-                None
-            };
+            // One destination per source and no cycle, so this walk visits each
+            // strip once, upstream before downstream. `clip_stereo` is free
+            // here and carries the total between channels.
+            for step in 0..send_order.len() {
+                let index = send_order[step];
+                send_strips[index].shape_incoming(frames)?;
+                send_strips[index].total_into(frames, &mut clip_stereo[..samples]);
+                match send_strips[index].next {
+                    Some(next) => {
+                        add_stereo(&mut send_strips[next].incoming[..samples], &clip_stereo[..samples]);
+                    }
+                    None => add_stereo(&mut pre_master[..samples], &clip_stereo[..samples]),
+                }
+            }
+            // The live monitor path is not sent: it joins the pre-master sum
+            // after every channel and before the one mastering pass.
+            if let Some(live) = live_samples {
+                add_stereo(&mut pre_master[..samples], live);
+            }
+            out[..samples].copy_from_slice(&pre_master[..samples]);
             mixer
-                .mix_with_live_and_extra(
-                    out,
-                    |index| &voices[index][..frames],
-                    live_samples,
-                    app_samples,
-                )
+                .run_master(&mut out[..samples])
                 .map_err(|error| format!("transport: {error}"))?;
         }
 
@@ -3045,6 +3559,7 @@ mod tests {
             fade_in: 0,
             fade_out: 0,
             inserts: Vec::new(),
+            channel: None,
         }
     }
 
@@ -3085,6 +3600,51 @@ mod tests {
 
     fn right_channel(out: &[f32]) -> Vec<f32> {
         out.chunks_exact(2).map(|frame| frame[1]).collect()
+    }
+
+    /// A clip that names a Studio channel, with its own fader, pan and Out
+    /// inserts. `samples` fill the whole prepared block from frame zero.
+    fn routed_clip(
+        samples: Vec<f32>,
+        channel: usize,
+        gain: f32,
+        pan: f32,
+        inserts: Vec<InsertKind>,
+    ) -> TransportClip {
+        let duration = samples.len() as u64;
+        let mut clip = clip(samples, 0, duration, false);
+        clip.channel = Some(channel);
+        clip.gain = gain;
+        clip.pan = pan;
+        clip.inserts = inserts;
+        clip
+    }
+
+    /// A silent clip on a channel. Its own audio contributes nothing, but the
+    /// fader and inserts it carries are the channel's strip, which a send into
+    /// that channel runs through.
+    fn silent_clip(channel: usize, gain: f32, inserts: Vec<InsertKind>) -> TransportClip {
+        routed_clip(vec![0.0; 8], channel, gain, 0.0, inserts)
+    }
+
+    /// A transport with an output-cord graph and no click, prepared at 8 kHz.
+    fn send_transport(
+        clips: Vec<TransportClip>,
+        sends: Vec<(usize, usize)>,
+        period: usize,
+    ) -> TransportSource {
+        let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
+        let mut source = TransportSource::new(control)
+            .with_clips(clips)
+            .with_sends(sends);
+        source.prepared(8_000, period).expect("prepare");
+        source
+    }
+
+    fn block_once(source: &mut TransportSource, period: usize) -> Vec<f32> {
+        let mut out = vec![0.0f32; period * 2];
+        source.block(&mut out).expect("block");
+        out
     }
 
     #[test]
@@ -3182,6 +3742,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: None,
+            
+                sends: None,
             })
             .expect("send the moved plan");
         let mut second = vec![0.0f32; 8];
@@ -3201,6 +3763,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: None,
+            
+                sends: None,
             })
             .expect("send the trimmed plan");
         let mut third = vec![0.0f32; 8];
@@ -3234,6 +3798,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: None,
+            
+                sends: None,
             })
             .expect("send the empty plan");
         let mut second = vec![0.0f32; 8];
@@ -3360,6 +3926,8 @@ mod tests {
                 master_values: Some(vec![("master_limiter.ceiling".to_string(), -12.0)]),
                 drums: None,
                 synth: None,
+            
+                sends: None,
             })
             .expect("send the knob plan");
         let mut second = vec![0.0f32; 800];
@@ -3756,6 +4324,8 @@ mod tests {
                 master_values: None,
                 drums: Some(metal),
                 synth: None,
+            
+                sends: None,
             })
             .expect("send the chart update");
         let second = left_channel(&drum_block(&mut source, 1_000));
@@ -3786,11 +4356,45 @@ mod tests {
     }
 
     #[test]
+    fn an_app_tap_on_a_channel_follows_its_output_cord() {
+        let route = |channel| AppRoute {
+            gain: 1.0,
+            pan: -1.0,
+            inserts: Vec::new(),
+            channel: Some(channel),
+        };
+        let mut chart = drum_chart(Kit::Acoustic, 1, true, &[(Voice::Kick, &[100])]);
+        chart.routing = vec![route(1)];
+
+        let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
+        let mut plain = TransportSource::new(Arc::clone(&control))
+            .with_drums(chart.clone())
+            .with_sends(Vec::new());
+        plain.prepared(8_000, 256).expect("prepare the plain kit");
+        let dry = peak(&left_channel(&drum_block(&mut plain, 256)));
+        assert!(dry > 1e-4, "the routed kit never sounded");
+
+        // The kick's channel 1 sends into channel 2, whose fader sits at 0.5.
+        let mut sent = TransportSource::new(Arc::clone(&control))
+            .with_clips(vec![silent_clip(2, 0.5, Vec::new())])
+            .with_drums(chart)
+            .with_sends(vec![(1, 2)]);
+        sent.prepared(8_000, 256).expect("prepare the sent kit");
+        let wet = peak(&left_channel(&drum_block(&mut sent, 256)));
+        assert!(
+            (wet - dry * 0.5).abs() < 1e-5,
+            "the app tap did not follow its output cord: {wet} vs {dry}"
+        );
+    }
+
+    #[test]
     fn an_app_gain_of_zero_silences_the_drum_bus() {
         let out = routed_drum_block(vec![AppRoute {
             gain: 0.0,
             pan: 0.0,
             inserts: Vec::new(),
+        
+            channel: None,
         }]);
         assert!(
             out.iter().all(|sample| sample.abs() < 1e-9),
@@ -3804,11 +4408,15 @@ mod tests {
             gain: 1.0,
             pan: 0.0,
             inserts: Vec::new(),
+        
+            channel: None,
         }]);
         let half = routed_drum_block(vec![AppRoute {
             gain: 0.5,
             pan: 0.0,
             inserts: Vec::new(),
+        
+            channel: None,
         }]);
         let unity_peak = peak(&unity);
         assert!(unity_peak > 1e-3, "the unity routing never sounded");
@@ -3827,6 +4435,8 @@ mod tests {
             gain: 1.0,
             pan: -1.0,
             inserts: Vec::new(),
+        
+            channel: None,
         }]);
         assert!(peak(&left_channel(&left)) > 1e-3, "hard left was silent");
         assert!(
@@ -3839,6 +4449,8 @@ mod tests {
             gain: 1.0,
             pan: 1.0,
             inserts: Vec::new(),
+        
+            channel: None,
         }]);
         assert!(peak(&right_channel(&right)) > 1e-3, "hard right was silent");
         assert!(
@@ -3855,6 +4467,8 @@ mod tests {
                 gain: 1.0,
                 pan: 0.0,
                 inserts,
+            
+                channel: None,
             }])
         };
         let dry = render(Vec::new());
@@ -3874,6 +4488,8 @@ mod tests {
             gain: 0.5,
             pan: -0.5,
             inserts: Vec::new(),
+        
+            channel: None,
         };
         let one = peak(&routed_drum_block(vec![route.clone()]));
         let two = peak(&routed_drum_block(vec![route.clone(), route]));
@@ -3894,6 +4510,8 @@ mod tests {
             gain: 1.0,
             pan: 0.0,
             inserts: vec![InsertKind::Reverb],
+        
+            channel: None,
         }];
         let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
         let (plans, rx) = std::sync::mpsc::channel();
@@ -3915,6 +4533,8 @@ mod tests {
                 master_values: None,
                 drums: Some(silent),
                 synth: None,
+            
+                sends: None,
             })
             .expect("send the step-only update");
         let second = drum_block(&mut source, 4_096);
@@ -3950,6 +4570,393 @@ mod tests {
     }
 
     #[test]
+    fn a_send_plays_the_source_through_the_destinations_fader() {
+        // A hard-left at unity, B silent but its channel's fader sits at 0.5.
+        let a = routed_clip(vec![0.25; 8], 1, 1.0, -1.0, Vec::new());
+        let b = silent_clip(2, 0.5, Vec::new());
+        let mut source = send_transport(vec![a, b], vec![(1, 2)], 8);
+        let out = block_once(&mut source, 8);
+        let left = left_channel(&out);
+        assert!(
+            left.iter().all(|sample| (sample - 0.125).abs() < 1e-6),
+            "the source did not pass through the destination fader: {left:?}"
+        );
+        assert!(
+            peak(&right_channel(&out)) < 1e-6,
+            "a hard-left source leaked right through the send"
+        );
+    }
+
+    #[test]
+    fn a_send_runs_the_destinations_inserts_deterministically() {
+        let render = |inserts: Vec<InsertKind>| {
+            let a = routed_clip(vec![0.25; 8], 1, 1.0, -1.0, Vec::new());
+            let b = silent_clip(2, 0.5, inserts);
+            let mut source = send_transport(vec![a, b], vec![(1, 2)], 8);
+            block_once(&mut source, 8)
+        };
+        let dry = render(Vec::new());
+        let wet = render(vec![InsertKind::Reverb]);
+        assert_ne!(dry, wet, "the destination's insert did not shape the send");
+        assert!(peak(&wet) > 1e-6, "the destination insert left the send silent");
+        assert_eq!(
+            wet,
+            render(vec![InsertKind::Reverb]),
+            "the routing was not deterministic"
+        );
+    }
+
+    #[test]
+    fn a_send_preserves_the_sources_pan_image() {
+        // The destination is hard right, but a destination never re-pans a
+        // send: A's hard-left image survives.
+        let a = routed_clip(vec![0.25; 8], 1, 1.0, -1.0, Vec::new());
+        let mut b = silent_clip(2, 1.0, Vec::new());
+        b.pan = 1.0;
+        let mut source = send_transport(vec![a, b], vec![(1, 2)], 8);
+        let out = block_once(&mut source, 8);
+        assert!(peak(&left_channel(&out)) > 1e-3, "the send lost its left image");
+        assert!(
+            peak(&right_channel(&out)) < 1e-6,
+            "the destination panned the send again: {:?}",
+            right_channel(&out)
+        );
+    }
+
+    #[test]
+    fn a_destination_reverb_keeps_the_two_images_apart() {
+        // A shared reverb would let the hard-left send ring into the right
+        // side when the insert runs the two halves. One chain per side keeps
+        // the right at exact silence.
+        let a = routed_clip(vec![0.025; 8], 1, 1.0, -1.0, Vec::new());
+        let b = silent_clip(2, 1.0, vec![InsertKind::Reverb]);
+        let mut source = send_transport(vec![a, b], vec![(1, 2)], 8);
+        let out = block_once(&mut source, 8);
+        assert!(peak(&left_channel(&out)) > 1e-6, "the reverb send never sounded");
+        assert!(
+            peak(&right_channel(&out)) < 1e-9,
+            "the destination reverb bled the left image into the right: {:?}",
+            right_channel(&out)
+        );
+    }
+
+    #[test]
+    fn a_send_chain_applies_every_destination_in_order() {
+        // A -> B -> C, with both destination faders at 0.5: a quarter survives.
+        let a = routed_clip(vec![0.25; 8], 1, 1.0, -1.0, Vec::new());
+        let b = silent_clip(2, 0.5, Vec::new());
+        let c = silent_clip(3, 0.5, Vec::new());
+        let mut source = send_transport(vec![a, b, c], vec![(1, 2), (2, 3)], 8);
+        let out = block_once(&mut source, 8);
+        let left = left_channel(&out);
+        assert!(
+            left.iter().all(|sample| (sample - 0.0625).abs() < 1e-6),
+            "the chain did not apply B then C: {left:?}"
+        );
+    }
+
+    #[test]
+    fn two_channels_send_into_one_destination_and_sum() {
+        let one = routed_clip(vec![0.125; 8], 1, 1.0, -1.0, Vec::new());
+        let two = routed_clip(vec![0.25; 8], 2, 1.0, -1.0, Vec::new());
+        let bus = silent_clip(3, 0.5, Vec::new());
+        let mut source = send_transport(vec![one, two, bus], vec![(1, 3), (2, 3)], 8);
+        let out = block_once(&mut source, 8);
+        let left = left_channel(&out);
+        assert!(
+            left.iter().all(|sample| (sample - 0.1875).abs() < 1e-6),
+            "the two sends did not sum before the destination fader: {left:?}"
+        );
+    }
+
+    #[test]
+    fn a_send_reaches_a_destination_with_no_sources_as_a_unity_wire() {
+        // Channel 2 has no clip and no tap, so its strip is unity and dry. The
+        // incoming sum still leaves through it rather than disappearing.
+        let a = routed_clip(vec![0.25; 8], 1, 1.0, -1.0, Vec::new());
+        let mut source = send_transport(vec![a], vec![(1, 2)], 8);
+        let out = block_once(&mut source, 8);
+        let left = left_channel(&out);
+        assert!(
+            left.iter().all(|sample| (sample - 0.25).abs() < 1e-6),
+            "a source-less destination did not pass the send: {left:?}"
+        );
+    }
+
+    #[test]
+    fn a_channel_with_no_send_is_unaffected() {
+        let mut plain_source =
+            send_transport(vec![clip(vec![0.25; 8], 0, 8, false)], Vec::new(), 8);
+        let plain_out = block_once(&mut plain_source, 8);
+
+        let mut routed = clip(vec![0.25; 8], 0, 8, false);
+        routed.channel = Some(1);
+        // Channel 2 has no source of its own, so its cord to 3 carries silence.
+        let b = silent_clip(3, 0.5, Vec::new());
+        let mut source = send_transport(vec![routed, b], vec![(2, 3)], 8);
+        let out = block_once(&mut source, 8);
+        assert_eq!(
+            plain_out, out,
+            "an unrelated send changed a channel that has no cord of its own"
+        );
+    }
+
+    #[test]
+    fn a_clip_with_no_channel_still_sums_straight_into_the_master() {
+        // The clip carries no channel, so no cord can take it: the two silent
+        // channels and their send are inaudible and leave it exactly as before.
+        let mut bare = send_transport(vec![clip(vec![0.25; 8], 0, 8, false)], Vec::new(), 8);
+        let bare_out = block_once(&mut bare, 8);
+        let mut source = send_transport(
+            vec![
+                clip(vec![0.25; 8], 0, 8, false),
+                silent_clip(1, 0.5, Vec::new()),
+                silent_clip(2, 0.5, Vec::new()),
+            ],
+            vec![(1, 2)],
+            8,
+        );
+        let out = block_once(&mut source, 8);
+        assert_eq!(bare_out, out, "a clip with no channel was changed by a send graph");
+    }
+
+    // --- the app strip's live, ramped fader and pan --------------------------
+
+    fn ramp_route(gain: f32, pan: f32, inserts: Vec<InsertKind>) -> AppRoute {
+        AppRoute {
+            gain,
+            pan,
+            inserts,
+            channel: None,
+        }
+    }
+
+    /// One prepared app strip fed a constant dual-mono block. Returns the left
+    /// channel of what it added.
+    fn ramp_block(
+        strips: &mut Vec<AppStrip>,
+        amplitude: f32,
+        frames: usize,
+    ) -> Vec<f32> {
+        let signal = vec![amplitude; frames * 2];
+        let mut master = vec![0.0; frames * 2];
+        route_app_source(strips, &signal, frames, &mut master, &mut [])
+            .expect("route the app source");
+        left_channel(&master)
+    }
+
+    #[test]
+    fn an_app_fader_change_ramps_across_the_block_without_a_step() {
+        let frames = 16;
+        let mut strips = build_app_strips(&[ramp_route(1.0, 0.0, Vec::new())], 8_000, frames);
+        let before = ramp_block(&mut strips, 0.5, frames);
+        assert!(before[0] > 1e-3, "the app strip never sounded");
+
+        // Move the fader to half. The next block starts where the last one
+        // ended and slides down, so there is no jump at the block edge and no
+        // step between frames larger than the ramp allows.
+        reconcile_app_strips(
+            &mut strips,
+            &[ramp_route(0.5, 0.0, Vec::new())],
+            8_000,
+            frames,
+        );
+        let after = ramp_block(&mut strips, 0.5, frames);
+        assert!(
+            (after[0] - before[0]).abs() < 1e-6,
+            "the fader stepped at the block edge: {} then {}",
+            before[0],
+            after[0]
+        );
+        let step = before[0] * 0.5 / (frames - 1) as f32;
+        for pair in after.windows(2) {
+            let delta = (pair[0] - pair[1]).abs();
+            assert!(
+                delta <= step * 1.001 + 1e-7,
+                "the ramp jumped {delta}, more than {step} in one frame: {after:?}"
+            );
+        }
+        assert!(
+            (after[frames - 1] - before[0] * 0.5).abs() < 1e-5,
+            "the ramp did not arrive at the new fader: {after:?}"
+        );
+    }
+
+    #[test]
+    fn an_app_pan_change_ramps_across_the_block() {
+        let frames = 16;
+        let mut strips = build_app_strips(&[ramp_route(1.0, -1.0, Vec::new())], 8_000, frames);
+        let signal = vec![0.5f32; frames * 2];
+        let mut master = vec![0.0; frames * 2];
+        route_app_source(&mut strips, &signal, frames, &mut master, &mut [])
+            .expect("route the app source");
+        let full_left = peak(&left_channel(&master));
+        assert!(full_left > 1e-3, "hard left never sounded");
+
+        reconcile_app_strips(
+            &mut strips,
+            &[ramp_route(1.0, 1.0, Vec::new())],
+            8_000,
+            frames,
+        );
+        master.fill(0.0);
+        route_app_source(&mut strips, &signal, frames, &mut master, &mut [])
+            .expect("route the app source");
+        let left = left_channel(&master);
+        let right = right_channel(&master);
+        assert!(
+            (left[0] - full_left).abs() < 1e-6,
+            "the pan stepped at the block edge: {} then {}",
+            full_left,
+            left[0]
+        );
+        for pair in left.windows(2) {
+            assert!(pair[0] + 1e-7 >= pair[1], "the left side was not ramped down: {left:?}");
+        }
+        for pair in right.windows(2) {
+            assert!(pair[1] + 1e-7 >= pair[0], "the right side was not ramped up: {right:?}");
+        }
+        assert!(left[frames - 1] < full_left * 0.05, "the pan did not reach the right: {left:?}");
+        assert!(right[frames - 1] > full_left * 0.95, "the right side did not arrive: {right:?}");
+    }
+
+    #[test]
+    fn an_app_gain_change_keeps_a_reverb_tail() {
+        let frames = 256;
+        let mut strips = build_app_strips(
+            &[ramp_route(1.0, 0.0, vec![InsertKind::Reverb])],
+            8_000,
+            frames,
+        );
+        let mut impulse = vec![0.0f32; frames * 2];
+        impulse[0] = 1.0;
+        let mut master = vec![0.0; frames * 2];
+        route_app_source(&mut strips, &impulse, frames, &mut master, &mut [])
+            .expect("the impulse");
+
+        // A gain-only update must not rebuild the chain: the tail keeps
+        // ringing through the next block (attenuated by the ramping fader).
+        reconcile_app_strips(
+            &mut strips,
+            &[ramp_route(0.0, 0.0, vec![InsertKind::Reverb])],
+            8_000,
+            frames,
+        );
+        master.fill(0.0);
+        let silence = vec![0.0f32; frames * 2];
+        route_app_source(&mut strips, &silence, frames, &mut master, &mut [])
+            .expect("the tail");
+        assert!(
+            peak(&master) > 1e-8,
+            "a gain-only change reset the reverb tail"
+        );
+    }
+
+    #[test]
+    fn an_app_insert_list_change_rebuilds_and_drops_the_tail() {
+        let frames = 256;
+        let mut strips = build_app_strips(
+            &[ramp_route(1.0, 0.0, vec![InsertKind::Reverb])],
+            8_000,
+            frames,
+        );
+        let mut impulse = vec![0.0f32; frames * 2];
+        impulse[0] = 1.0;
+        let mut master = vec![0.0; frames * 2];
+        route_app_source(&mut strips, &impulse, frames, &mut master, &mut [])
+            .expect("the impulse");
+
+        reconcile_app_strips(
+            &mut strips,
+            &[ramp_route(1.0, 0.0, Vec::new())],
+            8_000,
+            frames,
+        );
+        master.fill(0.0);
+        let silence = vec![0.0f32; frames * 2];
+        route_app_source(&mut strips, &silence, frames, &mut master, &mut [])
+            .expect("the rebuilt strip");
+        assert!(
+            peak(&master) < 1e-9,
+            "a changed insert list kept the old chain's tail: {:?}",
+            peak(&master)
+        );
+    }
+
+    #[test]
+    fn a_destination_fader_change_ramps_across_the_block() {
+        let frames = 16;
+        let mut strip = SendStrip::new(2, 1.0, &[], 8_000, frames);
+        strip.clear(frames);
+        strip.incoming[..frames * 2].fill(0.5);
+        strip.shape_incoming(frames).expect("the first block");
+        let mut total = vec![0.0f32; frames * 2];
+        strip.total_into(frames, &mut total);
+        let before = total[0];
+        assert!((before - 0.5).abs() < 1e-6, "the destination was not a wire: {before}");
+
+        strip.reconcile(2, 0.5, &[], 8_000, frames);
+        strip.clear(frames);
+        strip.incoming[..frames * 2].fill(0.5);
+        strip.shape_incoming(frames).expect("the next block");
+        strip.total_into(frames, &mut total);
+        assert!(
+            (total[0] - before).abs() < 1e-6,
+            "the destination fader stepped at the block edge: {} then {}",
+            before,
+            total[0]
+        );
+        assert!(
+            (total[(frames - 1) * 2] - before * 0.5).abs() < 1e-5,
+            "the destination fader did not ramp to half: {:?}",
+            left_channel(&total)
+        );
+        let step = before * 0.5 / (frames - 1) as f32;
+        for pair in left_channel(&total).windows(2) {
+            let delta = (pair[0] - pair[1]).abs();
+            assert!(
+                delta <= step * 1.001 + 1e-7,
+                "the destination ramp jumped {delta}, more than {step} in one frame"
+            );
+        }
+    }
+
+    #[test]
+    fn a_destination_fader_change_keeps_its_reverb_tail() {
+        let frames = 64;
+        // Two identical destinations ring from the same impulse. Only one
+        // moves its fader in the next block, so the other is the control.
+        let mut changed = SendStrip::new(2, 1.0, &[InsertKind::Reverb], 8_000, frames);
+        let mut steady = SendStrip::new(2, 1.0, &[InsertKind::Reverb], 8_000, frames);
+        for strip in [&mut changed, &mut steady] {
+            strip.incoming[0] = 1.0;
+            strip.shape_incoming(frames).expect("shape the first block");
+        }
+        changed.reconcile(2, 0.5, &[InsertKind::Reverb], 8_000, frames);
+        let mut changed_total = vec![0.0f32; frames * 2];
+        let mut steady_total = vec![0.0f32; frames * 2];
+        for (strip, total) in [
+            (&mut changed, &mut changed_total),
+            (&mut steady, &mut steady_total),
+        ] {
+            strip.clear(frames);
+            strip.shape_incoming(frames).expect("shape the next block");
+            strip.total_into(frames, total);
+        }
+        assert!(peak(&steady_total) > 1e-8, "the reverb tail did not ring");
+        assert!(
+            (changed_total[0] - steady_total[0]).abs() < 1e-6,
+            "the destination fader stepped at the block edge: {} vs {}",
+            changed_total[0],
+            steady_total[0]
+        );
+        assert!(
+            peak(&changed_total) > 1e-8,
+            "a fader-only change reset the destination's reverb tail"
+        );
+    }
+
+    #[test]
     fn the_synth_renders_through_its_routing_and_a_patch_keeps_it() {
         let (plans, notes, _, mut source) = app_transport(None, Vec::new(), Vec::new(), 256);
         plans
@@ -3959,6 +4966,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
+            
+                sends: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -3979,8 +4988,12 @@ mod tests {
                         gain: 0.0,
                         pan: 0.0,
                         inserts: Vec::new(),
+                    
+                        channel: None,
                     }]),
                 }),
+            
+                sends: None,
             })
             .expect("send the routing");
         let muted = drum_block(&mut source, 256);
@@ -4002,6 +5015,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(9_000.0)),
+            
+                sends: None,
             })
             .expect("send the second patch");
         let still_muted = drum_block(&mut source, 256);
@@ -4089,6 +5104,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
+            
+                sends: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -4114,6 +5131,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
+            
+                sends: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -4153,6 +5172,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
+            
+                sends: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -4187,6 +5208,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(2_000.0)),
+            
+                sends: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -4202,6 +5225,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(12_000.0)),
+            
+                sends: None,
             })
             .expect("send the second patch");
         let out = drum_block(&mut source, 1_000);
@@ -4233,6 +5258,8 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
+            
+                sends: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);

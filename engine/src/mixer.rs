@@ -872,13 +872,7 @@ impl Mixer {
         }
 
         bus.fill(0.0);
-        let Mixer {
-            tracks,
-            scratch,
-            master,
-            master_scratch,
-            ..
-        } = self;
+        let Mixer { tracks, scratch, .. } = self;
         for (index, track) in tracks.iter_mut().enumerate() {
             let stereo = &mut scratch[..frames * 2];
             track
@@ -909,24 +903,50 @@ impl Mixer {
         }
 
         // The master chain sees the sum, never a track: this is the only place
-        // the whole mix exists at once. Each slot runs once per bus channel on
-        // deinterleaved halves, so a stereo effect keeps its two tails apart.
-        if !master.is_empty() {
-            if master_scratch.len() < frames * 2 {
-                return Err("the master chain was not prepared for this block".to_string());
-            }
-            let (left, right) = master_scratch.split_at_mut(frames);
-            for (index, frame) in bus.chunks_exact(2).enumerate() {
-                left[index] = frame[0];
-                right[index] = frame[1];
-            }
-            for slot in master.iter_mut() {
-                slot.process(left, right);
-            }
-            for (index, frame) in bus.chunks_exact_mut(2).enumerate() {
-                frame[0] = left[index];
-                frame[1] = right[index];
-            }
+        // the whole mix exists at once.
+        self.run_master(bus)
+    }
+
+    /// Run the armed master rack over one interleaved stereo bus, in place.
+    ///
+    /// This is the single mastering pass a transport, a playback or a caller
+    /// that builds its own channel graph shares. Each slot runs once per bus
+    /// channel on deinterleaved halves, so a stereo effect keeps its two tails
+    /// apart. An empty rack leaves the bus untouched; a block longer than the
+    /// prepared period is refused rather than reallocated.
+    pub fn run_master(&mut self, bus: &mut [f32]) -> Result<(), String> {
+        if bus.len() % 2 != 0 {
+            return Err(format!(
+                "the master bus must hold whole stereo frames, found {} samples",
+                bus.len()
+            ));
+        }
+        let frames = bus.len() / 2;
+        let Mixer {
+            master,
+            master_scratch,
+            ..
+        } = self;
+        if master.is_empty() {
+            return Ok(());
+        }
+        if master_scratch.len() < frames * 2 {
+            return Err(format!(
+                "a {frames}-frame master block is longer than the prepared {} frames",
+                master_scratch.len() / 2
+            ));
+        }
+        let (left, right) = master_scratch.split_at_mut(frames);
+        for (index, frame) in bus.chunks_exact(2).enumerate() {
+            left[index] = frame[0];
+            right[index] = frame[1];
+        }
+        for slot in master.iter_mut() {
+            slot.process(left, right);
+        }
+        for (index, frame) in bus.chunks_exact_mut(2).enumerate() {
+            frame[0] = left[index];
+            frame[1] = right[index];
         }
         Ok(())
     }

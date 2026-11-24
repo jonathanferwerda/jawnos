@@ -3735,7 +3735,10 @@ impl Server {
     /// or a device exists. A `start` while the transport already plays retunes
     /// and seeks in place: no device is closed, so there is no gap. Clips ride
     /// `update`, which replaces the placement of the running transport without
-    /// stopping it.
+    /// stopping it. `sends` is the Studio output-cord graph (one destination
+    /// per source, no self edge, no cycle); a clip or an app tap that names a
+    /// `channel` follows its cord, and one that does not sums straight into the
+    /// master. Both `start` and `update` carry it.
     fn transport_command(&mut self, object: &Object) -> String {
         let action = match get(object, "action") {
             Some(Value::Str(action)) => action.as_str(),
@@ -3809,6 +3812,13 @@ impl Server {
             Ok(drums) => drums,
             Err(error) => return error_line(&error),
         };
+        // The Studio output cords. Validated here, before any device opens, so
+        // a self edge, a second destination for one source or a cycle is one
+        // clear refusal and no thread.
+        let sends = match parse_sends(get(object, "sends")) {
+            Ok(sends) => sends.unwrap_or_default(),
+            Err(error) => return error_line(&error),
+        };
         let spec = match ClickSpec::new(bpm, beats_per_bar, gain) {
             Ok(spec) => spec,
             Err(error) => return error_line(&error),
@@ -3829,24 +3839,30 @@ impl Server {
                 session.control.set_tempo(bpm, beats_per_bar, gain);
                 session.control.set_loop(loop_start, loop_end);
                 session.control.seek(position);
-                // A `start` on a playing transport may carry a chart: it rides
-                // the plan channel like an `update`, so the device stays open.
-                if let Some(chart) = drums {
+                // A `start` on a playing transport may carry a chart or a new
+                // output-cord graph: both ride the plan channel like an
+                // `update`, so the device stays open.
+                let sends_changed = get(object, "sends").is_some();
+                if drums.is_some() || sends_changed {
+                    let chart = drums.as_ref().map(|chart| chart.clone());
                     let plan = TransportPlan {
                         clips: None,
                         master: None,
                         master_values: None,
-                        drums: Some(chart.clone()),
+                        drums: chart,
                         synth: None,
+                        sends: Some(sends),
                     };
                     if session.plan_tx.send(plan).is_err() {
                         return error_line(
                             "the transport's render thread is no longer accepting plans",
                         );
                     }
-                    session.drums = chart.length;
-                    session.drum_routes = chart.routing.len();
-                    session.drum_kit = chart.kit_name().to_string();
+                    if let Some(chart) = drums {
+                        session.drums = chart.length;
+                        session.drum_routes = chart.routing.len();
+                        session.drum_kit = chart.kit_name().to_string();
+                    }
                 }
                 return self.transport_status();
             }
@@ -3944,6 +3960,7 @@ impl Server {
                         master,
                         master_values,
                         drums,
+                        sends,
                         plan_rx,
                         live_rx,
                         note_rx,
@@ -4024,9 +4041,18 @@ impl Server {
             Ok(drums) => drums,
             Err(error) => return error_line(&error),
         };
-        if clips.is_none() && master.is_none() && master_values.is_none() && drums.is_none() {
+        let sends = match parse_sends(get(object, "sends")) {
+            Ok(sends) => sends,
+            Err(error) => return error_line(&error),
+        };
+        if clips.is_none()
+            && master.is_none()
+            && master_values.is_none()
+            && drums.is_none()
+            && sends.is_none()
+        {
             return error_line(
-                "update needs \"clips\", \"master\", \"master_values\" or \"drums\": the change for the running transport",
+                "update needs \"clips\", \"master\", \"master_values\", \"drums\" or \"sends\": the change for the running transport",
             );
         }
         let clip_count = clips.as_ref().map(|clips| clips.len());
@@ -4040,6 +4066,7 @@ impl Server {
             master_values,
             drums,
             synth: None,
+            sends,
         };
         let session = match self.transport.as_mut() {
             Some(session) => session,
@@ -4139,6 +4166,7 @@ impl Server {
                 patch: Some(patch),
                 routing: None,
             }),
+            sends: None,
         };
         if session.plan_tx.send(plan).is_err() {
             return error_line("the transport's render thread is no longer accepting plans");
@@ -4179,6 +4207,7 @@ impl Server {
                 patch: None,
                 routing: Some(routing),
             }),
+            sends: None,
         };
         if session.plan_tx.send(plan).is_err() {
             return error_line("the transport's render thread is no longer accepting plans");
@@ -5183,6 +5212,24 @@ fn transport_clip(value: &Value, rate: u32, cache: &mut TakeCache) -> Result<Tra
             )
         }
     };
+    // The Studio channel this take follows. Absent means no cord: the take is
+    // summed straight into the master bus, exactly as before sends existed.
+    let channel = match get(fields, "channel") {
+        None | Some(Value::Null) => None,
+        Some(Value::Num(value))
+            if value.is_finite()
+                && value.fract() == 0.0
+                && *value >= 1.0
+                && *value <= 32.0 =>
+        {
+            Some(*value as usize)
+        }
+        _ => {
+            return Err(
+                "a transport clip \"channel\" must be a whole number from 1 to 32".to_string(),
+            )
+        }
+    };
     let take = cache.decode(&path)?;
     if take.rate != rate {
         return Err(format!(
@@ -5190,7 +5237,7 @@ fn transport_clip(value: &Value, rate: u32, cache: &mut TakeCache) -> Result<Tra
             path, take.rate, rate
         ));
     }
-    TransportClip::from_samples(
+    let mut clip = TransportClip::from_samples(
         path,
         take.rate,
         take.samples,
@@ -5203,7 +5250,9 @@ fn transport_clip(value: &Value, rate: u32, cache: &mut TakeCache) -> Result<Tra
         fade_in,
         fade_out,
         inserts,
-    )
+    )?;
+    clip.channel = channel;
+    Ok(clip)
 }
 
 /// The `click` object `record` echoes when it armed one, e.g.
@@ -5318,14 +5367,15 @@ const MAX_APP_ROUTES: usize = 16;
 /// action: one strip per channel the app is patched into.
 ///
 /// ```text
-/// "routing":[{"gain":0.8,"pan":-0.5,"inserts":["fuzz","reverb"]}]
+/// "routing":[{"channel":2,"gain":0.8,"pan":-0.5,"inserts":["fuzz","reverb"]}]
 /// ```
 ///
 /// An absent or `null` routing is the empty list (unpatched: unity gain,
 /// centre pan, no inserts). A present entry must be an object; an absent
-/// `gain` is 1, an absent `pan` is 0 and an absent `inserts` is none. `gain`
-/// is in `0..=1`, `pan` in `-1..=1`, and every insert name must be one the
-/// engine can build. Each refusal names the path the page sent, e.g.
+/// `gain` is 1, an absent `pan` is 0, an absent `inserts` is none and an
+/// absent `channel` means the tap has no output cord. `gain` is in `0..=1`,
+/// `pan` in `-1..=1`, `channel` a whole 1..=32, and every insert name must be
+/// one the engine can build. Each refusal names the path the page sent, e.g.
 /// `drums.routing[1].gain` or `synth routing[0].inserts[2]`.
 fn parse_app_routing(value: Option<&Value>, prefix: &str) -> Result<Vec<AppRoute>, String> {
     let entries = match value {
@@ -5383,9 +5433,119 @@ fn parse_app_routing(value: Option<&Value>, prefix: &str) -> Result<Vec<AppRoute
             }
             _ => return Err(format!("{label}.inserts must be an array of insert names")),
         };
-        routes.push(AppRoute { gain, pan, inserts });
+        // The Studio channel this tap follows. Absent means no cord: the app
+        // sums straight into the pre-master bus, exactly as before sends.
+        let channel = match get(fields, "channel") {
+            None | Some(Value::Null) => None,
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= 1.0
+                    && *value <= 32.0 =>
+            {
+                Some(*value as usize)
+            }
+            _ => {
+                return Err(format!(
+                    "{label}.channel must be a whole number from 1 to 32"
+                ))
+            }
+        };
+        routes.push(AppRoute {
+            gain,
+            pan,
+            inserts,
+            channel,
+        });
     }
     Ok(routes)
+}
+
+/// The `sends` field: the Studio output-cord graph, one destination per source.
+///
+/// ```text
+/// "sends":[{"from":1,"to":2},{"from":3,"to":2}]
+/// ```
+///
+/// Each entry is one cord. `from` and `to` must be whole channels in `1..=32`,
+/// `from` cannot equal `to`, a source may appear once (it has one output jack)
+/// and the graph must be acyclic. A refusal names the channel it is about, and
+/// a cycle names the channel where it closes. `None` leaves the running graph
+/// alone; an empty array is a graph with no cords, so every source sums into
+/// the master bus.
+fn parse_sends(value: Option<&Value>) -> Result<Option<Vec<(usize, usize)>>, String> {
+    let entries = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Arr(entries)) => entries,
+        _ => return Err("\"sends\" must be an array of send objects".to_string()),
+    };
+    let mut sends = Vec::with_capacity(entries.len());
+    let mut destinations = [None::<usize>; 32];
+    for (index, entry) in entries.iter().enumerate() {
+        let fields = match entry {
+            Value::Obj(fields) => fields,
+            _ => return Err(format!("sends[{index}] must be an object with \"from\" and \"to\"")),
+        };
+        let from = match get(fields, "from") {
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= 1.0
+                    && *value <= 32.0 =>
+            {
+                *value as usize
+            }
+            _ => return Err(format!("sends[{index}].from must be a whole channel 1 to 32")),
+        };
+        let to = match get(fields, "to") {
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= 1.0
+                    && *value <= 32.0 =>
+            {
+                *value as usize
+            }
+            _ => return Err(format!("sends[{index}].to must be a whole channel 1 to 32")),
+        };
+        if from == to {
+            return Err(format!("channel {from} cannot send to itself"));
+        }
+        if let Some(other) = destinations[from - 1] {
+            return Err(format!(
+                "channel {from} already sends to channel {other}; a channel send has one destination"
+            ));
+        }
+        destinations[from - 1] = Some(to);
+        sends.push((from, to));
+    }
+    // Walk every chain. A node visited twice closes a loop at that node, which
+    // is the channel the refusal names.
+    for start in 1..=32usize {
+        if destinations[start - 1].is_none() {
+            continue;
+        }
+        let mut visited = [false; 32];
+        let mut at = start;
+        let mut path: Vec<usize> = Vec::new();
+        loop {
+            if visited[at - 1] {
+                let named: Vec<String> = path.iter().map(|channel| channel.to_string()).collect();
+                return Err(format!(
+                    "channel {at} closes a send loop ({} -> {})",
+                    named.join(" -> "),
+                    at
+                ));
+            }
+            visited[at - 1] = true;
+            path.push(at);
+            match destinations[at - 1] {
+                Some(next) => at = next,
+                None => break,
+            }
+        }
+    }
+    Ok(Some(sends))
 }
 
 /// The `drums` field: the native machine's chart.
@@ -6470,6 +6630,7 @@ fn run_transport(
     master: Vec<InsertKind>,
     master_values: Vec<(String, f32)>,
     drums: Option<DrumChart>,
+    sends: Vec<(usize, usize)>,
     plans: std::sync::mpsc::Receiver<TransportPlan>,
     live: std::sync::mpsc::Receiver<TransportLive>,
     notes: std::sync::mpsc::Receiver<TransportNote>,
@@ -6479,6 +6640,7 @@ fn run_transport(
         .with_clips(clips)
         .with_master(master)
         .with_master_values(master_values)
+        .with_sends(sends)
         .with_plan_rx(plans)
         .with_live_rx(live)
         .with_note_rx(notes)
@@ -9955,6 +10117,101 @@ break"}"#).is_err());
         }
 
         let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_transport_start_accepts_a_send_graph_and_an_update_can_replace_it() {
+        let mut server = socket_server();
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"start","position":0,"sends":[{"from":1,"to":2},{"from":2,"to":3}]}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","sends":[{"from":1,"to":3}]}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+
+        // The same command refuses a cycle while the transport keeps playing.
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","sends":[{"from":1,"to":2},{"from":2,"to":1}]}"#,
+        ));
+        assert!(line.contains("\"ok\":false"), "{line}");
+        assert!(line.contains("channel 1 closes a send loop"), "{line}");
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"state\":\"playing\""), "{status}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_transport_start_refuses_a_bad_send_graph_by_name() {
+        let mut server = socket_server();
+        for (line, needle) in [
+            (
+                r#"{"cmd":"transport","action":"start","sends":[{"from":1,"to":2},{"from":2,"to":1}]}"#,
+                "channel 1 closes a send loop",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","sends":[{"from":2,"to":2}]}"#,
+                "channel 2 cannot send to itself",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","sends":[{"from":1,"to":2},{"from":1,"to":3}]}"#,
+                "channel 1 already sends to channel 2",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","sends":[{"from":0,"to":2}]}"#,
+                "from must be a whole channel",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","sends":[{"from":1,"to":33}]}"#,
+                "to must be a whole channel",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","sends":[{"from":1.5,"to":2}]}"#,
+                "from must be a whole channel",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","sends":"cords"}"#,
+                "array of send objects",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","sends":[{"from":1}]}"#,
+                "to must be a whole channel",
+            ),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+        }
+        // No refusal opened a device or a thread.
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"state\":\"stopped\""), "{status}");
+    }
+
+    #[test]
+    fn a_routing_tap_refuses_a_channel_outside_the_wire_range() {
+        let mut server = socket_server();
+        for (line, needle) in [
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"routing":[{"channel":0}]}}"#,
+                "drums.routing[0].channel",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"routing":[{"channel":33}]}}"#,
+                "drums.routing[0].channel",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"routing":[{"channel":1.5}]}}"#,
+                "drums.routing[0].channel",
+            ),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+        }
     }
 
     #[test]
