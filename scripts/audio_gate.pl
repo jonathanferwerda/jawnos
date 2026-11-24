@@ -524,11 +524,10 @@ click muted, and records four tracks from the same input.
   --json               one JSON object instead of the table
   --help               this text
 
-The four-track step needs the engine configured with at least N capture
-channels; duplicating one input across tracks does not bypass that check. On a
-two-input UM2 the engine must be started with a larger --channels and a device
-that grants them, or --tracks lowered. The step proves one shared start stamp,
-not four independent converters.
+The four-track step reads the one patched input on every track, so a two-input
+UM2 runs it at the engine's normal capture width; the step proves one shared
+start stamp, not four independent converters. --tracks 2..32 changes how many
+stamp checks the step makes.
 
 Exit 0 when every check passes, 1 on a gate failure, 2 on a usage error.
 USAGE
