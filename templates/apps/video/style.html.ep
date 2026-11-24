@@ -174,12 +174,21 @@
 			cursor: var(--jawnos-cursor-pointer, pointer);
 			background-color: rgba(255,255,255,.08);
 		}
-		.music_chapters .music_chapter_tile img {
+		.music_chapters .music_chapter_tile img, .music_chapters .music_chapter_tile video {
 			display: block;
 			width: 100%;
 			height: 100%;
 			object-fit: cover;
 			border: none;
+		}
+		/* the hidden clip a card plays on hover; it covers the card so the
+		   poster and the film are the same size */
+		.music_chapters .music_chapter_tile video {
+			display: none;
+			position: absolute;
+			left: 0;
+			top: 0;
+			background-color: #000;
 		}
 		.music_chapters .music_chapter_caption {
 			position: absolute;
@@ -187,6 +196,9 @@
 			right: 0;
 			bottom: 0;
 			display: flex;
+			/* the caption sits over the clip; a pointer on it is still on the
+			   card, so the preview must not stop there */
+			pointer-events: none;
 			justify-content: space-between;
 			gap: 6px;
 			padding: 3px 6px;

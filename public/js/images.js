@@ -126,6 +126,110 @@ $(document).ready(function() {
 	}
 });
 
+// ---- a video card's clip preview -------------------------------------------
+// A video card is a poster <img> and a hidden <video> that share a `brother`
+// token: the poster is what the grid lays out, and the video's `potential_src`
+// is the whole file. Hovering the poster swaps the video in and plays only the
+// slice the card stands for - a chapter's start_time..end_time, or a short
+// opening slice for a whole film - then puts the poster back on leave. The
+// video's own `loop` attribute is switched off: the clip is looped by seeking
+// back to its start, so a chapter preview never runs on into the next chapter.
+function galleryPreviewPartner(node, kind, brother) {
+	if (!brother) { return $(); }
+	var found = node.siblings(kind).filter('[brother="' + brother + '"]');
+	if (!found.length) { found = node.parent().find(kind + '[brother="' + brother + '"]'); }
+	return found.first();
+}
+
+// The slice a card is about. A chapter plays its own start_time..end_time; one
+// without an end_time gets a short slice, and the film's own poster plays a
+// short opening rather than the whole film.
+function galleryPreviewClip(img, vid) {
+	var start = parseFloat(img.attr('start_time'));
+	var end = parseFloat(img.attr('end_time'));
+	var duration = parseFloat(vid.attr('duration'));
+	if (!isFinite(start) || start < 0) { start = 0; }
+	if (!isFinite(duration) || duration <= 0) { duration = Infinity; }
+	if (!(isFinite(end) && end > start)) {
+		end = start + (start > 0 ? 5 : 8);
+		if (end > duration) { end = duration; }
+	}
+	return { start: start, end: end };
+}
+
+function galleryPreviewSeek(v) {
+	var clip = v._jawnosClip;
+	if (!clip) { return; }
+	// the end is compared a hair early so the jump happens before `ended`
+	if ((isFinite(clip.end) && v.currentTime >= clip.end - 0.05) || v.currentTime < clip.start - 0.4) {
+		try { v.currentTime = clip.start; } catch (e) {}
+	}
+}
+
+function galleryPreviewShow(v) {
+	var vid = $(v);
+	galleryPreviewPartner(vid, 'img.video_preview_thumb', vid.attr('brother')).hide();
+	vid.css('display', 'block');
+}
+
+function galleryPreviewHide(v) {
+	var vid = $(v);
+	var clip = v._jawnosClip;
+	try { v.pause(); } catch (e) {}
+	if (clip) { try { v.currentTime = clip.start; } catch (e) {} }
+	v._jawnosClip = null;
+	vid.hide();
+	galleryPreviewPartner(vid, 'img.video_preview_thumb', vid.attr('brother')).show();
+}
+
+function galleryPreviewEnter(img) {
+	img = $(img);
+	// a card that names a non-video type (an audio row the album grid still
+	// draws as a tile) has no picture to preview
+	var type = img.attr('type');
+	if (type && type !== 'video') { return; }
+	var brother = img.attr('brother');
+	if (!brother) { return; }
+	var vid = galleryPreviewPartner(img, 'video.video_preview_thumb', brother);
+	var src = vid.attr('potential_src');
+	if (!vid.length || !src) { return; }
+	var v = vid[0];
+	v._jawnosClip = galleryPreviewClip(img, vid);
+	v.muted = true;
+	v.loop = false;
+	v.autoplay = false;
+	v.preload = 'auto';
+	v.setAttribute('playsinline', '');
+	if (!v._jawnosPreviewBound) {
+		v._jawnosPreviewBound = true;
+		// the loop is inside the clip itself, and the pointer leaving the video
+		// (not the poster, which is already hidden) puts the poster back
+		$(v).on('timeupdate.jawnos_preview', function() { galleryPreviewSeek(v); });
+		$(v).on('ended.jawnos_preview', function() {
+			if (!v._jawnosClip) { return; }
+			try { v.currentTime = v._jawnosClip.start; v.play(); } catch (e) {}
+		});
+		$(v).on('mouseleave.jawnos_preview', function() { galleryPreviewHide(v); });
+		$(v).on('error.jawnos_preview', function() { galleryPreviewHide(v); });
+	}
+	function start() {
+		galleryPreviewSeek(v);
+		galleryPreviewShow(v);
+		var played = v.play();
+		if (played && played.catch) { played.catch(function() { galleryPreviewHide(v); }); }
+	}
+	if (v.getAttribute('src') !== src) { v.src = src; }
+	$(v).off('loadedmetadata.jawnos_preview');
+	// wait for the file's facts so the first painted frame is the clip's own,
+	// not frame zero of the film
+	if (v.readyState >= 1) { start(); }
+	else { $(v).one('loadedmetadata.jawnos_preview', start); }
+}
+
+$(document).on('mouseenter', '.video_preview_thumb[isa="img"]', function() {
+	galleryPreviewEnter(this);
+});
+
 // ---- window and data --------------------------------------------------------
 
 function galleryApplyChrome() {

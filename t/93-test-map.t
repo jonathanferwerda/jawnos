@@ -149,13 +149,13 @@ subtest 'every test is reachable' => sub {
 };
 
 subtest 'an unclaimed app file is matched through agent_help' => sub {
-	# The Gallery app's script is claimed by no header; agent_help derives the
-	# app from the tree, so the change runs Gallery's tests instead of all of
-	# them. The match itself is still tests_for_path's.
+	# The Store app's cart script is claimed by no header; agent_help derives
+	# the app from the tree, so the change runs Store's tests instead of all
+	# of them. The match itself is still tests_for_path's.
 	#
 	# The paths are built, not written: a literal in this body would claim them
 	# for this test (that is the mention tier), and the case would vanish.
-	my $gallery = join('/', 'public', 'js', 'images' . '.js');
+	my $gallery = join('/', 'public', 'js', 'store', 'cart' . '.js');
 	my $vendor  = join('/', 'public', 'js', 'jquery-ui' . '.js');
 
 	my ($out, $rc) = run_tests_for('--files', $gallery, '--json');

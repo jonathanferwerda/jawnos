@@ -1,8 +1,9 @@
-# tests-for: public/js/music.js templates/apps/video/markup.html.ep templates/apps/video/script.html.ep templates/apps/video/style.html.ep
+# tests-for: public/js/music.js public/js/images.js templates/apps/video/markup.html.ep templates/apps/video/script.html.ep templates/apps/video/style.html.ep
 # covers:    In theatre mode or a fullscreen the Music player draws a film's
 #            chapters just above the player bar - above the More tools panel
 #            while it is open - as 200x120 cards on a translucent band that
-#            scrolls sideways when they do not all fit, and a card seeks.
+#            scrolls sideways when they do not all fit, a card seeks, and
+#            hovering a card (or any video poster) plays its clip in place.
 
 use strict;
 use warnings;
@@ -14,6 +15,7 @@ use RepoSource;
 
 my $root = repo_root();
 my $js = read_file("$root/public/js/music.js");
+my $images = read_file("$root/public/js/images.js");
 my $markup = read_file("$root/templates/apps/video/markup.html.ep");
 my $style = read_file("$root/templates/apps/video/style.html.ep");
 my $script = read_file("$root/templates/apps/video/script.html.ep");
@@ -72,6 +74,35 @@ cmp_ok($arm, '>=', 2, 'the theatre and fullscreen both arm it');
 # --- a card is a seek -------------------------------------------------------
 like($js, qr!\$\(document\)\.on\('click', '\.music_chapter_tile'!, 'a card is clickable');
 like($js, qr!v\.currentTime = start;!, 'and seeks the picture to that chapter');
+
+# --- hovering a card plays its clip ----------------------------------------
+like($js, qr!'&thumb=ya&duration='!, 'the poster still asks for the chapter frame');
+like($js, qr!var preview = '/file_open\?file=' \+ encodeURIComponent\(file\) \+ remote;!,
+	'the card also carries the full file as the clip address');
+like($js, qr!\$\('<video muted playsinline preload="none" isa="video">'\)!,
+	'each card pairs its poster with a muted video');
+like($js, qr!\.attr\('potential_src', preview\)!, 'the video knows which file to play');
+like($js, qr!\.attr\('start_time', ch\.start_time \|\| 0\)!, 'the video carries the chapter start');
+like($js, qr!\.attr\('end_time', ch\.end_time \|\| ''\)!, 'and its end, so the clip stops there');
+like($js, qr!\.attr\('brother', brother\)!, 'poster and video share the pairing token');
+like($style, qr!\.music_chapters \.music_chapter_tile video \{[^}]*display: none;!,
+	'the clip is hidden until the pointer arrives');
+like($style, qr!\.music_chapters \.music_chapter_tile video \{[^}]*position: absolute;!,
+	'the clip covers the card in place of the poster');
+like($style, qr!\.music_chapters \.music_chapter_caption \{[^}]*pointer-events: none;!,
+	'the caption does not end a preview while the pointer is on it');
+
+# --- the shared preview handler --------------------------------------------
+like($images, qr!\$\(document\)\.on\('mouseenter', '\.video_preview_thumb\[isa="img"\]'!,
+	'hovering any video poster starts its clip');
+like($images, qr!function galleryPreviewClip\(img, vid\)!, 'the clip is read from the card, not the film');
+like($images, qr!start_time!, 'a chapter starts at its own start_time');
+like($images, qr!end_time!, 'and stops at its end_time');
+like($images, qr!v\.currentTime >= clip\.end - 0\.05!, 'the clip loops back before the chapter ends');
+like($images, qr!v\.loop = false;!, 'the video element does not loop on past the clip');
+like($images, qr!\.on\('mouseleave\.jawnos_preview', function\(\) \{ galleryPreviewHide\(v\); \}\)!,
+	'leaving the clip puts the poster back');
+like($images, qr!function galleryPreviewShow\(v\)!, 'and the video is sized into the poster\'s place');
 
 # --- the wheel over the row scrolls it, never the film ----------------------
 like($script, qr!\.jog_wheel, \.music_chapters'!, 'the player gesture leaves the chapter row alone');

@@ -4121,15 +4121,37 @@ function musicChaptersRefresh() {
 				'&end_time=' + encodeURIComponent(ch.end_time || '') +
 				'&id=' + encodeURIComponent(title) +
 				'&chapter=ya' + remote;
+			// the full file, for the clip the card plays on hover; the preview
+			// handler seeks it to this chapter and loops inside the chapter
+			var preview = '/file_open?file=' + encodeURIComponent(file) + remote;
+			var brother = 'chapter_' + i + '_' + Math.random().toString(36).slice(2);
 			var tile = $('<div class="music_chapter_tile hover"></div>')
 				.attr('start_time', start)
 				.attr('hint', title || '')
 				.attr('aria-label', title || '');
 			// the same transparent placeholder as the library's chapter thumbs; the
-			// artwork collector fills it and batches the loads
-			$('<img loading="lazy" decoding="async">')
+			// artwork collector fills it and batches the loads. The hidden video is
+			// the card's clip, paired with the picture by `brother`; the preview
+			// handler in images.js plays it while the pointer is on the card.
+			$('<img loading="lazy" decoding="async" isa="img">')
+				.addClass('video_preview_thumb')
 				.attr('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
 				.attr('data-artwork', url)
+				.attr('type', 'video')
+				.attr('file_uuid', entry.file_uuid || '')
+				.attr('start_time', ch.start_time || 0)
+				.attr('end_time', ch.end_time || '')
+				.attr('brother', brother)
+				.appendTo(tile);
+			$('<video muted playsinline preload="none" isa="video">')
+				.addClass('video_preview_thumb music_chapter_video')
+				.attr('potential_src', preview)
+				.attr('duration', duration)
+				.attr('type', 'video')
+				.attr('file_uuid', entry.file_uuid || '')
+				.attr('start_time', ch.start_time || 0)
+				.attr('end_time', ch.end_time || '')
+				.attr('brother', brother)
 				.appendTo(tile);
 			var caption = $('<div class="music_chapter_caption"></div>');
 			$('<span class="music_chapter_title"></span>').text(title).appendTo(caption);
