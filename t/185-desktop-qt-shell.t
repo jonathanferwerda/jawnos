@@ -333,8 +333,23 @@ my $moff = `cd "$root" && JAWNOS_MOMENTUM=0 PYTHONPATH=desktop python3 -c 'from 
 like($moff, qr/^False$/m, 'JAWNOS_MOMENTUM=0 turns coasting off');
 like($qt, qr/errorpage\.dark_page/, 'the manager shows a dark page after its retries');
 like($qt, qr/LOAD_TIMEOUT_MS = 20000/, 'a navigation that never finishes has its own deadline');
-like($qt, qr/page\.loadStarted\.connect\(lambda: nav_guard\.start\(LOAD_TIMEOUT_MS\)\)/,
+like($qt, qr/page\.loadStarted\.connect\(load_begun\)/,
 	'the deadline is armed by every navigation');
+# Qt calls a document served under an HTTP error status a failed load: the
+# locked screen answers 423 and the Gate can answer 4xx, and both send a page.
+# Before the fix the shell read that as no answer at all, drew the dark page
+# over the lock screen and retried, so the lock screen flashed and Unlock could
+# not be pressed.
+like($qt, qr/page\.loadingChanged\.connect\(on_loading\)/,
+	'the manager view learns why a load failed');
+like($qt, qr/errorpage\.answered_by_server\(info\.status\(\), info\.isErrorPage\(\), info\.errorDomain\(\)\)/,
+	'and keeps a server answer apart from a silent Manager');
+like($qt, qr/nav\["answered_error"\] = True/,
+	'so the HTTP-status failure is remembered');
+like($qt, qr/if not _ok and nav\.pop\("answered_error", False\)/,
+	'and the settled load counts as answered');
+like($qt, qr/QTimer\.singleShot\(0, lambda: settle\(_ok\)\)/,
+	'waiting a turn for loadingChanged to name the domain');
 like($qt, qr/view\.stop\(\)/, 'a stalled navigation is stopped, not left running');
 like($qt, qr/this page retries by itself/, 'and the dark page says it retries by itself');
 # The dark page is a setHtml load, and its loadFinished arrives ok=True. The
@@ -347,6 +362,15 @@ like($qt, qr/if nav\.pop\("drawing_error", False\):.*?nav\["stalled"\] = False\s
 like($qt, qr/errorpage\.watch\(page_obj\)/, 'and peer windows show one at once');
 like($errpage, qr/background:#000000/, 'the error page is on the black ground');
 like($errpage, qr/#ffcc00/, 'with the jawn yellow for the retry');
+like($errpage, qr/answered_by_server\(info\.status\(\), info\.isErrorPage\(\), info\.errorDomain\(\)\)/,
+	'a peer window keeps a page the server answered with, too');
+my $answered = `cd "$root" && PYTHONPATH=desktop python3 -c 'from jawnos_desktop.errorpage import answered_by_server as a; print(a("LoadStatus.LoadFailedStatus", False, "ErrorDomain.HttpStatusCodeDomain"), a("LoadStatus.LoadFailedStatus", False, "ErrorDomain.NoErrorDomain"), a("LoadStatus.LoadFailedStatus", True, "ErrorDomain.HttpStatusCodeDomain"), a("LoadStatus.LoadSucceededStatus", False, "ErrorDomain.NoErrorDomain"))' 2>&1`;
+SKIP: {
+	skip 'python3 is not installed here', 1
+		if $answered =~ /command not found|No such file|No module named/;
+	like($answered, qr/^True False False False$/m,
+		'an HTTP-status page is an answer; a transport failure and Chromium\'s own page are not');
+}
 like($qt, qr/QSystemTrayIcon/, 'the shell keeps a tray');
 like($qt, qr/class Supervisor/, 'and supervises jawn');
 like($qt, qr/auto_update_available/, 'including the desktop self-update');

@@ -60,6 +60,23 @@ def dark_page(message="", url="", title="This page cannot be displayed", hint=""
         safe_title, safe_title, message_html, hint_html, url_html, retry_html)
 
 
+def answered_by_server(status, is_error_page, error_domain):
+    """True when a failed load still delivered the server's own page.
+
+    Qt reports any HTTP error status as ``LoadFailedStatus`` (the domain is the
+    HTTP status), but the body - the Gate, the locked screen, the app-required
+    page - is rendered all the same. Only a load with no response at all means
+    the Manager is silent, so such a page must not be replaced by the dark error
+    page. The enum members are matched by name so a renamed binding still works.
+    """
+    if is_error_page:
+        return False
+    if not str(status or "").endswith("LoadFailedStatus"):
+        return False
+    domain = str(error_domain or "")
+    return domain.endswith("HttpStatusCodeDomain") or domain.endswith("HttpErrorDomain")
+
+
 def watch(page_obj, hint=""):
     """Show the dark page whenever this page's main frame fails to load.
 
@@ -76,7 +93,8 @@ def watch(page_obj, hint=""):
         try:
             if info.status() != failed:
                 return
-            if info.isErrorPage():
+            if answered_by_server(info.status(), info.isErrorPage(), info.errorDomain()):
+                # the server answered with its own page; it is not a dead host
                 return
             page_obj.setHtml(dark_page(info.errorString(), info.url().toString(),
                                        hint=hint))

@@ -2467,7 +2467,7 @@ def main(argv=None):
     # the dark page, and keep retrying until the Manager answers again.
     LOAD_TIMEOUT_MS = 20000
     RETRY_MS = 10000
-    nav = {"stalled": False, "retry": None, "drawing_error": False}
+    nav = {"stalled": False, "retry": None, "drawing_error": False, "answered_error": False}
     nav_guard = QTimer()
     nav_guard.setSingleShot(True)
     retry_timer = QTimer()
@@ -2512,23 +2512,36 @@ def main(argv=None):
         show_unanswered(manager or url)
 
     nav_guard.timeout.connect(on_stall)
-    page.loadStarted.connect(lambda: nav_guard.start(LOAD_TIMEOUT_MS))
 
-    def on_load(_ok):
+    def load_begun():
+        # Each navigation starts clean: an HTTP answer from the last load must
+        # not excuse a real failure in this one.
+        nav["answered_error"] = False
+        nav_guard.start(LOAD_TIMEOUT_MS)
+
+    def on_loading(info):
+        # Qt reports a document served under an HTTP error status as a failed
+        # load. The locked screen answers 423 with the page the person needs to
+        # see, so remember that this failure was the server's answer rather than
+        # a Manager that never spoke.
+        try:
+            if errorpage.answered_by_server(info.status(), info.isErrorPage(), info.errorDomain()):
+                nav["answered_error"] = True
+        except Exception:
+            pass
+
+    page.loadStarted.connect(load_begun)
+    if hasattr(page, "loadingChanged"):
+        page.loadingChanged.connect(on_loading)
+
+    def settle(_ok):
         nonlocal login_pending, migration_pending
         nonlocal ticket, ticket_used, candidate_tickets, stored_ticket_now
-        nav_guard.stop()
-        if nav.pop("drawing_error", False):
-            # the dark page finished drawing: the retry armed beside it is the
-            # only thing that brings the Manager back, so it must survive this
-            # load. The hint on that page says so.
-            nav["stalled"] = False
-            return
-        if not _ok and nav["stalled"]:
-            # view.stop() from the deadline: the dark page is already drawn
-            nav["stalled"] = False
-            return
-        nav["stalled"] = False
+        if not _ok and nav.pop("answered_error", False):
+            # The server answered with a page under an error status (the locked
+            # screen's 423, a 404 document): the Manager did answer, and its own
+            # page stays on screen instead of the dark "did not answer" page.
+            _ok = True
         if os.environ.get("JAWNOS_QT_DEBUG"):
             sys.stderr.write("qt-load ok=%s title=%r manager=%s pending=%s\n" % (
                 _ok, view.title(), view.url().toString().endswith("/manager"), login_pending))
@@ -2613,6 +2626,26 @@ def main(argv=None):
             return
         if kick is not None:
             QTimer.singleShot(1200, kick)
+
+    def on_load(_ok):
+        nav_guard.stop()
+        if nav.pop("drawing_error", False):
+            # the dark page finished drawing: the retry armed beside it is the
+            # only thing that brings the Manager back, so it must survive this
+            # load. The hint on that page says so.
+            nav["stalled"] = False
+            return
+        if not _ok and nav["stalled"]:
+            # view.stop() from the deadline: the dark page is already drawn
+            nav["stalled"] = False
+            return
+        nav["stalled"] = False
+        if not _ok:
+            # loadingChanged names the failure's domain just after loadFinished,
+            # so give it that one turn before deciding the Manager is silent.
+            QTimer.singleShot(0, lambda: settle(_ok))
+            return
+        settle(_ok)
 
     page.loadFinished.connect(on_load)
 
