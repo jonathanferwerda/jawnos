@@ -432,6 +432,11 @@ sub audio_engine_devices {
 
 	my @devices;
 	foreach my $alsa (&_audio_alsa_devices()) {
+		# A capture-only card — a webcam's microphone, say — is listed by the
+		# kernel but cannot play, so choosing it as the engine's device leaves the
+		# person with silence and nothing to read. It is not this picker's to
+		# offer; a capture list is a different question.
+		next unless _audio_card_plays( $alsa->{'card_index'} );
 		my $index = $alsa->{'card_index'};
 		my $card = defined $index ? $card_at{$index} : undef;
 		$alsa->{'card'} = $card->{'name'} if $card;
@@ -486,6 +491,21 @@ sub _audio_alsa_devices {
 	}
 	close $fh;
 	return @devices;
+}
+
+# Whether a card has a playback PCM at all. The kernel's card list names every
+# card, including a capture-only one (a webcam's microphone), and the engine's
+# device must be able to play. A card directory the box cannot read — a
+# non-Linux machine, or a fixture that names the cards without the tree — keeps
+# its row rather than vanishing: the probe never invents a limit.
+sub _audio_card_plays {
+	my ($index) = @_;
+	return 1 unless defined $index && $index =~ /\A[0-9]+\z/;
+	my $dir = ( $ENV{'JAWNOS_ASOUND_DIR'} || '/proc/asound' ) . "/card$index";
+	opendir(my $dh, $dir) or return 1;
+	my @playback = grep { /\Apcm[0-9]+p\z/ } readdir $dh;
+	closedir $dh;
+	return @playback ? 1 : 0;
 }
 
 # The plan's shape, the switch, and what the engine on this machine says. The

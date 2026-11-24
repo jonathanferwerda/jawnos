@@ -37,15 +37,20 @@ my $cards = "$scratch/asound-cards";
 open(my $cards_fh, '>', $cards) or die "cards fixture: $!";
 print {$cards_fh} " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n";
 print {$cards_fh} " 1 [UM2            ]: USB-Audio - BEHRINGER UMC 202HD 192k\n";
+print {$cards_fh} " 2 [WEBCAM         ]: USB-Audio - C270 HD WEBCAM\n";
+print {$cards_fh} " 3 [GHOST          ]: Virtual - Nothing Here\n";
 close $cards_fh;
 local $ENV{JAWNOS_ASOUND_CARDS} = $cards;
 
 # The kernel's playback probe, so the no-choice fallback names a card that
 # exists here: card 0 plays, card 1 does too, and the first one wins.
 local $ENV{JAWNOS_ASOUND_DIR} = "$scratch/asound";
-make_path("$scratch/asound/card0", "$scratch/asound/card1");
+make_path("$scratch/asound/card0", "$scratch/asound/card1", "$scratch/asound/card2");
 write_file("$scratch/asound/card0/pcm0p", '');
 write_file("$scratch/asound/card1/pcm0p", '');
+# Card 2 is capture-only (a webcam's microphone) and card 3 has no tree at all,
+# so the picker's playback probe is testable both ways.
+write_file("$scratch/asound/card2/pcm0c", '');
 
 # One in-memory settings table, keyed the way setting_grabber/setter write,
 # and this machine's name for the device-scoped rows. The domain module under
@@ -540,6 +545,10 @@ require JawnOS::Domain::Audio;
 	like($um2->{name}, qr/UMC 202HD/, 'and carries the card description');
 	ok((grep { $_->{backend} eq 'pipewire' } @$devices), 'PipeWire is offered');
 	ok((grep { $_->{backend} eq 'null' } @$devices), 'and null');
+	ok(!(grep { ($_->{device} || '') eq 'hw:WEBCAM,0' } @$devices),
+		'a capture-only card is not offered as the engine device');
+	ok((grep { ($_->{device} || '') eq 'hw:GHOST,0' } @$devices),
+		'and a card the probe cannot see keeps its row rather than vanishing');
 
 	my $saved = subs::audio_engine_device_write('alsa', 'hw:0,0');
 	is($saved->{ok}, 1, 'a device choice saves');
