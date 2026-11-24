@@ -23,6 +23,8 @@ like($enc, qr/setting="backup_years"/, 'and the yearly count');
 like($enc, qr/setting="backup_offsite"/, 'and the second-copy folder');
 like($enc, qr/id="backup_verify_now"/, 'the panel offers Verify now');
 like($enc, qr/source/, 'the backup cards name their source');
+like($enc, qr/backup_storage_summary/, 'the Enc panel shows local and card usage');
+like($enc, qr/Over the quota/, 'and warns when the card is over its quota');
 
 my $js = read_file("$root/public/js/manager/configure/04_currency_backup.js");
 like($js, qr/#backup_verify_now/, 'the button has a handler');

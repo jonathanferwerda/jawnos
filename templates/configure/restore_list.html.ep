@@ -12,6 +12,7 @@
 #backup_list .bk_meta { font-size:12px; opacity:.7; margin:4px 0 8px; }
 #backup_list .bk_actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 #backup_verify_note { font-size:12px; opacity:.85; margin:6px 0; }
+#backup_storage code { word-break:break-all; }
 </style>
 <div class="cfg">
 	<h2>Enc</h2>
@@ -30,6 +31,35 @@
 			<div class="cfg-row"><label>Months</label><input type="number" min="0" max="24" step="1" id="backup_months" class="misc_setting" setting="backup_months" device="<%= $dt %>" value="<%= $tiers->{'months'} %>" /></div>
 			<div class="cfg-row"><label>Years</label><input type="number" min="0" max="20" step="1" id="backup_years" class="misc_setting" setting="backup_years" device="<%= $dt %>" value="<%= $tiers->{'years'} %>" /></div>
 		</div>
+	</div>
+
+	<div class="cfg-card" id="backup_storage">
+		<h3 style="margin-top:0;">Storage</h3>
+		<% my $storage = &subs::backup_storage_summary(); %>
+		<% my $human = sub { &subs::backup_human_bytes($_[0]) }; %>
+		<p class="cfg-note">Local snapshots: <b><%= $human->($storage->{'local'}) %></b> in <code><%= $storage->{'local_dir'} %></code>.</p>
+		<% if ($storage->{'card'}) { my $card = $storage->{'card'}; %>
+			<p class="cfg-note">
+				Card: <code><%= $card->{'dir'} %></code><br>
+				<% if ($card->{'foreign'}) { %>
+					This card names another machine (<%= $card->{'owner'} // '' %>); it is not used here.
+				<% } elsif (($card->{'quota'} // 0) <= 0) { %>
+					Card backups are off. Using <b><%= $human->($card->{'usage'}) %></b>.
+				<% } else { %>
+					Using <b><%= $human->($card->{'usage'}) %></b>
+					<% if (defined $card->{'cap'}) { %>
+						of <b><%= $human->($card->{'cap'}) %></b> (<%= $card->{'quota'} %>% of the <%= defined $card->{'capacity'} ? $human->($card->{'capacity'}) : 'card' %>)
+					<% } else { %>
+						(the card size is unknown)
+					<% } %>.
+					<% if (defined $card->{'cap'} && $card->{'usage'} > $card->{'cap'}) { %>
+						<span style="color:red;"> Over the quota by <b><%= $human->($card->{'usage'} - $card->{'cap'}) %></b>.</span>
+					<% } %>
+				<% } %>
+			</p>
+		<% } else { %>
+			<p class="cfg-note">No archive card is configured. Set one under Controllers -> Storage.</p>
+		<% } %>
 	</div>
 
 	<div class="cfg-card">

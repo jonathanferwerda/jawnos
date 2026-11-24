@@ -19,7 +19,7 @@ use JawnOSTest;
 subs::preload('backup_retention_keep backup_retention_settings backup_period_keys backup_compress backup_decompress '
 	. 'backup_codec backup_open_sealed backup_archive_prune backup_archive_usage '
 	. 'backup_path_allowed backup_archive_owner backup_mirror_archive backup_offsite_dir backup_offsite_copy backup_offsite_prune '
-	. 'backup_verify_file backup_sha256 encrypter_legacy openssl_file_crypt');
+	. 'backup_verify_file backup_sha256 backup_human_bytes backup_storage_summary encrypter_legacy openssl_file_crypt');
 
 sub stamp_for {
 	my ($date) = @_;
@@ -234,6 +234,42 @@ my $owned_name = "jawnos_$stamp_new.enc";
 	local *subs::signatorial_designer = sub { 'machine-b' };
 	ok( !subs::backup_path_allowed("$owned/$owned_name"), 'another machine refuses the card path' );
 	ok( !subs::backup_mirror_archive($source), 'and does not write to the card' );
+}
+
+# --- the Enc storage readout -------------------------------------------------
+is( subs::backup_human_bytes(0), '0 B', 'zero bytes' );
+is( subs::backup_human_bytes(1024), '1.0 KB', 'kibibytes are shown as KB' );
+is( subs::backup_human_bytes(3 * 1024 * 1024), '3.0 MB', 'megabytes are shown as MB' );
+
+my $read_local = tempdir(CLEANUP => 1);
+my $read_card = tempdir(CLEANUP => 1);
+write_file("$read_local/jawnos.enc", 'a' x 1000);
+write_file("$read_local/jawnos_1795478403416.enc", 'b' x 2000);
+write_file("$read_card/jawnos_1795392003353.enc", 'c' x 500);
+my $read;
+{
+	local *subs::backups_dir = sub { $read_local };
+	local *subs::backup_archive_dir = sub { $read_card };
+	local *subs::backup_archive_owner = sub { 'machine-a' };
+	local *subs::signatorial_designer = sub { 'machine-a' };
+	local *subs::backup_quota_percent = sub { 10 };
+	local *subs::backup_archive_capacity = sub { 10000 };
+	$read = subs::backup_storage_summary();
+}
+is( $read->{'local'}, 3000, 'local usage sums the stable and dated files' );
+is( $read->{'card'}->{'usage'}, 500, 'card usage sums its copies' );
+is( $read->{'card'}->{'cap'}, 1000, 'the card cap is the quota share' );
+is( $read->{'card'}->{'quota'}, 10, 'the card quota is reported' );
+ok( !$read->{'card'}->{'foreign'}, 'its own card is not foreign' );
+{
+	local *subs::backups_dir = sub { $read_local };
+	local *subs::backup_archive_dir = sub { $read_card };
+	local *subs::backup_archive_owner = sub { 'machine-b' };
+	local *subs::signatorial_designer = sub { 'machine-a' };
+	local *subs::backup_quota_percent = sub { 10 };
+	local *subs::backup_archive_capacity = sub { 10000 };
+	my $foreign = subs::backup_storage_summary();
+	ok( $foreign->{'card'}->{'foreign'}, 'another machine\'s card is marked foreign' );
 }
 
 done_testing();

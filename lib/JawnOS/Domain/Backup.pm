@@ -466,6 +466,48 @@ sub backup_archive_usage($dir) {
 	return $sum;
 }
 
+# A short human size for the Enc storage readout.
+sub backup_human_bytes($bytes) {
+	my $n = (defined $bytes && $bytes =~ /^\d+$/) ? $bytes + 0 : 0;
+	my @units = qw/B KB MB GB TB PB/;
+	my $i = 0;
+	while ($n >= 1024 && $i < $#units) { $n /= 1024; $i++; }
+	return $i == 0 ? sprintf('%d B', $n) : sprintf('%.1f %s', $n, $units[$i]);
+}
+
+# What the Enc Storage card shows: local snapshot bytes and the card's usage
+# against the controller's quota. The owner is included so the panel can say
+# when the mounted card belongs to another machine.
+sub backup_storage_summary {
+	my $local_dir = &subs::backups_dir();
+	my $local = 0;
+	foreach my $file ( glob($local_dir . '/jawnos*.enc') ) {
+		next unless $file =~ m{/jawnos(?:_\d+)?\.enc\z};
+		next unless -f $file;
+		$local += -s $file;
+	}
+	my $summary = { local => $local, local_dir => $local_dir, card => undef };
+	my $card_dir = &backup_archive_dir();
+	return $summary unless $card_dir;
+	my $owner = &backup_archive_owner($card_dir);
+	my $mine = &subs::signatorial_designer() || '';
+	my $foreign = (defined $owner && length $owner && length $mine && $owner ne $mine) ? 1 : 0;
+	my $usage = &backup_archive_usage($card_dir);
+	my $capacity = &backup_archive_capacity($card_dir);
+	my $quota = &backup_quota_percent();
+	my $cap = defined $capacity ? int($capacity * $quota / 100) : undef;
+	$summary->{'card'} = {
+		dir => $card_dir,
+		usage => $usage,
+		capacity => $capacity,
+		quota => $quota,
+		cap => $cap,
+		owner => $owner,
+		foreign => $foreign
+	};
+	return $summary;
+}
+
 # Copy one sealed archive to the card. Returns 1 when the sealed bytes are in
 # place; a missing card or a zero quota is a quiet skip, never a failed backup.
 sub backup_mirror_archive($path) {
