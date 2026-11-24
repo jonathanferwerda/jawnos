@@ -1490,10 +1490,6 @@ sub follow_plan {
 
 sub child_exited {
 	my ($raw) = @_;
-	# The engine is gone, so the machine must not stay pointed at a sink nobody
-	# captures. Put the previous default back before the backoff starts.
-	remove_system_mix();
-	$child_system_source = undef;
 	my $ran = defined $child_started ? time - $child_started : 0;
 	$last_exit = describe_wait($raw);
 	# A real run earns a fresh ladder; a run of a few milliseconds does not.
@@ -1505,6 +1501,29 @@ sub child_exited {
 	$backoff   = $delay;
 	$child_pid = undef;
 	$child_started = undef;
+
+	# The engine is gone. A crash is followed by a respawn on the first rung,
+	# and the person's audio is already in the mix: taking the sink away moves
+	# their streams onto the card and back, and on an ALSA plan WirePlumber
+	# rebuilds the card's output at the unity the engine held it at, so the
+	# stream lands on full scale for as long as the handover takes - the burst
+	# the mix exists to prevent. A crash that is about to be retried at once
+	# therefore keeps the sink; the machine is silent for that second, which is
+	# the honest half of the handover. A clean `exit 0` is a quit this
+	# supervisor asked for (a plan or backend change) and a longer backoff means
+	# the engine is not coming straight back: both hand the machine back,
+	# because the sink must not outlive a stop or sit behind no capture at all.
+	my $keep_mix = $delay <= $RESTART_DELAYS[0]
+		&& defined $active_system_device
+		&& $last_exit ne 'exit 0';
+	if ($keep_mix) {
+		print "audio supervisor: engine $last_exit after " . int($ran)
+			. "s; keeping the system mix across the ${delay}s restart\n";
+	}
+	else {
+		remove_system_mix();
+		$child_system_source = undef;
+	}
 	write_status();
 	print "audio supervisor: engine $last_exit after " . int($ran)
 		. "s; restarting in ${delay}s\n";
@@ -1719,6 +1738,9 @@ while (!$stop) {
 		ensure_engine_fresh();
 		unless (-f $binary && -x $binary) {
 			report_missing();
+			# A mix kept across an earlier crash must not sit behind no engine
+			# for the missing-binary wait; hand the machine back.
+			remove_system_mix();
 			$last_exit = 'engine missing';
 			$child_pid = undef;
 			$child_started = undef;
@@ -1743,6 +1765,9 @@ while (!$stop) {
 			$last_exit = $spawn_refused // 'the engine could not be started';
 			$child_pid = undef;
 			$child_started = undef;
+			# A spawn the machine refused leaves no child to capture a mix it
+			# may have just made, or one kept across the crash before it.
+			remove_system_mix();
 			write_status();
 			print "audio supervisor: $last_exit; retrying in ${MISSING_RETRY}s\n";
 			$next_start = time + $MISSING_RETRY;

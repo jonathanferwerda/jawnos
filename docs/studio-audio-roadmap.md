@@ -1201,9 +1201,16 @@ picker, the save, the repoint and the refusal.
 14.0 ms is the PipeWire path, not the tracking target. The dropdown keeps every choice, so the person
 can move between ALSA, a PipeWire profile and the null device without a terminal, and the brief cut
 while a backend or profile changes is accepted — there is no Studio-mode handover. PipeWire stays the
-default on every other machine. The gentle handover is unchanged on both backends: `remove` writes
-the live mix's level to the output, moves the default, and unloads the mix sink last, so a stream
-that follows the engine down lands at the person's level, never at the unity the engine held.
+default on every other machine. The gentle handover needed one more fix for this plan
+(2026-11-23, measured on `table`): with the mix at 60% and a tone playing, killing the engine child
+landed the tone on the card at **100%** - the unity the engine holds that output at - because a
+card-rule removal restarts WirePlumber and the output the level is written to is one of the nodes
+that restart rebuilds. `SystemMix::remove` now reads the live mix level before the rule comes off
+and waits (about a second, polled every 25 ms) for the output to be listed, so the level, default,
+unload order survives the restart. On top of that the supervisor now keeps the mix across a crash
+it is about to retry on the first rung (one second), so the common restart moves nothing at all; a
+second crash, a longer backoff, a refused spawn and a missing binary all hand the machine back at
+the person's level. `t/337` pins the keep-and-then-hand-back, `t/360` the late output.
 
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;

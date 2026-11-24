@@ -325,6 +325,121 @@ ENGINE
 	ok(!-e $status, 'and removes the status file');
 }
 
+# --- a crash keeps the mix across the restart it is about to make -----------
+#
+# A crash is retried on the first rung (a second), so taking the sink away and
+# putting it back only moves the person's streams onto the card and back - and
+# on a card with a WirePlumber rule the rebuilt output is at the unity the
+# engine held it at, which is heard. The sink is kept for that restart; a
+# second crash, with a longer backoff, hands the machine back.
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+
+	my $sinks     = "$dir/sinks";
+	my $default   = "$dir/default";
+	my $pactl_log = "$dir/pactl.log";
+	open(my $sfh, '>', $sinks) or die "sinks: $!";
+	print {$sfh} "0\talsa_output.card1\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+	close $sfh;
+	open(my $dfh, '>', $default) or die "default: $!";
+	print {$dfh} "alsa_output.card1\n";
+	close $dfh;
+	open(my $lfh, '>', $pactl_log) or die "log: $!";
+	close $lfh;
+	write_script("$dir/bin/pactl", <<'PACTL');
+	my $dir = $ENV{'FAKE_PACTL_DIR'} or exit 9;
+	open(my $log, '>>', "$dir/pactl.log") or exit 9;
+	print {$log} join(' ', @ARGV), "\n";
+	close $log;
+	sub slurp {
+		my ($path) = @_;
+		open(my $fh, '<', $path) or return '';
+		local $/;
+		my $text = <$fh>;
+		close $fh;
+		return defined $text ? $text : '';
+	}
+	my $cmd = $ARGV[0] // '';
+	my $all = join(' ', @ARGV);
+	if ($cmd eq 'info') { print "Server Name: PulseAudio (on PipeWire)\n"; exit 0; }
+	if ($all eq '-f json list sinks') {
+		print '[{"index":0,"name":"alsa_output.card1","properties":{';
+		print '"alsa.card":"1","api.alsa.pcm.stream":"playback","node.name":"alsa_output.card1"}}]';
+		exit 0;
+	}
+	if ($all eq '-f json list sources') {
+		print '[{"index":0,"name":"alsa_input.card1","properties":{';
+		print '"alsa.card":"1","api.alsa.pcm.stream":"capture","node.name":"alsa_input.card1"}}]';
+		exit 0;
+	}
+	if ($all eq 'list short sinks') { print slurp("$dir/sinks"); exit 0; }
+	if ($cmd eq 'get-default-sink') { print slurp("$dir/default"); exit 0; }
+	if ($cmd eq 'get-sink-volume') { print "Volume: mono: 65536 / 100% / 0 dB\n"; exit 0; }
+	if ($cmd eq 'get-sink-mute') { print "Mute: no\n"; exit 0; }
+	if ($cmd eq 'set-default-sink') {
+		open(my $fh, '>', "$dir/default") or exit 9;
+		print {$fh} $ARGV[1], "\n"; close $fh; exit 0;
+	}
+	if ($cmd eq 'load-module') {
+		open(my $fh, '>>', "$dir/sinks") or exit 9;
+		print {$fh} "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n";
+		close $fh; print "42\n"; exit 0;
+	}
+	if ($cmd eq 'unload-module') {
+		open(my $fh, '>', "$dir/sinks") or exit 9;
+		print {$fh} "0\talsa_output.card1\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+		close $fh; exit 0;
+	}
+	exit 0;
+PACTL
+	local $ENV{PATH} = "$dir/bin:$ENV{PATH}";
+	local $ENV{FAKE_PACTL_DIR} = $dir;
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$dir/wireplumber";
+	local $ENV{JAWNOS_SYSTEMCTL} = write_script("$dir/bin/systemctl", "exit 0;\n");
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/crashing-engine", "exit 3;\n");
+
+	my $plan = "$dir/audio-plan.json";
+	open(my $pfh, '>', $plan) or die "plan: $!";
+	print {$pfh} '{"manage":1,"backend":"alsa","device":"hw:1,0","plan":'
+		. '{"sources":[{"id":"gtr","kind":"input","channel":0}],"buses":[{"id":"house"}],'
+		. '"sinks":[{"id":"out","kind":"interface","channel":0}],'
+		. '"routes":[{"from":"gtr","to":"house"},{"from":"house","to":"out"}]}}';
+	close $pfh;
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+
+	my $status = "$home/.president/audio.json";
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => [ '--socket', "$dir/audio.sock" ],
+	);
+
+	my $first = wait_for(sub {
+		my $s = read_status($status);
+		return $s && defined $s->{'restarts'} && $s->{'restarts'} >= 1;
+	}, 10);
+	ok($first, 'the crashing engine is restarted once');
+	is(read_text($default), "jawn_system\n", 'and the mix is kept for the restart');
+	unlike(read_text($pactl_log), qr/unload-module/,
+		'so no stream moves onto the card');
+	like(read_text($pactl_log), qr/load-module module-null-sink sink_name=jawn_system/,
+		'the mix was made for the engine that crashed');
+
+	my $second = wait_for(sub {
+		my $s = read_status($status);
+		return $s && defined $s->{'restarts'} && $s->{'restarts'} >= 2;
+	}, 15);
+	ok($second, 'a second crash reaches the longer backoff');
+	ok(wait_for(sub { read_text($pactl_log) =~ /unload-module 42/ }, 5),
+		'which hands the machine back');
+	is(read_text($default), "alsa_output.card1\n", 'to the output the mix replaced');
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the supervisor still stops cleanly');
+}
+
 # --- a live engine: --check, --status, and a clean stop ----------------------
 {
 	my $dir  = tempdir(CLEANUP => 1);
