@@ -32,10 +32,18 @@ my $src = do { local $/; open(my $fh, '<', $js) or die "$js: $!"; <$fh> };
 like($src, qr/jawnosRefreshProbe/, 'the browser half exposes a dump handle');
 like($src, qr/jawnosUpdateQuietReload/, 'it watches the quiet-reload path');
 like($src, qr/jawnosRevisionArrived/, 'and the revision handler');
+# The Gate is a different document, so the probe is not on it. The manager log
+# line (lib/JawnOS/Manager/Part33.pm) is the only record of a lapse; the report
+# must classify and print it, or a reload that landed on the Gate stays a gap.
+my $pl_src = do { local $/; open(my $fh, '<', $pl) or die "$pl: $!"; <$fh> };
+like($pl_src, qr/qr\/session gate:\/\s*=> 'session_gate'/, 'the server half recognizes a session-gate line');
+like($pl_src, qr/restart\|revision\|log_error\|session_gate/, 'and prints it beside the reload');
 like($src, qr/probe_endpoint/, 'the collector endpoint is installable per device');
 like($src, qr/probe_device/, 'and so is the device label');
 like($src, qr/setInterval\(heartbeat, 60000\)/, 'it sends a heartbeat over a long run');
 like($src, qr/document\.cookie = COOKIE/, 'it renews the cookie that reloads it');
+like($src, qr/cookieValue\(COOKIE\) === '1'/, 'an armed browser renews the cookie on every load');
+like($src, qr/PROBE_AGE\s*=\s*30\s*\*\s*86400/, 'the opt-in outlives a multi-day investigation');
 like($src, qr/window\.jawnos_probe_endpoint/, 'a collector can still be injected explicitly');
 like($src, qr/window\.jawnos_probe_host/, 'and so can the device host name');
 # A fixed 40-character tail of the URL was the user agent for every socket, so

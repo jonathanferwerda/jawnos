@@ -341,6 +341,15 @@ sub authentication_passer($c) {
 	my $principal_active;
 	my $padlock_rows;
 
+	# A session that was approved and is now refused is the one event worth a
+	# line: it is the lapse the refresh probe cannot see, because the Gate is a
+	# different document and the probe's own script is not on it. Record why
+	# here, before the cookie is rewritten to revoked, so the next lapse is
+	# explainable instead of guesswork.
+	my $session_was_approved = (($c->session('authentication') || '') eq 'approved') ? 1 : 0;
+	my $session_server_time = $c->session('server_time') // 0;
+	my $gate_reason = '';
+
 	my $authentication = $c->session('authentication') || 'revoked';
 	if ($c->session('authentication') eq 'denial' || $c->session('reject_count') > 3 || ($c->stash('no') && $c->stash('no') == 1)) {
 		my $denial = $c->render(template => 'guest_layouts/denial', message => '... access denied.');
@@ -392,6 +401,7 @@ sub authentication_passer($c) {
 	}
 	if (! -e $dob) {
 		$authentication = "revoked";
+		$gate_reason = 'database-missing';
 	}
 	else {
 		my ($db,$database,$sql) = &subs::database_grabber();
@@ -401,6 +411,9 @@ sub authentication_passer($c) {
 		# local and the encrypted features ask for the code when they need it.
 		unless ($live_local || ($current_suds && $suds_id && secure_compare($suds_id, &subs::suds_id($current_suds)))) {
 			$authentication = 'revoked';
+			$gate_reason ||= !$current_suds ? 'vault-unreadable'
+				: !$suds_id ? 'session-has-no-suds'
+				: 'vault-changed';
 		}
 		# a device/person session lives only while its roster row does: revoking
 		# either revokes the cookie at the next check. The fast path above reads
@@ -408,7 +421,14 @@ sub authentication_passer($c) {
 		unless (defined $principal_active) {
 			$principal_active = &subs::session_principal_active($person_uuid, $device_uuid);
 		}
-		$authentication = 'revoked' unless $principal_active;
+		unless ($principal_active) {
+			$authentication = 'revoked';
+			$gate_reason ||= 'person-inactive'
+				if defined $person_uuid && length $person_uuid && !&subs::person_active($person_uuid);
+			$gate_reason ||= 'device-inactive'
+				if defined $device_uuid && length $device_uuid && !&subs::device_active($device_uuid);
+			$gate_reason ||= 'principal-inactive';
+		}
 		# benign: the two values are all this needs, and the uuid ensure that
 		# settings_grabber would otherwise run is a write check that also flushed
 		# the per-request setting memo on every request.
@@ -500,6 +520,9 @@ sub authentication_passer($c) {
 			}
 			if ($ticket->{'warranty'} <= $server_time || $ticket->{'status'} ne 'active') {
 				$authentication = 'revoked';
+				$gate_reason ||= ($ticket->{'status'} ne 'active')
+					? 'ticket-' . ($ticket->{'status'} || 'missing')
+					: 'ticket-warranty';
 			}
 			else {
 				$c->session('warranty' => $ticket->{'warranty'});
@@ -508,7 +531,26 @@ sub authentication_passer($c) {
 		}
 		elsif ($c->session('warranty') < $server_time) {
 			$authentication = 'revoked';
+			$gate_reason ||= 'warranty-expired';
 		}
+	}
+	# One line per lapse, before the cookie is rewritten. Only a session that had
+	# been approved is news: a cookieless request has no session to lose, and
+	# logging those would bury the event (the app gate shadow already covers the
+	# first visit). The detail names the failed check, the source, whether a
+	# principal was carried, and how stale the session was - the four things
+	# that decide which clock or row removed it.
+	if ($session_was_approved && $authentication ne 'approved' && length $gate_reason) {
+		my $stale = $session_server_time ? int(($server_time - $session_server_time) / 1000) : -1;
+		my $answer = (($c->req->headers->header('X-Requested-With') // '') =~ /XMLHttpRequest/i) ? 'xhr' : 'gate';
+		$log->info('session gate: ' . $gate_reason
+			. ' ' . ($c->req->method || 'GET') . ' ' . $app_path
+			. ' from ' . ($c->tx->remote_address || '?')
+			. ' source=' . ($c->session('source') || '-')
+			. ' person=' . (defined $person_uuid && length $person_uuid ? 'yes' : 'no')
+			. ' device=' . (defined $device_uuid && length $device_uuid ? 'yes' : 'no')
+			. ' stale=' . $stale . 's'
+			. ' answer=' . $answer);
 	}
 	unless ($authentication eq 'approved') {
 		$c->session('authentication' => 'revoked');

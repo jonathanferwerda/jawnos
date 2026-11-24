@@ -38,6 +38,20 @@ for my $r (@renders) {
 	like($r->{'call'}, qr/webauthn_available\s*=>/, "gate render at line $r->{'line'} passes webauthn_available");
 }
 
+# A lapsed session must say which check refused it. The Gate is a different
+# document, so the refresh probe is not on it: this log line is the only thing
+# that can explain a WebUI reload that landed on the Gate instead of the desk.
+# Each revocation names its own cause so "the session expired" is answerable.
+like($text, qr/session gate: ' \. \$gate_reason/, 'a lapse logs its reason');
+like($text, qr/session_was_approved/, 'and only a session that had been approved is logged');
+foreach my $reason (qw(
+	database-missing vault-unreadable session-has-no-suds vault-changed
+	person-inactive device-inactive principal-inactive ticket-warranty warranty-expired
+)) {
+	like($text, qr/\Q$reason\E/, "the gate reason names $reason");
+}
+like($text, qr/'ticket-' \. \(\$ticket->\{'status'\} \|\| 'missing'\)/, 'a refused ticket names its status');
+
 # The template really does use it - a rename would make the check above vacuous.
 my $template = "$FindBin::Bin/../templates/gate.html.ep";
 open(my $tf, '<', $template) or die "$template: $!\n";

@@ -86,6 +86,7 @@ foreach my $k (qw(cert key)) {
 }
 
 my @KIND = (
+	[qr/session gate:/                  => 'session_gate'],
 	[qr/BLE listener closed/                => 'ble_listener_closed'],
 	[qr/BLE listener (?:error|held)/        => 'ble_listener_error'],
 	[qr/worker spawn/                       => 'worker_spawn'],
@@ -364,7 +365,7 @@ sub run_report {
 		$count{ $_->{'kind'} }++ foreach @server_kinds;
 		print "  ", join(' ', map { "$_=$count{$_}" } sort keys %count), "\n";
 		foreach my $s (@server_kinds) {
-			next unless $s->{'kind'} =~ /^(?:restart|revision|log_error)$/;
+			next unless $s->{'kind'} =~ /^(?:restart|revision|log_error|session_gate)$/;
 			printf "  %s %s %s\n", fmt_t($s->{'t'}), $s->{'kind'},
 				substr($s->{'text'} || '', 0, 140);
 		}

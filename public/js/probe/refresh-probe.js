@@ -34,6 +34,12 @@
   var ENDPOINT_KEY = 'jawnos_refresh_probe_endpoint';
   var DEVICE_KEY = 'jawnos_refresh_probe_device';
   var COOKIE = 'jawnos_probe';
+  // A reload investigation runs for days. The cookie is the opt-in the layout
+  // reads to include this file again, so an armed browser renews it on every
+  // load instead of falling out after the first two days. The opt-out stays
+  // short: ?probe=0 is a deliberate stop, not a state to keep alive.
+  var PROBE_AGE = 30 * 86400;
+  var OPTOUT_AGE = 2 * 86400;
   var MAX = 400;
 
   function now() { return Date.now(); }
@@ -86,14 +92,24 @@
         + '; SameSite=Lax' + (location.protocol === 'https:' ? '; Secure' : '');
     } catch (e) {}
   }
+  function cookieValue(name) {
+    try {
+      var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch (e) { return ''; }
+  }
 
   var q = params();
 
   // An explicit ?probe=1 pins the probe in this browser. The temporary
   // default-on layout includes this file without a param and must not leave a
   // cookie that outlives that window; ?probe=0 records the opt-out instead.
-  if (q.probe === '1') { cookie('1', 2 * 86400); }
-  else if (q.probe === '0') { cookie('0', 2 * 86400); }
+  // A browser that already said yes renews the same cookie on every load: the
+  // layout only serves this file because that cookie is there, so a long run
+  // must not end when the first two-day window does.
+  if (q.probe === '1') { cookie('1', PROBE_AGE); }
+  else if (q.probe === '0') { cookie('0', OPTOUT_AGE); }
+  else if (cookieValue(COOKIE) === '1') { cookie('1', PROBE_AGE); }
 
   var injectedEndpoint = (typeof window.jawnos_probe_endpoint === 'string')
     ? window.jawnos_probe_endpoint : '';
