@@ -3153,7 +3153,7 @@ function playerCacheSaver(type, force) {
 			'currentTime': at, 
 			duration: (tree.sound.duration || 0),
 			file: playerCacheFile(), 
-			volume: master_volume, 
+			volume: musicVolumeLevel(), 
 			muted: music_muted, 
 			state: tree.sound.state, 
 			theatre_mode: $('#video').attr('theatre_mode'), 

@@ -91,7 +91,7 @@ sub music_transport_state {
 sub music_transport_local($action, $opts = {}) {
 	$action = '' unless defined $action;
 	$action = lc $action;
-	return 0 unless $action =~ /^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files)$/;
+	return 0 unless $action =~ /^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files|volume)$/;
 	if ($action eq 'play_files') {
 		my $files = $opts->{'files'};
 		return 0 unless ref $files eq 'ARRAY' && scalar @{$files};
@@ -103,6 +103,16 @@ sub music_transport_local($action, $opts = {}) {
 				($opts->{'key'} || '')
 			)
 		});
+		return 1;
+	}
+	# Volume is the controlled player's own level, the same one its slider
+	# writes: clamp it here so a caller cannot hand the peer a wild value.
+	if ($action eq 'volume') {
+		my $level = $opts->{'value'};
+		return 0 unless defined $level && $level =~ /^-?\d+(?:\.\d+)?$/;
+		$level = 0 if $level < 0;
+		$level = 1 if $level > 1;
+		&Websocket::send('server', { console => &Websocket::console_command('musicVolumeSet', $level + 0) });
 		return 1;
 	}
 	my @args = ($action);
@@ -170,7 +180,8 @@ Manager::app->routes->post('/music/transport' => sub ($c) {
 		files => $files,
 		same_order => ($c->param('same_order') ? 1 : 0),
 		key => ($c->param('key') || ''),
-		percent => $c->param('percent')
+		percent => $c->param('percent'),
+		value => $c->param('value')
 	);
 	if ($target && $target ne 'local' && !$remoted) {
 		my $rm = &music_remote_row($target);

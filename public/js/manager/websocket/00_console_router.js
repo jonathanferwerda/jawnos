@@ -66,6 +66,14 @@ var jawnosConsoleCommands = {
 	musicSettingApply: function (a) {
 		if (typeof musicSettingApply === 'function') { musicSettingApply(String(a[0]), a[1]); }
 	},
+	musicVolumeSet: function (a) {
+		if (typeof musicVolumeSet === 'function') {
+			musicVolumeSet(parseFloat(a[0]));
+			// the widget reads the level back from the player cache, and a paused
+			// player would not write it on its own
+			if (typeof playerCacheSaver === 'function') { playerCacheSaver(undefined, true); }
+		}
+	},
 	jawnosPrivateRefresh: function (a) {
 		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(a[0] || 0); }
 	},

@@ -41,6 +41,14 @@ like($remote, qr/console_command\('musicSettingApply'/, 'a remote setting is app
 like($router, qr/musicTransportLocal: function/, 'the browser router whitelists the transport');
 like($router, qr/musicPlayFiles: function/, 'and the handed queue');
 like($router, qr/musicSettingApply: function/, 'and the setting push');
+like($router, qr/musicVolumeSet: function/, 'and the peer volume');
+like($remote, qr/\$action eq 'volume'/, 'the transport can set the controlled player volume');
+like($remote, qr/console_command\('musicVolumeSet'/, 'the volume crosses as a named instruction');
+like($remote, qr/value => \$c->param\('value'\)/, 'the route carries the level');
+like($taskbar, qr/data-music-volume/, 'the widget has a remote volume slider');
+like($taskbar, qr/action: 'volume', value: level/, 'the slider rides the transport route');
+like($router, qr/playerCacheSaver\(undefined, true\)/, 'the peer writes the level back for the widget');
+like($music, qr/volume: musicVolumeLevel\(\)/, 'the player cache records the level the player is using');
 
 # --- only playback settings travel -----------------------------------------
 like($remote, qr/my %music_remote_setting = map \{ \$_ => 1 \} qw\(normalize video equalizer subtitles\);/,

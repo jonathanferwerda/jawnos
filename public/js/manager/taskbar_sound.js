@@ -21,7 +21,7 @@ var jawnosSoundTaskbarWheelTimer = {};
 // The Music transport in the panel. The machine list and the remembered remote
 // target are read once and refreshed when the panel opens; the remote player's
 // state is polled only while the panel is on screen.
-var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0 };
+var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0 };
 
 function jawnosSoundTaskbarPercent(value) {
 	var pct = parseFloat(value);
@@ -308,6 +308,41 @@ function jawnosSoundTaskbarMusicRepaint() {
 	section.find('[data-music-role="playpause"]').attr('aria-label', playing ? jawnosT('Pause') : jawnosT('Play'));
 	var now = (state && (state.title || state.file)) ? (state.title || '') : '';
 	section.find('[data-music-role="now"]').text(now);
+	// The volume row belongs to a peer's Music app; this machine's own level is
+	// the house and device sliders above.
+	var remote = !!jawnosSoundTaskbarMusicTarget();
+	section.find('[data-music-volume]').closest('.taskbar_panel_row').toggle(remote);
+	if (remote && state) {
+		var pct = Math.round((state.muted ? 0 : (parseFloat(state.volume) || 0)) * 100);
+		var slider = section.find('[data-music-volume]');
+		// a slider under the person's finger must not be pulled back by a poll
+		if (document.activeElement !== slider[0]) { slider.val(pct); }
+		section.find('[data-music-volume-value]').text(pct + '%');
+	}
+}
+// A drag is a lot of events; one POST per settle keeps the peer's player from
+// being re-tuned on every pixel while still feeling immediate.
+function jawnosSoundTaskbarMusicVolumeSend(level) {
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!target) { return; }
+	if (jawnosSoundTaskbarMusic.state) {
+		jawnosSoundTaskbarMusic.state.volume = level;
+		if (level > 0) { jawnosSoundTaskbarMusic.state.muted = 0; }
+	}
+	clearTimeout(jawnosSoundTaskbarMusic.volume_timer);
+	jawnosSoundTaskbarMusic.volume_timer = setTimeout(function() {
+		$.ajax({
+			url: '/music/transport',
+			type: 'POST',
+			dataType: 'json',
+			data: { target: target, action: 'volume', value: level },
+			success: function(r) {
+				if (r && r.ok) { setTimeout(jawnosSoundTaskbarMusicStateLoad, 250); }
+				else { jawnosSoundTaskbarFail((r && r.error) || jawnosT('Could not control that machine.')); }
+			},
+			error: function() { jawnosSoundTaskbarFail(jawnosT('Could not control that machine.')); }
+		});
+	}, 180);
 }
 function jawnosSoundTaskbarMusicTransport(action) {
 	var target = jawnosSoundTaskbarMusicTarget();
@@ -370,6 +405,12 @@ function jawnosSoundTaskbarMusicSection() {
 	select.val(target);
 	row.append(select);
 	section.append(row);
+	var volume = $('<div class="taskbar_panel_row taskbar_music_volume"></div>');
+	volume.append($('<input type="range" class="taskbar_sound_slider" min="0" max="100" step="1">')
+		.attr('data-music-volume', '')
+		.attr('aria-label', jawnosT('The volume of the Music app this widget controls')));
+	volume.append($('<span class="taskbar_panel_value"></span>').attr('data-music-volume-value', ''));
+	section.append(volume);
 	section.append($('<div class="taskbar_music_now" data-music-role="now"></div>'));
 	jawnosSoundTaskbarMusicRepaint();
 	return section;
@@ -577,6 +618,11 @@ $(document).on('change', '#taskbar_sound_panel [data-sound-level]', function() {
 $(document).on('click', '#taskbar_sound_panel [data-music-action]', function(e) {
 	e.stopPropagation();
 	jawnosSoundTaskbarMusicTransport($(this).attr('data-music-action'));
+});
+$(document).on('input', '#taskbar_sound_panel [data-music-volume]', function() {
+	var pct = Math.round(parseFloat(this.value) || 0);
+	$(this).closest('.taskbar_panel_row').find('[data-music-volume-value]').text(pct + '%');
+	jawnosSoundTaskbarMusicVolumeSend(pct / 100);
 });
 
 $(document).on('change', '#taskbar_sound_panel [data-music-target]', function() {
