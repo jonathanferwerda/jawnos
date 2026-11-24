@@ -1233,6 +1233,38 @@ a render queue, a level meter that is true. No codec is written here.
 **Gate:** a two-camera take with a clean audio master exported end-to-end, picture within one frame
 of the timeline.
 
+**Remote listeners and the Music app (idea, 2026-11-24).** Today a remote listener is a pipe and a
+stopwatch. The server hands the decoded stream to `pacat` on the listening machine
+(`perl/Music/02_remote_audio_stream.pl`), and when the measured lag crosses a threshold the pipe is
+flushed and restarted; the picture is delayed to match the sound by hand
+(`perl/Music/01_remote_audio_receiver.pl`). That works because the audio and the picture are two
+clocks meeting at an offset someone tuned, not because anything owns the clock. The idea is to make
+the broadcast an engine source and sink pair: the track plays as a `player` source on the house
+engine, a listener's stream is a peer or zone sink on the same engine, and the P3/P4 machinery
+(offset and drift estimated from timestamped datagrams, a stream placed by master position) paces
+each listener instead of a flush heuristic. The video would then be placed by the same master
+position the audio is placed by, so a remote picture and its sound come from one clock rather than
+two, and the engine's drift fit would be what keeps them together over a long film.
+
+What has to be answered before this becomes a phase rather than an investigation:
+
+- **Whether the engine's clock is actually better here, or just different.** The numbers to compare
+  are listener end-to-end latency and its spread, and A/V offset drift across a 30-minute film,
+  measured the way P3 measured drift. If the pipe's flush heuristic already holds a few
+  milliseconds, the engine buys correctness rather than latency, and the note should say so.
+- **Fan-out.** The engine's uplink is one authenticated session per peer, one stream id per source
+  (`--serve --uplink`); a house radio stream is several listeners at once. Either the engine grows a
+  broadcast sink, or the manager keeps fanning out and only the clock comes from the engine.
+- **Format.** A track is whatever the file is; the engine's timeline is 48 kHz stereo float, and a
+  browser still needs a codec it can decode. The engine would have to decode (it does not) or accept
+  a converted PCM feed, and the conversion has to sit on the same clock as the rest of the plan.
+- **Who owns the listener's device.** A phone has no engine; the current receiver writes to `pacat`
+  for exactly that reason. An engine path can only own machines that run one, so the pipe stays as
+  the fallback and both paths must agree on the clock they claim to have.
+
+Recorded as an investigation, not a commitment: it is P7's clock seam, and its answer depends on
+P3's drift work and P4's uplink being live first.
+
 ### P8 — Other platforms
 
 CoreAudio and WASAPI behind the same device trait — the seam `docs/platform-roadmap.md` P2/P3 opens.
