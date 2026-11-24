@@ -20,6 +20,7 @@
 			</select>
 		</label>
 		<span class="studio_panel_buttons">
+			<button class="studio_panel_pin hover" data-panel="drums" aria-pressed="false" hint="<%= &subs::ui('Keep this panel above the others') %>">📌</button>
 			<button class="studio_panel_min hover" data-panel="drums" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
 			<button class="studio_panel_max hover" data-panel="drums" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
 		</span>

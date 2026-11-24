@@ -462,7 +462,7 @@ function studioEngineClipPlan() {
 				loop: !!take.loop,
 				fade_in: fIn,
 				fade_out: fOut,
-				inserts: inserts
+				inserts: take.printed ? [] : inserts
 			});
 		});
 	});
@@ -922,6 +922,8 @@ function studioApplyPlaybackMix() {
 		var m = mixer[ch] || {};
 		var silent = m.mute || (anySolo && !m.solo);
 		c.playBus.gain.value = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()) * (silent ? 0 : 1);
+		// a printed take rides its own bus at the same level, mute and solo included
+		studioChannelFader(ch, c.playBus.gain.value);
 		c.playPan.pan.value = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
 	});
 }
@@ -1019,7 +1021,11 @@ function studioScheduleTake(ch, take, ordered, i, p0, p1, ctx0) {
 		var src = studioAudio.ctx.createBufferSource();
 		src.buffer = buf;
 		var g = studioAudio.ctx.createGain();
-		src.connect(g).connect(c.playBus);
+		// A printed take already ran through the Out pedals when it was bounced,
+		// so it joins the channel after the chain; an unprinted one still needs
+		// them on the way out.
+		var bus = (take.printed && c.printBus) ? c.printBus : c.playBus;
+		src.connect(g).connect(bus);
 		g.gain.setValueAtTime(studioTakeGain(winStart, 2 * fIn, winEnd, 2 * fOut, a), when);
 		var fiEnd = winStart + (2 * fIn);
 		if (fIn > 0 && fiEnd > a && fiEnd <= b) { g.gain.linearRampToValueAtTime(1, timeAt(fiEnd)); }

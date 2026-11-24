@@ -297,7 +297,7 @@ function studioChannelVolumeSet(ch, value) {
 	value = Math.max(0, Math.min(100, studioKnobNumber(value, 1)));
 	$('.channel_volume[channel="' + ch + '"]').val(value);
 	var c = studioAudio.channels[ch];
-	if (c && c.playBus) { try { c.playBus.gain.value = studioVolumeFraction(value); } catch (e) {} }
+	if (c && (c.playBus || c.printBus)) { try { studioChannelFader(ch, value); } catch (e) {} }
 	// the fader is one factor of the mix, not the whole of it: a muted or
 	// solo-silenced channel stays silent while its fader moves
 	studioApplyPlaybackMix();
@@ -493,7 +493,10 @@ function studioSaver() {
 			song[i]['mixer'].out[ir] = {
 				uuid: take.uuid, startTime: take.startTime, offset: take.offset || 0,
 				duration: take.duration, encoding: take.encoding, src: take.src,
-				loop: take.loop ? 1 : 0
+				loop: take.loop ? 1 : 0,
+				// A bounced take already carries its Out pedals; the reloaded
+				// take must keep skipping them on playback and export.
+				printed: take.printed ? 1 : 0
 			};
 		});
 	});

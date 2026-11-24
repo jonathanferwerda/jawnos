@@ -305,6 +305,96 @@ $(document).on('click', '#studio_save', function() {
 	studioSave();
 });
 
+// The Open sheet: one row per saved studio song. The rows are rebuilt from the
+// hidden song select every time the sheet opens, so the select the save
+// response replaced is already the current list; the server still owns it.
+function studioOpenDialogText(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+function studioOpenDialogTime(timestamp) {
+	var ts = Number(timestamp);
+	if (!ts || !isFinite(ts)) { return ''; }
+	// A saved timestamp is milliseconds; tolerate a seconds value so an old
+	// record still reads as a date.
+	if (ts < 1000000000000) { ts = ts * 1000; }
+	if (typeof fixedTimeString === 'function') { return fixedTimeString(ts); }
+	return new Date(ts).toLocaleString();
+}
+
+function studioOpenDialogRows() {
+	var list = $('#studio_open_dialog .studio_dialog_list');
+	if (!list.length) { return 0; }
+	list.empty();
+	var rows = 0;
+	$('#studio_song_select').find('option').each(function() {
+		var option = $(this);
+		var uuid = option.val();
+		if (!uuid || uuid == 'none') { return; }
+		var stamp = option.attr('data-timestamp') || '';
+		var row = $('<button type="button"></button>')
+			.addClass('studio_open_row hover')
+			.attr('data-uuid', uuid);
+		$('<span></span>').addClass('studio_open_name')
+			.text(option.attr('data-app') || '').appendTo(row);
+		$('<span></span>').addClass('studio_open_time')
+			.attr('timestamp', stamp).text(studioOpenDialogTime(stamp)).appendTo(row);
+		row.appendTo(list);
+		rows++;
+	});
+	if (!rows) {
+		$('<p></p>').addClass('studio_dialog_empty')
+			.text(studioOpenDialogText('There are no saved studio songs yet.')).appendTo(list);
+	}
+	return rows;
+}
+
+function studioOpenDialogHide() {
+	var dialog = $('#studio_open_dialog');
+	if (!dialog.length || !dialog.is(':visible')) { return; }
+	dialog.hide();
+	$('#studio_open').attr('aria-expanded', 'false');
+}
+
+function studioOpenDialogShow() {
+	var dialog = $('#studio_open_dialog');
+	if (!dialog.length) { return; }
+	studioOpenDialogRows();
+	dialog.show();
+	$('#studio_open').attr('aria-expanded', 'true');
+	var first = dialog.find('.studio_open_row').first();
+	if (first.length) { first.focus(); }
+	else { $('#studio_open_close').focus(); }
+}
+
+$(document).on('click', '#studio_open', function(e) {
+	e.preventDefault();
+	studioOpenDialogShow();
+});
+
+$(document).on('click', '#studio_open_close', function() {
+	studioOpenDialogHide();
+});
+
+$(document).on('click', '#studio_open_dialog .studio_open_row', function() {
+	var uuid = $(this).attr('data-uuid');
+	studioOpenDialogHide();
+	if (uuid) { studioLoad(uuid); }
+});
+
+$(document).on('keydown', function(e) {
+	if (e.key == 'Escape' || e.keyCode == 27) { studioOpenDialogHide(); }
+});
+
+// A press anywhere but the sheet itself (or the Open button that opened it)
+// dismisses the list; pointerdown fires before the opening click can arrive.
+$(document).on('pointerdown', function(e) {
+	var dialog = $('#studio_open_dialog');
+	if (!dialog.length || !dialog.is(':visible')) { return; }
+	if ($(e.target).closest('#studio_open_dialog, #studio_open').length) { return; }
+	studioOpenDialogHide();
+});
+
 
 
 
@@ -408,6 +498,7 @@ $(document).on('change', '#studio_song_select', function() {
 	}
 });
 function studioLoad(uuid) {
+	studioOpenDialogHide();
 	var buttons = mixer['buttons'];
 	studioStop();
 	$.ajax({ 
@@ -479,7 +570,8 @@ function studioLoad(uuid) {
 					mixer[i].media.out[ir] = {
 						uuid: vr['uuid'], startTime: startTime, offset: studioKnobNumber(vr['offset'], 0),
 						duration: duration, encoding: vr['encoding'], src: vr['src'], status: 'stop', track: el,
-						loop: vr['loop'] ? true : false
+						loop: vr['loop'] ? true : false,
+						printed: vr['printed'] ? true : false
 					};
 					studioTakeRequestBuffer(mixer[i].media.out[ir]);
 					mixer['time']['duration'] = Math.max(mixer['time']['duration'], startTime + duration);

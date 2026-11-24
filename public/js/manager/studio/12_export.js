@@ -209,7 +209,16 @@ function studioExportOffline(entries, includeMaster) {
 		if (pan) { volume.connect(pan); tail = pan; }
 		tail.connect(bus);
 
-		inputs.push({ input: chain.input, takes: entry.takes || [] });
+		// A printed take already carries its Out pedals in its audio, so it joins
+		// the fader dry; mixing it through the chain would apply the pedals twice.
+		// The extra node exists only when a printed take is in this channel.
+		var dry = null;
+		if ((entry.takes || []).some(function (take) { return take && take.printed; })) {
+			dry = off.createGain();
+			dry.connect(volume);
+		}
+
+		inputs.push({ input: chain.input, dry: dry, takes: entry.takes || [] });
 	});
 
 	return { ctx: off, inputs: inputs, duration: songEnd, rate: rate };
@@ -227,7 +236,8 @@ async function studioExportMix(entries, uuid, songName, format, bitrate, include
 			if (studioExportTakeIsVideo(take)) { continue; }
 			var buffer = await studioExportTakeBuffer(offline.ctx, take);
 			if (!buffer) { continue; }
-			studioExportSchedule(offline.ctx, input.input, take, buffer, offline.duration);
+			var destination = (take.printed && input.dry) ? input.dry : input.input;
+			studioExportSchedule(offline.ctx, destination, take, buffer, offline.duration);
 		}
 	}
 

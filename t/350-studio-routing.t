@@ -93,6 +93,7 @@ like(body($js, 'studioAttachSynth'), qr/studioDrumsRouteSelection\(\)/,
 my $engine = body($js, 'studioChannelEngine');
 ok(length $engine, 'the channel engine is one function');
 like($engine, qr/outIn: ctx\.createGain\(\),/, 'a channel owns an outIn gain');
+like($engine, qr/printBus: ctx\.createGain\(\),/, 'and a dry bus for a printed take');
 like($engine, qr/outInserts: \[\],/, 'and an empty output chain');
 like($engine, qr/outInsertByName: \{\},/, 'with a name index');
 like($engine, qr/c\.playBus\.connect\(c\.outIn\);/, 'playback leaves the fader into the output chain');
@@ -107,9 +108,11 @@ like($out, qr/c\.outInserts\.forEach\(function \(insert\) \{[\s\S]*?node\.connec
 	'each output insert is wired after the one before it');
 like($out, qr/var target = studioChannelOutputTarget\(ch\);/, 'the last node reads the output jack');
 like($out, qr/dest = studioAudio\.channels\[target\] \|\| studioChannelEngine\(target\);/, 'a channel destination is brought up if needed');
-like($out, qr/if \(dest && dest\.trim\) \{ node\.connect\(dest\.trim\); \}/,
-	'a channel send enters the destination input chain');
-like($out, qr/else \{ node\.connect\(c\.playPan\); \}/, 'otherwise the last node feeds the pan');
+like($out, qr/var sink = \(dest && dest\.trim\) \? dest\.trim : c\.playPan;/,
+	'a channel send or the pan is the chain\'s sink');
+like($out, qr/node\.connect\(sink\);/, 'the last node feeds that sink');
+like($out, qr/if \(c\.printBus\) \{ c\.printBus\.connect\(sink\); \}/,
+	'a printed take reaches the same sink without the chain');
 
 my $output_info = body($js, 'studioChannelOutputInfo');
 like($output_info, qr/studio_channel_information\[direction="output"\]/, 'the output jack is read from the channel');

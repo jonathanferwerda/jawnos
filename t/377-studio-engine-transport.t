@@ -680,8 +680,8 @@ like(
 );
 like(
 	$transport_js,
-	qr/inserts: inserts/,
-	'the clip object carries its insert names'
+	qr/inserts: take\.printed \? \[\] : inserts/,
+	'a printed take travels dry; another clip carries its insert names'
 );
 like(
 	$transport_js,

@@ -15,6 +15,8 @@
      13_strip.js  - the channel strip's mute and solo buttons
      14_audio_file.js - encode an AudioBuffer as a 16-bit WAV blob
      15_house_patch.js - the plan's other sources in the input picker: monitor, mute, inserts, bus take
+     16_bounce.js  - print a take or a selection through its pedal chain
+     17_tools.js   - cursor/select/cut, the cross-lane selection and its actions
      12_tuner.js  - the chromatic tuner on Jtune: listening, pitch, note, arrows
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
@@ -189,6 +191,7 @@ function studioChannelEngine(ch) {
 		meterAnalyser: ctx.createAnalyser(),
 		recDest: ctx.createMediaStreamDestination(),
 		playBus: ctx.createGain(),
+		printBus: ctx.createGain(),
 		outIn: ctx.createGain(),
 		playPan: ctx.createStereoPanner(),
 		monGain: ctx.createGain(),
@@ -218,6 +221,10 @@ function studioChannelEngine(ch) {
 	// is empty, so the rebuild below is the wire outIn -> playPan and a take
 	// plays exactly as it was recorded.
 	c.playBus.connect(c.outIn);
+	// A printed take already carries its Out pedals in its audio, so it joins the
+	// channel after the chain: straight to the pan. It still moves with the
+	// channel fader and mute (see studioChannelFader), it just skips the pedals.
+	c.printBus.connect(c.playPan);
 	studioAudio.channels[ch] = c;
 	studioRebuildOutputs(ch);
 	c.playPan.connect(studioAudio.master);
@@ -234,6 +241,18 @@ function studioChannelEngine(ch) {
 	c.recGain.connect(c.monGain);
 	c.monGain.connect(studioAudio.master);
 	return c;
+}
+
+// The channel fader drives both take buses, so an unprinted take (through the
+// Out chain) and a printed one (straight to the pan) stay at the same level,
+// mute and solo included. `value` is a fader position (0..100) or a fraction.
+function studioChannelFader(ch, value) {
+	var c = studioAudio.channels[ch];
+	if (!c) { return; }
+	var gain = studioVolumeFraction(value);
+	[c.playBus, c.printBus].forEach(function (bus) {
+		if (bus && bus.gain) { bus.gain.value = gain; }
+	});
 }
 
 function studioRebuildInserts(ch) {
@@ -296,6 +315,9 @@ function studioRebuildOutputs(ch) {
 	var c = studioAudio.channels[ch];
 	if (!c || !c.outIn) { return; }
 	try { c.outIn.disconnect(); } catch (e) {}
+	// A printed take joins here too, so a channel send still reaches the same
+	// destination even though the take skipped the pedals.
+	if (c.printBus) { try { c.printBus.disconnect(); } catch (e) {} }
 	c.outInserts.forEach(function (insert) {
 		if (insert.output) { try { insert.output.disconnect(); } catch (e) {} }
 	});
@@ -309,8 +331,9 @@ function studioRebuildOutputs(ch) {
 	if (target && target !== String(ch) && !studioChannelOutputCycle(ch, target)) {
 		dest = studioAudio.channels[target] || studioChannelEngine(target);
 	}
-	if (dest && dest.trim) { node.connect(dest.trim); }
-	else { node.connect(c.playPan); }
+	var sink = (dest && dest.trim) ? dest.trim : c.playPan;
+	node.connect(sink);
+	if (c.printBus) { c.printBus.connect(sink); }
 }
 
 // The rack shows one chain at a time. Which one is the channel's own view and

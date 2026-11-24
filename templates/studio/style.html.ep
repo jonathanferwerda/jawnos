@@ -111,6 +111,8 @@
 		min-height: 18px;
 		line-height: 16px;
 		padding: 0 4px;
+		/* the palette keeps the left; Close sits at the right edge */
+		margin-left: auto;
 	}
 	#studio_palette_add {
 		font-size: 12px;
@@ -812,6 +814,18 @@
 	.studio_layout_bar button {
 		font-size: 12px;
 	}
+	/* New, Open, Save and Configure sit together at the left edge. */
+	.studio_file_buttons {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		padding-right: 4px;
+		border-right: 1px solid var(--line);
+	}
+	.studio_file_buttons button {
+		font-size: 12px;
+		padding: 2px 8px;
+	}
 	/* the app-bar grip moves the whole window, so the title bar is never the
 	   only place a crowded top edge leaves to grab */
 	.studio_window_grip {
@@ -874,6 +888,144 @@
 		align-items: center;
 		gap: 2px;
 		margin-left: auto;
+	}
+	/* A pinned panel stays above the others however the stack is raised. */
+	.studio_panel_pin[aria-pressed="true"] {
+		filter: saturate(1.6) brightness(1.15);
+	}
+	.studio_panel_pin {
+		font-size: 11px;
+		line-height: 1;
+		padding: 1px 4px;
+	}
+	/* The timeline tools live on the Tracks title bar, above the ruler. */
+	.studio_tools {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+	}
+	.studio_tools .studio_tool {
+		font-size: 11px;
+		line-height: 1;
+		padding: 2px 7px;
+		border-radius: 4px;
+	}
+	.studio_tools .studio_tool[aria-pressed="true"] {
+		background: var(--accent);
+		color: var(--panel);
+	}
+	/* Select and Cut change the pointer over the lanes and the ruler. */
+	#studio_viewer.studio_tool_select canvas.track,
+	#studio_ruler.studio_tool_select .studio_ruler_canvas {
+		cursor: var(--jawnos-cursor-crosshair, crosshair);
+	}
+	#studio_viewer.studio_tool_cut canvas.track {
+		cursor: var(--jawnos-cursor-cell, cell);
+	}
+	/* The selection bar names the chosen span and offers its three actions. */
+	.studio_selection_bar {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 2px 4px;
+		flex: 0 0 auto;
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		border-bottom: 1px solid var(--line);
+	}
+	.studio_selection_label {
+		font-size: 11px;
+		opacity: .8;
+		white-space: nowrap;
+	}
+	.studio_selection_bar button {
+		font-size: 11px;
+		line-height: 1;
+		padding: 2px 7px;
+	}
+	/* A translucent block over each selected lane, and over the ruler span. */
+	#studio_viewer {
+		position: relative;
+	}
+	.studio_selection_overlay {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		z-index: 2;
+	}
+	.studio_selection_lane {
+		position: absolute;
+		background: color-mix(in srgb, var(--accent) 24%, transparent);
+		border-left: 1px solid var(--accent);
+		border-right: 1px solid var(--accent);
+		box-sizing: border-box;
+	}
+	.studio_ruler_selection {
+		position: absolute;
+		top: 0;
+		height: 100%;
+		pointer-events: none;
+		background: color-mix(in srgb, var(--accent) 34%, transparent);
+		border-left: 1px solid var(--accent);
+		border-right: 1px solid var(--accent);
+		box-sizing: border-box;
+		z-index: 2;
+	}
+	/* The Open sheet: a list of every saved studio song, over the window. */
+	.studio_dialog {
+		position: absolute;
+		left: 50%;
+		top: 12%;
+		transform: translateX(-50%);
+		width: min(520px, 88vw);
+		max-height: 70%;
+		display: flex;
+		flex-direction: column;
+		z-index: 9000;
+		border: 1px solid var(--line);
+		border-radius: calc(var(--jawnos-corner, 12px) * .8);
+		background: var(--panel);
+		color: var(--ink);
+		box-shadow: var(--shadow-2, 0 8px 24px rgba(0, 0, 0, .28));
+	}
+	.studio_dialog_bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		padding: 6px 8px;
+		border-bottom: 1px solid var(--line);
+	}
+	.studio_dialog_list {
+		overflow-y: auto;
+		min-height: 0;
+		padding: 4px;
+	}
+	.studio_open_row {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+		width: 100%;
+		box-sizing: border-box;
+		text-align: left;
+		padding: 6px 8px;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: inherit;
+		font-size: 13px;
+	}
+	.studio_open_row:hover {
+		background: var(--accent-soft, var(--panel-2));
+	}
+	.studio_open_time {
+		font-size: 11px;
+		opacity: .6;
+		white-space: nowrap;
+	}
+	.studio_dialog_empty {
+		padding: 10px;
+		opacity: .7;
 	}
 	.studio_panel_bar button {
 		font-size: 12px;

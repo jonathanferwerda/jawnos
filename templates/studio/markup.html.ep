@@ -24,7 +24,6 @@
 	   switch shows. The board draws those effects as the stompbox tiles below. %>
 	<div id="pedalboard" style="display:none;">
 		<div class="studio_pedalboard_bar">
-			<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
 			<span class="studio_effect_palette">
 				<span id="studio_palette_channel" class="studio_palette_channel"></span>
 				<select id="studio_palette_effect" hint="<%= &subs::ui('Choose an effect to add to this track\'s chain') %>">
@@ -36,6 +35,7 @@
 				</select>
 				<button id="studio_palette_add" class="hover" hint="<%= &subs::ui('Add the chosen effect to this chain') %>"><%= &subs::ui('Add') %></button>
 			</span>
+			<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
 		</div>
 		<%# The In/Out switch and the selected track's board. studioRackRender()
 		   fills both; the board holds only the inserts, in signal order. %>
@@ -124,16 +124,23 @@
 	</div>
 	<div id="studio_layout_bar" class="studio_layout_bar">
 		<span class="studio_window_grip hover" hint="<%= &subs::ui('Drag to move the Studio window') %>">⠿</span>
+		<%# The song's own file controls sit at the left edge, beside Configure:
+		   New, Open, Save and the gear are one press away without a sheet. %>
+		<span class="studio_file_buttons" role="group" aria-label="<%= &subs::ui('Song files') %>">
+			<img id="studio_new" hint="New song" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/file.png') %>">
+			<button id="studio_open" class="hover" hint="<%= &subs::ui('Open a saved studio song') %>"><%= &subs::ui('Open') %></button>
+			<img id="studio_save" hint="Save" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>">
+			<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
+		</span>
 		<span id="studio_track_count" class="studio_track_count"></span>
 		<%# One button for the DAW-informed arrangement: transport across the top,
 		   the timeline under it, and the console at the foot. On a narrow window
 		   every panel stacks instead. %>
 		<button id="studio_arrange" class="hover" hint="<%= &subs::ui('Arrange the panels') %>"><%= &subs::ui('Arrange') %></button>
 		<%# Always in reach, whatever the transport's height: it opens the bottom
-		   sheet, and Configure and Loop live here too so a short transport does
-		   not hide them. The transport keeps its burger for the old layout. %>
+		   sheet, and Loop lives here so a short transport does not hide it.
+		   The transport keeps its burger for the old layout. %>
 		<button id="studio_pedals" class="hover" aria-pressed="false" hint="<%= &subs::ui('Open or close the pedalboard') %>"><%= &subs::ui('Pedals') %></button>
-		<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
 		<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Loop" class="little_thumb hover" id="studio_loop">
 		<%# The top bar is the panels' own taskbar: one entry per interior window,
 		   so a minimized panel is still one press away. The panel's own title bar
@@ -155,10 +162,27 @@
 	<div id="studio_tracks_panel" class="studio_panel">
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="tracks" hint="<%= &subs::ui('Drag to move the track listing') %>"><%= &subs::ui('Tracks') %></span>
+			<%# The editing tool sits on the bar above the ruler. Cursor moves and
+			   trims; Select draws a time range across lanes; Cut splits a take. %>
+			<span class="studio_tools" role="toolbar" aria-label="<%= &subs::ui('Timeline tools') %>">
+				<button class="studio_tool hover" data-tool="cursor" aria-pressed="true" hint="<%= &subs::ui('Drag clips and their edges') %>"><%= &subs::ui('Cursor') %></button>
+				<button class="studio_tool hover" data-tool="select" aria-pressed="false" hint="<%= &subs::ui('Select a time range across tracks') %>"><%= &subs::ui('Select') %></button>
+				<button class="studio_tool hover" data-tool="cut" aria-pressed="false" hint="<%= &subs::ui('Click a clip to cut it at that point') %>"><%= &subs::ui('Cut') %></button>
+			</span>
 			<span class="studio_panel_buttons">
+				<button class="studio_panel_pin hover" data-panel="tracks" aria-pressed="false" hint="<%= &subs::ui('Keep this panel above the others') %>">📌</button>
 				<button class="studio_panel_min hover" data-panel="tracks" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
 				<button class="studio_panel_max hover" data-panel="tracks" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
 			</span>
+		</div>
+		<%# What a Select drag last made, and the three things it is for: repeat
+		   it, print it through each track's pedals, or export it as a file. %>
+		<div id="studio_selection_bar" class="studio_selection_bar" style="display:none;" role="status" aria-live="polite">
+			<span id="studio_selection_label" class="studio_selection_label"></span>
+			<button id="studio_selection_loop" class="hover" hint="<%= &subs::ui('Repeat this time range') %>"><%= &subs::ui('Loop') %></button>
+			<button id="studio_selection_bounce" class="hover" hint="<%= &subs::ui('Print this range through each track\'s pedals') %>"><%= &subs::ui('Bounce') %></button>
+			<button id="studio_selection_export" class="hover" hint="<%= &subs::ui('Export this range as a file') %>"><%= &subs::ui('Export') %></button>
+			<button id="studio_selection_clear" class="hover" hint="<%= &subs::ui('Clear the selection') %>"><%= &subs::ui('Clear') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="tracks" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
 		<span class="studio_panel_bottom" data-studio-bottom="tracks" hint="<%= &subs::ui('Drag the bottom edge to resize this panel\'s height') %>"></span>
@@ -167,6 +191,7 @@
 		<div id="studio_ruler" class="studio_ruler">
 			<span class="studio_ruler_pad"></span>
 			<canvas id="studio_ruler_canvas" class="studio_ruler_canvas" aria-label="<%= &subs::ui('Timeline ruler') %>" hint="<%= &subs::ui('Click the ruler to move the playhead while stopped or playing') %>"></canvas>
+			<div id="studio_ruler_selection" class="studio_ruler_selection" aria-hidden="true"></div>
 		</div>
 		<div id="studio_viewer" channel_count="<%= $channel_count %>" data-max-tracks="<%= $max_tracks %>">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
@@ -197,6 +222,7 @@
 					<span class="studio_track_resize hover" channel="<%= $ch %>" hint="<%= &subs::ui('Drag the bottom edge to resize this track') %>"></span>
 				</div>
 			<% } %>
+			<div id="studio_selection_overlay" class="studio_selection_overlay" aria-hidden="true"></div>
 		</div>
 		<div id="studio_track_container"></div>
 	</div>
@@ -204,6 +230,7 @@
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="mixer" hint="<%= &subs::ui('Drag to move the channel strips') %>"><%= &subs::ui('Channels') %></span>
 			<span class="studio_panel_buttons">
+				<button class="studio_panel_pin hover" data-panel="mixer" aria-pressed="false" hint="<%= &subs::ui('Keep this panel above the others') %>">📌</button>
 				<button class="studio_panel_min hover" data-panel="mixer" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
 				<button class="studio_panel_max hover" data-panel="mixer" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
 			</span>
@@ -297,6 +324,7 @@
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="transport" hint="<%= &subs::ui('Drag to move the transport') %>"><%= &subs::ui('Transport') %></span>
 			<span class="studio_panel_buttons">
+				<button class="studio_panel_pin hover" data-panel="transport" aria-pressed="false" hint="<%= &subs::ui('Keep this panel above the others') %>">📌</button>
 				<button class="studio_panel_min hover" data-panel="transport" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
 				<button class="studio_panel_max hover" data-panel="transport" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
 			</span>
@@ -342,17 +370,37 @@
 		</span>
 	</div>
 	</div>
+	<div id="studio_open_dialog" class="studio_dialog" style="display:none;" role="dialog" aria-modal="true" aria-label="<%= &subs::ui('Open a studio song') %>">
+		<div class="studio_dialog_bar">
+			<b><%= &subs::ui('Open a studio song') %></b>
+			<button id="studio_open_close" class="hover" hint="<%= &subs::ui('Close this list') %>"><%= &subs::ui('Close') %></button>
+		</div>
+		<div class="studio_dialog_list">
+			<% if (@{$songs}) { %>
+				<% foreach my $song ( @{$songs} ) { %>
+					<button class="studio_open_row hover" data-uuid="<%= $song->{'uuid'} %>" hint="<%= &subs::ui('Open this song') %>">
+						<span class="studio_open_name"><%= &subs::format_name($song->{'app'}) %></span>
+						<span class="studio_open_time time" timestamp="<%= $song->{'timestamp'} %>"></span>
+					</button>
+				<% } %>
+			<% } else { %>
+				<p class="studio_dialog_empty"><%= &subs::ui('There are no saved studio songs yet.') %></p>
+			<% } %>
+		</div>
+	</div>
 </div>
 <div id="studio_config" style="display:none;">
 		<h1>Configure</h1>
 
-		<div id="song_controls" style="">
-			<img id="studio_new" hint="New song" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/file.png') %>">
-			<%= include 'studio/song_select', songs => $songs, last_song => $last_song %>
-			<img id="studio_save" hint="Save" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>">
+		<div id="song_controls">
 			<img id="studio_delete" hint="Delete" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/icons/trash.png') %>">
 			<img class="little_thumb hover studio_config_toggle_close" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_close"><br>
 			<input type="hidden" id="studio_name">
+			<%# The old dropdown stays hidden: the Open dialog reads it, and the save
+			   response replaces it, so no route learns a new shape. %>
+			<div id="studio_song_select_holder" style="display:none;" aria-hidden="true">
+				<%= include 'studio/song_select', songs => $songs, last_song => $last_song %>
+			</div>
 		</div>
 		<div>
 			<table style="width:98%;">

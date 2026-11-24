@@ -66,12 +66,39 @@ function studioCountInBeats() {
 
 // The committed region: where the last loop take was recorded, which is also
 // the section the transport repeats while "ongoing". Stored as a bar, so a
-// tempo change keeps it musical.
+// tempo change keeps it musical. A region set by the Select tool carries an
+// explicit end in seconds instead, because a dragged span need not land on a
+// bar line; that end wins over the bar arithmetic.
 function studioLoopRegion() {
 	var r = mixer['time'] && mixer['time']['loop_region'];
-	if (!r || !(r.bars > 0)) { return null; }
+	if (!r) { return null; }
+	var start = studioKnobNumber(r.start, 0);
+	var end = studioKnobNumber(r.end, 0);
+	if (end > start) { return { start: r.start, bars: r.bars, end: r.end }; }
+	if (!(r.bars > 0)) { return null; }
 	var bar = studioBarSeconds();
 	return { start: r.start, bars: r.bars, end: r.start + (r.bars * bar) };
+}
+
+// Commit an explicit span (seconds) as the repeated region. The bar count is
+// kept as a hint for the take-length snap, but the end is what the transport
+// and the canvas honour. Selecting a range is a transport edit, so the loop
+// button lights as ongoing and the song remembers both.
+function studioSetLoopRange(start, end) {
+	var from = studioKnobNumber(start, 0);
+	var to = studioKnobNumber(end, 0);
+	from = Math.max(0, from);
+	if (!(to > from)) { return false; }
+	mixer['time']['loop_region'] = {
+		start: from,
+		end: to,
+		bars: Math.max(1, Math.round((to - from) / studioBarSeconds()))
+	};
+	mixer['time']['loop'] = 'ongoing';
+	$('#studio_loop').attr('enabled', 'ongoing').attr('obg', 'rgb(211, 211, 211)').css({ 'background-color': 'red' });
+	studioSaver();
+	studioDrawTracks();
+	return true;
 }
 
 // What recording now would commit: the snapped position the playhead is at (or
@@ -246,6 +273,11 @@ function studioSplitTake(ch, take, t) {
 		src: take.src,
 		encoding: take.encoding
 	};
+	// A printed take already carries its Out pedals in its audio, and both
+	// halves index the same printed buffer, so the right half must not run the
+	// chain a second time on playback.
+	if (take.printed) { right.printed = true; }
+	if (take.buffer) { right.buffer = take.buffer; }
 	// A razor cut ends the looper behaviour: both halves become ordinary clips.
 	take.loop = false;
 	right.loop = false;
@@ -307,10 +339,12 @@ function studioClipSnapshot(take) {
 		src: take.src,
 		uuid: take.uuid || null,
 		data: take.data,
+		buffer: take.buffer,
 		offset: take.offset || 0,
 		duration: take.duration || 0,
 		encoding: take.encoding,
-		loop: !!take.loop
+		loop: !!take.loop,
+		printed: !!take.printed
 	};
 }
 
@@ -324,6 +358,9 @@ function studioClipMenu(hit, px, py) {
 	studioClipMenuRow(menu, 'copy', studioLayoutText('Copy'), false);
 	// Paste needs a snapshot, so it reads disabled until something is copied
 	studioClipMenuRow(menu, 'paste', studioLayoutText('Paste'), !studioClipboard);
+	$('<div class="studio_menu_head"></div>').text(studioLayoutText('Take')).appendTo(menu);
+	studioClipMenuRow(menu, 'delete', studioLayoutText('Delete'), false);
+	studioClipMenuRow(menu, 'bounce', studioLayoutText('Bounce'), false);
 	// Only a loop track takes a drum loop; another track keeps the clip menu.
 	var loopTrack = mixer[hit.ch] && mixer[hit.ch].armed && mixer[hit.ch].armed.state == 'loop';
 	if (loopTrack) { studioLoopMenuRows(menu); }
@@ -368,6 +405,10 @@ function studioPasteTake(ch, t) {
 		encoding: clip.encoding,
 		loop: false
 	};
+	// A copied printed take is already wet, so it keeps that flag and its
+	// rendered buffer; otherwise the copy would run the Out chain again.
+	if (clip.printed) { pasted.printed = true; }
+	if (clip.buffer) { pasted.buffer = clip.buffer; }
 	// A saved clip already has a server file; an unsaved one must carry its blob
 	// so the pasted copy gets uploaded too.
 	if (!clip.uuid) { pasted.data = clip.data; }
@@ -443,6 +484,12 @@ $(document).on('click', '.studio_clip_menu .studio_menu_row', function (e) {
 	}
 	else if (command == 'paste') {
 		studioPasteTake(hit.ch, hit.t);
+	}
+	else if (command == 'delete') {
+		studioRemoveTake(hit.ch, hit.take);
+	}
+	else if (command == 'bounce') {
+		studioBounceTake(hit.ch, hit.take);
 	}
 });
 

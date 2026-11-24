@@ -30,6 +30,10 @@ var studioPanelSelectors = {
 var studioPanelNames = ['transport', 'tracks', 'mixer', 'drums'];
 var studioPanelState = {};
 var studioPanelZ = 10;
+// Pinning is a stacking choice, not a geometry: pinned panels live in their own
+// z band, high enough that raising an unpinned panel can never cover one.
+var STUDIO_PINNED_Z = 100000;
+var studioPanelPinnedZ = STUDIO_PINNED_Z;
 var studioPanelObserver = null;
 var studioPanelObservedDesk = null;
 
@@ -137,6 +141,9 @@ function studioApplyPanelGeometry(name) {
 	panel.toggleClass('studio_panel_minimized', !!state.minimized);
 	panel.toggleClass('studio_panel_maximized', !!state.maximized);
 	panel.attr('data-studio-name', name);
+	studioPanelReflectPin(name);
+	if (typeof state.z === 'number') { panel.css('z-index', state.z); }
+	else { studioPanelAssignZ(name); }
 	if (state.maximized) {
 		panel.css({ left: '0px', top: '0px', width: '100%', height: '100%' });
 		if (!state.minimized) { studioPanelContentRelayout(name); }
@@ -192,7 +199,8 @@ function studioPersistPanelState(name) {
 		width: Math.round(state.width || 0),
 		height: Math.round(state.height || 0),
 		minimized: !!state.minimized,
-		maximized: !!state.maximized
+		maximized: !!state.maximized,
+		pinned: !!state.pinned
 	};
 	var setting = 'studio_panel_position_' + name;
 	var text = JSON.stringify(value);
@@ -219,6 +227,7 @@ function studioLoadPanelStates() {
 				? saved.minimized
 				: (String(((mixer && mixer.settings) || {})[studioLegacyHidden[name]] || '') == 'yes');
 			state.maximized = !!saved.maximized;
+			state.pinned = !!saved.pinned;
 		}
 		else {
 			// No geometry yet (a first open, or an older saved dock/float record):
@@ -231,6 +240,7 @@ function studioLoadPanelStates() {
 				? saved.minimized
 				: (String(((mixer && mixer.settings) || {})[studioLegacyHidden[name]] || '') == 'yes');
 			state.maximized = !!(saved && saved.maximized);
+			state.pinned = !!(saved && saved.pinned);
 		}
 		var box = studioPanelBox(state.left, state.top, state.width, state.height);
 		state.left = box.left;
@@ -379,6 +389,49 @@ $(document).on('keydown', function (e) {
 
 // ---- the panel stack and its taskbar ---------------------------------------
 
+// Give a panel a place in its band. Pinned panels share one band above every
+// unpinned one, so a press on an unpinned panel raises it within its band but
+// never over a pinned panel.
+function studioPanelAssignZ(name) {
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	var state = studioPanelStateFor(name);
+	if (state.pinned) {
+		studioPanelPinnedZ += 1;
+		state.z = studioPanelPinnedZ;
+	}
+	else {
+		studioPanelZ += 1;
+		state.z = studioPanelZ;
+	}
+	panel.css('z-index', state.z);
+}
+
+// Reflect the pin in the window and its title-bar button. Geometry does not
+// change: a pinned panel keeps its box.
+function studioPanelReflectPin(name) {
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	var state = studioPanelStateFor(name);
+	panel.toggleClass('studio_panel_pinned', !!state.pinned);
+	$('.studio_panel_pin').each(function () {
+		if ($(this).attr('data-panel') === name) {
+			$(this).attr('aria-pressed', state.pinned ? 'true' : 'false');
+		}
+	});
+}
+
+function studioPanelSetPinned(name, pinned, persist) {
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	var state = studioPanelStateFor(name);
+	state.pinned = !!pinned;
+	studioPanelAssignZ(name);
+	studioPanelReflectPin(name);
+	studioPanelTaskbarRefresh();
+	if (persist !== false) { studioPersistPanelState(name); }
+}
+
 function studioPanelFront() {
 	var front = '';
 	var top = -1;
@@ -412,8 +465,7 @@ function studioPanelTaskbarRefresh() {
 function studioPanelRaise(name) {
 	var panel = studioPanelElement(name);
 	if (!panel.length) { return; }
-	studioPanelZ += 1;
-	panel.css('z-index', studioPanelZ);
+	studioPanelAssignZ(name);
 	$('.studio_panel').removeClass('studio_panel_raised');
 	panel.addClass('studio_panel_raised');
 	studioPanelTaskbarRefresh();
@@ -467,9 +519,21 @@ $(document).on('click', '.studio_panel_max', function (e) {
 	studioPanelToggleMaximized($(this).attr('data-panel'), true);
 });
 
+// The pin is a toggle, not a raise: the press belongs to the button, so the
+// panel's own pointerdown handler leaves it alone and this click does the work.
+$(document).on('click', '.studio_panel_pin', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var name = $(this).attr('data-panel');
+	if (!name) { return; }
+	var state = studioPanelStateFor(name);
+	studioPanelSetPinned(name, !state.pinned, true);
+});
+
 // Any press inside a panel window brings it forward, the same way a press on a
 // desk window does. Nested controls keep their own handlers; this only stacks.
-$(document).on('pointerdown', '.studio_panel', function () {
+$(document).on('pointerdown', '.studio_panel', function (e) {
+	if ($(e.target).closest('.studio_panel_pin').length) { return; }
 	var name = $(this).attr('data-studio-name') || studioPanelNameForElement(this);
 	if (name) { studioPanelRaise(name); }
 });
