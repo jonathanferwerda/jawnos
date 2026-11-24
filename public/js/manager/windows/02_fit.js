@@ -73,6 +73,25 @@ function windowHalfRect(side) {
 	};
 }
 
+// The half a window stands in. windowDimensionSetter classifies the same way,
+// but a restored window is fitted before it is classified: its saved box is
+// already the half, so windowFit has to read the side from there too.
+function windowHalfSide(win, left, width) {
+	win = $(win);
+	var view = win.attr('view');
+	if (view == 'left' || view == 'right') { return view; }
+	var ww = $(window).width();
+	if (!ww) { return ''; }
+	// windowFit already measured the box it is about to fit
+	if (left === undefined) { left = parseFloat(win.css('left')); }
+	if (width === undefined) { width = win.width(); }
+	if (!isFinite(left) || !isFinite(width)) { return ''; }
+	var right = left + width;
+	if (right >= ww - 1 && left >= (ww / 2 - 5) && left <= (ww / 2 + 5)) { return 'right'; }
+	if (left <= 1 && right >= (ww / 2 - 5) && right <= (ww / 2 + 5)) { return 'left'; }
+	return '';
+}
+
 // The band at either edge that owns a drop as the half snap. It is a short
 // reach in from the edge itself - not a share of the desk - so a window moved
 // toward a side to sit nearer it is not snapped in half by accident. The
@@ -767,15 +786,22 @@ function windowFit(win) {
 	}
 	var winLeft = Number(numeral(win.css('left')).format()) || 0;
 	var winTop = Number(numeral(win.css('top')).format()) || 0;
+	var winWidth = win.width();
 	// A bar on the top edge is a hard edge too: no window may tuck its title bar
 	// under it, or the one part that drags it is out of reach. This is the case a
 	// top taskbar opened after the window was moved to the top creates.
 	var top_limit = (typeof windowTopLimit == 'function') ? windowTopLimit() : 0;
+	// A half window's rail moves to the other half of the desk, so the clothesline
+	// is not over it: its title bar only has to clear the taskbar. The half box
+	// also carries this screen's foot (and a dock search panel).
+	var half = windowHalfSide(win, winLeft, winWidth);
+	var half_box = (half && typeof windowHalfRect == 'function') ? windowHalfRect(half) : null;
+	if (half_box) { top_limit = half_box.top; }
 	if (!windowPhoneChecker() && winTop < top_limit) {
 		win.css('top', top_limit + 'px');
 		winTop = top_limit;
 	}
-	if (winLeft + win.width() > viewW) {
+	if (winLeft + winWidth > viewW) {
 		win.width(Math.max(240, viewW - winLeft));
 	}
 	var wanted = parseFloat(win.attr('fit_height')) || 0;
@@ -797,6 +823,7 @@ function windowFit(win) {
 	// squeezed. A phone keeps its own deck fit.
 	var foot = viewH - ((typeof windowBottomClearance == 'function') ? windowBottomClearance() : 0);
 	if (foot < 240) { foot = 240; }
+	if (half_box) { foot = Math.max(240, half_box.top + half_box.height); }
 	if (!windowPhoneChecker() && winTop + win.height() > foot) {
 		if (win.attr('fit_shrunk') != 'yes') {
 			win.attr('fit_height', win.height()).attr('fit_shrunk', 'yes');

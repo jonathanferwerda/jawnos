@@ -37,6 +37,10 @@ like($windows, qr/var half = windowHalfRect\(edge\);/, 'the drag preview draws t
 like($windows, qr/box\.attr\('snap', 'half'\)/, 'marked so the highlight can read differently');
 like($css, qr/#window_tile_preview\[snap="half"\] \{/, 'the half highlight is its own style');
 like($css, qr/#window_tile_preview\[snap="half"\] \{[^}]*border-style: solid;/s, 'a solid edge rather than the slot hint');
+like($fit, qr/function windowHalfSide\(win, left, width\)/, 'a half is read from its view or its saved box');
+like($fit, qr/var half = windowHalfSide\(win, winLeft, winWidth\);/, 'windowFit asks which half it stands in');
+like($fit, qr/if \(half_box\) \{ top_limit = half_box\.top; \}/,
+	'a half keeps its title bar under the taskbar only');
 
 # --- an edge no longer hides the preview ------------------------------------
 unlike($windows, qr/if \(at\.x < \(ww \/ 10\) \|\| at\.x > \(ww - \(ww \/ 10\)\)\) \{ box\.hide\(\); return; \}/,
@@ -160,6 +164,129 @@ JS
 	my $rc = $? >> 8;
 	diag($out) if $rc;
 	is($rc, 0, 'windowHalfRect draws the box the window will take');
+}
+
+# --- a half is fitted to its own side, not the full desk --------------------
+# A snapped window moves the rail to the other half, so the clothesline is not
+# over it. A restored half is fitted before windowDimensionSetter writes its
+# view, so windowFit reads the side from the saved box as well.
+SKIP: {
+	skip 'node is needed to play the half fit', 1 unless $node && -x $node;
+
+	my ($hfh, $half_fit_harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $hfh <<'JS';
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+const windowStub = { width: 1600, height: 1000, visualViewport: null };
+
+function El(attrs, style) {
+	this.length = 1;
+	this.attrs = attrs || {};
+	this.style = style || {};
+}
+El.prototype.attr = function (k, v) {
+	if (v === undefined) { return this.attrs[k]; }
+	this.attrs[k] = v;
+	return this;
+};
+El.prototype.removeAttr = function (k) { delete this.attrs[k]; return this; };
+El.prototype.css = function (k, v) {
+	if (v === undefined) { return (this.style[k] === undefined) ? '' : String(this.style[k]); }
+	this.style[k] = v;
+	return this;
+};
+El.prototype.width = function (v) {
+	if (v === undefined) { return parseFloat(this.style.width) || 0; }
+	this.style.width = v + 'px';
+	return this;
+};
+El.prototype.height = function (v) {
+	if (v === undefined) { return parseFloat(this.style.height) || 0; }
+	this.style.height = v + 'px';
+	return this;
+};
+El.prototype.hasClass = function () { return false; };
+El.prototype.find = function () { return { each: function () {} }; };
+
+function chain() {
+	return { length: 0, on: function () { return this; }, closest: function () { return { length: 0 }; } };
+}
+function $(sel) {
+	if (sel === windowStub) {
+		return { on: function () { return this; }, width: function () { return windowStub.width; }, height: function () { return windowStub.height; } };
+	}
+	if (sel instanceof El) { return sel; }
+	return chain();
+}
+
+const sandbox = {
+	window: windowStub,
+	document: {},
+	navigator: { userAgent: 'test' },
+	$: $,
+	Math: Math,
+	Number: Number,
+	isFinite: isFinite,
+	parseFloat: parseFloat,
+	numeral: function (v) { return { format: function () { return String(parseFloat(v)); }, value: function () { return parseFloat(v); } }; },
+	getComputedStyle: function () { return { overflow: 'visible' }; },
+	headerHeight: 44,
+	windowTopLimit: function () { return 81; },
+	windowBottomClearance: function () { return 47; },
+	windowPhoneChecker: function () { return false; },
+	windowTiledSlot: function () { return -1; },
+	reservedSpots: { header: 40 },
+	clothesLinePos: { exists: 1 },
+	clothesLineHeight: 40
+};
+vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
+
+let failures = 0;
+function eq(name, got, want) {
+	if (got === want) { console.log('ok - ' + name); }
+	else { failures++; console.log('not ok - ' + name + ': ' + got + ' != ' + want); }
+}
+
+// a right half: 800 wide at 800, under the taskbar at 44, to the foot at 953
+let w = new El({ view: 'right' }, { left: '800px', top: '44px', width: '800px', height: '909px' });
+sandbox.windowFit(w);
+eq('a right half keeps its title bar under the taskbar, not the clothesline', parseFloat(w.style.top), 44);
+eq('and keeps the half foot', parseFloat(w.style.height), 909);
+
+// a restored window is fitted before windowDimensionSetter writes the view:
+// the saved box itself is the half
+w = new El({}, { left: '800px', top: '44px', width: '800px', height: '909px' });
+sandbox.windowFit(w);
+eq('a restored half is read from its box', parseFloat(w.style.top), 44);
+eq('and its foot too', parseFloat(w.style.height), 909);
+
+w = new El({ view: 'left' }, { left: '0px', top: '44px', width: '800px', height: '909px' });
+sandbox.windowFit(w);
+eq('a left half keeps the same top and foot', parseFloat(w.style.top), 44);
+eq('and the same height', parseFloat(w.style.height), 909);
+
+// a free window in the middle is still under the clothesline
+w = new El({}, { left: '900px', top: '44px', width: '480px', height: '909px' });
+sandbox.windowFit(w);
+eq('a free window still clears the clothesline', parseFloat(w.style.top), 81);
+eq('and gives the band to the foot', parseFloat(w.style.height), 872);
+
+// a maximize is not a half: it still owns the full desk and its rail
+w = new El({ view: 'max' }, { left: '0px', top: '44px', width: '1600px', height: '909px' });
+sandbox.windowFit(w);
+eq('a maximize still clears the clothesline', parseFloat(w.style.top), 81);
+eq('and gives the band to its foot', parseFloat(w.style.height), 872);
+
+process.exit(failures ? 1 : 0);
+JS
+	close $hfh;
+
+	my $half_fit_out = `$node "$half_fit_harness" "$root/public/js/manager/windows/02_fit.js" 2>&1`;
+	my $half_fit_rc = $? >> 8;
+	diag($half_fit_out) if $half_fit_rc;
+	is($half_fit_rc, 0, 'windowFit keeps a half clear of the clothesline');
 }
 
 # --- an effect's transform cannot change the view a window wears ------------
