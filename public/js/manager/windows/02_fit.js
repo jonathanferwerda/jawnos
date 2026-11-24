@@ -267,7 +267,7 @@ function jawnosWindowFootApply() {
 		var win = $(this);
 		var view = win.attr('view');
 		if (view != 'max' && view != 'left' && view != 'right') { return; }
-		if (!win.is(':visible') || win.hasClass('window_full_viewport')) { return; }
+		if (!win.is(':visible') || win.hasClass('window_full_viewport') || win.hasClass('window_music_full')) { return; }
 		var wanted = (view == 'max') ? windowMaxRect().height : windowHalfRect(view).height;
 		var current = (win[0] && win[0].style) ? win[0].style.height : '';
 		var a = parseFloat(wanted);
@@ -780,7 +780,7 @@ function windowFit(win) {
 	if (win.length == 0) { return; }
 	// the whole glass already is the viewport, and a clamp here would write a
 	// fit_height the way back would inherit
-	if (win.hasClass('window_full_viewport')) { return; }
+	if (win.hasClass('window_full_viewport') || win.hasClass('window_music_full')) { return; }
 	var view = windowViewport();
 	var viewW = view.width;
 	var viewH = view.height;

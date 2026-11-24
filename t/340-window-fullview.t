@@ -69,8 +69,8 @@ like($fit, qr/win\.removeClass\('window_full_viewport'\)\.removeData\('window-fu
 	'leaving clears the state and the saved box');
 like($fit, qr/win\.css\(\{ 'position': 'fixed', 'left': box\.left, 'top': box\.top, 'width': box\.width, 'height': box\.height \}\)/,
 	'and puts the window back where it was');
-like($fit, qr/if \(win\.hasClass\('window_full_viewport'\)\) \{ return; \}/,
-	'a viewport fit leaves the full glass alone');
+like($fit, qr/if \(win\.hasClass\('window_full_viewport'\) \|\| win\.hasClass\('window_music_full'\)\) \{ return; \}/,
+	'a viewport fit leaves the full glass and the restored Music dress alone');
 like($fit, qr/var foot = viewH - \(\(typeof windowBottomClearance == 'function'\) \? windowBottomClearance\(\) : 0\)/,
 	'the fit stops above the taskbar and dock');
 like($fit, qr/if \(!windowPhoneChecker\(\) && winTop \+ win\.height\(\) > foot\)/,

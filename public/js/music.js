@@ -2282,6 +2282,11 @@ function musicKeepalive(playing) {
 // without an onpause; release the keepalive so a backgrounded app can sleep
 // again. Minimising or hiding the window leaves it alone.
 $(document).on('click touchend', '.close_button[app="music"]', function() {
+	// A closed window is not a full screen to reopen: keep the track, drop the
+	// choice before the window (and its <video>) leaves the page.
+	musicFullscreenIntent = false;
+	clearTimeout(musicFullscreenExitTimer);
+	try { playerCacheSaver(undefined, true); } catch (e) {}
 	musicKeepalive(false);
 	if (musicShelfWatcher) { musicShelfWatcher.disconnect(); musicShelfWatcher = null; }
 	// Closing the window gives the AudioContext (and so its Pulse stream) back
@@ -2335,6 +2340,13 @@ function musicContentCache(html) {
 	// the chapters belong to the track that was playing; the restored one draws
 	// its own, so neither a stale row nor its signature is stored
 	shell.find('.music_chapters').removeClass('shown').empty().removeAttr('data-sig');
+	// The restored full screen is runtime state as well: the next open paints it
+	// from the player cache, so a shell must not replay the dress by itself (a
+	// fullscreen that ended before the save would otherwise come back).
+	shell.find('#music').removeClass('music_fullscreen');
+	shell.find('.window_music_full').removeClass('window_music_full');
+	// the desktop's corner target is a live handler, not markup
+	shell.find('#music_fullscreen_gesture').remove();
 	shell.find('#music_player_data').empty();
 	// The queue is the manifest; the cards are only the slice that happened to
 	// be mounted. Store the shell with that slice gone if it was scrolled away,
@@ -2573,6 +2585,10 @@ async function musicInit(method) {
 			// only a saved track is restored: a first-ever open (no player cache) must
 			// not start playing on its own
 			if (saved_file) {
+				// mediaMaker paints the theatre and then the full-screen dress, so
+				// the choice is handed over before it runs; see
+				// musicFullscreenRestoreApply.
+				musicFullscreenRestorePending = !!pd.fullscreen;
 				mediaMaker({ file: saved_file, currentTime: pd.currentTime, method: 'restore', timestamp: Date.now(), state: pd.state, });
 				if (method != 'search') {
 					tree.sound.currentTime = pd.currentTime;
@@ -2723,6 +2739,10 @@ function playerCacheSaver(type, force) {
 			muted: music_muted, 
 			state: tree.sound.state, 
 			theatre_mode: $('#video').attr('theatre_mode'), 
+			// the person's full-screen choice, carried across a reload; see
+			// musicFullscreenIntent. The live element is not the answer here: a
+			// reload leaves fullscreen on the way out.
+			fullscreen: musicFullscreenIntent ? 1 : 0,
 			unlocked: unlocked,
 			resizes: {
 				music_albums: { bottom: $('#music_albums').css('top'), height: musicShelfBand(), auto: musicShelfAuto ? 1 : 0 },
@@ -2966,6 +2986,17 @@ var musicWindowState = {
 // would point the next open at the bottom of a slice. Keep the last honest view
 // instead, and never let a hidden save overwrite it.
 var musicViewLast = null;
+// The player's full screen across a reload. A browser will not re-enter its
+// top layer without a press, so the choice is carried in the player cache and
+// a restored full screen wears music.css's `music_fullscreen` dress (and its
+// window's `window_music_full`) until a press asks for the real thing. The
+// intent, not the live element, is what the cache writes: reloading leaves
+// fullscreen on the way out, and that leave must not erase the choice.
+var musicFullscreenIntent = false;
+var musicFullscreenRestorePending = false;
+var musicFullscreenExitTimer = 0;
+var musicFullscreenAsking = false;
+var musicWasFullscreen = false;
 // Is there a list on screen to measure? A display:none ancestor (the theatre,
 // a minimised window) gives the scroller no height, so its rows cannot be
 // measured and a sync would request a slice around a row that is not the one at
@@ -3683,6 +3714,10 @@ function mediaMaker(data) {
 			else {
 				theatreModeOff();
 			}
+			// a restored full screen goes back on after the theatre decides the
+			// player's ordinary dress; the pending flag is only set by the reload's
+			// own restore, so a track change never puts it on
+			musicFullscreenRestoreApply();
 			tree.sound.onplaying = function() {
 				tree.sound.state = 1;
 				musicVideoResume();
@@ -4066,14 +4101,35 @@ $(document).on('click', '#music_list_view', function() {
 	}
 });
 
+// The player's full screen, in either dress. The browser's own fullscreen puts
+// #music in the top layer; a restored one wears the class instead (the same
+// picture, without the top layer) until a press asks for the real thing. Ask
+// these, not document.fullscreenElement, wherever the player's bigness is
+// decided. A Video window has no #music, so its own fullscreen is not ours.
+function musicFullscreenElement() {
+	if (!$('#music').length) { return null; }
+	var v = document.getElementById('video');
+	var fs = document.fullscreenElement || document.webkitFullscreenElement;
+	return (fs && v && (fs == v || fs.contains(v))) ? fs : null;
+}
+function musicPseudoFullscreen() {
+	return $('#music').length > 0 && $('#music').hasClass('music_fullscreen');
+}
+
 // Does the player's picture take the bigger of its two styles? The theatre is
 // the obvious yes; a full screen is one too - a player that fills the screen
 // should not leave its picture in the corner.
 function musicPictureBig() {
 	if ($('#video').attr('theatre_mode') == 'on') { return true; }
-	var v = document.getElementById('video');
-	var fs = document.fullscreenElement || document.webkitFullscreenElement;
-	return !!(fs && v && (fs == v || fs.contains(v)));
+	return !!(musicFullscreenElement() || musicPseudoFullscreen());
+}
+
+// Put the player's picture in the size its current dress asks for.
+function musicPicturePlace() {
+	var v = $('#video');
+	if (v.length && v.attr('type') == 'video' && v.attr('theatre_mode') != 'on') {
+		v.attr('style', v.attr(musicPictureBig() ? 'big_style' : 'thumb_style'));
+	}
 }
 
 // ---- the film's chapters in the theatre and in fullscreen -------------------
@@ -4202,10 +4258,35 @@ $(document).on('fullscreenchange webkitfullscreenchange', function() {
 	$('#music_configuration, #music_audio_panel').filter(':visible').each(function() {
 		musicConfigFloat($(this));
 	});
-	var v = $('#video');
-	if (v.length && v.attr('type') == 'video' && v.attr('theatre_mode') != 'on') {
-		v.attr('style', v.attr(musicPictureBig() ? 'big_style' : 'thumb_style'));
+	if (musicFullscreenElement()) {
+		// the top layer is the real thing, so the restored dress steps aside
+		$('#music').removeClass('music_fullscreen');
+		musicFullscreenWindow(false);
+		musicFullscreenGestureRemove();
+		musicFullscreenIntent = true;
+		musicWasFullscreen = true;
+		musicFullscreenAsking = false;
+		clearTimeout(musicFullscreenExitTimer);
+		musicFullscreenRestoreDisarm();
+		try { playerCacheSaver(undefined, true); } catch (e) {}
 	}
+	else if (musicWasFullscreen) {
+		musicWasFullscreen = false;
+		// A reload leaves fullscreen on the way out. Clearing the choice here
+		// would erase it before pagehide's save; the delayed clear keeps the
+		// next open fullscreen, while a real exit is still remembered. A page
+		// put away in the background keeps the choice for its return.
+		if (!document.hidden) {
+			clearTimeout(musicFullscreenExitTimer);
+			musicFullscreenExitTimer = setTimeout(function() {
+				if (musicFullscreenElement() || musicPseudoFullscreen()) { return; }
+				musicFullscreenIntent = false;
+				try { playerCacheSaver(undefined, true); } catch (e) {}
+			}, 1200);
+		}
+		musicFullscreenAsking = false;
+	}
+	musicPicturePlace();
 	// a fullscreen is the other time the picture is big enough for chapters
 	musicChaptersRefresh();
 	musicChromeArm();
@@ -6259,6 +6340,126 @@ function musicVisualState() {
 	return musicVisual.st;
 }
 
+// ---- the full screen a reload puts back -------------------------------------
+//
+// Chromium grants requestFullscreen only to a press: a page that has just
+// loaded is refused, however sure it is the person wants the picture big. So a
+// reload restores the player's full-screen view as a dress of its own - the
+// `music_fullscreen` class on #music (music.css) and `window_music_full` on its
+// window, which lifts it over the desk and puts its title bar away - and the
+// next press asks the browser for the top layer. F, the fullscreen button, the
+// first click in the player, and Escape all work the way they do in the real
+// thing; the dress only differs in that the browser's own chrome is still there
+// until that press lands.
+// The desktop shell can synthesize a trusted click, which is what the browser
+// wants and a page cannot give itself. A tiny corner target turns that click
+// into the request: the shell clicks its own bottom-left, the target catches
+// it, and musicPlayerFullscreen runs inside the click's activation. The target
+// only exists while the restored dress is up and is gone within a second.
+function musicFullscreenGestureRemove() {
+	$('#music_fullscreen_gesture').remove();
+}
+function musicFullscreenGestureAsk() {
+	musicFullscreenGestureRemove();
+	// The marker and the shim are both installed by the desktop shell's own
+	// script; the Manager app's jawnosDesktopCall helper is a lazy part and may
+	// not be loaded in a page that only holds the player.
+	if (!window.JawnDesktop || !window.webkit || !window.webkit.messageHandlers
+		|| !window.webkit.messageHandlers.jawnos) { return; }
+	var target = $('<div id="music_fullscreen_gesture"></div>')
+		.attr('aria-hidden', 'true')
+		.css({
+			position: 'fixed', left: '0px', bottom: '0px',
+			width: '16px', height: '16px', opacity: '0',
+			'z-index': 2147483647
+		})
+		.on('click', function (e) {
+			e.preventDefault();
+			e.stopPropagation();
+			musicFullscreenGestureRemove();
+			if (musicPseudoFullscreen() && !musicFullscreenElement()) { musicPlayerFullscreen(); }
+		});
+	$('#music').append(target);
+	// Send the target's own middle: a window with a scrollbar or a chrome bar
+	// moves the page's bottom-left away from the widget's, and the shell should
+	// click the target, not the box around it.
+	var rect = target[0].getBoundingClientRect();
+	try {
+		window.webkit.messageHandlers.jawnos.postMessage(JSON.stringify({
+			action: 'resume_fullscreen',
+			args: { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
+		}));
+	}
+	catch (e) {}
+	// The shell clicks the target at once; this is only the cleanup for a
+	// desktop that does not know the action, or a window that is not the shell's.
+	setTimeout(musicFullscreenGestureRemove, 1200);
+}
+
+function musicFullscreenOn() {
+	var m = $('#music');
+	if (!m.length) { return; }
+	m.addClass('music_fullscreen');
+	musicFullscreenWindow(true);
+	musicFullscreenIntent = true;
+	clearTimeout(musicFullscreenExitTimer);
+	musicPicturePlace();
+	musicChaptersRefresh();
+	musicChromeArm();
+}
+function musicFullscreenOff() {
+	var m = $('#music');
+	if (!m.length) { return; }
+	m.removeClass('music_fullscreen');
+	musicFullscreenWindow(false);
+	musicFullscreenRestoreDisarm();
+	musicFullscreenGestureRemove();
+	musicPicturePlace();
+	musicChaptersRefresh();
+}
+// The window around the player: raised over the taskbar and dock, title bar
+// away. The window's own full-view mode keeps its own class, so a person who
+// had given the Music window the whole glass before the reload keeps it.
+function musicFullscreenWindow(on) {
+	var wind = $('#music').closest('.wind');
+	if (!wind.length) { return; }
+	if (on) { wind.addClass('window_music_full'); }
+	else { wind.removeClass('window_music_full'); }
+}
+function musicFullscreenRestoreDisarm() {
+	$('#music').off('pointerdown.music_fs_restore');
+}
+// The first press after a restore is the gesture the browser wants. It is only
+// armed while the dress is showing, and a press on Escape is left to the
+// keyboard handler, which leaves the dress instead of asking for the screen.
+function musicFullscreenRestoreArm() {
+	$('#music').off('pointerdown.music_fs_restore').one('pointerdown.music_fs_restore', function() {
+		if (musicPseudoFullscreen() && !musicFullscreenElement()) { musicPlayerFullscreen(); }
+	});
+}
+function musicFullscreenRestoreApply() {
+	if (!musicFullscreenRestorePending) { return; }
+	musicFullscreenRestorePending = false;
+	musicFullscreenOn();
+	musicFullscreenRestoreArm();
+	// Ask anyway: an engine that grants fullscreen without a press lands the
+	// top-layer picture here, and one that refuses keeps the dress above.
+	musicPlayerFullscreen();
+	// In the desktop app the shell can supply the press instead; the browser
+	// keeps the dress and the next real press.
+	musicFullscreenGestureAsk();
+}
+// Escape (and any explicit leave) takes the dress off for good; the intent is
+// written false at once, so a later reload does not put the player back big.
+function musicFullscreenLeave() {
+	if (!musicPseudoFullscreen()) { return false; }
+	musicFullscreenOff();
+	musicFullscreenIntent = false;
+	clearTimeout(musicFullscreenExitTimer);
+	try { playerCacheSaver(undefined, true); } catch (e) {}
+	return true;
+}
+
 // Fullscreen for the player, the way the picture needs it: the whole player
 // goes fullscreen, not the <video> element. A fullscreened <video> is the
 // browser's own media element, so moving the mouse over it brings the browser's
@@ -6274,11 +6475,20 @@ function musicPlayerFullscreen() {
 	// the button (and F) is a toggle: a second press leaves fullscreen
 	var fs = document.fullscreenElement || document.webkitFullscreenElement;
 	if (fs) {
+		musicFullscreenIntent = false;
+		clearTimeout(musicFullscreenExitTimer);
+		musicFullscreenWindow(false);
 		var out = document.exitFullscreen ? document.exitFullscreen()
 			: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
 		if (out && out.catch) { out.catch(function () {}); }
+		try { playerCacheSaver(undefined, true); } catch (e) {}
 		return;
 	}
+	// A press while the restored dress is up asks for the real thing; a restore
+	// with no press behind it is refused and leaves the dress in place.
+	if (musicFullscreenAsking) { return; }
+	musicFullscreenAsking = true;
+	setTimeout(function () { musicFullscreenAsking = false; }, 1500);
 	if (v.getAttribute('type') == 'video') {
 		$(v).show();
 	}
@@ -6286,9 +6496,18 @@ function musicPlayerFullscreen() {
 		$(v).hide();
 	}
 	var target = document.getElementById('music') || v;
-	var p = target.requestFullscreen ? target.requestFullscreen()
-		: (target.webkitRequestFullscreen ? target.webkitRequestFullscreen() : null);
-	if (p && p.catch) { p.catch(function () {}); }
+	// a restore asks outside a click, where an engine can refuse synchronously
+	var p = null;
+	try {
+		p = target.requestFullscreen ? target.requestFullscreen()
+			: (target.webkitRequestFullscreen ? target.webkitRequestFullscreen() : null);
+	}
+	catch (e) { p = null; }
+	if (p && p.then) {
+		p.then(function () { musicFullscreenAsking = false; },
+			function () { musicFullscreenAsking = false; });
+	}
+	else { musicFullscreenAsking = false; }
 }
 
 // The stream tap is a per-context worklet node. It is dropped when the window

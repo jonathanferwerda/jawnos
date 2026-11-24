@@ -3,7 +3,8 @@
 #            preview is fixed to the viewport, where the fullscreen player
 #            fills the screen; clamping it to the window's frame - still behind
 #            the player at its old size - left the thumb over the window's own
-#            seek bar instead of the fullscreen one.
+#            seek bar instead of the fullscreen one. The restored full-screen
+#            dress counts as the same box.
 
 use strict;
 use warnings;
@@ -27,5 +28,11 @@ like($hover, qr/fullscreen && fullscreen\.contains\(this\)[\s\S]*?var full = ful
 	'the clamp spans the fullscreen element, not the window behind it');
 like($hover, qr/else \{[\s\S]*?numeral\(\$\(this\)\.closest\('\.wind'\)\.css\('left'\)\)\.value\(\);[\s\S]*?numeral\(\$\(this\)\.closest\('\.wind'\)\.css\('right'\)\)\.value\(\)/,
 	'a windowed player still clamps to its window frame');
+
+# A reload restores the full screen as the music_fullscreen class instead of the
+# top layer, so the preview must follow that element when there is no
+# document.fullscreenElement.
+like($hover, qr/if \(!fullscreen\) \{ fullscreen = \$\('#<%= \$id %>'\)\.closest\('\.music_fullscreen'\)\[0\] \|\| null; \}/,
+	'a restored full screen is the same box as the top-layer one');
 
 done_testing();

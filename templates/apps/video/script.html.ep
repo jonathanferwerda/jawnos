@@ -158,7 +158,7 @@
 			// music.js as well as from a mouse move.
 			var <%= $miss %>HideAfter = (window.matchMedia && window.matchMedia('(hover: hover)').matches) ? 1200 : 3000;
 			function <%= $miss %>ChromeIdle() {
-				if ($('#<%= $id %>').attr('theatre_mode') == 'on' || document.fullscreenElement || '<%= $id %>' != 'video') {
+				if ($('#<%= $id %>').attr('theatre_mode') == 'on' || document.fullscreenElement || $('#<%= $id %>').closest('.music_fullscreen').length || '<%= $id %>' != 'video') {
 					var mouse = mouse_position();
 					var el = document.elementsFromPoint(mouse.x,mouse.y);	
 					var seen = 0;
@@ -766,8 +766,11 @@
 				// The preview is fixed to the viewport, so a fullscreen player fills
 				// the space the pointer is in. The window's frame is still behind it
 				// at its old size, and clamping to that box parked the thumb over
-				// the window's own seek bar instead of the fullscreen one.
+				// the window's own seek bar instead of the fullscreen one. A reload
+				// restores the full screen as a class rather than the top layer, so
+				// that dress counts as the same box (music.js).
 				var fullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+				if (!fullscreen) { fullscreen = $('#<%= $id %>').closest('.music_fullscreen')[0] || null; }
 				var wl, wr;
 				if (fullscreen && fullscreen.contains(this)) {
 					var full = fullscreen.getBoundingClientRect();

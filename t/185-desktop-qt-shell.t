@@ -204,6 +204,18 @@ like($bridge, qr/def browse_launcher/, 'and the Browse launcher');
 like($bridge, qr/BROWSE_BRIDGE_JS/, 'the Browse shim');
 like($bridge, qr/MEDIA_MONITOR_JS/, 'and the media monitor the keep-awake uses');
 
+# A reload cannot re-enter fullscreen on its own, but the shell can hand the
+# page a trusted click: Qt-delivered input is a real gesture to Chromium.
+like($qt, qr/"resume_fullscreen"/, 'the bridge can supply the fullscreen gesture');
+like($qt, qr/def synthetic_click\(view, x=8, y=None\)/, 'the shell has one way to deliver it');
+like($qt, qr/view\.focusProxy\(\)/, 'the page lives in the view\'s focus proxy');
+like($qt, qr/QMouseEvent\(kind, QPointF\(pt\), proxy\.mapToGlobal\(pt\)/,
+	'as a press and release, which Chromium treats as a click');
+like($qt, qr/QEvent\.Type\.MouseButtonPress,[\s\S]{0,80}QEvent\.Type\.MouseButtonRelease/,
+	'the release follows the press');
+like($qt, qr/reply = \{"ok": synthetic_click\(view_obj, px, py\)\}/, 'and the action answers through the bridge');
+like($qt, qr/from PySide6\.QtGui import QIcon, QMouseEvent/, 'with the trusted event type imported');
+
 # The two capabilities WebKitGTK gave a page by default and Qt does not:
 # downloads (Qt cancels one nothing accepts) and window.open/target=_blank
 # (Qt drops one whose page returns no window). A same-origin Manager URL keeps

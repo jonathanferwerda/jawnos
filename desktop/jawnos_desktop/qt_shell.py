@@ -1368,13 +1368,15 @@ def main(argv=None):
         from PySide6.QtCore import (
             QEvent,
             QObject,
+            QPoint,
+            QPointF,
             QTimer,
             QUrl,
             Qt,
             Signal,
             Slot,
         )
-        from PySide6.QtGui import QIcon
+        from PySide6.QtGui import QIcon, QMouseEvent
         from PySide6.QtWidgets import (
             QApplication,
             QDialog,
@@ -1845,6 +1847,38 @@ def main(argv=None):
         script.setRunsOnSubFrames(False)
         page_obj.scripts().insert(script)
 
+    def synthetic_click(view, x=8, y=None):
+        """Deliver a trusted click to the page in a WebEngine view.
+
+        A page cannot grant itself user activation, so a reload cannot put the
+        Music player back in fullscreen on its own. Input the embedder delivers
+        is trusted: a press and release on the view's focus proxy is a real
+        click to Chromium and satisfies requestFullscreen's gesture check. The
+        page keeps a 16x16 target in its bottom-left corner, so the click lands
+        on nothing else.
+        """
+        try:
+            proxy = view.focusProxy()
+        except Exception:
+            proxy = None
+        if proxy is None:
+            return False
+        try:
+            px = max(4, min(int(x), max(4, proxy.width() - 4)))
+            py = max(4, min(int(proxy.height() - 8) if y is None else int(y),
+                           max(4, proxy.height() - 4)))
+            pt = QPoint(px, py)
+            for kind in (QEvent.Type.MouseButtonPress,
+                         QEvent.Type.MouseButtonRelease):
+                event = QMouseEvent(kind, QPointF(pt), proxy.mapToGlobal(pt),
+                                    Qt.MouseButton.LeftButton,
+                                    Qt.MouseButton.LeftButton,
+                                    Qt.KeyboardModifier.NoModifier)
+                QApplication.sendEvent(proxy, event)
+            return True
+        except Exception:
+            return False
+
     def handle_message(name, raw, page_obj, view_obj, allowed_host, manager_base):
         """Handle one page message; allowed_host is this window's manager host.
 
@@ -1882,7 +1916,7 @@ def main(argv=None):
             return
         if action not in ("app_pubkey", "app_sign", "media_state",
                           "open_manager", "browse", "screen_list",
-                          "screen_want", "screen_cancel"):
+                          "screen_want", "screen_cancel", "resume_fullscreen"):
             return
         # Only the manager's own origin may use the bridge. A public page
         # loaded in this view must not be able to borrow the app's key.
@@ -1979,6 +2013,18 @@ def main(argv=None):
                 open_manager_window(url, manager,
                                     args.get("name") or "JawnOS Machine")
                 reply = {"ok": True}
+            elif action == "resume_fullscreen":
+                # The Music page restored its full-screen view after a reload
+                # and has no press to show the browser. This trusted click is
+                # that press; the page's corner target checks the dress itself,
+                # so a click that arrives after the person left does nothing.
+                args = message.get("args") or {}
+                try:
+                    px = int(args.get("x")) if args.get("x") is not None else 8
+                    py = int(args.get("y")) if args.get("y") is not None else None
+                except (TypeError, ValueError):
+                    px, py = 8, None
+                reply = {"ok": synthetic_click(view_obj, px, py)}
             else:
                 args = message.get("args") or {}
                 url = args.get("url") or ""

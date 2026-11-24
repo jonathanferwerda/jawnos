@@ -281,21 +281,33 @@ $(document).on('keydown', function(e) {
 					: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
 				if (out && out.catch) { out.catch(function () {}); }
 			}
+			else if (typeof musicFullscreenLeave == 'function' && musicFullscreenLeave()) {
+				// A reload restores the player's full-screen view without the
+				// browser's top layer; Escape leaves that dress the same way.
+				e.preventDefault();
+			}
 		}
 	}
 	else if (e.keyCode == 70 && !e.ctrlKey && !e.altKey && !e.metaKey
 		&& !$(e.target).is('textarea, select')
 		&& !($(e.target).is('input') && $(e.target).attr('type') != 'range')
-		&& (document.fullscreenElement || document.webkitFullscreenElement)) {
+		&& (document.fullscreenElement || document.webkitFullscreenElement
+			|| (typeof musicPseudoFullscreen == 'function' && musicPseudoFullscreen()))) {
 		// F leaves a fullscreen picture from here, before any app block: the
 		// Music shortcut block below is skipped while a slider has focus or
 		// another window is on top, which is exactly when the picture fills the
 		// screen. Typing in a field is left alone; a seek or volume slider still
-		// counts as a shortcut, not typing.
+		// counts as a shortcut, not typing. A reload's restored full screen is
+		// the dress, not the top layer, so F asks the browser for the real one
+		// from here as well (musicPlayerFullscreen).
 		e.preventDefault();
-		var fs_out = document.exitFullscreen ? document.exitFullscreen()
-			: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
-		if (fs_out && fs_out.catch) { fs_out.catch(function () {}); }
+		var fs_real = document.fullscreenElement || document.webkitFullscreenElement;
+		if (fs_real) {
+			var fs_out = document.exitFullscreen ? document.exitFullscreen()
+				: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
+			if (fs_out && fs_out.catch) { fs_out.catch(function () {}); }
+		}
+		else if (typeof musicPlayerFullscreen == 'function') { musicPlayerFullscreen(); }
 	}
 	else if (e.keyCode == 65 && e.ctrlKey == true) {
 		if (topWindow() == 'folders') {

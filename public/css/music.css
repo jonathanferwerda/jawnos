@@ -170,9 +170,15 @@ html, body {
    library has no place there - the picture and the two bars do - so it is put
    away while the player is in the top layer, and comes back on exit. The bars
    are shown and hidden by the video include's mousemove handler, the same one
-   that serves the theatre. */
+   that serves the theatre.
+
+   `music_fullscreen` is the same dress without the top layer: a browser will
+   not re-enter fullscreen for a page it has not seen a press on, so a reload
+   restores the player's full-screen view as a class and the next press asks
+   for the real thing (music.js). The two selectors must stay in step. */
 #music:fullscreen,
-#music:-webkit-full-screen {
+#music:-webkit-full-screen,
+#music.music_fullscreen {
 	position: fixed;
 	top: 0;
 	left: 0;
@@ -189,7 +195,8 @@ html, body {
 /* the picture's box fills the screen; the bars overlay it, so nothing of the
    page shows at the sides while the video decodes a scrub */
 #music:fullscreen #music_theatre,
-#music:-webkit-full-screen #music_theatre {
+#music:-webkit-full-screen #music_theatre,
+#music.music_fullscreen #music_theatre {
 	position: absolute;
 	top: 0;
 	left: 0;
@@ -199,12 +206,14 @@ html, body {
 	height: 100%;
 }
 #music:fullscreen #music_theatre > div,
-#music:-webkit-full-screen #music_theatre > div {
+#music:-webkit-full-screen #music_theatre > div,
+#music.music_fullscreen #music_theatre > div {
 	width: 100%;
 	height: 100%;
 }
 #music:fullscreen #music_library,
-#music:-webkit-full-screen #music_library {
+#music:-webkit-full-screen #music_library,
+#music.music_fullscreen #music_library {
 	display: none;
 }
 body.dark_theme #music,

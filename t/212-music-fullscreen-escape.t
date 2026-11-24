@@ -27,6 +27,12 @@ like($keys, qr/\.dialog_box:visible/, 'Escape only cancels a visible dialog');
 like($keys, qr/keyCode == 27\) \{.*?document\.exitFullscreen \? document\.exitFullscreen\(\)/s,
 	'the first Escape branch leaves fullscreen');
 like($keys, qr/webkitExitFullscreen/, 'with the prefixed fallback');
+# A reload restores the player's full-screen view as a class rather than the
+# browser's top layer; Escape must leave that dress too.
+like($keys, qr/else if \(typeof musicFullscreenLeave == 'function' && musicFullscreenLeave\(\)\)/,
+	'Escape also leaves a restored full-screen dress');
+like($keys, qr/musicFullscreenLeave\(\)\) \{[^}]*e\.preventDefault\(\);/s,
+	'and takes the key');
 my $escape_at = index($keys, 'keyCode == 27');
 my $exit_at = index($keys, 'document.exitFullscreen');
 my $music_at = index($keys, "topWindow() == 'music'");
@@ -42,6 +48,10 @@ ok($f_at >= 0 && ($music_at < 0 || $f_at < $music_at),
 	'F has a fullscreen-exit branch before the Music block');
 my $f_exit_at = index($keys, 'document.exitFullscreen', $f_at);
 ok($f_exit_at > $f_at, 'and that branch exits fullscreen');
+like($keys, qr/typeof musicPseudoFullscreen == 'function' && musicPseudoFullscreen\(\)/,
+	'F also knows the restored full-screen dress');
+like($keys, qr/else if \(typeof musicPlayerFullscreen == 'function'\) \{ musicPlayerFullscreen\(\); \}/,
+	'and asks for the real fullscreen from it');
 
 # The music bar's order is transport, theatre, shuffle, repeat, tools, title,
 # fullscreen. The title takes the row's slack, so the toggle after it sits at
@@ -71,5 +81,9 @@ like($help, qr/button or Escape leaves fullscreen/,
 	'and the video help names Escape too');
 like($help, qr/player button beside the track title/,
 	'the Music help says where the fullscreen button is');
+like($help, qr/A reload comes back to the full-screen picture/,
+	'and says a reload returns to the full-screen picture');
+like($help, qr/in the JawnOS desktop app it returns to the real full screen/,
+	'with the desktop app needing no extra press');
 
 done_testing();

@@ -442,8 +442,8 @@ like($fit, qr/var box = windowMaxRect\(\);/, 'the maximizer applies that box');
 like($fit, qr/function jawnosWindowFootApply\(\)/, 'a bar change has one re-fit');
 like($fit, qr/if \(view != 'max' && view != 'left' && view != 'right'\) \{ return; \}/,
 	'only a half or a maximize owns the foot');
-like($fit, qr/if \(!win\.is\(':visible'\) \|\| win\.hasClass\('window_full_viewport'\)\) \{ return; \}/,
-	'a hidden or whole-glass window keeps its box');
+like($fit, qr/if \(!win\.is\(':visible'\) \|\| win\.hasClass\('window_full_viewport'\) \|\| win\.hasClass\('window_music_full'\)\) \{ return; \}/,
+	'a hidden, whole-glass or restored-full-screen window keeps its box');
 like($fit, qr/windowMaximizer\(win\.attr\('timestamp'\), win\.attr\('app'\)\)/,
 	'a maximized window takes its box again');
 like($fit, qr/else \{ windowHalfski\(win, view\); \}/, 'a half takes its box again');

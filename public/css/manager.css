@@ -1561,6 +1561,30 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 .window_fullview_exit:hover,
 .window_fullview_exit:focus { opacity: 1; }
 .window_fullview_exit .window_control_icon { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* The Music player's restored full screen (music.js). A browser will not put a
+   page back in the top layer without a press, so a reload restores the player's
+   full-screen dress and its window takes the whole glass until the press asks
+   for the real thing. The box the window leaves is not touched: the rules
+   override it while the class is on, and removing the class puts it back. */
+.wind.window_music_full {
+	position: fixed !important;
+	left: 0 !important;
+	top: 0 !important;
+	width: 100% !important;
+	height: 100% !important;
+	inset: 0 !important;
+	z-index: 40000 !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+}
+.wind.window_music_full > .top_navbar { display: none !important; }
+.wind.window_music_full > .window_contents { width: 100% !important; height: 100% !important; padding-top: 0 !important; }
+/* a window that was already given the whole glass keeps that state, but its
+   corner restore would sit over the picture and would not leave the dress */
+.wind.window_music_full > .window_fullview_exit { display: none !important; }
+/* the frame ring is the window's, not the picture's */
+.wind.window_music_full::after { display: none; }
+#browser:has(> .wind.window_music_full:not([style*="display: none"])) { z-index: 40000 !important; }
 /* A launcher shell (the phone's home and the handheld's controller/games) is
    already the whole glass: the full-screen control has nothing to fill, and the
    corner restore would only put a way back over the app. A launcher-loaded app

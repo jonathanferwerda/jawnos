@@ -456,10 +456,23 @@ function jawnosWindowsReapTheme(theme) {
 // a stored video or iframe source would start over on the next reload.
 function jawnosWindowsShellSanitize(node) {
 	if (!node || node.nodeType !== 1) { return node; }
+	// The Music player's restored full screen is painted from the player cache on
+	// the next open, not carried in the window's markup: a stored dress would
+	// put a window back over the desk after a reload that is no longer fullscreen.
+	if (node.classList) {
+		node.classList.remove('window_music_full');
+		node.classList.remove('music_fullscreen');
+	}
 	var children = node.children || [];
 	for (var i = children.length - 1; i >= 0; i--) {
 		var child = children[i];
 		if (!child) { continue; }
+		// the desktop gesture target is a 16px invisible click catcher; storing
+		// it would leave it over the desk with no handler on the next restore
+		if (child.id == 'music_fullscreen_gesture') {
+			if (node.removeChild) { node.removeChild(child); }
+			continue;
+		}
 		var tag = String(child.tagName || '').toUpperCase();
 		if (tag == 'SCRIPT' || tag == 'NOSCRIPT') {
 			if (node.removeChild) { node.removeChild(child); }
