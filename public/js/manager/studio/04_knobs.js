@@ -156,6 +156,53 @@ function studioKnobSet(knob, value) {
 	studioKnobReadout(knob, value);
 }
 
+// The value a knob holds, printed above it. A knob is a picture of a rotation, so
+// the number is what tells a chain reloaded from the song where each control was
+// left; the label is made on the first paint and kept beside its knob.
+function studioKnobValue(knob, value) {
+	var label = knob.closest('.pedal_knob').length
+		? knob.parent().children('.knob_value').first()
+		: knob.nextAll('.knob_value').first();
+	if (!label.length) {
+		label = $('<b class="knob_value" aria-hidden="true"></b>');
+		if (knob.closest('.pedal_knob').length) {
+			label.prependTo(knob.parent());
+		}
+		else {
+			// the artwork tiles lay their knobs out in percents of the pedal
+			var style = knob[0].style;
+			label.css({
+				left: style.left || '0px',
+				width: style.width || '0px',
+				top: 'calc(' + (style.top || '0px') + ' - 15px)'
+			});
+			label.insertAfter(knob);
+		}
+	}
+	label.text(Math.round(value));
+}
+
+// Paint one knob from its input: the picture's angle and, on a pedal, the value
+// above it. `scope` is the tile being built: a board tile is cloned out of the
+// library and is not in the document yet when its saved values are applied, and
+// a knob that was never painted is why a reloaded chain looked all zeroes.
+function studioKnobPaint(input, scope) {
+	var channel = input.attr('channel');
+	var control = input.attr('control');
+	if (!channel || !control) { return; }
+	var value = studioKnobNumber(input.val(), 0);
+	var root = (scope && $(scope).length) ? $(scope) : $(document);
+	root.find('.knob[control="' + control + '"][channel="' + channel + '"]').each(function () {
+		var knob = $(this);
+		var flip = numeral(knob.attr('flip')).value() || 0;
+		var range = numeral(knob.attr('range')).value() || .85;
+		var turn = numeral((360 / 100) * (value * range)).value();
+		var angle = (knob.attr('direction') == 'counter') ? (flip - turn) : (flip + turn);
+		knob.css({ transform: 'rotate(' + angle + 'deg)' });
+		if (knob.closest('.pedal').length) { studioKnobValue(knob, value); }
+	});
+}
+
 $(document).on('pointerdown', '.knob', function (e) {
 	if (e.originalEvent.button) { return; }
 	var knob = $(this);
@@ -234,20 +281,9 @@ else { document.addEventListener('mousewheel', studioWheelHandler, { passive: fa
 $(document).on('change mousemove touchmove','.knob_control',function() {
 	var input = $(this);
 	var channel = input.attr('channel');
-
-	var current_value = input.val();
 	var control = input.attr('control');
-	var knob = $('.knob[control="' + control + '"][channel="' + channel + '"]');
-	var direction = knob.attr('direction');
-	var flip = numeral(knob.attr('flip')).value() || 0;
-	var range = numeral(knob.attr('range')).value() || .85;
-	var step = numeral(input.attr('step')).value();
 
-	var transform_value = (flip + numeral((360 / 100) * (current_value * range)).value());
-	if (direction == 'counter') {
-		transform_value = (flip - numeral((360 / 100) * (current_value * range)).value());
-	}
-	knob.css({ 'transform': 'rotate(' + transform_value + 'deg)' });
+	studioKnobPaint(input);
 	if (/^[0-9]+$/.test(channel)) { studioApplyChannel(channel); }
 	else { studioApplyPedals(); }
 	// Pan is part of the engine clip plan; other knobs are not, so only a pan

@@ -393,4 +393,22 @@ like($js, qr/studioListenRearmTimer = setTimeout\(function \(\) \{/,
 	'a burst of changes produces one re-arm');
 unlike($knobs, qr/studioListenRearm/, 'a knob turn stays a live param and never re-arms');
 
+# --- a pedal knob shows where it was left -----------------------------------
+# A knob is a picture of a rotation, so it is painted from its input (the value
+# the song saved) instead of sitting at zero, and its value is printed above it.
+like($knobs, qr/function studioKnobPaint\(input, scope\)/,
+	'one painter draws a knob from its input, wherever that input lives');
+like($knobs, qr/function studioKnobValue\(knob, value\)/,
+	'and prints the value above the knob');
+like($knobs, qr/knob\.nextAll\('\.knob_value'\)\.first\(\)/,
+	'the label is found again rather than made twice');
+like($rack, qr/studioKnobPaint\(\$\(this\), tile\);/,
+	'a board tile paints its restored knobs, so a reload is not all zeroes');
+like($style, qr/\.knob_value\s*\{[^}]*position:\s*absolute/s,
+	'the value sits above an artwork knob');
+like($style, qr/\.pedal_knob \.knob_value\s*\{[^}]*position:\s*static/s,
+	'and joins the drawn pedal\'s own column');
+unlike($rack, qr/axis:\s*'x'/,
+	'the rack sort is not axis-locked: a locked axis leaves the clone\'s top unwritten');
+
 done_testing();

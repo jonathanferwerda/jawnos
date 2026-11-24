@@ -85,6 +85,11 @@ function studioRackTile(ch, ins, chain) {
 		if ((!ins.values || ins.values[control] === undefined) && value !== undefined) {
 			ins.set(control, value);
 		}
+		// The picture and the value above it follow the input: a tile built from a
+		// saved song must show where its knobs were left, not sit at zero.
+		if ($(this).hasClass('knob_control') && typeof studioKnobPaint === 'function') {
+			studioKnobPaint($(this), tile);
+		}
 	});
 	if (ins.bypassed) { tile.addClass('studio_rack_off'); }
 	// Small tools on the frame: touch order and removal without leaving the board.
@@ -152,7 +157,10 @@ function studioRackRender(ch) {
 		};
 		holder.sortable({
 			items: '> .studio_rack_tile',
-			axis: 'x',
+			// No `axis`: jQuery UI writes only the axis it is not locked out of, so a
+			// horizontal-only sort never sets the clone's `top` and the picture rides
+			// the top of the page instead of the cursor. The row is one line, so the
+			// pointer's vertical travel changes nothing about where the drop lands.
 			tolerance: 'pointer',
 			// Every tile lives on the one board, so a drop lands in the same chain;
 			// the settle handler still tolerates a tile that says it came from elsewhere.
