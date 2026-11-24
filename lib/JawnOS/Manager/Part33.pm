@@ -57,7 +57,11 @@ use Sereal::Decoder qw(decode_sereal);
 use Minion;
 use IPC::Open2 qw(open2);
 
-our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
+our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, %fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
+
+# Per-worker throttle for the "vault unreadable, session kept" line: one line a
+# minute per caller, so a quiet failure is visible without flooding the log.
+my %vault_kept_seen;
 
 # The live snapshot gives every fiat pair and every coin in one read: a code's
 # rate is the reporting currency per one unit, so the pair is the ratio of the
@@ -349,6 +353,7 @@ sub authentication_passer($c) {
 	my $session_was_approved = (($c->session('authentication') || '') eq 'approved') ? 1 : 0;
 	my $session_server_time = $c->session('server_time') // 0;
 	my $gate_reason = '';
+	my $vault_unreadable_kept = 0;
 
 	# A cookie that is present but yields no session did not fail one of the
 	# checks below: it could not be read at all (a different signing key, or a
@@ -428,11 +433,24 @@ sub authentication_passer($c) {
 		my $suds_id = $c->session('suds_id');
 		# A live loopback session has no vault key to compare yet; its desk is
 		# local and the encrypted features ask for the code when they need it.
-		unless ($live_local || ($current_suds && $suds_id && secure_compare($suds_id, &subs::suds_id($current_suds)))) {
-			$authentication = 'revoked';
-			$gate_reason ||= !$current_suds ? 'vault-unreadable'
-				: !$suds_id ? 'session-has-no-suds'
-				: 'vault-changed';
+		my $suds_ok = $live_local || ($current_suds && $suds_id && secure_compare($suds_id, &subs::suds_id($current_suds)));
+		if (!$suds_ok) {
+			if (!$current_suds && $suds_id) {
+				# An unreadable vault is not a changed key. A machine whose key
+				# file or home is briefly unavailable would otherwise send every
+				# live session to the Gate on the next request - the fast path is
+				# skipped whenever a padlock row exists, so one failed read is
+				# enough. Keep the session, let the encrypted features fail on
+				# their own, and record the condition below. A vault that reads
+				# and differs still revokes.
+				$vault_unreadable_kept = 1;
+			}
+			else {
+				$authentication = 'revoked';
+				$gate_reason ||= !$current_suds ? 'vault-unreadable'
+					: !$suds_id ? 'session-has-no-suds'
+					: 'vault-changed';
+			}
 		}
 		# a device/person session lives only while its roster row does: revoking
 		# either revokes the cookie at the next check. The fast path above reads
@@ -551,6 +569,26 @@ sub authentication_passer($c) {
 		elsif ($c->session('warranty') < $server_time) {
 			$authentication = 'revoked';
 			$gate_reason ||= 'warranty-expired';
+		}
+	}
+	# An unreadable vault keeps the session, so it never reaches the lapse log
+	# above; say it here, throttled per caller, or the condition would be
+	# invisible on a machine that is quietly serving from a failed read.
+	if ($vault_unreadable_kept && $session_was_approved) {
+		my $xhr = (($c->req->headers->header('X-Requested-With') // '') =~ /XMLHttpRequest/i) ? 1 : 0;
+		if ($xhr || $app_path eq '/manager') {
+			my $now = &subs::rightNow();
+			my $key = ($c->tx->remote_address || '?') . '|' . ($c->session('device_uuid') || $c->session('person_uuid') || '');
+			if (!defined $vault_kept_seen{$key} || $now - $vault_kept_seen{$key} > 60000) {
+				$vault_kept_seen{$key} = $now;
+				my $stale = $session_server_time ? int(($server_time - $session_server_time) / 1000) : -1;
+				$log->info('session gate: vault-unreadable (kept) '
+					. ($c->req->method || 'GET') . ' ' . $app_path
+					. ' from ' . ($c->tx->remote_address || '?')
+					. ' source=' . ($c->session('source') || '-')
+					. ' stale=' . $stale . 's'
+					. ' answer=' . ($xhr ? 'xhr' : 'gate'));
+			}
 		}
 	}
 	# One line per lapse, before the cookie is rewritten. Only a session that had

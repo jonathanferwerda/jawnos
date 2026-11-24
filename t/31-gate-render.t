@@ -52,6 +52,9 @@ foreach my $reason (qw(
 }
 like($text, qr/'ticket-' \. \(\$ticket->\{'status'\} \|\| 'missing'\)/, 'a refused ticket names its status');
 like($text, qr/session gate: cookie-unreadable/, 'a cookie that cannot be read is named too');
+like($text, qr/\$vault_unreadable_kept = 1/, 'an unreadable vault keeps a session that has a fingerprint');
+like($text, qr/'vault-changed'/, 'but a vault that reads and differs still revokes');
+like($text, qr/session gate: vault-unreadable \(kept\)/, 'and the kept session is recorded without a reload');
 
 # The template really does use it - a rename would make the check above vacuous.
 my $template = "$FindBin::Bin/../templates/gate.html.ep";
