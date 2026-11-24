@@ -102,7 +102,13 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'alarm' || ($ENV{PORT_ENV} eq 'developmen
 	#&Alarm::alarm_clock();;
 }
 
-if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'development' && $ENV{PURPOSE} eq 'main'))) {
+# Only the websocket worker holds the page sockets, so only it may bind the
+# push sockets. A development main worker used to bind them too (the alarm and
+# websocket setup ran in it), and the last binder won the path: a push from a
+# manager worker then landed in a worker with no page and was delivered
+# nowhere. The browser's socket is on the websocket worker's own listener
+# (ws_port) in development as well, so the main worker must not bind it.
+if ($ENV{PURPOSE} && $ENV{PURPOSE} eq 'websocket') {
 	# Sessions are ptys owned by this worker: a restarted worker has none, so
 	# the list a person sees must not promise shells that no longer exist.
 	$gb::terminal_sessions = {};
@@ -260,6 +266,9 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 	# One accessor for the relay listener: native binds one path per app or one
 	# path for every app (the payload names it), and TCP binds one shared port.
 	sub ws_server_ensure($app) {
+		# A main worker can reach this through the websocket route; it must not
+		# bind the push path, or it steals it from the worker holding the pages.
+		return undef unless $ENV{PURPOSE} && $ENV{PURPOSE} eq 'websocket';
 		if (JawnOS::Transport::tcp()) {
 			my $server = $ws_server->{'__tcp'};
 			return $server if $server && defined Mojo::IOLoop->acceptor($server);
