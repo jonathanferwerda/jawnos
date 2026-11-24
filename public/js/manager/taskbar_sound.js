@@ -18,6 +18,10 @@ var jawnosSoundTaskbarWheelDelay = 250;
 var jawnosSoundTaskbarWheelAccum = {};
 var jawnosSoundTaskbarWheelVolume = {};
 var jawnosSoundTaskbarWheelTimer = {};
+// The Music transport in the panel. The machine list and the remembered remote
+// target are read once and refreshed when the panel opens; the remote player's
+// state is polled only while the panel is on screen.
+var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0 };
 
 function jawnosSoundTaskbarPercent(value) {
 	var pct = parseFloat(value);
@@ -232,6 +236,145 @@ function jawnosSoundTaskbarLevelSection(status) {
 	return section;
 }
 
+// ---- the Music transport in the panel -------------------------------------
+//
+// The widget is the quickest way to start Music and to control a machine's
+// Music app. The local target is this window's own player (music.js); a remote
+// target is relayed to that machine. The widget remembers its remote target
+// separately from the Music window's own remote session.
+function jawnosSoundTaskbarMusicTarget() {
+	return jawnosSoundTaskbarMusic.widget_target || '';
+}
+function jawnosSoundTaskbarMusicLoad() {
+	$.ajax({
+		url: '/music/remote_machines',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		success: function(r) {
+			if (!r || !r.ok) { return; }
+			jawnosSoundTaskbarMusic.machines = r.machines || [];
+			jawnosSoundTaskbarMusic.widget_target = r.widget_target || '';
+			jawnosSoundTaskbarMusic.loaded = 1;
+			jawnosSoundTaskbarPanelRefresh();
+		}
+	});
+}
+function jawnosSoundTaskbarMusicState() {
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!target) {
+		return (typeof musicTransportStateLocal == 'function') ? musicTransportStateLocal() : null;
+	}
+	return jawnosSoundTaskbarMusic.state;
+}
+function jawnosSoundTaskbarMusicStateLoad() {
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!target) {
+		jawnosSoundTaskbarMusic.state = null;
+		jawnosSoundTaskbarMusicRepaint();
+		return;
+	}
+	if (typeof document !== 'undefined' && document.hidden) { return; }
+	$.ajax({
+		url: '/music/transport_state',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function(r) {
+			if (!r || !r.ok || jawnosSoundTaskbarMusicTarget() !== target) { return; }
+			jawnosSoundTaskbarMusic.state = r;
+			jawnosSoundTaskbarMusicRepaint();
+		}
+	});
+}
+// The player's icons follow the selected icon set; the window's own logo
+// carries both glyphs, so use them when it is open and the shipped pair when it
+// is not.
+function jawnosSoundTaskbarMusicIcon(playing) {
+	var logo = $('#play_logo');
+	var src = playing ? logo.attr('pause_icon') : logo.attr('play_icon');
+	if (src) { return src; }
+	return playing ? '/icons/pause.jpg' : '/icons/play.jpg';
+}
+function jawnosSoundTaskbarMusicRepaint() {
+	var section = $('#taskbar_sound_panel [data-sound-section="music"]');
+	if (!section.length) { return; }
+	var state = jawnosSoundTaskbarMusicState();
+	var playing = state && state.playing ? 1 : 0;
+	section.find('[data-music-role="playpause"] img')
+		.attr('src', jawnosSoundTaskbarMusicIcon(playing))
+		.attr('hint', playing ? jawnosT('Pause') : jawnosT('Play'));
+	section.find('[data-music-role="playpause"]').attr('aria-label', playing ? jawnosT('Pause') : jawnosT('Play'));
+	var now = (state && (state.title || state.file)) ? (state.title || '') : '';
+	section.find('[data-music-role="now"]').text(now);
+}
+function jawnosSoundTaskbarMusicTransport(action) {
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!target) {
+		// Keep the local path here, in the page: music.js already has the player
+		// and the one-meaning "open it if it is not open" behaviour.
+		if (typeof musicTransportLocal == 'function') { musicTransportLocal(action); }
+		setTimeout(jawnosSoundTaskbarMusicRepaint, 150);
+		setTimeout(jawnosSoundTaskbarMusicRepaint, 900);
+		return;
+	}
+	var state = jawnosSoundTaskbarMusic.state;
+	var send = action;
+	if (action == 'toggle') { send = (state && state.playing) ? 'pause' : 'play'; }
+	$.ajax({
+		url: '/music/transport',
+		type: 'POST',
+		dataType: 'json',
+		data: { target: target, action: send },
+		success: function(r) {
+			if (r && r.ok) { setTimeout(jawnosSoundTaskbarMusicStateLoad, 250); }
+			else { jawnosSoundTaskbarFail((r && r.error) || jawnosT('Could not control that machine.')); }
+		},
+		error: function() { jawnosSoundTaskbarFail(jawnosT('Could not control that machine.')); }
+	});
+}
+function jawnosSoundTaskbarMusicSection() {
+	var section = $('<div class="taskbar_panel_section"></div>').attr('data-sound-section', 'music');
+	section.append($('<h4></h4>').text(jawnosT('Music')));
+	var transport = $('<div class="taskbar_panel_row taskbar_music_transport"></div>');
+	var maker = function(action, icon, label) {
+		return $('<button type="button"></button>')
+			.attr('data-music-action', action)
+			.attr('data-music-role', action == 'toggle' ? 'playpause' : action)
+			.attr('aria-label', jawnosT(label))
+			.append($('<img alt="">').attr('src', icon).attr('hint', jawnosT(label)));
+	};
+	var prev_icon = $('#prev_logo').attr('src') || '/icons/prev.jpg';
+	var next_icon = $('#next_logo').attr('src') || '/icons/next.jpg';
+	transport.append(maker('prev', prev_icon, 'Previous'));
+	transport.append(maker('toggle', jawnosSoundTaskbarMusicIcon(false), 'Play'));
+	transport.append(maker('next', next_icon, 'Next'));
+	section.append(transport);
+	var row = $('<div class="taskbar_panel_row"></div>');
+	var select = $('<select class="taskbar_music_select" data-music-target></select>')
+		.attr('aria-label', jawnosT('The Music app this widget controls'));
+	select.append($('<option value=""></option>').text(jawnosT('This machine')));
+	var target = jawnosSoundTaskbarMusicTarget();
+	var target_listed = false;
+	$.each(jawnosSoundTaskbarMusic.machines || [], function(i, machine) {
+		if (!machine || !machine.uuid) { return; }
+		if (machine.uuid == target) { target_listed = true; }
+		select.append($('<option></option>').attr('value', machine.uuid).text(machine.label || machine.uuid));
+	});
+	// a remembered machine that has gone offline still shows as the choice; the
+	// next press says it is not reachable instead of silently aiming elsewhere
+	if (target && !target_listed) {
+		select.append($('<option></option>').attr('value', target).text(target));
+	}
+	select.val(target);
+	row.append(select);
+	section.append(row);
+	section.append($('<div class="taskbar_music_now" data-music-role="now"></div>'));
+	jawnosSoundTaskbarMusicRepaint();
+	return section;
+}
+
 function jawnosSoundTaskbarPanelFooter() {
 	var footer = $('<div class="taskbar_panel_footer"></div>');
 	footer.append($('<button type="button" class="taskbar_panel_open"></button>')
@@ -246,6 +389,9 @@ function jawnosSoundTaskbarPanelBuild(panel) {
 	var footer = jawnosSoundTaskbarPanelFooter();
 	var note = $('<p class="taskbar_panel_note"></p>').attr('data-sound-note', '1');
 	panel.append(jawnosSoundTaskbarLevelSection(status));
+	panel.append(jawnosSoundTaskbarMusicSection());
+	// the section was built off the document; paint its state once it is in reach
+	setTimeout(jawnosSoundTaskbarMusicRepaint, 0);
 	if (!status || !status.ok) {
 		// Mark the panel so the next poll rebuilds it in place.
 		jawnosSoundTaskbarPanelStale = true;
@@ -363,6 +509,12 @@ $(document).on('click', '.taskbar_widget[widget="sound"]', function() {
 	if (typeof jawnosTaskbarPanelToggle === 'function') {
 		var open = typeof jawnosTaskbarPanelIsOpen === 'function' && jawnosTaskbarPanelIsOpen('taskbar_sound_panel');
 		if (!open && (!jawnosSoundTaskbarData || !jawnosSoundTaskbarData.ok)) { jawnosSoundTaskbarLoad(); }
+		if (!open) {
+			// refresh the peers on every open: a machine that joined since the page
+			// loaded belongs in the picker, and one that left should stop showing
+			jawnosSoundTaskbarMusicLoad();
+			jawnosSoundTaskbarMusicStateLoad();
+		}
 		jawnosTaskbarPanelToggle('taskbar_sound_panel', $(this), jawnosSoundTaskbarPanelBuild);
 		return;
 	}
@@ -422,7 +574,44 @@ $(document).on('change', '#taskbar_sound_panel [data-sound-level]', function() {
 	});
 });
 
+$(document).on('click', '#taskbar_sound_panel [data-music-action]', function(e) {
+	e.stopPropagation();
+	jawnosSoundTaskbarMusicTransport($(this).attr('data-music-action'));
+});
+
+$(document).on('change', '#taskbar_sound_panel [data-music-target]', function() {
+	var target = $(this).val() || '';
+	jawnosSoundTaskbarMusic.widget_target = target;
+	jawnosSoundTaskbarMusic.state = null;
+	$.ajax({
+		url: '/music/remote_target',
+		type: 'POST',
+		dataType: 'json',
+		data: { target: target, scope: 'widget' },
+		success: function(r) {
+			if (!r || !r.ok) {
+				jawnosSoundTaskbarFail((r && r.error) || jawnosT('Could not remember that machine.'));
+				jawnosSoundTaskbarMusicLoad();
+				return;
+			}
+			jawnosSoundTaskbarMusicStateLoad();
+			jawnosSoundTaskbarMusicRepaint();
+		},
+		error: function() {
+			jawnosSoundTaskbarFail(jawnosT('Could not remember that machine.'));
+			jawnosSoundTaskbarMusicLoad();
+		}
+	});
+});
+
 $(function() {
 	setTimeout(jawnosSoundTaskbarLoad, 1600);
 	setInterval(jawnosSoundTaskbarLoad, 45000);
+	setTimeout(jawnosSoundTaskbarMusicLoad, 1900);
+	// Only a panel that is on screen pays for the remote player's state.
+	setInterval(function() {
+		if (typeof jawnosTaskbarPanelIsOpen === 'function' && jawnosTaskbarPanelIsOpen('taskbar_sound_panel')) {
+			jawnosSoundTaskbarMusicStateLoad();
+		}
+	}, 5000);
 });

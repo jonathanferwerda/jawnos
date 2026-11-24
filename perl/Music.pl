@@ -315,4 +315,5 @@ require "./perl/Music/05_library_and_queue.pl";
 require "./perl/Music/06_track_naming.pl";
 require "./perl/Music/07_song_maker.pl";
 require "./perl/Music/08_music_routes.pl";
+require "./perl/Music/09_remote_control.pl";
 1;

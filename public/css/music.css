@@ -909,7 +909,8 @@ body.dark_theme .music_cfg_drawer {
 }
 .music_cfg_drawer .music_folder_toggle,
 .music_cfg_drawer .music_archive_toggle,
-.music_cfg_drawer .music_audio_output_select {
+.music_cfg_drawer .music_audio_output_select,
+.music_cfg_drawer .music_remote_target {
 	height: auto;
 	min-height: 30px;
 	margin: 0;
@@ -923,11 +924,13 @@ body.dark_theme .music_cfg_drawer {
 }
 .music_cfg_drawer .music_folder_toggle:hover,
 .music_cfg_drawer .music_archive_toggle:hover,
-.music_cfg_drawer .music_audio_output_select:hover {
+.music_cfg_drawer .music_audio_output_select:hover,
+.music_cfg_drawer .music_remote_target:hover {
 	border-color: var(--music-accent);
 }
 .music_cfg_drawer .music_folder_toggle[status="on"],
-.music_cfg_drawer .music_archive_toggle[status="on"] {
+.music_cfg_drawer .music_archive_toggle[status="on"],
+.music_cfg_drawer .music_remote_target[selected="yes"] {
 	background: var(--music-accent);
 	border-color: var(--music-accent);
 	color: #111;
@@ -1514,4 +1517,37 @@ body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="rou
 	font-size: 11px;
 	line-height: 1.4;
 	color: var(--ink-muted);
+}
+
+/* ---- remote control -------------------------------------------------------
+   A Music window that is controlling another machine becomes that machine's
+   app: its library, its player, its settings. The video surface, the theatre
+   toggle and full screen are left out - there is no picture to show - while the
+   player bar and the library stay. The local player is not touched. */
+#music.music_remote_mode #video,
+#music.music_remote_mode #music_album_cover,
+#music.music_remote_mode .media_visualizer,
+#music.music_remote_mode .media_visual_media,
+#music.music_remote_mode .music_chapters,
+#music.music_remote_mode .media_tools_panel,
+#music.music_remote_mode .media_tools_toggle,
+#music.music_remote_mode .media_visualization_label,
+#music.music_remote_mode #music_list_view,
+#music.music_remote_mode [hint="Fullscreen"],
+#music.music_remote_mode [hint="Theatre mode"] { display: none !important; }
+
+#music_remote_now {
+	max-width: 34%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	opacity: .72;
+}
+
+/* The row the controlled machine is playing. It is deliberately not `.playing`:
+   that class belongs to this machine's own player and is what the player cache
+   reads back. */
+#music .music_file.music_remote_playing {
+	box-shadow: inset 3px 0 0 var(--music-accent);
 }

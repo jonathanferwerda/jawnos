@@ -1,0 +1,41 @@
+<%# The remote control panel: choose another machine whose Music app this window
+    becomes. The panel is a drawer like Audio and Configure, and the local
+    player is never stopped by choosing one. %>
+<% my $target = $crate->{'settings'}->{'remote_target'} || ''; %>
+<% my $remote_machines = &subs::remote_machine_lister({ self => 'no' }) || []; %>
+<% my @machines; my %seen_machine; my $self_signatorial = &subs::signatorial_designer(); %>
+<% foreach my $rm ( @{$remote_machines} ) {
+	next if ($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1';
+	next if $self_signatorial && ($rm->{'signatorial'} || '') eq $self_signatorial;
+	next if ($rm->{'device'} || '') eq 'server';
+	next unless ($rm->{'connection'} || '') eq 'active';
+	my $uuid = $rm->{'uuid'} || '';
+	next unless length $uuid && !$seen_machine{$uuid}++;
+	push @machines, $rm;
+} %>
+<% my $target = $crate->{'settings'}->{'remote_target'} || ''; %>
+<div class="music_cfg_bar" hint="<%= &subs::ui('Drag here to move this panel') %>">
+	<span class="music_cfg_bar_title"><%= &subs::ui('Remote Music') %></span>
+	<button type="button" id="music_remote_close" class="music_cfg_close hover" hint="<%= &subs::ui('Close') %>" aria-label="<%= &subs::ui('Close') %>">&times;</button>
+</div>
+<div class="music_cfg_body">
+	<div class="music_cfg_section">
+		<h4 class="music_cfg_heading"><%= &subs::ui('Control another machine') %></h4>
+		<p class="music_cfg_note"><%= &subs::ui('This machine keeps playing. The window becomes the other machine’s Music app, without its video screen.') %></p>
+		<div id="music_remote_machines" class="music_cfg_chips">
+			<button type="button" class="music_remote_target hover" data-remote-target="local" selected="<%= $target ? 'no' : 'yes' %>" hint="<%= &subs::ui('This machine') %>"><%= &subs::ui('This machine') %></button>
+			<% my %listed = map { ($_->{'uuid'} || '') => 1 } @machines; %>
+			<% foreach my $rm ( @machines ) { %>
+				<% my $label = &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $rm->{'uuid'}; %>
+				<button type="button" class="music_remote_target hover" data-remote-target="<%= $rm->{'uuid'} %>" selected="<%= ($target && $target eq $rm->{'uuid'}) ? 'yes' : 'no' %>"><%= $label %></button>
+			<% } %>
+			<% if ($target && !$listed{$target}) { %>
+				<% my $offline = &subs::db_query('select hostname,fqdn from remote_machines where uuid=?', $target)->hashes->[0]; %>
+				<button type="button" class="music_remote_target hover" data-remote-target="<%= $target %>" selected="yes"><%= ($offline && ($offline->{'hostname'} || $offline->{'fqdn'})) ? ($offline->{'hostname'} || $offline->{'fqdn'}) : $target %> (<%= &subs::ui('offline') %>)</button>
+			<% } %>
+		</div>
+		<% if (!scalar @machines) { %>
+			<p class="music_cfg_note"><%= &subs::ui('No other machine is reachable right now.') %></p>
+		<% } %>
+	</div>
+</div>

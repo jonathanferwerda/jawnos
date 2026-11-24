@@ -124,6 +124,12 @@
 					// The input id carries this render's miss, but a refresh can hand the
 					// window a new one; the element itself always knows which it wears.
 					var bar_miss = $('#<%= $id %>').attr('miss') || '<%= $miss %>';
+					// A Music window controlling another machine shows that machine's
+					// clock and title; the remote state poll owns them, not this element.
+					if (typeof musicRemoteTarget === 'function' && musicRemoteTarget()) {
+						// leave the bar to musicRemoteApplyState
+					}
+					else {
 					$('#' + bar_miss + '_position').val(v.duration ? v.currentTime / v.duration * 100 : 0);
 					$('#<%= $id %>_time_display').text(numeral(v.currentTime).format('00:00:00'));
 					<% if ($source eq 'music') { %>
@@ -140,6 +146,7 @@
 					}
 					$('#<%= $id %>_full_title').text(played_title);
 					<% } %>
+					}
 				}, 1000);
 			}
 			<% if ($source eq 'music') { %>
@@ -636,6 +643,21 @@
 			});
 
 			vidOn('change mousedown mouseup touchmove click', '#<%= $miss %>_position', function(e) {
+				// A Music window controlling another machine moves that machine's
+				// player, not this hidden element. The percentage is the only
+				// position both players agree on before the remote duration lands.
+				if (typeof musicRemoteTarget === 'function' && musicRemoteTarget()) {
+					var percent = parseFloat($(this).val());
+					if (isFinite(percent)) {
+						$.ajax({
+							url: '/music/transport',
+							type: 'POST',
+							dataType: 'json',
+							data: { target: musicRemoteTarget(), action: 'seek_percent', percent: percent }
+						});
+					}
+					return;
+				}
 				var movable = 1;
 				if (e.type == 'mousemove' && e.buttons == 0) {
 					movable = 0;

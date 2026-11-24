@@ -1922,7 +1922,7 @@ function musicEqualizerDirty() {
 function musicEqualizerSave() {
 	clearTimeout(music_eq_save_timer);
 	music_eq_save_timer = setTimeout(function() {
-		settingSetter({
+		musicSettingSave({
 			app: 'music',
 			setting: 'equalizer',
 			value: JSON.stringify({ bands: music_equalizer.bands, bass: music_equalizer.bass, preset: music_equalizer.preset })
@@ -1930,6 +1930,14 @@ function musicEqualizerSave() {
 	}, 250);
 }
 function musicEqualizerApply(chain) {
+	// While this window controls another machine the visible curve is that
+	// machine's; touching this machine's graph with it would re-tune the local
+	// playback the person was told would carry on. The snapshot is applied on
+	// the way out, when the target is already gone.
+	if (musicRemoteTarget()) {
+		if (!chain) { musicEqualizerPaint(); }
+		return;
+	}
 	var g = chain || musicVisual;
 	var ctx = musicVisual && musicVisual.ctx;
 	var now = ctx ? ctx.currentTime : 0;
@@ -1975,6 +1983,13 @@ function musicEqualizerPaint() {
 }
 function musicEqualizerChanged(preset) {
 	music_equalizer.preset = preset || 'custom';
+	if (musicRemoteTarget()) {
+		// The curve belongs to the controlled machine now. This machine's own
+		// player is left exactly as it was; the snapshot is restored on the way out.
+		musicEqualizerPaint();
+		musicEqualizerSave();
+		return;
+	}
 	// A non-flat curve needs the shared graph; flat leaves it alone (and does not
 	// build one just to multiply the sound by nothing).
 	if (musicEqualizerDirty() && musicGraphWanted() && !(musicVisual && musicVisual.limiter)) {
@@ -2055,7 +2070,8 @@ $(document).on('input', '#music_eq_bass', function() {
 // spot in the same window_places store the Guide uses, so it comes back after a
 // restart. A sheet never moved opens against the Music window's top-right.
 function musicConfigKey(panel) {
-	return 'music:' + (panel.attr('id') == 'music_audio_panel' ? 'audio' : 'configuration');
+	var id = panel.attr('id');
+	return 'music:' + (id == 'music_audio_panel' ? 'audio' : (id == 'music_remote_panel' ? 'remote' : 'configuration'));
 }
 // A sheet never moved opens against the Music window's top-right. When the
 // other sheet is already open, put this one beside it rather than over it, so
@@ -2075,8 +2091,8 @@ function musicConfigPlace(panel) {
 		left = r.right - w - 16;
 		top = r.top + 90;
 	}
-	var other = musicConfigSheet((panel.attr('id') == 'music_audio_panel') ? 'music_configuration' : 'music_audio_panel');
-	if (other.length && other.is(':visible')) {
+	var other = $('#music_configuration, #music_audio_panel, #music_remote_panel').not(panel).filter(':visible').first();
+	if (other.length) {
 		var o = other[0].getBoundingClientRect();
 		var gap = 12;
 		var clear = (left + w + gap <= o.left || left >= o.right + gap || top + h + gap <= o.top || top >= o.bottom + gap);
@@ -2106,7 +2122,7 @@ function musicConfigPlace(panel) {
 	});
 }
 function musicConfigFront(panel) {
-	$('#music_configuration, #music_audio_panel').not(panel).css('z-index', 900000);
+	$('#music_configuration, #music_audio_panel, #music_remote_panel').not(panel).css('z-index', 900000);
 	panel.css('z-index', 900001);
 }
 // The window paints its own title bar above its contents, so a sheet left in
@@ -2160,7 +2176,7 @@ $(document).on('mousedown touchstart', '.music_cfg_drawer', function () {
 	musicConfigFront($(this));
 });
 function musicConfigDraggable() {
-	$('#music_configuration, #music_audio_panel').filter(':not([cfg_drag_armed])').each(function () {
+	$('#music_configuration, #music_audio_panel, #music_remote_panel').filter(':not([cfg_drag_armed])').each(function () {
 		var panel = $(this);
 		panel.attr('cfg_drag_armed', '1');
 		panel.draggable({
@@ -2334,6 +2350,7 @@ function musicContentCache(html) {
 	doc.body.innerHTML = html;
 	var shell = $(doc.body);
 	shell.find('.playing').removeClass('playing holla');
+	shell.find('.music_remote_playing').removeClass('music_remote_playing');
 	// where the theatre's chrome is at this instant is runtime state; the next
 	// open decides it again from theatre_mode instead of replaying a hidden bar
 	shell.find('#interface, .media_controls.music_player_bar').removeClass('music_chrome_hidden');
@@ -2430,6 +2447,346 @@ function musicToggle(files, same_order) {
 	}
 }
 
+// ---- remote control --------------------------------------------------------
+//
+// A Music window may become the face of another machine's Music app. The target
+// rides on #music (remote_target); while it is empty this window is its own
+// player. The local player is never stopped or muted by this mode: local
+// playback carries on while the window shows the peer's library and controls.
+//
+// The taskbar widget has its own target (music.widget_target) and uses the same
+// routes, so a person can control a remote room without changing what the Music
+// window is showing.
+function musicRemoteTarget() {
+	return $('#music').attr('remote_target') || '';
+}
+function musicRemoteSend(action, extra) {
+	var target = musicRemoteTarget();
+	if (!target) { return false; }
+	var data = $.extend({ target: target, action: action }, extra || {});
+	$.ajax({ url: '/music/transport', type: 'POST', dataType: 'json', data: data });
+	return true;
+}
+// A remote setting is written on the controlled machine, never here. The local
+// player keeps the settings it was playing with until the window is let go.
+function musicSettingSave(setter) {
+	if (setter && setter.app == 'music' && musicRemoteTarget()) {
+		$.ajax({
+			url: '/music/remote_setting',
+			type: 'POST',
+			dataType: 'json',
+			data: { target: musicRemoteTarget(), setting: setter.setting, value: setter.value }
+		});
+		return;
+	}
+	return settingSetter(setter);
+}
+
+var music_transport_pending = [];
+var music_transport_timer = 0;
+var music_transport_waits = 0;
+var music_transport_window_ready = false;
+function musicTransportReady() {
+	return (music_transport_window_ready && typeof tree == 'object' && tree && tree.sound && $('#music').length > 0);
+}
+function musicTransportFlush() {
+	clearTimeout(music_transport_timer);
+	if (!music_transport_pending.length) { return; }
+	if (!musicTransportReady()) {
+		if (++music_transport_waits > 40) {
+			music_transport_pending = [];
+			music_transport_waits = 0;
+			return;
+		}
+		music_transport_timer = setTimeout(musicTransportFlush, 250);
+		return;
+	}
+	var queue = music_transport_pending.splice(0, music_transport_pending.length);
+	music_transport_waits = 0;
+	$.each(queue, function(i, item) { musicTransportRun(item.action, item.opts); });
+}
+// A transport press from the taskbar or from a peer's controller. A window that
+// is not open is opened first; the action waits for the player that open builds.
+function musicTransportLocal(action, opts) {
+	action = String(action || '').toLowerCase();
+	opts = opts || {};
+	if (!/^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files)$/.test(action)) { return false; }
+	if (action == 'play_files') { return musicPlayFiles(opts.files, opts.same_order, opts.key); }
+	if (!musicTransportReady()) {
+		music_transport_pending.push({ action: action, opts: opts });
+		// A window already in the DOM is either initialising or minimised; the
+		// end of musicInit flushes the queue, so only a missing window is opened.
+		if (!$('#music').length && typeof musicToggle == 'function') { musicToggle(); }
+		musicTransportFlush();
+		return true;
+	}
+	return musicTransportRun(action, opts);
+}
+function musicTransportRun(action, opts) {
+	if (!musicTransportReady()) { return false; }
+	var sound = tree.sound;
+	if (action == 'next') { nextTrack(); return true; }
+	if (action == 'prev') { prevTrack(); return true; }
+	if (action == 'open') { return true; }
+	if (action == 'stop') {
+		sound.pause();
+		sound.state = 0;
+		$('#play_logo').attr('src', jawnosPlayIcon());
+		remoteTrackToggle({ file: (tree.songs[0] ? tree.songs[0].file : ''), toggle: 'off', seek: sound.currentTime });
+		playerCacheSaver(undefined, true);
+		return true;
+	}
+	if (action == 'seek_percent') {
+		var duration = parseFloat(sound.duration);
+		var percent = parseFloat(opts.percent);
+		if (!isFinite(duration) || duration <= 0 || !isFinite(percent)) { return false; }
+		sound.currentTime = Math.max(0, Math.min(duration, duration * (percent / 100)));
+		remoteTrackToggle({ file: (tree.songs[0] ? tree.songs[0].file : ''), toggle: 'seek', seek: sound.currentTime });
+		playerCacheSaver();
+		return true;
+	}
+	var playing = !sound.paused && !sound.ended;
+	var want_play = (action == 'play') ? true : (action == 'pause' ? false : !playing);
+	if (!want_play) {
+		if (!sound.paused) {
+			sound.pause();
+			sound.state = 0;
+			$('#play_logo').attr('src', jawnosPlayIcon());
+			remoteTrackToggle({ file: (tree.songs[0] ? tree.songs[0].file : ''), toggle: 'off', seek: sound.currentTime });
+			playerCacheSaver(undefined, true);
+		}
+		return true;
+	}
+	if (playing) { return true; }
+	musicPlayToggleLocal();
+	return true;
+}
+// Hand a queue to a machine's Music app. musicToggle(files) already means
+// "open with this list and start it", and windowMaker replaces the existing
+// Music window rather than making a second one.
+function musicPlayFiles(files, same_order, key) {
+	if (!files || !files.length) { return false; }
+	if (typeof musicToggle == 'function') { musicToggle(files, same_order ? 1 : 0); }
+	return true;
+}
+function musicTransportStateLocal() {
+	if (!musicTransportReady()) { return { ok: 1, playing: 0, key: '', file: '', title: '', currentTime: 0, duration: 0 }; }
+	var sound = tree.sound;
+	var file = (typeof playerCacheFile == 'function') ? playerCacheFile() : '';
+	var title = String(file || '').split('/').pop();
+	title = title.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+	return {
+		ok: 1,
+		playing: (!sound.paused && !sound.ended) ? 1 : 0,
+		key: tree.current_track || '',
+		file: file,
+		title: title,
+		currentTime: sound.currentTime || 0,
+		duration: sound.duration || 0
+	};
+}
+
+var music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0 };
+var music_remote_poll_timer = 0;
+var music_remote_snapshot = null;
+function musicRemoteSnapshotSave() {
+	if (music_remote_snapshot) { return; }
+	music_remote_snapshot = {
+		equalizer: JSON.parse(JSON.stringify(music_equalizer)),
+		video: $.extend({}, music_video)
+	};
+}
+function musicRemoteSnapshotRestore() {
+	var snap = music_remote_snapshot;
+	music_remote_snapshot = null;
+	if (!snap) { return; }
+	music_equalizer = snap.equalizer;
+	musicEqualizerApply();
+	musicVideoSet(snap.video);
+	musicVideoPaint();
+	musicVideoEnhanceApply();
+}
+function musicRemotePaint() {
+	var target = musicRemoteTarget();
+	var mode = !!target;
+	$('#music').toggleClass('music_remote_mode', mode);
+	if (!mode) {
+		clearInterval(music_remote_poll_timer);
+		music_remote_poll_timer = 0;
+		music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0 };
+		$('#music_remote_now').hide().text('');
+		return;
+	}
+	musicRemoteSnapshotSave();
+	if ($('#video').attr('theatre_mode') == 'on' && typeof theatreModeOff == 'function') { theatreModeOff(); }
+	if ($('#music').hasClass('music_fullscreen') && typeof musicFullscreenOff == 'function') { musicFullscreenOff(); }
+	$('#music_remote_now').show();
+	var remote_panel = (typeof musicConfigSheet == 'function') ? musicConfigSheet('music_remote_panel') : $('#music_remote_panel');
+	remote_panel.find('[data-remote-target]').each(function() {
+		$(this).attr('selected', $(this).attr('data-remote-target') == target ? 'yes' : 'no');
+	});
+	musicRemoteSettingsLoad();
+	musicRemoteStateLoad();
+	if (!music_remote_poll_timer) {
+		music_remote_poll_timer = setInterval(function() {
+			if (musicRemoteTarget()) { musicRemoteStateLoad(); }
+			else { musicRemotePaint(); }
+		}, 4000);
+	}
+}
+function musicRemoteStateLoad() {
+	var target = musicRemoteTarget();
+	if (!target) { return; }
+	$.ajax({
+		url: '/music/transport_state',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function(r) {
+			if (!r || !r.ok || musicRemoteTarget() !== target) { return; }
+			musicRemoteApplyState(r);
+		}
+	});
+}
+// The remote row is marked with its own class: `.playing` is the local
+// player's, and borrowing it would move the local highlight and, worse, make a
+// later player-cache save name the remote track while the local file plays on.
+function musicRemoteApplyPlaying(key) {
+	$('.music_remote_playing').removeClass('music_remote_playing');
+	if (!key) { return; }
+	$('.music_file').each(function() {
+		if (musicKey(this) === key) { $(this).addClass('music_remote_playing'); }
+	});
+}
+function musicRemoteApplyState(r) {
+	music_remote_state.playing = !!r.playing;
+	music_remote_state.key = r.key || '';
+	music_remote_state.file = r.file || '';
+	music_remote_state.title = r.title || '';
+	music_remote_state.currentTime = parseFloat(r.currentTime) || 0;
+	music_remote_state.duration = parseFloat(r.duration) || 0;
+	$('#play_logo').attr('src', r.playing ? jawnosPauseIcon() : jawnosPlayIcon());
+	musicRemoteApplyPlaying(r.key);
+	$('#music_remote_now').text((r.title || r.file || ''));
+	var bar = $('#video_position');
+	if (bar.length && music_remote_state.duration > 0) {
+		bar.val(Math.max(0, Math.min(100, music_remote_state.currentTime / music_remote_state.duration * 100)));
+	}
+	var clock = function(v) { return (typeof numeral == 'function') ? numeral(v).format('00:00:00') : ''; };
+	$('#elapsed_progress').text(clock(music_remote_state.currentTime));
+	$('#total_progress').text(clock(music_remote_state.duration));
+	$('#video_time_display').text(clock(music_remote_state.currentTime));
+	$('#video_full_title').text((r.title || ''));
+}
+function musicRemoteSettingsLoad() {
+	var target = musicRemoteTarget();
+	if (!target) { return; }
+	$.ajax({
+		url: '/music/remote_settings',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function(r) {
+			if (!r || !r.ok || musicRemoteTarget() !== target) { return; }
+			if (r.normalize) { $('#music_normalize_select').val(r.normalize); }
+			if (r.video) { musicVideoSet(r.video); musicVideoPaint(); }
+			if (r.equalizer) { musicEqualizerFromEqualizer(r.equalizer); musicEqualizerPaint(); }
+		}
+	});
+}
+function musicRemoteChoose(target) {
+	target = target || '';
+	var current = musicRemoteTarget();
+	if (target === current) { return; }
+	$.ajax({
+		url: '/music/remote_target',
+		type: 'POST',
+		dataType: 'json',
+		data: { target: target, scope: 'window' },
+		success: function(r) {
+			// A machine that left the roster is refused here, before the window
+			// changes its face; the panel stays as it was and says why.
+			if (!r || !r.ok) {
+				if (typeof jawnosNotice == 'function') {
+					jawnosNotice({ title: jawnosT('Remote Music'), message: (r && r.error) || jawnosT('That machine is not reachable.') });
+				}
+				return;
+			}
+			if (!target) {
+				$('#music').attr('remote_target', '');
+				musicRemoteSnapshotRestore();
+				musicRemotePaint();
+				searchMusic({ library: 'local' });
+				return;
+			}
+			$('#music').attr('remote_target', target);
+			musicRemoteSnapshotSave();
+			musicRemotePaint();
+			// the peer's Music app is the thing being controlled: open it so the
+			// first transport press has somewhere to land
+			musicRemoteSend('open');
+			// show its library; searchMusic swaps the lists in place, so local
+			// playback is not touched
+			searchMusic({ library: target });
+		}
+	});
+}
+function musicRemotePlayItem(item) {
+	var key = musicKey(item);
+	if (!key) { return; }
+	var files = [], seen = false;
+	$.each(tree.all_songs || [], function(i, song) {
+		if (!song) { return; }
+		if (musicSongKey(song) === key) { seen = true; }
+		if (seen && song.file) { files.push(song.file); }
+	});
+	if (!files.length) {
+		var f = item.attr('file');
+		if (f) { files = [f]; }
+	}
+	if (!files.length) { return; }
+	musicRemoteApplyPlaying(key);
+	musicRemoteSend('play_files', { files: JSON.stringify(files), same_order: 1, key: key });
+}
+// A setting pushed onto this machine by the controller. It runs in this
+// machine's own player, exactly as the panel would have done it here.
+function musicSettingApply(setting, value) {
+	setting = String(setting || '');
+	if (setting == 'normalize') {
+		music_normalize = String(value || 'off');
+		$('#music').attr('normalize', music_normalize);
+		$('#music_normalize_select').val(music_normalize);
+		musicNormalizeApply();
+		return;
+	}
+	if (setting == 'video') {
+		var v = value;
+		if (typeof v == 'string') { v = isJson(v) ? JSON.parse(v) : {}; }
+		musicVideoSet(v || {});
+		musicVideoPaint();
+		musicVideoEnhanceApply();
+		return;
+	}
+	if (setting == 'equalizer') {
+		var eq = value;
+		if (typeof eq == 'string') { eq = isJson(eq) ? JSON.parse(eq) : {}; }
+		musicEqualizerFromEqualizer(eq || {});
+		musicEqualizerApply();
+		musicEqualizerPaint();
+		return;
+	}
+	if (setting == 'subtitles') {
+		try {
+			if (tree && tree.sound && tree.sound.textTracks && tree.sound.textTracks[0]) {
+				tree.sound.textTracks[0].mode = (String(value) == 'showing') ? 'showing' : 'hidden';
+				$('#video_subtitle_toggle').attr('status', tree.sound.textTracks[0].mode);
+			}
+		} catch (e) {}
+	}
+}
+
 // The player bar's one-second tick (seek, clock and title) is defined by the
 // video include, whose script only runs when the window is first appended. A
 // search now swaps the lists in place and a window refresh strips scripts, so
@@ -2440,6 +2797,7 @@ function musicBarIntervalArm() {
 }
 
 async function musicInit(method) {
+	music_transport_window_ready = false;
 	// a re-render leaves the open drawer on the frame and a fresh hidden shell
 	// in the contents; ask for the live one from here on (see musicConfigSheet)
 	var audio_sheet = musicConfigSheet('music_audio_panel');
@@ -2683,6 +3041,9 @@ async function musicInit(method) {
 	// remote list are right before the Audio drawer is ever opened
 	musicVideoLoad();
 	musicVideoMachinesLoad();
+	musicRemotePaint();
+	music_transport_window_ready = true;
+	musicTransportFlush();
 }
 // The file the player element is actually playing, read back out of its src.
 // The cache used to save tree.songs[0] - the first row of the CURRENT list - and
@@ -2734,6 +3095,7 @@ function playerCacheSaver(type, force) {
 		var playerData = { 
 			key: tree.current_track, 
 			'currentTime': at, 
+			duration: (tree.sound.duration || 0),
 			file: playerCacheFile(), 
 			volume: master_volume, 
 			muted: music_muted, 
@@ -4339,6 +4701,7 @@ $(document).on('mousemove mouseenter touchstart pointerdown', '#music', function
 });
 
 function theatreModeOn() {
+	if (musicRemoteTarget()) { return; }
 	$('#music_library').hide();
 	$('#video').show();
 	var bs = $('#video').attr('big_style');
@@ -4412,7 +4775,7 @@ $(document).on('click', '#video_subtitle_toggle', function() {
 		v.textTracks[0].mode = 'showing';
 		vst.attr('status', 'showing');
 	}
-	settingSetter({ 'app': 'music', 'setting': 'subtitles', 'value': v.textTracks[0].mode });
+	musicSettingSave({ 'app': 'music', 'setting': 'subtitles', 'value': v.textTracks[0].mode });
 });
 
 function musicAppointmentWriter(type,mute) {
@@ -4476,17 +4839,19 @@ $(document).on('click', '.music_file_fetch_home', function () {
 	});
 });
 
-$(document).on('click', '#play', function() {
+function musicPlayToggleLocal() {
+	if (!tree || !tree.sound) { return; }
 	if (tree.sound.src == '') {
-		mediaMaker({ file: tree.songs[0].file });
+		if (tree.songs && tree.songs[0]) { mediaMaker({ file: tree.songs[0].file }); }
+		return;
 	}
-	else if (tree.sound.paused) {
+	if (tree.sound.paused) {
 		musicVolumeApply();
 		musicPlay();
 		tree.sound.state = 1;
 		$('#play_logo').attr('src', jawnosPauseIcon());
 		remoteTrackToggle({
-			file: tree.songs[0].file,
+			file: (tree.songs[0] ? tree.songs[0].file : ''),
 			toggle: 'on',
 			seek: tree.sound.currentTime
 		});
@@ -4496,7 +4861,7 @@ $(document).on('click', '#play', function() {
 		tree.sound.state = 0;
 		$('#play_logo').attr('src', jawnosPlayIcon());
 		remoteTrackToggle({
-			file: tree.songs[0].file,
+			file: (tree.songs[0] ? tree.songs[0].file : ''),
 			toggle: 'off',
 			seek: tree.sound.currentTime
 		});
@@ -4504,9 +4869,19 @@ $(document).on('click', '#play', function() {
 	playerCacheSaver();
 	var html = $('#music').parent().html();
 	musicContentCache(html);
+}
+
+$(document).on('click', '#play', function() {
+	if (musicRemoteTarget()) {
+		var action = (music_remote_state.playing === null) ? 'toggle' : (music_remote_state.playing ? 'pause' : 'play');
+		musicRemoteSend(action);
+		return;
+	}
+	musicPlayToggleLocal();
 });
 
 $(document).on('click', '#prev', function() {
+	if (musicRemoteTarget()) { musicRemoteSend('prev'); return; }
 	prevTrack();
 });
 
@@ -4543,11 +4918,16 @@ function nextTrack() {
 }
 
 $(document).on('click', '#next', function() {
+	if (musicRemoteTarget()) { musicRemoteSend('next'); return; }
 	nextTrack();
 });
 
 $(document).on('click', '.track_item', function(e) {
 	var item = $(this);
+	if (musicRemoteTarget() && !$(e.target).hasClass('music_information_toggle')) {
+		musicRemotePlayItem(item);
+		return;
+	}
 	if ($(e.target).hasClass('music_information_toggle')) {
 		musicInformation(musicKey(item));
 	}
@@ -4955,7 +5335,14 @@ $(document).on(musicChapterWheel, '.music_chapters', function(e) {
 	this.scrollLeft += dy * step;
 });
 $(document).on('change', '#music_normalize_select', function() {
-	music_normalize = $(this).val() || 'off';
+	var normalize = $(this).val() || 'off';
+	if (musicRemoteTarget()) {
+		// the controlled machine's player is the one this choice is about; this
+		// machine keeps the setting its own playback already had
+		musicSettingSave({ app: 'music', setting: 'normalize', value: normalize });
+		return;
+	}
+	music_normalize = normalize;
 	$('#music').attr('normalize', music_normalize);
 	musicNormalizeApply();
 	// the graph is captured on this gesture; put the element's level and mute
@@ -5020,6 +5407,9 @@ $(document).on('click', '.music_album', function(e) {
 
 function searchMusic(data) {
 	if (typeof data != 'object') { data = {}; }
+	// A relayed remote library renders the peer's own window; the controller's
+	// target belongs to this window, so carry it across the render.
+	var remoteTargetAtSearch = musicRemoteTarget();
 	var searching = data['search'];
 	var list = data['list'] || [];
 	var same_order = data['same_order'];
@@ -5113,6 +5503,7 @@ function searchMusic(data) {
 			}
 
 			treeMaker();
+			if (remoteTargetAtSearch) { $('#music').attr('remote_target', remoteTargetAtSearch); }
 
 			var configOpen = musicConfigSheet('music_configuration').is(':visible');
 			if (in_place) {
@@ -5150,6 +5541,9 @@ function searchMusic(data) {
 					}
 				}
 			}
+			// a full render replaces the window contents, so the controller's target
+			// is put back after either branch, not only before them
+			if (remoteTargetAtSearch) { $('#music').attr('remote_target', remoteTargetAtSearch); }
 			$.each(response.artist, function(i,v) {
 				$('.music_artist[artist="' + v.artist + '"][path="' + v.path + '"]').attr('active', 'yes');
 			});
@@ -5200,6 +5594,7 @@ function searchMusic(data) {
 			if (theatreMode == 'on') {
 				theatreModeOn();
 			}
+			musicRemotePaint();
 		},
 		complete: function() {
 			// however the search ended (even a dropped connection), put the cursor
@@ -5355,6 +5750,16 @@ $(document).on('change', '#music_library_select', function() {
 	// their stored paths would be scanned (and found empty) at the new one
 	$('.music_album').attr('active', 'no');
 	$('.music_artist').attr('active', 'no');
+	// Picking a different library ends the remote-control session: this window
+	// is no longer showing the machine it was controlling. Picking the same one
+	// leaves it in place.
+	var target = musicRemoteTarget();
+	if (target && library != target) {
+		$('#music').attr('remote_target', '');
+		$.post('/music/remote_target', { target: '', scope: 'window' });
+		musicRemoteSnapshotRestore();
+		musicRemotePaint();
+	}
 	// the choice goes with the search, in one request - written separately it
 	// raced the search, and the search could relay to the old machine again
 	searchMusic({ library: library });
@@ -5456,6 +5861,23 @@ $(document).on('click', '#music_configuration_close', function(e) {
 	e.preventDefault();
 	// close the sheet the X belongs to, never whichever '#id' comes first
 	$(this).closest('.music_cfg_drawer').hide();
+});
+
+$(document).on('click', '#music_remote_close', function(e) {
+	e.preventDefault();
+	$(this).closest('.music_cfg_drawer').hide();
+});
+
+$(document).on('click', '#music_remote_toggle', function() {
+	var panel = musicConfigSheet('music_remote_panel');
+	if (panel.is(':visible')) { panel.hide(); return; }
+	musicRemotePaint();
+	musicConfigShow(panel);
+	musicConfigDraggable();
+});
+
+$(document).on('click', '#music_remote_panel [data-remote-target]', function() {
+	musicRemoteChoose($(this).attr('data-remote-target'));
 });
 
 function musicEqualizerFromEqualizer(eq) {
@@ -5670,7 +6092,7 @@ function musicVideoStatusPaint() {
 function musicVideoSave() {
 	clearTimeout(music_video_save_timer);
 	music_video_save_timer = setTimeout(function() {
-		settingSetter({
+		musicSettingSave({
 			app: 'music',
 			setting: 'video',
 			value: JSON.stringify({
@@ -6226,6 +6648,7 @@ function musicAudioPanelLoad(show) {
 			$.each(mao, function(k, v) { musicOutputPaint(k, v); });
 			musicStreamPaint();
 			musicScreenApply();
+			if (musicRemoteTarget()) { musicRemoteSettingsLoad(); }
 		},
 		error: function() { /* keep whatever the drawer already holds */ },
 		complete: function() { music_audio_loading = null; }
@@ -6417,6 +6840,7 @@ function musicFullscreenGestureAsk() {
 }
 
 function musicFullscreenOn() {
+	if (musicRemoteTarget()) { return; }
 	var m = $('#music');
 	if (!m.length) { return; }
 	m.addClass('music_fullscreen');
@@ -6492,6 +6916,7 @@ function musicFullscreenLeave() {
 // does in the theatre. The sound's picture, the visualiser's video, rides along
 // the same way.
 function musicPlayerFullscreen() {
+	if (musicRemoteTarget()) { return; }
 	var v = document.getElementById('video');
 	if (!v) { return; }
 	// the button (and F) is a toggle: a second press leaves fullscreen

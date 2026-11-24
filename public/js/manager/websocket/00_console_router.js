@@ -57,6 +57,15 @@ var jawnosConsoleCommands = {
 	musicToggle: function (a) {
 		if (typeof musicToggle === 'function') { musicToggle(a[0], a[1] ? 1 : 0); }
 	},
+	musicTransportLocal: function (a) {
+		if (typeof musicTransportLocal === 'function') { musicTransportLocal(String(a[0]), { percent: a[1] }); }
+	},
+	musicPlayFiles: function (a) {
+		if (typeof musicPlayFiles === 'function') { musicPlayFiles(a[0], a[1] ? 1 : 0, String(a[2] || '')); }
+	},
+	musicSettingApply: function (a) {
+		if (typeof musicSettingApply === 'function') { musicSettingApply(String(a[0]), a[1]); }
+	},
 	jawnosPrivateRefresh: function (a) {
 		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(a[0] || 0); }
 	},

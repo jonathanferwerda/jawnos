@@ -5396,3 +5396,11 @@ body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[positio
 	pointer-events: auto;
 	cursor: var(--jawnos-cursor-pointer, pointer);
 }
+
+/* The Sound panel's Music transport: three buttons, the machine picker and the
+   line naming what that machine is playing. */
+.taskbar_panel .taskbar_music_transport { gap: 6px; }
+.taskbar_panel .taskbar_music_transport button { flex: 1 1 0; padding: 4px 6px; }
+.taskbar_panel .taskbar_music_transport img { width: 16px; height: 16px; object-fit: contain; }
+.taskbar_panel .taskbar_music_select { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 11px; padding: 3px 5px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: 5px; }
+.taskbar_panel .taskbar_music_now { min-height: 1.2em; font-size: 11px; opacity: .72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
