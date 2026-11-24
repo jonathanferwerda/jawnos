@@ -1,4 +1,4 @@
-# tests-for: perl/Music/09_remote_control.pl perl/Music.pl public/js/music.js public/js/manager/taskbar_sound.js public/js/manager/websocket/00_console_router.js templates/apps/music/music.html.ep templates/apps/music/remote.html.ep templates/apps/video/script.html.ep public/css/music.css public/css/manager.css perl/help/topics_apps.pl
+# tests-for: perl/Music/09_remote_control.pl perl/Music.pl perl/Music/05_library_and_queue.pl perl/Music/08_music_routes.pl public/js/music.js public/js/manager/taskbar_sound.js public/js/manager/websocket/00_console_router.js templates/apps/music/music.html.ep templates/apps/music/remote.html.ep templates/apps/video/script.html.ep public/css/music.css public/css/manager.css perl/help/topics_apps.pl
 # covers:    A Music window can become another machine's Music app, and the Sound
 #            taskbar widget can start and drive Music (locally or on a peer).
 #            The command crosses as a named console instruction, never as source;
@@ -15,6 +15,7 @@ use File::Slurp qw(read_file);
 my $root = "$FindBin::Bin/..";
 my $remote = read_file("$root/perl/Music/09_remote_control.pl");
 my $search_routes = read_file("$root/perl/Music/08_music_routes.pl");
+my $queue_src = read_file("$root/perl/Music/05_library_and_queue.pl");
 my $music = read_file("$root/public/js/music.js");
 my $taskbar = read_file("$root/public/js/manager/taskbar_sound.js");
 my $router = read_file("$root/public/js/manager/websocket/00_console_router.js");
@@ -101,7 +102,28 @@ like($music_css, qr/#music\.music_remote_mode \[hint="Fullscreen"\]/, 'and the f
 like($music, qr/function musicSettingSave/, 'a setting save knows the remote mode');
 like($music, qr/function musicSettingApply/, 'and the peer can apply the pushed setting');
 like($search_routes, qr/my \$remote_view = \$c->param\('remote_view'\)/, 'the search route knows a remote view');
-like($search_routes, qr/music_queue_recall\(\$settings, \$unlocked\)/, 'a remote view recalls the host queue');
+like($search_routes, qr/music_queue_recall\(\$settings, \$unlocked, 1\)/, 'a remote view recalls the host queue even when the archive is on');
+like($queue_src, qr/sub music_queue_recall\(\$settings, \$unlocked, \$mirror = 0\)/, 'the recall takes a mirror flag');
+like($queue_src, qr/return undef if !\$mirror && .*archive/, 'and only the ordinary replay refuses an archive list');
+like($search_routes, qr/\$now_playing = \{ file => \$player->\{'file'\}/, 'the mirror marks the host current track');
+like($search_routes, qr/\$selected_artist = \$remote_view \? \(\$crate->\{'artist'\}/, 'and returns the host selected artists');
+like($search_routes, qr/\$selected_album = \$remote_view \? \(\$crate->\{'album'\}/, 'and albums');
+like($music, qr/musicRemoteApplyPlaying\(r\.key, r\.file\)/, 'the remote row is found by key or path');
+
+# --- the mirror gets the host's list even when the archive is on -------------
+require "$FindBin::Bin/../perl/Music/05_library_and_queue.pl";
+{
+	no warnings 'redefine';
+	local *subs::cache_get = sub { return { files => [ 'Music/a.mp3', 'Music/b.mp3' ], library => 'local' } };
+	local *subs::music_queue_applies = sub { return 1 };
+	local *Manager::music_queue_file_visible = sub { return 1 };
+	my $archive_settings = { archive => 'on', library => 'local' };
+	is(&Manager::music_queue_recall($archive_settings, 0), undef,
+		'an ordinary replay still refuses an archive list');
+	my $mirror = &Manager::music_queue_recall($archive_settings, 0, 1);
+	is_deeply($mirror && $mirror->{'files'}, [ 'Music/a.mp3', 'Music/b.mp3' ],
+		'a mirror replays the host queue even when the archive is on');
+}
 like($search_routes, qr/\$search = \$settings->\{'search'\} \/\/ ''/, 'and uses the host saved search');
 like($music, qr/remote_view: 1/, 'the window asks for the host view when it takes a peer');
 like($music, qr/remote_view \? '\{\}' : JSON.stringify\(nowPlaying\)/, 'the controller sends no now-playing of its own');

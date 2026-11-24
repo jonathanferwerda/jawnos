@@ -2652,11 +2652,15 @@ function musicRemoteStateLoad() {
 // The remote row is marked with its own class: `.playing` is the local
 // player's, and borrowing it would move the local highlight and, worse, make a
 // later player-cache save name the remote track while the local file plays on.
-function musicRemoteApplyPlaying(key) {
+function musicRemoteApplyPlaying(key, file) {
 	$('.music_remote_playing').removeClass('music_remote_playing');
-	if (!key) { return; }
+	if (!key && !file) { return; }
 	$('.music_file').each(function() {
-		if (musicKey(this) === key) { $(this).addClass('music_remote_playing'); }
+		// a mirrored render mints fresh file_uuids, so the key the host's player
+		// cache holds can be absent from the rows; the path is the stable name
+		if (musicKey(this) === key || (file && $(this).attr('file') === file)) {
+			$(this).addClass('music_remote_playing');
+		}
 	});
 }
 function musicRemoteApplyState(r) {
@@ -2667,7 +2671,7 @@ function musicRemoteApplyState(r) {
 	music_remote_state.currentTime = parseFloat(r.currentTime) || 0;
 	music_remote_state.duration = parseFloat(r.duration) || 0;
 	$('#play_logo').attr('src', r.playing ? jawnosPauseIcon() : jawnosPlayIcon());
-	musicRemoteApplyPlaying(r.key);
+	musicRemoteApplyPlaying(r.key, r.file);
 	$('#music_remote_now').text((r.title || r.file || ''));
 	var bar = $('#video_position');
 	if (bar.length && music_remote_state.duration > 0) {

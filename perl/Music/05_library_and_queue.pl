@@ -296,12 +296,16 @@ sub music_queue_remember($crate, $settings, $permissive) {
 }
 
 # The queue to replay when the window shell is not in the cache. Undef means
-# "search as before": the remembered queue is from another library, nothing in
-# it may be listed in this window, or the archive is on (a replayed list would
-# wear its rows as plain local files, because the manifest walk is what gives
-# them their machine).
-sub music_queue_recall($settings, $unlocked) {
-	return undef if (($settings->{'archive'} // '') eq 'on');
+# "search as before": the remembered queue is from another library or nothing in
+# it may be listed in this window.
+#
+# A mirror is a controller asking this machine for its own window. It gets the
+# remembered queue even when the archive is on: the list is not replayed here, it
+# is drawn on the controller with this machine's uuid on every row. An ordinary
+# replay still refuses an archive list, because it would wear the archived rows
+# as plain local files - the manifest walk is what gives them their machine.
+sub music_queue_recall($settings, $unlocked, $mirror = 0) {
+	return undef if !$mirror && (($settings->{'archive'} // '') eq 'on');
 	my $queue = &subs::cache_get({ app => 'music', context => 'queue' });
 	return undef unless &subs::music_queue_applies($queue, $settings->{'library'});
 	# The queue is data, so it is filtered by the same rule the folder walk uses

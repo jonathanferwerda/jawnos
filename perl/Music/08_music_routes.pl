@@ -91,10 +91,17 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	if ($remote_render) {
 		if ($remote_view) {
 			$search = $settings->{'search'} // '';
-			my $remembered = &music_queue_recall($settings, $unlocked);
+			my $remembered = &music_queue_recall($settings, $unlocked, 1);
 			if ($remembered && scalar @{$remembered->{'files'}}) {
 				$list = $remembered->{'files'};
 				$same_order = 1;
+			}
+			# The host's own player cache is what the controller is mirroring, so
+			# its current row is marked here rather than by the controller's
+			# (empty) now-playing.
+			my $player = &subs::cache_get({ app => 'music', context => 'player' }) || {};
+			if ($player->{'file'}) {
+				$now_playing = { file => $player->{'file'}, key => ($player->{'key'} || '') };
 			}
 			$settings->{'search'} = $search;
 		}
@@ -174,7 +181,11 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 			misses => $misses
 		);
 		my $website = &Manager::window_maker({ app => 'music', title => $title, contents => $contents }, $timestamp);
-		$c->render(json => { artist => $artist, album => $album, search => $search, html => $website });
+		# A remote view is the host's own window: its selected artists and albums
+		# light the shelves. The controller's own selections describe its list.
+		my $selected_artist = $remote_view ? ($crate->{'artist'} || []) : $artist;
+		my $selected_album = $remote_view ? ($crate->{'album'} || []) : $album;
+		$c->render(json => { artist => $selected_artist, album => $selected_album, search => $search, html => $website });
 	}
 	else {
 		$contents = $c->render_to_string(
