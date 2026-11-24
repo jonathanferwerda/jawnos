@@ -2696,6 +2696,55 @@ function musicRemoteSettingsLoad() {
 		}
 	});
 }
+// The view this machine was showing before it took on a peer's face. It rides
+// sessionStorage as well as the page, so a reload while controlling still comes
+// back to the person's own library when they choose This machine.
+var music_remote_local_view = null;
+function musicRemoteLocalViewSave() {
+	if (music_remote_local_view) { return; }
+	var view = {
+		search: $('#music_search').val() || '',
+		library: $('#music_library_select').val() || 'local',
+		artists: [],
+		albums: []
+	};
+	$('.music_artist[active="yes"]').each(function() {
+		view.artists.push({ artist: $(this).attr('artist'), path: $(this).attr('path') });
+	});
+	$('.music_album[active="yes"]').each(function() {
+		view.albums.push({ album: $(this).attr('album'), path: $(this).attr('path') });
+	});
+	music_remote_local_view = view;
+	try { sessionStorage.setItem('music_remote_local_view', JSON.stringify(view)); } catch (e) {}
+}
+function musicRemoteLocalViewRead() {
+	if (music_remote_local_view) { return music_remote_local_view; }
+	try {
+		var raw = sessionStorage.getItem('music_remote_local_view');
+		if (raw) { return JSON.parse(raw); }
+	} catch (e) {}
+	return null;
+}
+function musicRemoteLocalViewRestore() {
+	var view = musicRemoteLocalViewRead();
+	music_remote_local_view = null;
+	try { sessionStorage.removeItem('music_remote_local_view'); } catch (e) {}
+	if (!view) { searchMusic({ library: 'local' }); return; }
+	$('#music_search').val(view.search || '');
+	$('.music_artist').attr('active', 'no');
+	$('.music_album').attr('active', 'no');
+	$.each(view.artists || [], function(i, a) {
+		$('.music_artist').filter(function() {
+			return $(this).attr('artist') === a.artist && $(this).attr('path') === a.path;
+		}).attr('active', 'yes');
+	});
+	$.each(view.albums || [], function(i, a) {
+		$('.music_album').filter(function() {
+			return $(this).attr('album') === a.album && $(this).attr('path') === a.path;
+		}).attr('active', 'yes');
+	});
+	searchMusic({ library: view.library || 'local', search: view.search || '' });
+}
 function musicRemoteChoose(target) {
 	target = target || '';
 	var current = musicRemoteTarget();
@@ -2718,18 +2767,21 @@ function musicRemoteChoose(target) {
 				$('#music').attr('remote_target', '');
 				musicRemoteSnapshotRestore();
 				musicRemotePaint();
-				searchMusic({ library: 'local' });
+				musicRemoteLocalViewRestore();
 				return;
 			}
+			// save this machine's own view before the host's lists replace it
+			musicRemoteLocalViewSave();
 			$('#music').attr('remote_target', target);
 			musicRemoteSnapshotSave();
 			musicRemotePaint();
 			// the peer's Music app is the thing being controlled: open it so the
 			// first transport press has somewhere to land
 			musicRemoteSend('open');
-			// show its library; searchMusic swaps the lists in place, so local
-			// playback is not touched
-			searchMusic({ library: target });
+			// ask for the host's own window: its current queue, selected artists
+			// and albums, and its search word. searchMusic swaps the lists in
+			// place, so local playback is not touched.
+			searchMusic({ library: target, remote_view: 1 });
 		}
 	});
 }
@@ -4866,7 +4918,7 @@ function musicPlayToggleLocal() {
 			seek: tree.sound.currentTime
 		});
 	}
-	playerCacheSaver();
+	playerCacheSaver(undefined, true);
 	var html = $('#music').parent().html();
 	musicContentCache(html);
 }
@@ -5416,6 +5468,9 @@ function searchMusic(data) {
 	var new_settings = data['new_settings'];
 	var source = data['source'];
 	var library = data['library'];
+	// A remote view asks the host for its own window: its saved search, artists,
+	// albums and queue come back, and this machine's now-playing is not sent.
+	var remote_view = data['remote_view'] ? 1 : 0;
 	if (new_settings) {
 		new_settings = JSON.stringify(new_settings);
 	}
@@ -5454,7 +5509,7 @@ function searchMusic(data) {
 			nowPlaying = tree.songs[0];
 		}
 	}
-	var jnowPlaying = JSON.stringify(nowPlaying);
+	var jnowPlaying = remote_view ? '{}' : JSON.stringify(nowPlaying);
 	var jlist = JSON.stringify(list);
 	var resizes = musicWindowResizes();
 	var jresizes = JSON.stringify(resizes);
@@ -5478,7 +5533,8 @@ function searchMusic(data) {
 			same_order: same_order, 
 			new_settings: new_settings,
 			resizes: jresizes,
-			misses: jmiss
+			misses: jmiss,
+			remote_view: remote_view ? 1 : 0
 		},
 		success: function(response) {
 			// the bar's tick is deliberately left running: this search swaps the
@@ -5522,6 +5578,12 @@ function searchMusic(data) {
 				if (fragment.find('#music_configuration').length) {
 					musicConfigSheet('music_configuration').replaceWith(fragment.find('#music_configuration'));
 				}
+				// the search word and the library label sit in #interface, outside
+				// the lists this swap replaces; a remote view brings the host's own
+				var fresh_search = fragment.find('#music_search');
+				if (fresh_search.length) { $('#music_search').val(fresh_search.val()); }
+				var fresh_library = fragment.find('#music_library_name');
+				if (fresh_library.length) { $('#music_library_name').text(fresh_library.text()); }
 			}
 			else {
 				if (keep_video) {

@@ -95,7 +95,7 @@ sub music_transport_local($action, $opts = {}) {
 	if ($action eq 'play_files') {
 		my $files = $opts->{'files'};
 		return 0 unless ref $files eq 'ARRAY' && scalar @{$files};
-		&Websocket::send('music', {
+		&Websocket::send('server', {
 			console => &Websocket::console_command(
 				'musicPlayFiles',
 				$files,
@@ -107,7 +107,7 @@ sub music_transport_local($action, $opts = {}) {
 	}
 	my @args = ($action);
 	push @args, ($opts->{'percent'} + 0) if $action eq 'seek_percent' && defined $opts->{'percent'};
-	&Websocket::send('music', { console => &Websocket::console_command('musicTransportLocal', @args) });
+	&Websocket::send('server', { console => &Websocket::console_command('musicTransportLocal', @args) });
 	return 1;
 }
 
@@ -121,7 +121,7 @@ sub music_remote_setting_write($setting, $value) {
 	&subs::setting_setter({ app => 'music', setting => $setting, value => (defined $value ? $value : '') });
 	# The setting is data in the host's database; the player in its browser is
 	# what has to hear it now. This console command applies it without a reload.
-	&Websocket::send('music', {
+	&Websocket::send('server', {
 		console => &Websocket::console_command('musicSettingApply', $setting, defined $value ? $value : '')
 	});
 	return 1;

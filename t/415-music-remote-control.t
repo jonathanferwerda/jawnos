@@ -14,6 +14,7 @@ use File::Slurp qw(read_file);
 
 my $root = "$FindBin::Bin/..";
 my $remote = read_file("$root/perl/Music/09_remote_control.pl");
+my $search_routes = read_file("$root/perl/Music/08_music_routes.pl");
 my $music = read_file("$root/public/js/music.js");
 my $taskbar = read_file("$root/public/js/manager/taskbar_sound.js");
 my $router = read_file("$root/public/js/manager/websocket/00_console_router.js");
@@ -32,6 +33,8 @@ like($boot, qr{require "\./perl/Music/09_remote_control\.pl";}, 'Music.pl loads 
 
 # --- the command crosses as a named instruction ----------------------------
 like($remote, qr/console_command\('musicTransportLocal'/, 'transport sends a console instruction');
+like($remote, qr/Websocket::send\('server'/, 'the command rides the server console channel');
+unlike($remote, qr/Websocket::send\('music'/, 'and never the player data channel');
 like($remote, qr/console_command\(\s*'musicPlayFiles',\s*\$files,/, 'play_files carries its queue as an array');
 like($remote, qr/console_command\('musicSettingApply'/, 'a remote setting is applied in the peer player');
 like($router, qr/musicTransportLocal: function/, 'the browser router whitelists the transport');
@@ -97,6 +100,16 @@ like($music_css, qr/#music\.music_remote_mode \[hint="Fullscreen"\]/, 'and the f
 # --- settings arrive on the controlled machine ------------------------------
 like($music, qr/function musicSettingSave/, 'a setting save knows the remote mode');
 like($music, qr/function musicSettingApply/, 'and the peer can apply the pushed setting');
+like($search_routes, qr/my \$remote_view = \$c->param\('remote_view'\)/, 'the search route knows a remote view');
+like($search_routes, qr/music_queue_recall\(\$settings, \$unlocked\)/, 'a remote view recalls the host queue');
+like($search_routes, qr/\$search = \$settings->\{'search'\} \/\/ ''/, 'and uses the host saved search');
+like($music, qr/remote_view: 1/, 'the window asks for the host view when it takes a peer');
+like($music, qr/remote_view \? '\{\}' : JSON.stringify\(nowPlaying\)/, 'the controller sends no now-playing of its own');
+like($music, qr/function musicRemoteLocalViewSave/, 'the local view is remembered');
+like($music, qr/sessionStorage.setItem\('music_remote_local_view'/, 'across a reload too');
+like($music, qr/function musicRemoteLocalViewRestore/, 'and put back when This machine is chosen');
+like($music, qr/fresh_search/, 'an in-place swap carries the host search word');
+like($music, qr/fresh_library/, 'and the library label');
 like($music, qr/function musicRemoteApplyPlaying/, 'the remote row has its own marker class');
 my ($play_item) = $music =~ /function musicRemotePlayItem\(item\) \{(.*?)\n\}/s;
 ok(defined $play_item && length $play_item, 'musicRemotePlayItem is readable as a hunk');

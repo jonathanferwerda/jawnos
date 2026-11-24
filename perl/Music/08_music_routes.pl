@@ -51,6 +51,11 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	# shuffle, layout and search onto the host is how changing the laptop's
 	# view changed the table's. Apply them to this render only.
 	my $remote_render = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	# A remote view is the host's own window asked for by its controller: the
+	# host's saved search, artist and album stay in force, and its remembered
+	# queue is the list. The controller's search and selections are not sent
+	# over the host's own.
+	my $remote_view = $c->param('remote_view') ? 1 : 0;
 	unless ($remote_render) {
 		foreach my $ns ( keys %{$new_settings} ) {
 			&subs::setting_setter({ app => 'music', setting => $ns, value => $new_settings->{$ns} });
@@ -84,13 +89,24 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	}
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	if ($remote_render) {
-		foreach my $ns ( keys %{$new_settings} ) {
-			$settings->{$ns} = $new_settings->{$ns};
+		if ($remote_view) {
+			$search = $settings->{'search'} // '';
+			my $remembered = &music_queue_recall($settings, $unlocked);
+			if ($remembered && scalar @{$remembered->{'files'}}) {
+				$list = $remembered->{'files'};
+				$same_order = 1;
+			}
+			$settings->{'search'} = $search;
 		}
-		$settings->{'resizes'} = $resizes if defined $resizes;
-		$settings->{'album'} = $album if defined $album;
-		$settings->{'artist'} = $artist if defined $artist;
-		$settings->{'search'} = $search;
+		else {
+			foreach my $ns ( keys %{$new_settings} ) {
+				$settings->{$ns} = $new_settings->{$ns};
+			}
+			$settings->{'resizes'} = $resizes if defined $resizes;
+			$settings->{'album'} = $album if defined $album;
+			$settings->{'artist'} = $artist if defined $artist;
+			$settings->{'search'} = $search;
+		}
 	}
 
 	if ($settings->{'library'} ne 'local' && $c->param('remoted') ne 'yes') {
