@@ -91,17 +91,11 @@
 .wind[app="weather"] .weather_space_alerts {
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
+	gap: 4px;
 	margin-top: 6px;
+	grid-column: 1 / -1;
 }
-.wind[app="weather"] .weather_space_alert {
-	border-left: 2px solid var(--danger, #c0392b);
-	padding-left: 6px;
-	font-size: 11px;
-	line-height: 1.3;
-	opacity: .82;
-}
-.wind[app="weather"] .weather_space_alert_ends { opacity: .62; margin-top: 2px; }
+.wind[app="weather"] .weather_space_alerts .weather_alert { font-size: 12px; }
 .wind[app="weather"] #weather_stats {
 	flex: 1 1 240px;
 	display: grid;
@@ -344,6 +338,12 @@
 	background: #e9edf1;
 }
 .wind[app="weather"] #weather_radar_legend { min-height: 1.1em; font-size: 11px; }
+.wind[app="weather"] #weather_radar_timeline { display: flex; align-items: center; gap: 8px; }
+.wind[app="weather"] #weather_radar_timeline #weather_radar_play { min-width: 58px; }
+.wind[app="weather"] #weather_radar_time { flex: 1 1 auto; min-width: 80px; }
+.wind[app="weather"] #weather_radar_time_label { font-variant-numeric: tabular-nums; min-width: 9em; text-align: right; }
+.wind[app="weather"] #weather_radar_range_note { min-height: 1.1em; font-size: 11px; }
+.wind[app="weather"] .weather_radar_hidden { display: none !important; }
 .wind[app="weather"] .weather_radar_credit { font-size: 10px; opacity: .5; }
 .wind[app="weather"] #weather_history_precip_chart,
 .wind[app="weather"] #weather_history_space_chart { padding: 6px; }

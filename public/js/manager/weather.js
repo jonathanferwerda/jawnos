@@ -515,9 +515,23 @@ function weatherSpaceRender(space) {
 	var alerts = space.alerts || [];
 	var alertHtml = '';
 	if (alerts.length) {
-		alertHtml = '<div class="weather_space_alerts">' + alerts.map(function(a) {
-			var ends = a.valid_to ? '<div class="weather_space_alert_ends">' + jawnosT('Valid until') + ' ' + weatherTime(a.valid_to) + '</div>' : '';
-			return '<div class="weather_space_alert"><b>' + weatherEsc(a.id || '') + '</b> ' + weatherEsc(String(a.text || '').slice(0, 240)) + ends + '</div>';
+		alertHtml = '<div class="weather_space_alerts">' + alerts.map(function(a, i) {
+			var meta = [];
+			if (a.issued_at) { meta.push(jawnosT('Issued') + ' ' + weatherTime(a.issued_at)); }
+			if (a.valid_to) { meta.push(jawnosT('Valid until') + ' ' + weatherTime(a.valid_to)); }
+			if (a.id) { meta.push(weatherEsc(a.id)); }
+			var body = ''
+				+ (a.text ? '<div class="weather_alert_text">' + weatherEsc(a.text) + '</div>' : '')
+				+ (meta.length ? '<div class="weather_alert_meta">' + meta.join(' · ') + '</div>' : '');
+			var id = 'weather_space_alert_body_' + i;
+			var open = !!weatherAlertOpen['space:' + i];
+			return '<div class="weather_alert weather_space_alert">'
+				+ '<button type="button" class="weather_alert_toggle" data-alert-index="' + i + '" data-alert-group="space" aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="' + id + '">'
+				+ '<span class="weather_alert_title">' + weatherEsc(a.title || a.id || jawnosT('Space weather alert')) + '</span>'
+				+ '<span class="weather_alert_chevron" aria-hidden="true">▸</span>'
+				+ '</button>'
+				+ '<div class="weather_alert_body' + (open ? ' open' : '') + '" id="' + id + '">' + body + '</div>'
+				+ '</div>';
 		}).join('') + '</div>';
 	}
 	$w.find('#weather_space_body').html(stats.join('') + bar + local + alertHtml);
@@ -604,9 +618,10 @@ function weatherAlertToggle(button) {
 	var open = $b.attr('aria-expanded') !== 'true';
 	var id = $b.attr('aria-controls') || '';
 	var index = $b.attr('data-alert-index') || '';
+	var group = $b.attr('data-alert-group') || '';
 	$b.attr('aria-expanded', open ? 'true' : 'false');
 	$('#' + id).toggleClass('open', open);
-	if (index !== '') { weatherAlertOpen[index] = open; }
+	if (index !== '') { weatherAlertOpen[group ? group + ':' + index : index] = open; }
 }
 
 function weatherHours(hours) {

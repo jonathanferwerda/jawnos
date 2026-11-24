@@ -10,6 +10,7 @@ function weatherShowTab(name) {
 		// the canvas needs a laid-out parent; the panel was just shown
 		setTimeout(function() { weatherRadarStart(); }, 30);
 	}
+	if (name !== 'history' && typeof weatherRadarStopPlay === 'function') { weatherRadarStopPlay(); }
 	if (name === 'accuracy' && !weatherAccuracyLoaded) { weatherAccuracyLoad(); }
 	if (name === 'automations' && !weatherAutomationLoaded) { weatherAutomationLoad(); }
 }

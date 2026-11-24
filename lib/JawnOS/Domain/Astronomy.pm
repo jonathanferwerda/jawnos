@@ -221,6 +221,20 @@ sub _noaa_utc ($text) {
 	return timegm(0, $minute, $hour, $day, $NOAA_MONTH{lc $mon} - 1, $year) * 1000;
 }
 
+# A bulletin's headline is its product line, not the code and serial block above
+# it. The card uses this as the accordion title, so an alert reads like the
+# weather statements do instead of as one long line of text.
+sub _noaa_alert_title ($msg) {
+	return '' unless defined $msg && length $msg;
+	if ($msg =~ /^[ \t]*(EXTENDED\s+WARNING|CONTINUED\s+ALERT|ALERT|WARNING|WATCH|SUMMARY)\s*:\s*([^\r\n]+)/mi) {
+		my ($kind, $rest) = ($1, $2);
+		$rest =~ s/\s+/ /g;
+		$rest =~ s/^\s+|\s+$//g;
+		return length $rest ? uc($kind) . ': ' . $rest : uc($kind);
+	}
+	return '';
+}
+
 # The Kp bands a person reads. Kp is a 0-9 scale, updated every three hours.
 sub space_weather_label ($kp) {
 	return ('Unknown', 0) unless defined $kp && $kp =~ /^-?[0-9.]+$/;
@@ -412,7 +426,9 @@ sub space_weather_alerts ($json, $now = undef) {
 		push @out, {
 			id => $alert->{'product_id'} // '',
 			issue => $alert->{'issue_datetime'} // '',
+			($issued_at ? (issued_at => $issued_at) : ()),
 			($ends_at ? (valid_to => $ends_at) : ()),
+			title => &_noaa_alert_title($msg) || ($alert->{'product_id'} // ''),
 			text => substr($text, 0, 600),
 		};
 	}

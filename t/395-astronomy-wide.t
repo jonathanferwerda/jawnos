@@ -141,6 +141,8 @@ sub utc_ms {
 	], $now);
 	is(scalar @{$alerts}, 1, 'only the actionable bulletin is kept');
 	like($alerts->[0]{'text'}, qr/Geomagnetic K-index/, 'and its text is readable');
+	is($alerts->[0]{'title'}, 'ALERT: Geomagnetic K-index of 5', 'the product line is the accordion header');
+	is($alerts->[0]{'issued_at'}, utc_ms(2026, 11, 22, 20, 0, 0), 'the issue time is a timestamp');
 
 	# A bulletin leaves the card when its own end is behind us. NOAA's file keeps
 	# the whole day's products, so without this the newest three are yesterday's.
@@ -160,6 +162,8 @@ sub utc_ms {
 	], $now);
 	is(scalar @{$stale}, 0, 'an open-ended bulletin issued days ago is dropped');
 	is(&subs::_noaa_utc('2026 Nov 22 2100 UTC'), utc_ms(2026, 11, 22, 21, 0, 0), 'the alert body time parses');
+	is(&subs::_noaa_alert_title("Space Weather Message Code: WARK04\r\nEXTENDED WARNING: Geomagnetic K-index of 4 expected\r\nValid To: 2026 Nov 22 2000 UTC"),
+		'EXTENDED WARNING: Geomagnetic K-index of 4 expected', 'an extended warning keeps its own headline');
 
 	# A tiny aurora grid: the real one is longitude-major, but the nearest-point
 	# fallback must work when the index assumption does not.

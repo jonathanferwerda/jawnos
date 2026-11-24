@@ -2458,7 +2458,8 @@ like($weather_js, qr/weather_alert_areas/, 'the alert shows where the statement 
 like($weather_js, qr/weather_alert_toggle/, 'the statement body is an accordion');
 like($weather_js, qr/weatherAlertToggle/, 'and the title toggles it');
 like($weather_js, qr/weatherAlertLabel/, 'the accordion uses the statement first line');
-like($weather_js, qr/weather_space_alert_ends/, 'a space weather alert names the end that still stands');
+like($weather_js, qr/data-alert-group="space"/, 'a space weather alert is an accordion of its own group');
+like($weather_js, qr/weather_space_alert/, 'and wears the regular alert card class');
 like($weather_js, qr/weatherDayName/, 'and a weekday name');
 like($weather_js, qr/weatherLoading/, 'the app asks once at a time');
 like($weather_style, qr/overscroll-behavior-x/, 'the hourly strip scrolls sideways');

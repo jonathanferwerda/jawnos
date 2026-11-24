@@ -25,6 +25,10 @@ var weatherRadarWindTimer = null;
 var weatherRadarTileCache = {};
 var weatherRadarTileCount = 0;
 var weatherRadarObserver = null;
+var weatherRadarTimeline = [];
+var weatherRadarFrameIndex = -1;
+var weatherRadarPlayTimer = null;
+var weatherRadarFramesLoading = false;
 
 function weatherRadarGibs(layer, level) {
 	return 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' + layer
@@ -36,7 +40,7 @@ var WEATHER_RADAR_LAYERS = {
 	temperature:   { url: weatherRadarGibs('MODIS_Terra_Land_Surface_Temp_Day', 7), maxZ: 7, opacity: 0.55 },
 	smoke:         { url: weatherRadarGibs('MODIS_Terra_Aerosol', 6), maxZ: 6, opacity: 0.65 },
 	clouds:        { url: weatherRadarGibs('MODIS_Terra_Cloud_Fraction_Day', 6), maxZ: 6, opacity: 0.55 },
-	precipitation: { radar: true, maxZ: 12, opacity: 0.85 },
+	precipitation: { radar: true, maxZ: 7, opacity: 0.85 },
 	magnetic:      { aurora: true },
 	winds:         { wind: true }
 };
@@ -73,6 +77,7 @@ function weatherRadarStart() {
 	if (weatherRadarLayers.precipitation) { weatherRadarFramesLoad(false); }
 	if (weatherRadarLayers.magnetic) { weatherRadarAuroraLoad(false); }
 	if (weatherRadarLayers.winds) { weatherRadarWindLoad(false); }
+	weatherRadarTimelineRefresh();
 	weatherRadarLegend();
 }
 
@@ -245,35 +250,120 @@ function weatherRadarDrawTileLayer(ctx, map, spec) {
 	}
 }
 
+// RainViewer publishes the past two hours in ten-minute steps and, when it has
+// one, a short nowcast. That is the whole timeline this keyless feed offers; the
+// slider is built from exactly those frames rather than pretending to hold a day
+// of radar the service does not provide.
 function weatherRadarFramesLoad(force) {
 	if (!weatherRadarLayers.precipitation) { return; }
 	var now = Date.now();
-	if (!force && weatherRadarFrames && now - weatherRadarFramesAt < 10 * 60 * 1000) { return; }
+	if (!force && weatherRadarTimeline.length && now - weatherRadarFramesAt < 10 * 60 * 1000) { return; }
+	weatherRadarFramesLoading = true;
 	$.ajax({
 		url: 'https://api.rainviewer.com/public/weather-maps.json',
 		type: 'GET',
 		dataType: 'json',
 		timeout: 15000,
 		success: function(response) {
-			var past = (response && response.radar && response.radar.past) || [];
-			var latest = past.length ? past[past.length - 1] : null;
-			if (!latest || !latest.path) {
+			weatherRadarFramesLoading = false;
+			var host = (response && response.host) || 'https://tilecache.rainviewer.com';
+			var radar = (response && response.radar) || {};
+			var frames = [];
+			var seen = {};
+			var add = function(list, forecast) {
+				(list || []).forEach(function(frame) {
+					if (!frame || !frame.path || !frame.time || seen[frame.time]) { return; }
+					seen[frame.time] = 1;
+					frames.push({ time: Number(frame.time), path: String(frame.path), host: host, forecast: !!forecast });
+				});
+			};
+			add(radar.past, false);
+			add(radar.nowcast, true);
+			frames.sort(function(a, b) { return a.time - b.time; });
+			if (!frames.length) {
+				weatherRadarTimeline = [];
+				weatherRadarFrames = null;
+				weatherRadarTimelineRefresh();
 				weatherRadarLegend(jawnosT('Rain radar is unavailable right now.'));
 				return;
 			}
-			weatherRadarFrames = {
-				host: response.host || 'https://tilecache.rainviewer.com',
-				path: latest.path,
-				time: latest.time
-			};
+			var keep = weatherRadarFrames ? weatherRadarFrames.time : null;
+			weatherRadarTimeline = frames;
 			weatherRadarFramesAt = now;
+			var index = -1;
+			if (keep !== null) {
+				for (var i = 0; i < frames.length; i++) {
+					if (frames[i].time >= keep) { index = i; break; }
+				}
+			}
+			if (index < 0) {
+				var seconds = Date.now() / 1000;
+				for (var j = 0; j < frames.length; j++) {
+					if (frames[j].time <= seconds) { index = j; }
+				}
+				if (index < 0) { index = 0; }
+			}
+			weatherRadarFrameSelect(index, true);
+			weatherRadarTimelineRefresh();
 			weatherRadarLegend();
 			weatherRadarSafeDraw();
 		},
 		error: function() {
+			weatherRadarFramesLoading = false;
+			weatherRadarTimelineRefresh();
 			weatherRadarLegend(jawnosT('Rain radar is unavailable right now.'));
 		}
 	});
+}
+
+function weatherRadarFrameSelect(index, quiet) {
+	if (!weatherRadarTimeline.length) { return; }
+	index = Math.max(0, Math.min(weatherRadarTimeline.length - 1, parseInt(index, 10) || 0));
+	var frame = weatherRadarTimeline[index];
+	weatherRadarFrames = { host: frame.host, path: frame.path, time: frame.time, forecast: !!frame.forecast };
+	weatherRadarFrameIndex = index;
+	var $w = $('.wind[app="weather"]').last();
+	var label = weatherTime(frame.time * 1000) + (frame.forecast ? ' · ' + jawnosT('Forecast') : '');
+	$w.find('#weather_radar_time').val(index).attr('aria-valuetext', label);
+	$w.find('#weather_radar_time_label').text(label);
+	if (!quiet) {
+		weatherRadarLegend();
+		weatherRadarSafeDraw();
+	}
+}
+
+function weatherRadarTimelineRefresh() {
+	var $w = $('.wind[app="weather"]').last();
+	var frames = weatherRadarTimeline || [];
+	var n = frames.length;
+	$w.find('#weather_radar_time').attr('max', n ? n - 1 : 0).prop('disabled', n < 2);
+	$w.find('#weather_radar_play').prop('disabled', n < 2);
+	$w.find('#weather_radar_timeline, #weather_radar_range_note')
+		.toggleClass('weather_radar_hidden', !weatherRadarLayers.precipitation);
+	if (!n) {
+		$w.find('#weather_radar_range_note').text(weatherRadarFramesLoading
+			? jawnosT('Loading radar…')
+			: jawnosT('Rain radar is unavailable right now.'));
+		return;
+	}
+	var past = [], forecast = [];
+	for (var i = 0; i < frames.length; i++) {
+		(frames[i].forecast ? forecast : past).push(frames[i]);
+	}
+	var minutes = function(list) {
+		if (!list.length) { return 0; }
+		return Math.max(0, Math.round((list[list.length - 1].time - list[0].time) / 60));
+	};
+	var bits = [];
+	if (past.length) { bits.push(jawnosT('Past {0} min', minutes(past))); }
+	if (forecast.length) { bits.push(jawnosT('Forecast {0} min', minutes(forecast))); }
+	else { bits.push(jawnosT('No forecast frames from this source right now.')); }
+	$w.find('#weather_radar_range_note').text(bits.join(' · '));
+}
+
+function weatherRadarStopPlay() {
+	if (weatherRadarPlayTimer) { clearInterval(weatherRadarPlayTimer); weatherRadarPlayTimer = null; }
+	$('.wind[app="weather"]').last().find('#weather_radar_play').text(jawnosT('Play'));
 }
 
 // ---- the aurora grid --------------------------------------------------------
@@ -461,8 +551,27 @@ $(document).on('change', '#weather_radar_layers input', function() {
 		if (name === 'magnetic') { weatherRadarAuroraLoad(false); }
 		if (name === 'winds') { weatherRadarWindLoad(false); }
 	}
+	else if (name === 'precipitation') {
+		weatherRadarStopPlay();
+	}
+	weatherRadarTimelineRefresh();
 	weatherRadarLegend();
 	weatherRadarDraw();
+});
+
+$(document).on('input change', '#weather_radar_time', function() {
+	weatherRadarStopPlay();
+	weatherRadarFrameSelect(parseInt(this.value, 10));
+});
+
+$(document).on('click', '#weather_radar_play', function() {
+	if (weatherRadarPlayTimer) { weatherRadarStopPlay(); return; }
+	if (weatherRadarTimeline.length < 2) { return; }
+	$(this).text(jawnosT('Pause'));
+	weatherRadarPlayTimer = setInterval(function() {
+		if (weatherRadarTimeline.length < 2 || !document.getElementById('weather_radar_canvas')) { weatherRadarStopPlay(); return; }
+		weatherRadarFrameSelect((weatherRadarFrameIndex + 1) % weatherRadarTimeline.length);
+	}, 520);
 });
 
 $(document).on('change', '#weather_radar_basemap', function() {
@@ -476,7 +585,11 @@ function weatherRadarLegend(message) {
 	if (message) { bits.push(message); }
 	else {
 		if (weatherRadarLayers.precipitation) {
-			bits.push(weatherRadarFrames ? jawnosT('Radar {0}', weatherTime(weatherRadarFrames.time * 1000)) : jawnosT('Loading radar\u2026'));
+			var label = '';
+			if (weatherRadarFrames) {
+				label = weatherTime(weatherRadarFrames.time * 1000) + (weatherRadarFrames.forecast ? ' · ' + jawnosT('Forecast') : '');
+			}
+			bits.push(weatherRadarFrames ? jawnosT('Radar {0}', label) : jawnosT('Loading radar\u2026'));
 		}
 		if (weatherRadarLayers.clouds) { bits.push(jawnosT('Cloud fraction')); }
 		if (weatherRadarLayers.temperature) { bits.push(jawnosT('Land surface temperature')); }

@@ -15,6 +15,12 @@
 		<label class="weather_radar_layer"><input type="checkbox" data-layer="snow"> <%= &subs::ui('Snow') %></label>
 	</div>
 	<canvas id="weather_radar_canvas" aria-label="<%= &subs::ui('Weather layers over the map') %>"></canvas>
+	<div id="weather_radar_timeline">
+		<button type="button" id="weather_radar_play" hint="<%= &subs::ui('Play the radar frames in a loop') %>" disabled><%= &subs::ui('Play') %></button>
+		<input type="range" id="weather_radar_time" min="0" max="0" value="0" step="1" disabled aria-label="<%= &subs::ui('Radar time') %>" hint="<%= &subs::ui('Drag to see the radar at another time') %>">
+		<span id="weather_radar_time_label" class="weather_muted"></span>
+	</div>
+	<div id="weather_radar_range_note" class="weather_muted"></div>
 	<div id="weather_radar_legend" class="weather_muted"></div>
 	<div class="weather_muted weather_radar_credit"><%= &subs::ui('Radar © RainViewer · clouds, temperature, snow and smoke © NASA GIBS · winds © Open-Meteo · aurora © NOAA SWPC') %></div>
 </div>
