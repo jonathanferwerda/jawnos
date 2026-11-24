@@ -321,4 +321,24 @@ SKIP: {
 	is( $tcode, 0, q{the crate's own tests pass} ) or diag( $ttext . $terr );
 }
 
+# --- a monitor that underruns queues the lead again ------------------------
+# The listen loop writes one block per capture read, so a recovery leaves the
+# ring empty and the lead the open queued is gone. Without it every later block
+# underruns too: `table` sat in that state on 2026-11-24 - hundreds of hw_ptr
+# resets a minute, heard as a 500 Hz buzz (one 96-frame block is 2 ms) - and no
+# gain, cable or headphone change touched it.
+{
+	open( my $alsa_fh, '<', "$root/engine/src/alsa_device.rs" ) or die "alsa_device.rs: $!";
+	local $/;
+	my $alsa = <$alsa_fh>;
+	close $alsa_fh;
+
+	like( $alsa, qr/fn prime_and_start_with\(\s*playback: &Stream,\s*io: &alsa::pcm::IO<'_, i16>,\s*device: &str,/s,
+		'the lead can be queued through the IO a monitor already holds' );
+	like( $alsa, qr/Ok\(\(\)\) => \{\s*xruns \+= 1;[\s\S]{0,900}?underrun = true;[\s\S]{0,80}?break;/,
+		'a playback recovery marks the monitor starved' );
+	like( $alsa, qr/if underrun \{\s*prime_and_start_with\(&playback, &playback_io, device\)\?;/,
+		'and the next pass queues the lead again before it reads a block' );
+}
+
 done_testing();

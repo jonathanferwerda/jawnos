@@ -147,6 +147,26 @@ callbacks a second instead of 750. It keeps the near-zero promise (the 128/512 r
 machine. The supervisor's un-pinned pair, `plan_block()` and the test that pins both live in
 `perl/Audio.pl` and `t/337-audio-supervisor.t`.
 
+### §2c — the recovery cascade — 2026-11-24
+
+The person heard pops that turned into a 500 Hz buzz, a minute or two into monitoring, and no gain,
+cable or headphone change touched it. 48 kHz ÷ 96 frames = 500 Hz: one block. The playback PCM said
+so too — sampled every 20 ms for two minutes, `hw_ptr` reset hundreds of times, and most samples sat
+at `hw=0 appl=96 delay=0 state=XRUN`. The stream was writing a block, underrunning, recovering,
+writing again, forever.
+
+**One underrun was enough.** `run_listen_with_system` primes a full buffer of silence before the first
+read, because a playback auto-starts on its first write and a single write per read has no cushion
+(the code's own note: 4,178 underruns in ten seconds). A mid-run recovery calls `snd_pcm_recover`,
+which discards the ring — and nothing queued the lead again, so from that moment every block wrote
+into a buffer the device had already drained. The first underrun (an 8 ms stall on a loaded box with
+no real-time priority) was the pop; the cascade was the buzz.
+
+**The fix:** `prime_and_start_with` queues the same lead through the `IO` a running monitor already
+holds, and the loop calls it after every recovered underrun. A stall is now one short gap and a
+resumed cushion instead of a stutter that never clears. Source: `engine/src/alsa_device.rs`
+(`run_listen_with_system`); pinned by `t/332-engine-build.t`.
+
 ### The round trip, with the patch cable — 2026-11-17
 
 A cable from the interface's headphone output to its 1/4" instrument input (phantom off, instrument

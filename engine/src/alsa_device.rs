@@ -146,13 +146,23 @@ impl Stream {
 /// below are paced by the device rather than by the loop's own speed. A
 /// reopened stream gets the same lead the first open had.
 fn prime_and_start(playback: &Stream, device: &str) -> Result<(), String> {
-    let frames = playback.period.max(1);
-    let lead = crate::listen::monitor_prefill_frames(playback.buffer, frames);
-    let silence = vec![0i16; lead * 2];
     let io = playback
         .pcm
         .io_i16()
         .map_err(|error| format!("{device}: playback stream: {error}"))?;
+    prime_and_start_with(playback, &io, device)
+}
+
+/// The same lead on a stream whose `IO` the caller already holds: a monitor
+/// that underran mid-block cannot open a second one to prime through.
+fn prime_and_start_with(
+    playback: &Stream,
+    io: &alsa::pcm::IO<'_, i16>,
+    device: &str,
+) -> Result<(), String> {
+    let frames = playback.period.max(1);
+    let lead = crate::listen::monitor_prefill_frames(playback.buffer, frames);
+    let silence = vec![0i16; lead * 2];
     let mut primed = 0usize;
     while primed < lead {
         match io.writei(&silence[primed * 2..]) {
@@ -743,6 +753,7 @@ pub fn run_listen_with_system<S: crate::listen::ListenSink>(
         // block, and an underrun is recovered and counted like `--run` does.
         let samples = got * 2;
         let mut written = 0usize;
+        let mut underrun = false;
         while written < samples {
             match playback_io.writei(&output[written..samples]) {
                 Ok(0) => break,
@@ -750,11 +761,25 @@ pub fn run_listen_with_system<S: crate::listen::ListenSink>(
                 Err(error) => {
                     let message = format!("{error}");
                     match playback.pcm.try_recover(error, true) {
-                        Ok(()) => xruns += 1,
+                        Ok(()) => {
+                            xruns += 1;
+                            // A recovery empties the ring, and the lead the open
+                            // queued goes with it: from here every write lands in
+                            // a buffer the device has already drained, so the next
+                            // read has nothing to play and the monitor stutters
+                            // once per block. One early underrun used to leave it
+                            // in that block-rate buzz for the rest of the listen.
+                            // Queue the lead again, exactly as the open did.
+                            underrun = true;
+                            break;
+                        }
                         Err(_) => return Err(format!("{device}: playback: {message}")),
                     }
                 }
             }
+        }
+        if underrun {
+            prime_and_start_with(&playback, &playback_io, device)?;
         }
 
         played += got as u64;
