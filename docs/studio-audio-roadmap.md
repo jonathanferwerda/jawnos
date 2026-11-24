@@ -832,6 +832,21 @@ a loop are refused by name at the route and again in the engine. This is the tak
 plus the In pedals); the browser's Out chain stays playback-only. `t/350`, `t/355` and the mixer's
 unit tests pin the edge, the cycle guard and the pre-pan tap.
 
+**First gate run (2026-11-23, `table`, UM2, PipeWire engine).** The engine was rebuilt after the
+ALSA listen sink's frame count was fixed (v0.1.3663), then the gate ran with the house patch stopped
+and restored around it. **Recorded click grid: PASS**, first onset 6 301 samples, max delta 0.
+**Four-track shared start: PASS**, one `start_sample`, onset spread 0. **Playback grid: FAIL**, max
+delta 24 samples; the re-recorded click peaked at 0.000336 against 0.00705 in the take, and its
+intervals were 23 985–24 024 against an exact 24 000, so the onset detector was reading a signal
+21× quieter than the one it was written for. **Loopback: FAIL** because `hw:2,0` was busy while the
+PipeWire engine held the card; `--device default` measured the PipeWire path at 38.875 ms. The gate's
+always-zero peak report and the engine's one-client race were fixed in v0.1.3666. To close the gate:
+raise the interface's output/input gain (or the gate's playback gain) so the re-recorded click is not
+near the detector floor and rerun; the raw ALSA `hw:2,0` loopback has to run with the engine stopped,
+and the ±1-sample playback result is an ALSA-duplex measurement (both streams on the UM2's clock),
+not the PipeWire engine's separate playback and capture clocks. The A/B listening check is still a
+person's.
+
 ### P3 — Peers on one clock (2 weeks)
 
 Engine-to-engine over UDP: `table` as master, one peer, one shared transport. Offset and drift
