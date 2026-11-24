@@ -515,9 +515,10 @@ sub restart_wireplumber {
 # back in the server's listing, so a removal that read the list once could miss
 # the output it has to hand the level to - and a sink that appears after that
 # moment is heard at the unity the engine held it at. Wait for the output
-# (bounded: an unplugged card never comes back), then the caller's own order of
-# level, default and unload is the handover it was meant to be. With no name,
-# any sink that is neither the mix nor a null sink counts.
+# (bounded: about a second, because an unplugged card never comes back), then
+# the caller's own order of level, default and unload is the handover it was
+# meant to be. With no name, any sink that is neither the mix nor a null sink
+# counts.
 sub _await_restored_output {
 	my ($want) = @_;
 	my $named = defined $want && length $want;
@@ -527,7 +528,7 @@ sub _await_restored_output {
 			grep { ref $_ eq 'HASH' && defined $_->{'sink'} } @{ _null_sink_modules() };
 	}
 	my $sinks = _sinks();
-	for my $attempt (0 .. 15) {
+	for my $attempt (0 .. 39) {
 		if ($named) {
 			return $sinks if $sinks->{$want};
 		}
@@ -536,8 +537,10 @@ sub _await_restored_output {
 				if grep { $_ ne $system_sink && !/\Ajawn_call_in\z/ && !/\.monitor\z/ && !$null{$_} }
 				keys %{$sinks};
 		}
-		last if $attempt == 15;
-		sleep 0.1;
+		last if $attempt == 39;
+		# A short poll: the moment the node is listed is the moment a stream can
+		# land on it, and the level write is what keeps that moment quiet.
+		sleep 0.025;
 		$sinks = _sinks();
 	}
 	return $sinks;
@@ -1238,27 +1241,35 @@ sub remove {
 	my $state = _read_state($state_dir);
 	return _recover_without_state($state_dir) unless $state;
 
+	my $previous   = $state->{'previous_default'} // '';
+	my $module_id  = $state->{'module_id'} // '';
+	my $saved_level = $state->{'previous_level'};
+
+	# Read the live mix's level while it is still the default and still in the
+	# listing: it is the loudness the person hears today, the card's restart does
+	# not change it, and every call made after the nodes come back is time a
+	# stream can spend on the output at unity.
+	my $handover = available() ? _handover_level($saved_level, _sinks()) : undef;
+
 	# The rule is independent of the Pulse shim: a machine whose server is down
 	# still gets its card back, and a person's file is never unlinked.
 	my $card = _remove_managed_card($state_dir, $state);
 
-	my $previous   = $state->{'previous_default'} // '';
-	my $module_id  = $state->{'module_id'} // '';
-	my $saved_level = $state->{'previous_level'};
 	my $restored   = 0;
 	my $level_restored = 0;
 	my $unloaded   = 0;
 
-	my $sinks = available() ? _sinks() : {};
-	# A rule removal restarts WirePlumber, and the server can answer before the
-	# card's nodes are rebuilt. The output this removal hands the level to is one
-	# of those nodes: wait for it rather than skip the write and leave it at the
-	# unity the engine held.
-	if ( $sinks && available() && ref $card eq 'HASH'
-		&& ref $card->{'restart'} eq 'HASH'
-		&& $card->{'restart'}->{'ok'}
-		&& !$card->{'restart'}->{'skipped'} ) {
-		$sinks = _await_restored_output( length $previous ? $previous : undef );
+	my $sinks = {};
+	if ( available() ) {
+		# A rule removal restarts WirePlumber, and the server can answer before
+		# the card's nodes are rebuilt. The output this removal hands the level
+		# to is one of those nodes: wait for it rather than skip the write and
+		# leave it at the unity the engine held.
+		$sinks = ( ref $card eq 'HASH' && ref $card->{'restart'} eq 'HASH'
+			&& $card->{'restart'}->{'ok'}
+			&& !$card->{'restart'}->{'skipped'} )
+			? _await_restored_output( length $previous ? $previous : undef )
+			: _sinks();
 	}
 	# The mix carried the person's level while the hardware sink played at
 	# unity. Write that level back before the default moves: whatever stream
@@ -1266,7 +1277,6 @@ sub remove {
 	# it is heard at the unity the engine was holding. The live mix is the
 	# copy to read - `previous_level` only remembers what the mix was born
 	# with, and the tray may have moved since.
-	my $handover = available() ? _handover_level($saved_level, $sinks) : undef;
 	if ($handover) {
 		$level_restored = _restore_output_level($previous, $handover, $sinks);
 	}
