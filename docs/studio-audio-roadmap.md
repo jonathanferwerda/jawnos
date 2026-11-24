@@ -857,7 +857,8 @@ Pro Audio ports also fixed the level: the recorded click peaked at 0.13211 and t
 path, not the raw ALSA 64/256 floor of 2.71–2.79 ms; Studio's near-zero tracking target still points
 at the ALSA backend, while Pro Audio is the strongest PipeWire fallback and the profile the card
 keeps for the gate. The house patch was stopped for the run and restored on the Pro Audio plan
-afterwards.
+afterwards. Pro Audio is now a choice in Sound's **Engine device** picker rather than a pavucontrol
+trip (P5, below).
 
 ### P3 — Peers on one clock (2 weeks)
 
@@ -1181,6 +1182,28 @@ engine now asks for 256/1024 whatever the mode (ALSA duplex keeps 64/256), the p
 the PCM and replays the block inside a two-second window, and the supervisor ends a `failed` patch
 once so it respawns rather than leaving the house silent. Live after the change: `period 256 /
 buffer 1024`, `xruns 0`, patching past three minutes where the old engine never reached 150 s.
+
+**Engine device and card profiles (2026-11-23, in the tree).** The picker no longer offers a PCM
+name. Each card on the machine reads `ALSA — <card>`; under it come the PipeWire profiles that card
+offers — read once from `pactl list cards`, `Pro Audio` among them — then plain `PipeWire default` and
+the null device. A profile choice is stored as `card|profile` on this device's settings row beside the
+`pipewire|default` pair, so the profile is a property of the card, not of the engine's device string.
+Applying one sets the profile, moves the default output to the sink the new profile names, clears a
+plan input whose `node` the profile renamed (the old one would be silent), and restarts the engine.
+The card has to be free for that: an ALSA engine holds `hw:N,0` outright, so the startup copy is
+written first, the engine is quit, and the profile is retried for up to a second while the old child
+closes; the engine is then quit again so the respawn opens the new sink. A profile the card does not
+list is refused by name and nothing is saved. `t/242` pins the parser and the directive, `t/344` the
+picker, the save, the repoint and the refusal.
+
+**ALSA on `table` is permanent (2026-11-23, decided).** `table` runs `alsa|hw:2,0` with
+`manage` on, because that is the path whose 64/256 buffer measured 2.71–2.79 ms; the Pro Audio run's
+14.0 ms is the PipeWire path, not the tracking target. The dropdown keeps every choice, so the person
+can move between ALSA, a PipeWire profile and the null device without a terminal, and the brief cut
+while a backend or profile changes is accepted — there is no Studio-mode handover. PipeWire stays the
+default on every other machine. The gentle handover is unchanged on both backends: `remove` writes
+the live mix's level to the output, moves the default, and unloads the mix sink last, so a stream
+that follows the engine down lands at the person's level, never at the unity the engine held.
 
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;

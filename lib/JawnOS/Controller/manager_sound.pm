@@ -230,13 +230,17 @@ sub action_53033 {
 	$c->render(json => $result || { ok => 0, error => 'the fader could not be set' });
 }
 
-# POST /manager/sound/device - the interface the engine opens. The picker
-# writes the supervisor's startup copy and, while the engine is up, quits it so
-# the supervisor restarts on the new device.
+# POST /manager/sound/device - the interface the engine opens, and optionally
+# the PipeWire card profile it plays through. The picker writes the
+# supervisor's startup copy and, while the engine is up, quits it so the
+# supervisor restarts on the new device.
 sub action_53034 {
 	my $c = shift;
 	my $result = eval {
-		&subs::audio_engine_device_write($c->param('backend'), $c->param('device'));
+		&subs::audio_engine_device_write(
+			$c->param('backend'), $c->param('device'),
+			$c->param('profile'), $c->param('card'),
+		);
 	};
 	$c->render(json => $result || { ok => 0, error => 'the engine device could not be saved' });
 }

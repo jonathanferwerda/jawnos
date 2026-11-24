@@ -54,6 +54,10 @@ case "$1" in
 			printf '%s\n' 'Source #2' '	Name: fake_source' '	Description: Fake Microphone' '	Mute: yes' '	Volume: mono: 45875 / 70% / -7.00 dB'
 			exit 0
 		fi
+		if [ "$2" = "cards" ]; then
+			printf '%s\n' 'Card #49' '	Name: fake_card' '	Properties:' '		alsa.card = "0"' '	Profiles:' '		off: Off (sinks: 0, sources: 0, priority: 0, available: yes)' '		output:analog-stereo: Analog Stereo Output (sinks: 1, sources: 0, priority: 6500, available: yes)' '		pro-audio: Pro Audio (sinks: 32, sources: 32, priority: 1, available: yes)' '	Active Profile: output:analog-stereo'
+			exit 0
+		fi
 		;;
 	-f)
 		if [ "$2" = "json" ] && [ "$3" = "list" ] && [ "$4" = "sink-inputs" ]; then
@@ -61,7 +65,7 @@ case "$1" in
 			exit 0
 		fi
 		;;
-	set-sink-volume|set-source-volume|set-sink-mute|set-source-mute|set-default-sink|set-default-source|set-sink-input-mute|set-sink-input-volume)
+	set-sink-volume|set-source-volume|set-sink-mute|set-source-mute|set-default-sink|set-default-source|set-sink-input-mute|set-sink-input-volume|set-card-profile)
 		printf '%s\n' "$*" >> "$AUDIO_LOG"
 		exit 0 ;;
 esac
@@ -195,6 +199,33 @@ OUT
 	like(read_file($log), qr/^set-sink-input-mute 3 0$/m, 'the stream mute argv is exact');
 	is(JawnOS::Platform::Audio::set_stream_input_volume(3, 100), 1, 'a stream input is set');
 	like(read_file($log), qr/^set-sink-input-volume 3 100%$/m, 'the stream volume argv is exact');
+
+	# `pactl list cards` ties a PipeWire card to an ALSA index and lists the
+	# profiles (Pro Audio's id carries no colon, Analog Stereo's does).
+	my $cards = JawnOS::Platform::Audio::parse_pactl_cards(
+		JawnOS::Platform::Audio::run('pactl', 'list', 'cards'));
+	is(scalar @{$cards}, 1, 'one card block parses');
+	is($cards->[0]{name}, 'fake_card', 'by its PipeWire name');
+	is($cards->[0]{alsa_card}, '0', 'with the ALSA index /proc/asound/cards uses');
+	is($cards->[0]{active}, 'output:analog-stereo', 'and the profile it is on');
+	is_deeply([ map { $_->{id} } @{ $cards->[0]{profiles} } ],
+		['off', 'output:analog-stereo', 'pro-audio'], 'every profile id, colons and all');
+	is($cards->[0]{profiles}[2]{name}, 'Pro Audio', 'with the profile\'s own display name');
+	is_deeply(JawnOS::Platform::Audio::card_profiles('fake_card'), $cards->[0]{profiles},
+		'a card is looked up by the name the picker has');
+	is_deeply(JawnOS::Platform::Audio::card_profiles('no_such_card'), [],
+		'an unknown card offers nothing');
+
+	write_file($log, '');
+	is(JawnOS::Platform::Audio::set_card_profile('fake_card', 'pro-audio'), 1, 'a profile is set');
+	like(read_file($log), qr/^set-card-profile fake_card pro-audio$/m,
+		'and the argv is an argument list, never a shell');
+	is(JawnOS::Platform::Audio::set_card_profile('fake_card', 'a profile'), 0,
+		'a profile with a space is refused');
+	is(JawnOS::Platform::Audio::set_card_profile('--help', 'pro-audio'), 0,
+		'an option-shaped card is refused');
+	is(JawnOS::Platform::Audio::set_card_profile('fake_card', ''), 0,
+		'and an empty profile is refused');
 }
 
 # ============================================================================

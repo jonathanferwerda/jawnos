@@ -20,13 +20,19 @@ function soundPatchNodeIds() {
 }
 
 function soundPatchNote(text) { $('#sound_patch_note').text(text || ''); }
-// The picker's choices come from the manager as `devices` (ALSA cards, then
-// PipeWire and null) and `engine_device` (the saved choice). The running
-// engine's backend/device is `engine`; a difference means the engine still
-// has the old device and Apply will restart it.
+// The picker's choices come from the manager as `devices` (each ALSA card,
+// then the PipeWire profiles that card offers, then plain PipeWire and null)
+// and `engine_device` (the saved choice). The running engine's backend/device
+// is `engine`; a difference means the engine still has the old device and
+// Apply will restart it. A PipeWire profile is part of the saved choice, so
+// its id carries the card and the profile after the pair: `backend|device|card|profile`.
 function soundPatchDeviceValue(choice) {
-	return (choice && choice.backend ? choice.backend : '') + '|'
+	var value = (choice && choice.backend ? choice.backend : '') + '|'
 		+ (choice && choice.device ? choice.device : '');
+	if (choice && choice.backend === 'pipewire' && choice.card && choice.profile) {
+		value += '|' + choice.card + '|' + choice.profile;
+	}
+	return value;
 }
 
 function soundPatchDeviceRender() {
@@ -36,31 +42,49 @@ function soundPatchDeviceRender() {
 	var saved = (soundAudio && soundAudio.engine_device) || {};
 	var running = (soundAudio && soundAudio.engine) || {};
 	select.empty();
+	var active = '';
 	$.each(devices, function(i, device) {
 		var value = device.id || (device.backend + '|' + device.device);
 		select.append($('<option></option>').attr('value', value)
 			.text(device.name || device.id || device.device));
+		if (device.active) { active = value; }
 	});
 	var chosen = saved.backend ? soundPatchDeviceValue(saved)
 		: (running.backend ? soundPatchDeviceValue(running) : '');
-	if (chosen) { select.val(chosen); }
+	if (chosen) {
+		select.val(chosen);
+		// A saved profile this machine no longer offers (a card that went away)
+		// still reads back rather than silently becoming the first choice.
+		if (select.val() !== chosen) {
+			select.append($('<option></option>').attr('value', chosen)
+				.text(saved.profile ? ('PipeWire \u2014 ' + saved.profile) : chosen));
+			select.val(chosen);
+		}
+	}
 	var note = '';
 	if (running.backend && saved.backend
 		&& (running.backend !== saved.backend || running.device !== saved.device)) {
 		note = jawnosT('The engine is on') + ' ' + (running.device || running.backend)
 			+ '; ' + jawnosT('apply to switch');
 	}
+	else if (saved.backend === 'pipewire' && saved.profile && active && active !== chosen) {
+		note = jawnosT('The card is on another profile') + '; ' + jawnosT('apply to switch');
+	}
 	$('#sound_engine_device_note').text(note);
 }
 
 function soundPatchDeviceApply() {
-	var value = $('#sound_engine_device').val() || '';
-	var parts = value.split('|');
-	if (parts.length != 2 || !parts[0] || !parts[1]) { return; }
+	var parts = ($('#sound_engine_device').val() || '').split('|');
+	if (parts.length < 2 || !parts[0] || !parts[1]) { return; }
+	var data = { backend: parts[0], device: parts[1] };
+	if (parts.length >= 4 && parts[2] && parts[3]) {
+		data.card = parts[2];
+		data.profile = parts[3];
+	}
 	$.ajax({
 		url: '/manager/sound/device',
 		type: 'POST',
-		data: { backend: parts[0], device: parts[1] },
+		data: data,
 		success: function(result) {
 			result = result || {};
 			if (!result.ok) {

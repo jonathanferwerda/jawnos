@@ -27,6 +27,7 @@ our @EXPORT_OK = qw(
 	backend reset_backend devices
 	pactl_devices parse_pactl_devices parse_pactl_short
 	parse_wpctl amixer_control amixer_devices
+	parse_pactl_cards card_profiles set_card_profile
 	get_volume set_volume get_mute set_mute
 	default set_default
 	stream_inputs set_stream_input_volume set_stream_input_mute
@@ -204,6 +205,63 @@ sub parse_pactl_short {
 		};
 	}
 	return \@devices;
+}
+
+# `pactl list cards` blocks: the card's name, its ALSA index, its profiles and
+# the active one. A profile id contains colons, so the id ends at the last
+# `: ` before the description; the description's own `(sinks: ...)` suffix is
+# not part of it.
+sub parse_pactl_cards {
+	my ($text) = @_;
+	my (@cards, $card, $profiles);
+	foreach my $line (split /\n/, ($text || '')) {
+		if ($line =~ /^\s*Name:\s*(\S+)\s*$/) {
+			$card = { name => $1, profiles => [] };
+			push @cards, $card;
+			$profiles = 0;
+			next;
+		}
+		next unless $card;
+		if ($line =~ /^\s*Profiles:\s*$/) { $profiles = 1; next; }
+		if ($line =~ /^\s*Active Profile:\s*(.+?)\s*$/) {
+			$card->{'active'} = $1;
+			$profiles = 0;
+			next;
+		}
+		if ($line =~ /^\s+(?:alsa\.card|api\.alsa\.card) = \"(\d+)\"/) {
+			$card->{'alsa_card'} = $1;
+			next;
+		}
+		if ($profiles && $line =~ /^\s+(.+?):\s+(.+?)\s*\(\s*sinks:/) {
+			push @{ $card->{profiles} }, { id => $1, name => $2 };
+			next;
+		}
+		if ($line =~ /^\s*[A-Z][A-Za-z ]+:/) { $profiles = 0; }
+	}
+	return \@cards;
+}
+
+# The profiles a card offers, in the server's order. A card this machine does
+# not list answers the empty list, never an error.
+sub card_profiles {
+	my ($card) = @_;
+	return [] unless defined $card && length $card;
+	my $cards = parse_pactl_cards(run('pactl', 'list', 'cards'));
+	my ($found) = grep { $_->{'name'} eq $card } @{ $cards || [] };
+	return $found ? $found->{'profiles'} : [];
+}
+
+# Set a card's PipeWire/Pulse profile. The card and profile are checked before
+# they reach the command, which is an argument list and never a shell.
+sub set_card_profile {
+	my ($card, $profile) = @_;
+	return 0 unless defined $card && length $card && defined $profile && length $profile;
+	return 0 unless $card =~ /\A[A-Za-z0-9][A-Za-z0-9_.:@+\-]*\z/;
+	return 0 unless $profile =~ /\A[A-Za-z0-9][A-Za-z0-9_.:@+\-]*\z/;
+	my $backend = backend();
+	return 0 unless ( $backend->{'kind'} || '' ) eq 'pactl';
+	my $rc = system($backend->{'bin'}, 'set-card-profile', $card, $profile);
+	return $rc == 0 ? 1 : 0;
 }
 
 # The default device's own verbs are the authority for its level and mute, even

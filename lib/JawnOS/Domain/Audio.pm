@@ -293,6 +293,7 @@ our %audio_backend_device = (
 	null     => 'null',
 );
 our $audio_engine_device_setting = 'audio_engine_device';
+our $audio_engine_profile_setting = 'audio_engine_profile';
 
 # The picker pair from this device's row, or undef. Stored as
 # `backend|device`, the same spelling the Sound page posts.
@@ -327,8 +328,16 @@ sub _audio_engine_boot_read {
 # and the compiled default follow. A machine that has never chosen falls back
 # to the same ALSA default the supervisor uses.
 sub audio_engine_device_read {
+	my $profile = &_audio_engine_profile_read();
 	my $stored = &_audio_engine_device_setting_read();
-	return $stored if $stored;
+	if ($stored) {
+		return $stored unless $stored->{backend} eq 'pipewire' && $profile;
+		return {
+			%$stored,
+			profile => $profile->{profile},
+			card    => $profile->{card},
+		};
+	}
 
 	my $boot = &_audio_engine_boot_read();
 	my $doc = $boot->{doc} || {};
@@ -337,15 +346,93 @@ sub audio_engine_device_read {
 	my $device = $doc->{device};
 	$device = $audio_backend_device{$backend}
 		unless defined $device && length $device;
-	return { backend => $backend, device => $device };
+	return { backend => $backend, device => $device }
+		unless $backend eq 'pipewire' && $profile;
+	return {
+		backend => $backend, device => $device,
+		profile => $profile->{profile},
+		card    => $profile->{card},
+	};
 }
 
-# The ALSA cards this machine has, plus the PipeWire and null choices. A card's
-# first PCM is `hw:N,0`; the name is the /proc/asound/cards description. A test
-# can point JAWNOS_ASOUND_CARDS at a fixture; a machine with no card file still
-# gets the PipeWire and null choices.
+
+# The saved PipeWire profile, as `card|profile`. It is separate from the
+# engine pair because the engine's device stays `default`; the profile is a
+# property of the card the engine plays out.
+sub _audio_engine_profile_read {
+	my $raw = &subs::setting_grabber({
+		app     => 'sound',
+		setting => $audio_engine_profile_setting,
+		device  => &subs::device_setter(),
+	});
+	return undef unless defined $raw && !ref $raw && length $raw;
+	my ($card, $profile) = split /\|/, $raw, 2;
+	return undef unless defined $card && defined $profile
+		&& length $card && length $profile;
+	return undef unless $card =~ /\A[A-Za-z0-9][A-Za-z0-9_.:@+\-]*\z/
+		&& $profile =~ /\A[A-Za-z0-9][A-Za-z0-9_.:@+\-]*\z/;
+	return { card => $card, profile => $profile };
+}
+
+sub _audio_engine_profile_write {
+	my ($card, $profile) = @_;
+	return unless defined $card && length $card && defined $profile && length $profile;
+	&subs::setting_setter({
+		app     => 'sound',
+		setting => $audio_engine_profile_setting,
+		device  => &subs::device_setter(),
+		value   => "$card|$profile",
+	});
+}
+
+sub _audio_engine_profile_clear {
+	&subs::setting_setter({
+		app     => 'sound',
+		setting => $audio_engine_profile_setting,
+		device  => &subs::device_setter(),
+		value   => '',
+	});
+}
+
+# The picker's choices: each ALSA card, then the PipeWire profiles that card
+# offers, then the plain PipeWire choice and null. A card's first PCM is
+# `hw:N,0`; the name is the /proc/asound/cards description and the profiles
+# come from one `pactl list cards`, whose `alsa.card` property ties a PipeWire
+# card to the ALSA index. A test can point JAWNOS_ASOUND_CARDS at a fixture; a
+# machine with no card file still gets the PipeWire and null choices, and a
+# machine with no pactl gets no profile rows — never an invented one. Choosing
+# a profile is how Pro Audio is set from this picker rather than pavucontrol.
 sub audio_engine_devices {
-	my @devices = &_audio_alsa_devices();
+	require JawnOS::Platform::Audio;
+	my @cards = @{ JawnOS::Platform::Audio::parse_pactl_cards(
+		JawnOS::Platform::Audio::run('pactl', 'list', 'cards')) || [] };
+	my %card_at;
+	foreach my $card (@cards) {
+		next unless defined $card->{'alsa_card'} && length $card->{'alsa_card'};
+		$card_at{ $card->{'alsa_card'} } = $card;
+	}
+
+	my @devices;
+	foreach my $alsa (&_audio_alsa_devices()) {
+		my ($index) = $alsa->{'device'} =~ /\Ahw:(\d+),/;
+		my $card = defined $index ? $card_at{$index} : undef;
+		$alsa->{'card'} = $card->{'name'} if $card;
+		push @devices, $alsa;
+		next unless $card;
+		foreach my $profile (@{ $card->{'profiles'} || [] }) {
+			next if $profile->{'id'} eq 'off';
+			push @devices, {
+				id      => 'pipewire|default|' . $card->{'name'} . '|' . $profile->{'id'},
+				backend => 'pipewire',
+				device  => 'default',
+				card    => $card->{'name'},
+				profile => $profile->{'id'},
+				active  => ( defined $card->{'active'} && $card->{'active'} eq $profile->{'id'} ) ? 1 : 0,
+				name    => 'PipeWire — ' . $profile->{'name'}
+					. ( length $alsa->{'card_name'} ? ' (' . $alsa->{'card_name'} . ')' : '' ),
+			};
+		}
+	}
 	push @devices, {
 		id => 'pipewire|default', backend => 'pipewire', device => 'default',
 		name => 'PipeWire default',
@@ -371,7 +458,8 @@ sub _audio_alsa_devices {
 			id => "alsa|hw:$index,0",
 			backend => 'alsa',
 			device => "hw:$index,0",
-			name => "$name (hw:$index,0)",
+			name => "ALSA — $name",
+			card_name => $name,
 		};
 	}
 	close $fh;
@@ -748,14 +836,37 @@ sub audio_boot_file_write {
 # reads the file at every spawn), whatever the manage switch says - an engine
 # left running keeps its old backend and device, and on ALSA that means holding
 # the wrong card. A machine with no engine still saves the choice for later.
+#
+# A PipeWire choice may name a card profile (Pro Audio is the one that made the
+# gate pass). The profile belongs to the card, not to the pair, so it is saved
+# separately and the pair stays `pipewire|default`. The card has to be free
+# before it will change profile - an ALSA engine holds `hw:N,0` outright - so
+# the startup copy is written first (the respawn is then the PipeWire one),
+# the running engine is quit, and the profile is retried for a moment while
+# the old child closes. The default output moves to the sink the new profile
+# names, and a plan input whose node the profile renamed is cleared to the
+# machine's default source rather than left silent.
 sub audio_engine_device_write {
-	my ($backend, $device) = @_;
+	my ($backend, $device, $profile, $card) = @_;
 	$backend = '' if !defined $backend || ref $backend;
 	$device  = '' if !defined $device || ref $device;
 	return { ok => 0, error => 'choose an audio backend: alsa, pipewire or null' }
 		unless $audio_backend_ok{$backend};
 	return { ok => 0, error => 'choose a device for the backend' }
 		unless length $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/;
+
+	$profile = '' if !defined $profile || ref $profile;
+	$card    = '' if !defined $card || ref $card;
+	my $chosen;
+	if ($backend eq 'pipewire' && length $profile) {
+		require JawnOS::Platform::Audio;
+		return { ok => 0, error => 'a PipeWire profile needs the card it belongs to' }
+			unless length $card && $card =~ /\A[A-Za-z0-9][A-Za-z0-9_.:@+\-]*\z/;
+		my $offered = JawnOS::Platform::Audio::card_profiles($card);
+		return { ok => 0, error => "$profile is not a profile this card offers" }
+			unless grep { $_->{id} eq $profile } @{ $offered || [] };
+		$chosen = { card => $card, profile => $profile };
+	}
 
 	my $plan   = &audio_plan_read();
 	my $manage = &audio_manage_read();
@@ -765,6 +876,13 @@ sub audio_engine_device_write {
 		device  => &subs::device_setter(),
 		value   => $backend . '|' . $device,
 	});
+	if ($chosen) {
+		&_audio_engine_profile_write($chosen->{card}, $chosen->{profile});
+	}
+	else {
+		&_audio_engine_profile_clear();
+	}
+
 	my $written = &_audio_plan_boot_write($manage, $plan, $backend, $device);
 	return { ok => 0, error => $written->{error} } unless $written->{ok};
 
@@ -781,10 +899,72 @@ sub audio_engine_device_write {
 
 	require JawnOS::Audio::Engine;
 	my $available = eval { JawnOS::Audio::Engine::audio_engine_available() } ? 1 : 0;
-	my $applied = $available
-		? JawnOS::Audio::Engine::audio_engine_quit()
-		: { ok => 1, skipped => 1, error => '' };
-	return { ok => 1, backend => $backend, device => $device, applied => $applied };
+	my $applied;
+	if ($chosen) {
+		my $first = $available
+			? JawnOS::Audio::Engine::audio_engine_quit()
+			: { ok => 1, skipped => 1, error => '' };
+		my $set = &_audio_set_card_profile_wait($chosen->{card}, $chosen->{profile});
+		return { ok => 0, error => "the card did not accept the $chosen->{profile} profile" }
+			unless $set;
+		&_audio_profile_repoint($chosen->{card});
+		$applied = $first;
+		if ($available && !$first->{'skipped'}) {
+			# The respawn may have opened the sink the old profile named;
+			# quit once more now that the default has moved.
+			my $again = eval { JawnOS::Audio::Engine::audio_engine_quit() };
+			$applied = $again if ref $again eq 'HASH' && $again->{'ok'};
+		}
+	}
+	else {
+		$applied = $available
+			? JawnOS::Audio::Engine::audio_engine_quit()
+			: { ok => 1, skipped => 1, error => '' };
+	}
+	return {
+		ok => 1, backend => $backend, device => $device,
+		($chosen ? ( profile => $chosen->{profile}, card => $chosen->{card} ) : ()),
+		applied => $applied,
+	};
+}
+
+# A card the engine has just let go may take a moment to close; a profile
+# change is refused while it is held. One retry loop of a second is enough for
+# the supervisor's quit, and a card that never answers is a real refusal.
+sub _audio_set_card_profile_wait {
+	my ($card, $profile) = @_;
+	require JawnOS::Platform::Audio;
+	for my $attempt (1 .. 10) {
+		return 1 if JawnOS::Platform::Audio::set_card_profile($card, $profile);
+		select undef, undef, undef, 0.1;
+	}
+	return 0;
+}
+
+# A profile renames the card's nodes, so the sink the engine should play out
+# and the plan's input node both have to follow it. The default moves to the
+# card's new playback sink; an input naming a node of the old profile is
+# cleared, which means this machine's default source - the profile's new one.
+sub _audio_profile_repoint {
+	my ($card) = @_;
+	require JawnOS::Platform::Audio;
+	my $bus = $card;
+	$bus =~ s/\Aalsa_card\.//;
+	my ($sink) = grep { $_->{'id'} =~ /\Aalsa_output\.\Q$bus\E\./ }
+		@{ JawnOS::Platform::Audio::devices('output') || [] };
+	JawnOS::Platform::Audio::set_default('output', $sink->{'id'}) if $sink;
+
+	my $saved = &audio_plan_read();
+	my $changed = 0;
+	foreach my $source (@{ $saved->{sources} || [] }) {
+		next unless ( $source->{kind} || '' ) eq 'input';
+		next unless JawnOS::Audio::Plan::audio_plan_on_this_machine($source->{machine});
+		next unless defined $source->{node} && $source->{node} =~ /\Q$bus\E/;
+		$source->{node} = '';
+		$changed = 1;
+	}
+	eval { &audio_plan_write($saved) } if $changed;
+	return;
 }
 
 # The master switch. On applies the saved plan now; off stops the engine's

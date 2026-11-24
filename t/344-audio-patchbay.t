@@ -18,7 +18,8 @@ use utf8;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 use Test::More;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
+use File::Path qw(make_path);
 use File::Temp qw(tempdir);
 use JSON::PP ();
 use RepoSource ();
@@ -651,6 +652,150 @@ require JawnOS::Domain::Audio;
 			'the answer names the output the engine will play through');
 	}
 	subs::audio_manage_set(0);
+}
+
+# --- the picker offers a card's PipeWire profiles --------------------------
+#
+# Profiles are the card's, not the engine pair's: choosing Pro Audio saves
+# `card|profile` beside `pipewire|default`, sets the card, moves the default to
+# the sink the profile names, and restarts the engine. A profile change needs a
+# free card, so the engine is quit first - an ALSA engine holds `hw:N,0` - and
+# the fake pactl here records the argv rather than proving the hardware.
+{
+	%STORE = ();
+	unlink $ENV{JAWNOS_AUDIO_PLAN};
+	require JawnOS::Platform::Audio;
+	my $tools = "$scratch/tools";
+	make_path($tools);
+	my $log = "$scratch/cards.log";
+	write_file($log, '');
+	write_file("$tools/pactl", <<'SH');
+case "$1" in
+	info) echo "Server Name: fake"; exit 0 ;;
+	get-default-sink) echo "alsa_output.usb-BEHRINGER_UMC_202HD_192k-00.pro-output-0"; exit 0 ;;
+	get-default-source) echo "alsa_input.usb-BEHRINGER_UMC_202HD_192k-00.pro-input-0"; exit 0 ;;
+	get-sink-volume|get-source-volume) echo "Volume: front-left: 32768 / 50% / 0 dB"; exit 0 ;;
+	get-sink-mute|get-source-mute) echo "Mute: no"; exit 0 ;;
+	list)
+		case "$2" in
+		cards) cat "$AUDIO_CARDS"; exit 0 ;;
+		sinks) printf '%s\n' 'Sink #0' '	Name: alsa_output.usb-BEHRINGER_UMC_202HD_192k-00.pro-output-0' '	Description: UM2 Pro' '	Mute: no' '	Volume: front-left: 32768 / 50% / 0 dB' 'Sink #1' '	Name: alsa_output.pci-0000_00_1f.3.analog-stereo' '	Description: PCH' '	Mute: no' '	Volume: front-left: 32768 / 50% / 0 dB'; exit 0 ;;
+		sources) printf '%s\n' 'Source #0' '	Name: alsa_input.usb-BEHRINGER_UMC_202HD_192k-00.pro-input-0' '	Description: UM2 Pro' '	Mute: no' '	Volume: mono: 32768 / 50% / 0 dB'; exit 0 ;;
+		esac ;;
+	set-card-profile|set-default-sink|set-default-source)
+		printf '%s\n' "$*" >> "$AUDIO_LOG"; exit 0 ;;
+esac
+exit 1
+SH
+	chmod 0755, "$tools/pactl";
+
+	my $card_text = "$scratch/pactl-cards";
+	write_file($card_text, <<'CARDS');
+Card #49
+	Name: alsa_card.pci-0000_00_1f.3
+	Properties:
+		alsa.card = "0"
+	Profiles:
+		off: Off (sinks: 0, sources: 0, priority: 0, available: yes)
+		output:analog-stereo: Analog Stereo Output (sinks: 1, sources: 0, priority: 6500, available: yes)
+		pro-audio: Pro Audio (sinks: 32, sources: 32, priority: 1, available: yes)
+	Active Profile: output:analog-stereo
+
+Card #50
+	Name: alsa_card.usb-BEHRINGER_UMC_202HD_192k-00
+	Properties:
+		alsa.card = "1"
+	Profiles:
+		off: Off (sinks: 0, sources: 0, priority: 0, available: yes)
+		output:analog-stereo: Analog Stereo Output (sinks: 1, sources: 0, priority: 6500, available: yes)
+		input:analog-stereo: Analog Stereo Input (sinks: 0, sources: 1, priority: 6500, available: yes)
+		pro-audio: Pro Audio (sinks: 6, sources: 6, priority: 1, available: yes)
+	Active Profile: pro-audio
+CARDS
+
+	local $ENV{'PATH'} = "$tools:" . ($ENV{'PATH'} || '');
+	local $ENV{'AUDIO_CARDS'} = $card_text;
+	local $ENV{'AUDIO_LOG'} = $log;
+	JawnOS::Platform::Audio::reset_backend();
+
+	my $devices = subs::audio_engine_devices();
+	my ($um2_pro) = grep {
+		($_->{id} || '') eq 'pipewire|default|alsa_card.usb-BEHRINGER_UMC_202HD_192k-00|pro-audio'
+	} @$devices;
+	ok($um2_pro, 'the UM2 offers Pro Audio as a PipeWire choice');
+	like($um2_pro->{name}, qr/^PipeWire \x{2014} Pro Audio \(/, 'named by the profile and the card');
+	is($um2_pro->{active}, 1, 'and says it is the profile the card is on');
+	my ($um2_alsa) = grep { ($_->{device} || '') eq 'hw:1,0' } @$devices;
+	is($um2_alsa->{name}, "ALSA \x{2014} BEHRINGER UMC 202HD 192k",
+		'the ALSA entry leads with ALSA, never the PCM name');
+	is($um2_alsa->{card}, 'alsa_card.usb-BEHRINGER_UMC_202HD_192k-00',
+		'and carries the PipeWire card it maps to');
+	ok((grep { ($_->{id} || '') eq 'pipewire|default' } @$devices), 'plain PipeWire stays a choice');
+	ok((grep { ($_->{id} || '') eq 'pipewire|default|alsa_card.pci-0000_00_1f.3|output:analog-stereo' } @$devices),
+		'and another card offers its own profiles');
+
+	# An input node the new profile will rename.
+	subs::audio_plan_write({
+		sources => [ { id => 'gtr', kind => 'input', channel => 1,
+			node => 'alsa_input.usb-BEHRINGER_UMC_202HD_192k-00.pro-input-0' } ],
+		buses => [], sinks => [ { id => 'out', kind => 'interface' } ],
+		routes => [ { from => 'gtr', to => 'out' } ],
+	});
+
+	require JawnOS::Audio::SystemMix;
+	my $quit = 0;
+	{
+		no warnings 'redefine';
+		local *JawnOS::Audio::SystemMix::remove = sub { return { ok => 1 } };
+		local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
+		local *JawnOS::Audio::Engine::audio_engine_quit = sub {
+			$quit++;
+			return { ok => 1, state => 'done' };
+		};
+
+		write_file($log, '');
+		my $saved = subs::audio_engine_device_write('pipewire', 'default', 'pro-audio',
+			'alsa_card.usb-BEHRINGER_UMC_202HD_192k-00');
+		is($saved->{ok}, 1, 'a PipeWire profile saves');
+		is($saved->{profile}, 'pro-audio', 'and the answer names it');
+		is($STORE{'sound/audio_engine_profile/test-computer'},
+			'alsa_card.usb-BEHRINGER_UMC_202HD_192k-00|pro-audio',
+			'stored beside the pair on this device row');
+		is($STORE{'sound/audio_engine_device/test-computer'}, 'pipewire|default',
+			'while the pair stays plain PipeWire');
+		my $written = read_file($log);
+		like($written, qr/set-card-profile alsa_card\.usb-BEHRINGER_UMC_202HD_192k-00 pro-audio/,
+			'the card is set through pactl');
+		like($written, qr/set-default-sink alsa_output\.usb-BEHRINGER_UMC_202HD_192k-00\./,
+			'and the default output moves to the profile\'s sink');
+		is($quit, 2, 'the engine is quit to free the card and again to reopen the new sink');
+		is_deeply(
+			subs::audio_engine_device_read(),
+			{ backend => 'pipewire', device => 'default', profile => 'pro-audio',
+			  card => 'alsa_card.usb-BEHRINGER_UMC_202HD_192k-00' },
+			'and the profile reads back with the pair'
+		);
+		is(subs::audio_plan_read()->{sources}[0]{node}, '',
+			'a plan input the profile renamed is cleared to the default source');
+
+		my $refused = subs::audio_engine_device_write('pipewire', 'default', 'output:iec958-stereo',
+			'alsa_card.usb-BEHRINGER_UMC_202HD_192k-00');
+		is($refused->{ok}, 0, 'a profile the card does not offer is refused');
+		like($refused->{error}, qr/not a profile this card offers/, 'and the refusal says so');
+		is($STORE{'sound/audio_engine_profile/test-computer'},
+			'alsa_card.usb-BEHRINGER_UMC_202HD_192k-00|pro-audio',
+			'and the stored profile is left alone');
+
+		my $plain = subs::audio_engine_device_write('pipewire', 'default');
+		is($plain->{ok}, 1, 'the plain PipeWire choice saves');
+		ok(!length($STORE{'sound/audio_engine_profile/test-computer'} // ''),
+			'and clears the saved profile');
+		is_deeply(subs::audio_engine_device_read(), { backend => 'pipewire', device => 'default' },
+			'so the pair reads back without one');
+		is($quit, 3, 'and the plain choice restarts the engine once');
+	}
+
+	JawnOS::Platform::Audio::reset_backend();
 }
 
 # --- the manager gate: ALSA and every PipeWire plan get the mix ------------
