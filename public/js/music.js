@@ -2075,7 +2075,7 @@ function musicConfigPlace(panel) {
 		left = r.right - w - 16;
 		top = r.top + 90;
 	}
-	var other = (panel.attr('id') == 'music_audio_panel') ? $('#music_configuration') : $('#music_audio_panel');
+	var other = musicConfigSheet((panel.attr('id') == 'music_audio_panel') ? 'music_configuration' : 'music_audio_panel');
 	if (other.length && other.is(':visible')) {
 		var o = other[0].getBoundingClientRect();
 		var gap = 12;
@@ -2140,6 +2140,20 @@ function musicConfigShow(panel) {
 	panel.css({ visibility: 'hidden', display: 'flex' });
 	musicConfigPlace(panel);
 	panel.css('visibility', '');
+}
+// The two drawers are moved onto the window's frame (musicConfigFloat marks
+// them) and the template carries a hidden shell for each inside
+// .window_contents. A fresh render of the window replaces .window_contents and
+// brings another shell wearing the same id, while the open sheet survives on
+// the frame - so $('#id') (first in document order) is from then on the hidden
+// shell, and pressing X hid the wrong sheet while the open one could not be
+// closed. The marked sheet is the live one: the one on screen, with its place
+// and its contents. Readers ask for it; the fresh shell stays where it is so a
+// cached window still carries a drawer to replay.
+function musicConfigSheet(id) {
+	var sheets = $('#' + id);
+	var marked = sheets.filter('[music_window]');
+	return marked.length ? marked.first() : sheets.first();
 }
 // whichever sheet is touched comes to the front of the pair
 $(document).on('mousedown touchstart', '.music_cfg_drawer', function () {
@@ -2414,6 +2428,9 @@ function musicBarIntervalArm() {
 }
 
 async function musicInit(method) {
+	// a re-render leaves the open drawer on the frame and a fresh hidden shell
+	// in the contents; ask for the live one from here on (see musicConfigSheet)
+	var audio_sheet = musicConfigSheet('music_audio_panel');
 	// the saved list view (offset and top row) comes back with the player cache,
 	// so the rows the person was looking at are mounted again on the next open
 	var saved_view = null;
@@ -2433,7 +2450,7 @@ async function musicInit(method) {
 	// The Audio drawer is fetched from this machine and is also where the saved
 	// curve lives; fetch it once per opened window so a saved EQ is applied even
 	// if the drawer is never opened.
-	if (!$('#music_audio_panel').children().length) { try { await musicAudioPanelLoad(false); } catch (e) {} }
+	if (audio_sheet.length && !audio_sheet.children().length) { try { await musicAudioPanelLoad(false); } catch (e) {} }
 	if (method != 'search') {
 		// a restored window comes back with the setting the server last saved;
 		// a search re-render keeps the value already running in this page
@@ -2644,7 +2661,7 @@ async function musicInit(method) {
 			}
 		});
 	}
-	var mc = $('#music_configuration');
+	var mc = musicConfigSheet('music_configuration');
 	if (mc.is(':visible')) { musicConfigFloat(mc); }
 	// the video setting rides in the window markup, so the enhancement and the
 	// remote list are right before the Audio drawer is ever opened
@@ -4996,7 +5013,7 @@ function searchMusic(data) {
 
 			treeMaker();
 
-			var configOpen = $('#music_configuration').is(':visible');
+			var configOpen = musicConfigSheet('music_configuration').is(':visible');
 			if (in_place) {
 				// the list elements come back fresh, so musicInit rebuilds their
 				// jQuery UI resizable state below
@@ -5011,7 +5028,7 @@ function searchMusic(data) {
 				// the configuration panel carries the library's own controls and
 				// its remote_uuid, so it moves with a library switch
 				if (fragment.find('#music_configuration').length) {
-					$('#music_configuration').replaceWith(fragment.find('#music_configuration'));
+					musicConfigSheet('music_configuration').replaceWith(fragment.find('#music_configuration'));
 				}
 			}
 			else {
@@ -5077,7 +5094,7 @@ function searchMusic(data) {
 			$('#music').css('--music-shelf-height', musicShelfBand() + 'px');
 
 			if (configOpen == true) {
-				musicConfigShow($('#music_configuration'));
+				musicConfigShow(musicConfigSheet('music_configuration'));
 			}
 			if (theatreMode == 'on') {
 				theatreModeOn();
@@ -5336,7 +5353,8 @@ function musicOutputPaint(output, state) {
 
 $(document).on('click', '#music_configuration_close', function(e) {
 	e.preventDefault();
-	$('#music_configuration').hide();
+	// close the sheet the X belongs to, never whichever '#id' comes first
+	$(this).closest('.music_cfg_drawer').hide();
 });
 
 function musicEqualizerFromEqualizer(eq) {
@@ -6074,7 +6092,8 @@ $(document).on('change', '#music_video_quality, #music_video_fps', function() {
 });
 
 function musicAudioPanelLoad(show) {
-	var panel = $('#music_audio_panel');
+	// the sheet moved onto the frame, not the fresh shell a render may have left
+	var panel = musicConfigSheet('music_audio_panel');
 	if (!panel.length) { return Promise.resolve(); }
 	// the drawer floats over the theatre picture like the configuration sheet
 	if (show) { musicConfigShow(panel); }
@@ -6115,7 +6134,7 @@ function musicAudioPanelLoad(show) {
 }
 
 $(document).on('click', '#music_audio_toggle', function() {
-	var panel = $('#music_audio_panel');
+	var panel = musicConfigSheet('music_audio_panel');
 	if (panel.is(':visible')) { panel.hide(); return; }
 	// the configuration sheet is left alone: both can be open at once
 	musicAudioPanelLoad(true);
@@ -6127,11 +6146,12 @@ $(document).on('click', '#music_audio_toggle', function() {
 
 $(document).on('click', '#music_audio_close', function(e) {
 	e.preventDefault();
-	$('#music_audio_panel').hide();
+	// close the sheet the X belongs to, never whichever '#id' comes first
+	$(this).closest('.music_cfg_drawer').hide();
 });
 
 $(document).on('click', '#music_configuration_toggle', function() {
-	var mc = $('#music_configuration');
+	var mc = musicConfigSheet('music_configuration');
 	var remote_uuid = mc.attr('remote_uuid');
 	if (mc.is(':visible')) {
 		mc.hide();
