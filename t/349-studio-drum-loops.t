@@ -72,7 +72,7 @@ like($code, qr/studioDrums\.steps\[v\.name\] = steps;/, 'load replaces the row')
 like($code, qr/var kit = studioDrumsKitName\(item\.kit\);/, 'an unknown kit falls back to Acoustic');
 like($code, qr/if \(kit !== studioDrums\.kit\) \{[\s\S]{0,220}studioDrumsBuild\(studioDrums\.ctx\);[\s\S]{0,40}\}/,
 	'a different kit clears the buffers and rebuilds');
-like($code, qr/studioDrumsRender\(\);\s*\n\s*studioSaver\(\);/, 'load renders and saves the song');
+like($code, qr/studioDrumsRender\(\);\s*\n\s*studioDrumsSaver\(\);/, 'load renders and saves the song');
 
 # --- delete ----------------------------------------------------------------
 like($code, qr/function studioDrumsDeleteLoop\(\)/, 'a loop has one delete function');

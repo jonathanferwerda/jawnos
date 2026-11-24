@@ -809,6 +809,24 @@ impl Mixer {
     where
         F: Fn(usize) -> &'a [f32],
     {
+        self.mix_with_live_and_extra(bus, input, live, None)
+    }
+
+    /// The same sum, with a second interleaved stereo bus (the native drum
+    /// machine) added **after** the tracks and the live input and **before**
+    /// the master pass, so one mastering chain owns the whole transport mix.
+    /// `extra` must match the bus; `None` is exactly
+    /// [`mix_with_live`](Mixer::mix_with_live).
+    pub fn mix_with_live_and_extra<'a, F>(
+        &mut self,
+        bus: &mut [f32],
+        input: F,
+        live: Option<&[f32]>,
+        extra: Option<&[f32]>,
+    ) -> Result<(), String>
+    where
+        F: Fn(usize) -> &'a [f32],
+    {
         self.apply_pending();
         if bus.len() % 2 != 0 {
             return Err(format!(
@@ -843,6 +861,15 @@ impl Mixer {
                 ));
             }
         }
+        if let Some(extra) = extra {
+            if extra.len() != bus.len() {
+                return Err(format!(
+                    "the extra input has {} samples, the bus has {}",
+                    extra.len(),
+                    bus.len()
+                ));
+            }
+        }
 
         bus.fill(0.0);
         let Mixer {
@@ -868,6 +895,15 @@ impl Mixer {
         // the live input by the same amount.
         if let Some(live) = live {
             for (out, sample) in bus.iter_mut().zip(live.iter()) {
+                *out += sample;
+            }
+        }
+
+        // The drum machine's bus joins here too: after the tracks and the live
+        // input, before the master pass, so the armed rack masters the drums
+        // with everything else and never twice.
+        if let Some(extra) = extra {
+            for (out, sample) in bus.iter_mut().zip(extra.iter()) {
                 *out += sample;
             }
         }
@@ -1278,6 +1314,62 @@ mod tests {
         assert!(
             bus.iter().all(|sample| sample.abs() <= ceiling + 2e-2),
             "the master chain did not see the live input: {bus:?}"
+        );
+    }
+
+    #[test]
+    fn the_extra_bus_is_summed_before_the_master_chain() {
+        // No files: the bus is the live input plus the extra (drum) bus, both
+        // summed at unity and in that order.
+        let live = vec![0.1f32; 256];
+        let drums = vec![0.2f32; 256];
+        let mut plain = Mixer::new(&[], &[]);
+        plain.prepare(48_000, 128);
+        let mut bus = vec![0.0f32; 256];
+        plain
+            .mix_with_live_and_extra(
+                &mut bus,
+                |_| &[] as &[f32],
+                Some(&live),
+                Some(&drums),
+            )
+            .expect("mix");
+        for sample in &bus {
+            assert!((sample - 0.3).abs() < 1e-6, "the extra bus was not summed: {bus:?}");
+        }
+        // The live path is untouched: without the extra it is exactly the live
+        // input, and adding the extra is a straight sum.
+        let mut live_only = vec![0.0f32; 256];
+        plain
+            .mix_with_live(&mut live_only, |_| &[] as &[f32], Some(&live))
+            .expect("mix");
+        assert_eq!(live_only, live);
+        for (both, only) in bus.iter().zip(&live_only) {
+            assert!((both - only - 0.2).abs() < 1e-6, "the extra disturbed the live path");
+        }
+
+        // A master insert that scales the bus must scale the drum bus too: the
+        // limiter catches drums exactly as it catches a file or the live input.
+        let mut mixer = Mixer::new(&[], &[]);
+        mixer.push_master(InsertKind::Limiter);
+        assert!(mixer.set_master("master_limiter.ceiling", -6.0));
+        mixer.prepare(48_000, 128);
+        let loud = vec![0.8f32; 256];
+        let mut bus = vec![0.0f32; 256];
+        for _ in 0..4 {
+            mixer
+                .mix_with_live_and_extra(
+                    &mut bus,
+                    |_| &[] as &[f32],
+                    Some(&live),
+                    Some(&loud),
+                )
+                .expect("mix");
+        }
+        let ceiling = 10f32.powf(-6.0 / 20.0);
+        assert!(
+            bus.iter().all(|sample| sample.abs() <= ceiling + 2e-2),
+            "the master chain did not see the drum bus: {bus:?}"
         );
     }
 

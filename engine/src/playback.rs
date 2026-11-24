@@ -20,6 +20,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
+use jawn_drums::{Kit, Machine, Voice};
+
 use crate::effect::{Channel, InsertKind};
 use crate::mixer::{Mixer, ParamQueue};
 use crate::monbus::Consumer;
@@ -712,7 +714,16 @@ impl TransportControl {
 
     /// Move the transport to `position` at the next block. The last request
     /// wins; the render thread sees a whole seek or none of it.
+    ///
+    /// A request that lands within 20 ms of where the transport already is is
+    /// not a move: a tempo, loop or metronome knob sends the playhead it is
+    /// already at, and honouring it would reset every strip's tail - and
+    /// restart the drum chart - for no audible gain. A real seek is further.
     pub fn seek(&self, position: u64) {
+        let slack = (self.rate() as u64 / 50).max(1);
+        if position.abs_diff(self.position()) <= slack {
+            return;
+        }
         self.seek_frames.store(position, Ordering::Release);
         self.position.store(position, Ordering::Release);
         self.seek_seq.fetch_add(1, Ordering::AcqRel);
@@ -776,6 +787,87 @@ impl TransportControl {
     }
 }
 
+/// A sixteenth-note drum chart the transport plays through the native
+/// [`jawn_drums::Machine`].
+///
+/// One row per step; a row holds a `0..=100` velocity per voice in
+/// [`jawn_drums::Voice::index`] order. Step 0 sits at the frame the transport
+/// was started (or seeked) at, and a transport loop restarts the chart at step
+/// 0 when the position wraps to `loop_start`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrumChart {
+    /// The kit whose voices the machine renders.
+    pub kit: Kit,
+    /// The chart's length in sixteenth steps, `1..=MAX_STEPS`.
+    pub length: usize,
+    /// Repeat the chart after its last step; `false` plays it once.
+    pub looped: bool,
+    /// Exactly `length` rows; each row is one velocity per voice.
+    pub steps: Vec<[u8; Voice::COUNT]>,
+}
+
+impl DrumChart {
+    /// The most sixteenth steps one chart may carry, matching the crate's
+    /// [`jawn_drums::Pattern`] limit.
+    pub const MAX_STEPS: usize = 128;
+
+    /// A chart, padded or cut to `length`. The socket validates the wire shape;
+    /// this keeps the render thread's assumption (one row per step) true for
+    /// every caller.
+    pub fn new(kit: Kit, length: usize, looped: bool, mut steps: Vec<[u8; Voice::COUNT]>) -> Self {
+        let length = length.clamp(1, Self::MAX_STEPS);
+        steps.resize(length, [0; Voice::COUNT]);
+        steps.truncate(length);
+        DrumChart {
+            kit,
+            length,
+            looped,
+            steps,
+        }
+    }
+
+    /// The kit's wire name, as the status line reports it.
+    pub fn kit_name(&self) -> &'static str {
+        self.kit.name()
+    }
+}
+
+/// The transport's live drum state: the loaded kit, the pool of hits and the
+/// sixteenth-step cursor. Built in `prepared` or at a plan edge, never per
+/// block, because loading a kit renders every voice and allocates.
+struct DrumRender {
+    machine: Machine,
+    chart: DrumChart,
+    /// The next chart step to trigger.
+    step: usize,
+    /// Frames elapsed since the chart's step 0, kept in frames so a tempo
+    /// change moves the boundaries, not the cursor.
+    phase: f64,
+    /// The phase of the next step boundary.
+    next_phase: f64,
+    /// The step length the current boundary was measured with; a change
+    /// re-anchors the next boundary without jumping the phase.
+    step_frames: f64,
+    /// A one-shot chart that has played its last step.
+    finished: bool,
+}
+
+impl DrumRender {
+    fn new(chart: DrumChart, rate: u32, period: usize) -> Self {
+        let mut machine = Machine::new(rate, period);
+        machine.load_kit(chart.kit);
+        DrumRender {
+            machine,
+            chart,
+            step: 0,
+            phase: 0.0,
+            next_phase: 0.0,
+            step_frames: 0.0,
+            finished: false,
+        }
+    }
+}
+
 /// A whole replacement placement plan for a running transport.
 ///
 /// The control thread parses a plan (a full set of takes, already decoded) and
@@ -793,6 +885,10 @@ pub struct TransportPlan {
     /// the same block edge as a placement and never rebuild the rack, so a knob
     /// turn does not reset a reverb or a limiter's gain.
     pub master_values: Option<Vec<(String, f32)>>,
+    /// A replacement drum chart, or `None` to leave the playing chart alone.
+    /// A chart or kit change rebuilds the machine here, at a block edge; the
+    /// device stays open.
+    pub drums: Option<DrumChart>,
 }
 
 /// An attach or detach of a take's live input on a running transport.
@@ -855,6 +951,20 @@ pub struct TransportSource {
     /// a plan that is not ready waits for a later block instead of stalling the
     /// device.
     plan_rx: Option<Receiver<TransportPlan>>,
+    /// The drum chart this transport plays, if any. It arrives before the device
+    /// opens or rides a plan; the render machine is built from it in `prepared`
+    /// and at a plan edge that changes the kit.
+    drums: Option<DrumChart>,
+    /// The native drum machine and its sixteenth-step cursor, once a chart is
+    /// loaded.
+    drum_render: Option<DrumRender>,
+    /// The machine's planar block (left half, then right half), sized in
+    /// `prepared`.
+    drum_block: Vec<f32>,
+    /// The same block interleaved for the stereo mix bus. The machine renders
+    /// mono to both channels; this is the only per-block copy, and it allocates
+    /// nothing.
+    drum_stereo: Vec<f32>,
     /// The device rate and prepared period, kept so a plan that changes the
     /// clip count or insert set can rebuild the strips on the render thread.
     rate: u32,
@@ -883,6 +993,10 @@ impl TransportSource {
             live_block: Vec::new(),
             live_rx: None,
             plan_rx: None,
+            drums: None,
+            drum_render: None,
+            drum_block: Vec::new(),
+            drum_stereo: Vec::new(),
             rate: 0,
             period: 0,
             clip_position: 0,
@@ -924,6 +1038,14 @@ impl TransportSource {
     /// holds; the socket keeps the matching sender.
     pub fn with_plan_rx(mut self, plans: Receiver<TransportPlan>) -> Self {
         self.plan_rx = Some(plans);
+        self
+    }
+
+    /// The drum chart to play before the device opens. A chart that arrives
+    /// beside a running transport rides a [`TransportPlan`] instead, so the
+    /// device is never reopened.
+    pub fn with_drums(mut self, chart: DrumChart) -> Self {
+        self.drums = Some(chart);
         self
     }
 
@@ -981,7 +1103,13 @@ impl TransportSource {
             clips,
             master,
             master_values,
+            drums,
         } = plan;
+        // A chart or kit change builds (or reloads) the machine here, at the
+        // block edge; the device stays open and the clip strips are untouched.
+        if let Some(chart) = drums {
+            self.apply_drum_chart(chart);
+        }
         if let Some(master) = master {
             if master != self.master {
                 self.master = master;
@@ -1017,6 +1145,108 @@ impl TransportSource {
         } else {
             self.clips = clips;
             self.rebuild_strips();
+        }
+    }
+
+    /// Replace the drum chart at a plan edge. A different kit rebuilds the
+    /// machine (and renders its voices) once here; a same-kit chart swaps the
+    /// rows in place, so an edit never allocates on the audio thread. The
+    /// cursor keeps its place unless the new chart is shorter than it.
+    fn apply_drum_chart(&mut self, chart: DrumChart) {
+        let same_kit = self
+            .drum_render
+            .as_ref()
+            .map(|render| render.chart.kit == chart.kit)
+            .unwrap_or(false);
+        if same_kit {
+            let render = self
+                .drum_render
+                .as_mut()
+                .expect("same_kit means a render machine exists");
+            render.chart = chart.clone();
+            if render.step >= render.chart.length {
+                render.step %= render.chart.length;
+                render.finished = false;
+            }
+        } else if self.period > 0 && self.rate > 0 {
+            self.drum_render = Some(DrumRender::new(chart.clone(), self.rate, self.period));
+        }
+        self.drums = Some(chart);
+    }
+
+    /// Render one block of drums and schedule its steps.
+    ///
+    /// The phase is kept in frames since step 0, so a tempo change moves the
+    /// next boundary to the new sixteenth length without jumping the cursor.
+    /// A transport loop resets the phase and the chart position at the wrap, so
+    /// every loop begins on step 0 at `loop_start`. Every trigger is placed
+    /// with [`Machine::trigger_at`], so a step can land anywhere inside the
+    /// block, then the machine renders the whole block once.
+    fn render_drums(&mut self, song_start: u64, frames: usize) {
+        let Some(render) = self.drum_render.as_mut() else {
+            return;
+        };
+        let bpm = f64::from_bits(self.bpm_bits);
+        let q = if bpm.is_finite() && bpm > 0.0 {
+            (self.rate as f64 * 60.0 / bpm / 4.0).max(1.0)
+        } else {
+            1.0
+        };
+        // A tempo change re-anchors the next boundary one new step ahead; the
+        // phase itself (the cursor) is untouched.
+        if render.step_frames > 0.0 && (q - render.step_frames).abs() > 1e-9 {
+            render.next_phase = ((render.phase / q).floor() + 1.0) * q;
+        }
+        render.step_frames = q;
+        if render.next_phase < render.phase {
+            render.next_phase = ((render.phase / q).floor() + 1.0) * q;
+        }
+
+        let loop_bounds = self.clip_loop;
+        let mut phase = render.phase;
+        let mut song = song_start;
+        for frame in 0..frames {
+            if !render.finished && phase + 1e-9 >= render.next_phase {
+                let chart_length = render.chart.length.max(1);
+                if let Some(row) = render.chart.steps.get(render.step) {
+                    for voice in Voice::ALL {
+                        let velocity = row[voice.index()];
+                        if velocity > 0 {
+                            render.machine.trigger_at(voice.index(), velocity, frame);
+                        }
+                    }
+                }
+                render.step += 1;
+                if render.step >= chart_length {
+                    if render.chart.looped {
+                        render.step = 0;
+                    } else {
+                        render.finished = true;
+                    }
+                }
+                render.next_phase += q;
+            }
+            phase += 1.0;
+            song += 1;
+            if loop_bounds.1 > loop_bounds.0 && song >= loop_bounds.1 {
+                let length = loop_bounds.1 - loop_bounds.0;
+                song = loop_bounds.0 + (song - loop_bounds.1) % length;
+                // A transport loop always begins on chart step 0.
+                render.step = 0;
+                render.finished = false;
+                phase = 0.0;
+                render.next_phase = 0.0;
+            }
+        }
+        render.phase = phase;
+
+        let block = &mut self.drum_block[..frames * 2];
+        let (left, right) = block.split_at_mut(frames);
+        render.machine.render(left, right);
+        // The machine writes planar halves; the mix bus is interleaved.
+        for frame in 0..frames {
+            self.drum_stereo[frame * 2] = left[frame];
+            self.drum_stereo[frame * 2 + 1] = right[frame];
         }
     }
 
@@ -1125,6 +1355,15 @@ impl RenderSource for TransportSource {
         // transport is one assignment rather than an allocation on the audio
         // thread.
         self.live_block = vec![0.0; period.saturating_mul(2)];
+        // A chart that arrived before the device opened builds its machine
+        // here; loading a kit renders every voice, so the audio thread still
+        // only renders.
+        self.drum_block = vec![0.0; period.saturating_mul(2)];
+        self.drum_stereo = vec![0.0; period.saturating_mul(2)];
+        self.drum_render = self
+            .drums
+            .as_ref()
+            .map(|chart| DrumRender::new(chart.clone(), rate, period));
         self.rate = rate;
         self.period = period;
         self.clip_position = self.control.seek_frames();
@@ -1190,48 +1429,70 @@ impl RenderSource for TransportSource {
             self.apply_plan(plan);
         }
 
-        let click = self.click.as_mut().expect("the transport was prepared above");
+        // The click's cursor is the transport's absolute song frame at this
+        // block's first frame; the drums schedule against the same grid and
+        // wrap at the same loop bounds. The borrow is scoped so the drum and
+        // clip passes can borrow their own fields below.
+        let song_start = {
+            let click = self.click.as_mut().expect("the transport was prepared above");
 
-        // A seek is applied before tempo or loop changes so a `start` that
-        // carries all three lands on the new position with the new grid.
-        let seq = self.control.seek_seq();
-        if seq != self.seek_seq {
-            self.seek_seq = seq;
-            click.seek(self.control.seek_frames());
-            // The clip timeline jumps with the click, and the strips forget
-            // their tails so a seek does not carry the old place's reverb.
-            self.clip_position = self.control.seek_frames();
-            self.mixer.reset();
-        }
-        let bpm_bits = self.control.bpm_bits();
-        if bpm_bits != self.bpm_bits {
-            self.bpm_bits = bpm_bits;
-            click.set_tempo(f64::from_bits(bpm_bits));
-        }
-        let beats = self.control.beats_per_bar();
-        if beats != self.beats_per_bar {
-            self.beats_per_bar = beats;
-            click.set_beats_per_bar(beats);
-        }
-        let gain_bits = self.control.gain_bits();
-        if gain_bits != self.gain_bits {
-            self.gain_bits = gain_bits;
-            click.set_gain(f32::from_bits(gain_bits));
-        }
-        let loop_bounds = (self.control.loop_start(), self.control.loop_end());
-        if loop_bounds != self.loop_bounds {
-            self.loop_bounds = loop_bounds;
-            click.set_loop(loop_bounds.0, loop_bounds.1);
-            self.clip_loop = loop_bounds;
-        }
+            // A seek is applied before tempo or loop changes so a `start` that
+            // carries all three lands on the new position with the new grid.
+            let seq = self.control.seek_seq();
+            if seq != self.seek_seq {
+                self.seek_seq = seq;
+                click.seek(self.control.seek_frames());
+                // The clip timeline jumps with the click, and the strips forget
+                // their tails so a seek does not carry the old place's reverb.
+                self.clip_position = self.control.seek_frames();
+                self.mixer.reset();
+                // A seek restarts the chart at the new position: step 0 sits
+                // where the transport now is.
+                if let Some(render) = self.drum_render.as_mut() {
+                    render.step = 0;
+                    render.finished = false;
+                    render.phase = 0.0;
+                    render.next_phase = 0.0;
+                }
+            }
+            let bpm_bits = self.control.bpm_bits();
+            if bpm_bits != self.bpm_bits {
+                self.bpm_bits = bpm_bits;
+                click.set_tempo(f64::from_bits(bpm_bits));
+            }
+            let beats = self.control.beats_per_bar();
+            if beats != self.beats_per_bar {
+                self.beats_per_bar = beats;
+                click.set_beats_per_bar(beats);
+            }
+            let gain_bits = self.control.gain_bits();
+            if gain_bits != self.gain_bits {
+                self.gain_bits = gain_bits;
+                click.set_gain(f32::from_bits(gain_bits));
+            }
+            let loop_bounds = (self.control.loop_start(), self.control.loop_end());
+            if loop_bounds != self.loop_bounds {
+                self.loop_bounds = loop_bounds;
+                click.set_loop(loop_bounds.0, loop_bounds.1);
+                self.clip_loop = loop_bounds;
+            }
+            click.position()
+        };
 
-        // Clips first: `mix_with_live` overwrites the bus and, when the take's
-        // live input is attached, adds it before the master chain so both hear
-        // the same mastering pass. The click is added after the master chain,
-        // exactly as it is for a take's monitor.
+        // Clips first: `mix_with_live_and_extra` overwrites the bus and adds
+        // the take's live input and the drum bus before the master chain so all
+        // three hear one mastering pass. The click is added after the master
+        // chain, exactly as it is for a take's monitor.
         let has_clips = !self.clips.is_empty();
         let has_live = self.live.is_some();
-        if has_clips || has_live {
+        let has_drums = self.drum_render.is_some();
+        if has_clips || has_live || has_drums {
+            // The drum machine schedules this block's steps and renders once,
+            // before the mix reads every bus; `trigger_at` places a step at its
+            // own frame inside the block.
+            if has_drums {
+                self.render_drums(song_start, frames);
+            }
             let TransportSource {
                 clips,
                 mixer,
@@ -1240,6 +1501,7 @@ impl RenderSource for TransportSource {
                 live_block,
                 clip_position,
                 clip_loop,
+                drum_stereo,
                 ..
             } = self;
             if has_clips {
@@ -1280,13 +1542,27 @@ impl RenderSource for TransportSource {
                 }
                 None => None,
             };
+            let samples = frames * 2;
+            let drum_samples = if has_drums {
+                Some(&drum_stereo[..samples])
+            } else {
+                None
+            };
             mixer
-                .mix_with_live(out, |index| &voices[index][..frames], live_samples)
+                .mix_with_live_and_extra(
+                    out,
+                    |index| &voices[index][..frames],
+                    live_samples,
+                    drum_samples,
+                )
                 .map_err(|error| format!("transport: {error}"))?;
         }
 
-        click.render_absolute_into(out);
-        self.control.store_position(click.position());
+        {
+            let click = self.click.as_mut().expect("the transport was prepared above");
+            click.render_absolute_into(out);
+            self.control.store_position(click.position());
+        }
         Ok(())
     }
 }
@@ -2280,6 +2556,27 @@ mod tests {
     }
 
     #[test]
+    fn a_retune_at_the_playhead_is_not_a_seek() {
+        // A tempo, loop or metronome knob sends the position the transport is
+        // already at. Honouring it would reset every strip's tail and restart
+        // the drum chart on every knob turn, so a move this small is ignored.
+        let (control, mut source) = transport(120.0, 0, 0, 0);
+        source.prepared(8_000, 4_000).expect("prepare");
+        let mut block = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut block).expect("block");
+        let played = control.position();
+        let seq = control.seek_seq();
+
+        control.seek(played + 40);
+        assert_eq!(control.seek_seq(), seq, "a 5 ms move restarted the transport");
+        control.seek(played);
+        assert_eq!(control.seek_seq(), seq, "the playhead itself restarted it");
+
+        control.seek(played + 4_000);
+        assert_ne!(control.seek_seq(), seq, "a half-second seek was ignored");
+    }
+
+    #[test]
     fn a_transport_tempo_change_is_read_at_the_next_block() {
         let (control, mut source) = transport(120.0, 0, 0, 0);
         source.prepared(8_000, 4_000).expect("prepare");
@@ -2469,6 +2766,7 @@ mod tests {
                 clips: Some(vec![clip(samples.clone(), 4, 8, false)]),
                 master: None,
                 master_values: None,
+                drums: None,
             })
             .expect("send the moved plan");
         let mut second = vec![0.0f32; 8];
@@ -2486,6 +2784,7 @@ mod tests {
                 clips: Some(vec![clip(samples, 4, 4, false)]),
                 master: None,
                 master_values: None,
+                drums: None,
             })
             .expect("send the trimmed plan");
         let mut third = vec![0.0f32; 8];
@@ -2517,6 +2816,7 @@ mod tests {
                 clips: Some(Vec::new()),
                 master: None,
                 master_values: None,
+                drums: None,
             })
             .expect("send the empty plan");
         let mut second = vec![0.0f32; 8];
@@ -2641,6 +2941,7 @@ mod tests {
                 clips: None,
                 master: None,
                 master_values: Some(vec![("master_limiter.ceiling".to_string(), -12.0)]),
+                drums: None,
             })
             .expect("send the knob plan");
         let mut second = vec![0.0f32; 800];
@@ -2811,6 +3112,247 @@ mod tests {
         assert!(
             second.iter().all(|sample| *sample == 0.0),
             "the detached live input still sounded: {second:?}"
+        );
+    }
+
+    // --- transport drums: the native machine on the song grid ---------------
+
+    /// A chart from sparse rows: one velocity list per voice.
+    fn drum_chart(
+        kit: Kit,
+        length: usize,
+        looped: bool,
+        rows: &[(Voice, &[u8])],
+    ) -> DrumChart {
+        let mut steps = vec![[0u8; Voice::COUNT]; length];
+        for (voice, cells) in rows {
+            for (step, velocity) in cells.iter().take(length).enumerate() {
+                steps[step][voice.index()] = *velocity;
+            }
+        }
+        DrumChart::new(kit, length, looped, steps)
+    }
+
+    fn drum_transport(
+        rate: u32,
+        bpm: f64,
+        position: u64,
+        loop_start: u64,
+        loop_end: u64,
+        chart: DrumChart,
+        period: usize,
+    ) -> (Arc<TransportControl>, TransportSource) {
+        let control = Arc::new(TransportControl::new(
+            click_spec(bpm, 4, 0.0),
+            position,
+            loop_start,
+            loop_end,
+        ));
+        let mut source = TransportSource::new(Arc::clone(&control)).with_drums(chart);
+        source.prepared(rate, period).expect("prepare");
+        (control, source)
+    }
+
+    fn first_audible(samples: &[f32], threshold: f32) -> Option<usize> {
+        samples.iter().position(|sample| sample.abs() > threshold)
+    }
+
+    fn drum_block(source: &mut TransportSource, frames: usize) -> Vec<f32> {
+        let mut out = vec![0.0f32; frames * 2];
+        source.block(&mut out).expect("block");
+        out
+    }
+
+    #[test]
+    fn a_drum_step_zero_lands_on_the_transport_start() {
+        // A kick on step 0 is the transport's start frame itself: the block
+        // that contains frame 0 carries the onset within a few frames (the
+        // voice's own attack, never a step late).
+        let chart = drum_chart(Kit::Acoustic, 4, true, &[(Voice::Kick, &[100, 0, 0, 0])]);
+        let (_, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 64);
+        let left = left_channel(&drum_block(&mut source, 64));
+        let onset = first_audible(&left, 1e-6).expect("the kick on step 0 never sounded");
+        assert!(onset <= 8, "the step 0 onset was at frame {onset}");
+    }
+
+    #[test]
+    fn a_drum_chart_is_silent_before_its_first_sounding_step() {
+        // Step 0 is empty and step 1 is the kick (1000 frames at 8 kHz, 120 bpm),
+        // so the whole first block is silence and the next block opens on it.
+        let chart = drum_chart(Kit::Acoustic, 4, true, &[(Voice::Kick, &[0, 100, 0, 0])]);
+        let (_, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 1_000);
+        let first = drum_block(&mut source, 1_000);
+        assert!(
+            first.iter().all(|sample| sample.abs() < 1e-9),
+            "the chart sounded before its first step"
+        );
+        let second = left_channel(&drum_block(&mut source, 1_000));
+        let onset = first_audible(&second, 1e-6).expect("the first sounding step never arrived");
+        assert!(onset <= 8, "the step 1 onset was at frame {onset}");
+    }
+
+    #[test]
+    fn a_drum_step_at_a_sixteenth_lands_at_frame_6000() {
+        // 48 kHz at 120 bpm: one sixteenth is 48000 * 60 / 120 / 4 = 6000
+        // frames, so the chart's second step starts exactly there.
+        let chart = drum_chart(Kit::Acoustic, 4, true, &[(Voice::Kick, &[0, 100, 0, 0])]);
+        let (_, mut source) = drum_transport(48_000, 120.0, 0, 0, 0, chart, 12_000);
+        let left = left_channel(&drum_block(&mut source, 12_000));
+        let onset = first_audible(&left, 1e-6).expect("the second sixteenth never sounded");
+        assert!(
+            (onset as i64 - 6_000).abs() <= 8,
+            "the sixteenth landed at frame {onset}, not 6000"
+        );
+    }
+
+    #[test]
+    fn a_velocity_zero_drum_row_is_silent() {
+        let chart = drum_chart(Kit::Acoustic, 4, true, &[(Voice::Kick, &[0, 0, 0, 0])]);
+        let (_, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 1_000);
+        for pass in 0..4 {
+            let out = drum_block(&mut source, 1_000);
+            assert!(
+                out.iter().all(|sample| sample.abs() < 1e-9),
+                "a zero-velocity row sounded (pass {pass})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_one_shot_drum_chart_plays_once() {
+        // Two steps, a rim on step 0, no loop. The rim is short enough to die
+        // inside its own step, so the empty step 1 and the blocks after it are
+        // true silence.
+        let chart = drum_chart(Kit::Acoustic, 2, false, &[(Voice::Rim, &[100, 0])]);
+        let (_, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 1_000);
+        let first = left_channel(&drum_block(&mut source, 1_000));
+        assert!(first_audible(&first, 1e-6).is_some(), "the one-shot chart did not start");
+        for pass in 0..2 {
+            let out = drum_block(&mut source, 1_000);
+            assert!(
+                out.iter().all(|sample| sample.abs() < 1e-9),
+                "a one-shot chart repeated (pass {pass})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_looping_drum_chart_wraps_to_its_first_step() {
+        let chart = drum_chart(Kit::Acoustic, 2, true, &[(Voice::Rim, &[100, 0])]);
+        let (_, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 1_000);
+        let first = left_channel(&drum_block(&mut source, 1_000));
+        assert!(first_audible(&first, 1e-6).is_some(), "the chart did not start");
+        let second = left_channel(&drum_block(&mut source, 1_000));
+        assert!(
+            first_audible(&second, 1e-6).is_none(),
+            "the empty second step sounded"
+        );
+        let third = left_channel(&drum_block(&mut source, 1_000));
+        let onset = first_audible(&third, 1e-6).expect("the looping chart did not wrap");
+        assert!(onset <= 8, "the wrapped step 0 onset was at frame {onset}");
+    }
+
+    #[test]
+    fn a_transport_loop_restarts_the_drum_chart_at_loop_start() {
+        // A one-shot chart, so only the transport's own loop can restart it.
+        // The loop is 0..2000 (two 1000-frame steps); the wrap lands at the end
+        // of block 2 and step 0 sounds again at loop_start on block 3.
+        let chart = drum_chart(
+            Kit::Acoustic,
+            8,
+            false,
+            &[(Voice::Rim, &[100, 0, 0, 0, 0, 0, 0, 0])],
+        );
+        let (_, mut source) = drum_transport(8_000, 120.0, 0, 0, 2_000, chart, 1_000);
+        let first = left_channel(&drum_block(&mut source, 1_000));
+        assert!(first_audible(&first, 1e-6).is_some(), "the chart did not start");
+        let second = left_channel(&drum_block(&mut source, 1_000));
+        assert!(
+            first_audible(&second, 1e-6).is_none(),
+            "step 1 should have been empty"
+        );
+        let third = left_channel(&drum_block(&mut source, 1_000));
+        let onset = first_audible(&third, 1e-6).expect("the transport loop did not restart the chart");
+        assert!(onset <= 8, "the restarted step 0 onset was at frame {onset}");
+    }
+
+    #[test]
+    fn a_seek_restarts_the_drum_chart_at_the_new_position() {
+        let chart = drum_chart(
+            Kit::Acoustic,
+            8,
+            true,
+            &[(Voice::Rim, &[100, 0, 0, 0, 0, 0, 0, 0])],
+        );
+        let (control, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 1_000);
+        let first = left_channel(&drum_block(&mut source, 1_000));
+        assert!(first_audible(&first, 1e-6).is_some(), "the chart did not start");
+        // Without the seek the next step would be step 1 (empty). The seek must
+        // put step 0 on the new position's first frame instead.
+        control.seek(500);
+        let second = left_channel(&drum_block(&mut source, 1_000));
+        let onset = first_audible(&second, 1e-6).expect("the seek did not restart the chart");
+        assert!(onset <= 8, "the restarted step 0 onset was at frame {onset}");
+    }
+
+    #[test]
+    fn a_bpm_change_keeps_the_drum_cursor_and_moves_the_next_step() {
+        // Step 0 is empty and step 1 carries the rim. At 120 bpm the next step
+        // is 1000 frames after step 0; at 60 bpm it is 2000. The phase must not
+        // jump, so the onset waits for the new sixteenth boundary.
+        let chart = drum_chart(Kit::Acoustic, 4, true, &[(Voice::Rim, &[0, 100, 0, 0])]);
+        let (control, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 500);
+        let first = drum_block(&mut source, 500);
+        assert!(first.iter().all(|sample| sample.abs() < 1e-9));
+        control.set_tempo(60.0, 4, 0.0);
+        // Phases 500..2000 are still before the re-anchored 2000 boundary.
+        for pass in 0..3 {
+            let out = drum_block(&mut source, 500);
+            assert!(
+                out.iter().all(|sample| sample.abs() < 1e-9),
+                "a step fired before the new sixteenth boundary (pass {pass})"
+            );
+        }
+        let onset = first_audible(&left_channel(&drum_block(&mut source, 500)), 1e-6)
+            .expect("the step did not land on the new sixteenth boundary");
+        assert!(onset <= 8, "the new-boundary onset was at frame {onset}");
+    }
+
+    #[test]
+    fn a_drum_chart_plan_update_changes_the_kit_without_a_rebuild_error() {
+        let chart = drum_chart(Kit::Acoustic, 1, true, &[(Voice::Rim, &[100])]);
+        let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
+        let (plans, rx) = std::sync::mpsc::channel();
+        let mut source = TransportSource::new(Arc::clone(&control))
+            .with_drums(chart)
+            .with_plan_rx(rx);
+        source.prepared(8_000, 1_000).expect("prepare");
+        let first = left_channel(&drum_block(&mut source, 1_000));
+        assert!(first_audible(&first, 1e-6).is_some(), "the chart did not start");
+
+        let metal = drum_chart(Kit::Metal, 1, true, &[(Voice::Rim, &[100])]);
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: Some(metal),
+            })
+            .expect("send the chart update");
+        let second = left_channel(&drum_block(&mut source, 1_000));
+        assert!(
+            first_audible(&second, 1e-6).is_some(),
+            "the updated chart stopped sounding"
+        );
+        assert_eq!(
+            source
+                .drum_render
+                .as_ref()
+                .expect("a machine")
+                .chart
+                .kit,
+            Kit::Metal,
+            "the plan did not install the new kit"
         );
     }
 

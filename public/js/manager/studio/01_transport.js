@@ -320,6 +320,10 @@ function studioEngineClipsPost(seq) {
 		var fields = { clips_json: JSON.stringify(clips) };
 		var master = studioEngineMasterList();
 		fields.master_json = JSON.stringify(master);
+		// A chart edit is part of the same plan, so the engine hears it without
+		// a stop or a re-upload of the takes.
+		var drums = studioEngineDrumPlan();
+		if (drums) { fields.drums_json = JSON.stringify(drums); }
 		var values = studioEngineMasterValues();
 		if (values.length) { fields.master_values_json = JSON.stringify(values); }
 		studioEngineTransportPost('update', fields, function (data) {
@@ -572,6 +576,26 @@ function studioEngineClipStageAll(plan) {
 	});
 }
 
+// The native drum chart, in the engine's wire shape: eight voice rows of
+// sixteenth-note velocities. A muted row travels empty, because a missing or
+// short row is silence to the engine, which is what the browser's lamp means.
+// The chart is tiny, so it rides every plan beside the clips.
+function studioEngineDrumPlan() {
+	if (typeof studioDrums === 'undefined' || !studioDrums || !studioDrums.loaded) { return null; }
+	var length = studioDrums.lengthSteps || 16;
+	var steps = {};
+	studioDrumsVoices().forEach(function (v) {
+		if (studioDrums.muted[v.name]) { return; }
+		steps[v.name] = (studioDrums.steps[v.name] || []).slice(0, length);
+	});
+	return {
+		kit: studioDrums.kit,
+		length: length,
+		loop: studioDrums.loop ? 1 : 0,
+		steps: steps
+	};
+}
+
 function studioEngineTransportPost(action, fields, done) {
 	var data = $.extend({ action: action }, fields || {});
 	$.ajax({
@@ -608,6 +632,12 @@ function studioEngineTransportStart(pos, ready, exact) {
 	// retune `start` from studioEngineTransportSync. A take edit reaches it
 	// through `update`, so this path never re-sends the clips.
 	if (mixer['time']['engine_transport']) {
+		// A seek restarts the engine's drum chart at the new position; the
+		// highlight follows the same anchor.
+		if (typeof studioDrums !== 'undefined') {
+			studioDrums.engineAnchor = fields.position;
+			studioDrums.enginePos = fields.position;
+		}
 		studioEngineTransportPost('seek', { position: fields.position }, studioEngineTransportAnswer);
 		return;
 	}
@@ -633,9 +663,17 @@ function studioEngineTransportStart(pos, ready, exact) {
 		var seg = studioAudio.playSeg;
 		var now = exact ? pos : ((ctx && seg) ? (seg.pos0 + (ctx.currentTime - seg.ctx0)) : (mixer['time']['position'] || 0));
 		var fields = studioEngineTransportFields(now);
+		// The chart's step 0 sits where the engine starts, so the highlight and
+		// a recorded hit use the same origin.
+		if (typeof studioDrums !== 'undefined') {
+			studioDrums.engineAnchor = now;
+			studioDrums.enginePos = now;
+		}
 		// The plan rides as one JSON string: jQuery's own array encoding is not
 		// the shape the route reads.
 		fields.clips_json = JSON.stringify(clips);
+		var drums = studioEngineDrumPlan();
+		if (drums) { fields.drums_json = JSON.stringify(drums); }
 		// The master rack is the same for every take. It rides this first `start`
 		// and every later plan update, where an unchanged rack is a no-op. Its
 		// knob values ride beside it, so the engine starts with the mix the page
@@ -680,6 +718,12 @@ function studioEngineTransportDrop() {
 	studioEngineClipsCancel();
 	mixer['time']['engine_transport'] = false;
 	studioEngineTransportPollStop();
+	// The engine no longer plays the chart: hand it back to the browser
+	// scheduler from the playhead, so a mid-song fallback keeps the beat.
+	if (typeof studioDrumsTransport === 'function'
+		&& (mixer['time']['status'] == 'play' || mixer['time']['status'] == 'record')) {
+		studioDrumsTransport(true);
+	}
 	// Hand both clocks and the take audio back: re-anchor the scheduler at the
 	// playhead so a take already in progress starts mid-clip rather than
 	// staying silent until the next pass.

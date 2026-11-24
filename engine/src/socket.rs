@@ -90,10 +90,12 @@ use std::time::{Duration, Instant};
 use jawn_audio::{
     listen::{self, ListenPlan, ListenUnit},
     monitor_start, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device, DiskWriter,
-    InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack,
-    Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
+    InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue,
+    PlayTrack, Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
     TransportSource, MASTER_ORDER,
 };
+use jawn_audio::playback::DrumChart;
+use jawn_drums::{Kit, Voice};
 use jawn_audio::uplink::{Uplink, UplinkConfig, UplinkSourceSpec, UplinkStatus};
 
 use crate::patchbay::{PatchSummary, Patchbay};
@@ -3800,6 +3802,10 @@ impl Server {
             Ok(values) => values.unwrap_or_default(),
             Err(error) => return error_line(&error),
         };
+        let drums = match parse_drums(get(object, "drums")) {
+            Ok(drums) => drums,
+            Err(error) => return error_line(&error),
+        };
         let spec = match ClickSpec::new(bpm, beats_per_bar, gain) {
             Ok(spec) => spec,
             Err(error) => return error_line(&error),
@@ -3807,7 +3813,7 @@ impl Server {
 
         // Already ours: a tempo, loop or position change takes effect at the
         // next block. This is the responsive path the page's knobs use.
-        if let Some(session) = &self.transport {
+        if let Some(session) = self.transport.as_mut() {
             if session.is_playing() {
                 // Strips are built for the render thread, so a different take set
                 // needs a new thread and therefore a stop. Tempo and loop changes
@@ -3820,6 +3826,23 @@ impl Server {
                 session.control.set_tempo(bpm, beats_per_bar, gain);
                 session.control.set_loop(loop_start, loop_end);
                 session.control.seek(position);
+                // A `start` on a playing transport may carry a chart: it rides
+                // the plan channel like an `update`, so the device stays open.
+                if let Some(chart) = drums {
+                    let plan = TransportPlan {
+                        clips: None,
+                        master: None,
+                        master_values: None,
+                        drums: Some(chart.clone()),
+                    };
+                    if session.plan_tx.send(plan).is_err() {
+                        return error_line(
+                            "the transport's render thread is no longer accepting plans",
+                        );
+                    }
+                    session.drums = chart.length;
+                    session.drum_kit = chart.kit_name().to_string();
+                }
                 return self.transport_status();
             }
         }
@@ -3882,6 +3905,11 @@ impl Server {
         }
         let clip_count = clips.len();
         let master_count = master.len();
+        let drum_count = drums.as_ref().map(|chart| chart.length).unwrap_or(0);
+        let drum_kit = drums
+            .as_ref()
+            .map(|chart| chart.kit_name().to_string())
+            .unwrap_or_else(|| "off".to_string());
         let control = Arc::new(TransportControl::new(spec, position, loop_start, loop_end));
         control.set_playing(true);
         let error = Arc::new(Mutex::new(String::new()));
@@ -3905,6 +3933,7 @@ impl Server {
                         clips,
                         master,
                         master_values,
+                        drums,
                         plan_rx,
                         live_rx,
                     )
@@ -3923,6 +3952,8 @@ impl Server {
             error,
             clips: clip_count,
             master: master_count,
+            drums: drum_count,
+            drum_kit,
             plan_tx,
             live_tx,
             monitor_input: false,
@@ -3970,17 +4001,24 @@ impl Server {
             Ok(values) => values,
             Err(error) => return error_line(&error),
         };
-        if clips.is_none() && master.is_none() && master_values.is_none() {
+        let drums = match parse_drums(get(object, "drums")) {
+            Ok(drums) => drums,
+            Err(error) => return error_line(&error),
+        };
+        if clips.is_none() && master.is_none() && master_values.is_none() && drums.is_none() {
             return error_line(
-                "update needs \"clips\", \"master\" or \"master_values\": the change for the running transport",
+                "update needs \"clips\", \"master\", \"master_values\" or \"drums\": the change for the running transport",
             );
         }
         let clip_count = clips.as_ref().map(|clips| clips.len());
         let master_count = master.as_ref().map(|master| master.len());
+        let drum_count = drums.as_ref().map(|chart| chart.length);
+        let drum_kit = drums.as_ref().map(|chart| chart.kit_name().to_string());
         let plan = TransportPlan {
             clips,
             master,
             master_values,
+            drums,
         };
         let session = match self.transport.as_mut() {
             Some(session) => session,
@@ -3998,6 +4036,12 @@ impl Server {
         }
         if let Some(count) = master_count {
             session.master = count;
+        }
+        if let Some(count) = drum_count {
+            session.drums = count;
+        }
+        if let Some(kit) = drum_kit {
+            session.drum_kit = kit;
         }
         self.transport_status()
     }
@@ -4988,6 +5032,104 @@ fn parse_master_values(value: Option<&Value>) -> Result<Option<Vec<(String, f32)
     Ok(Some(out))
 }
 
+/// The `drums` field: the native machine's chart.
+///
+/// ```text
+/// {"kit":"acoustic","length":16,"loop":1,
+///  "steps":{"kick":[70,0,...],"snare":[...]}}
+/// ```
+///
+/// `length` is required and must be a whole 1..=128. `kit` is optional (an
+/// unknown name falls back to acoustic, exactly as the page does), `loop`
+/// defaults to 1, and `steps` is optional. Rows are keyed by the eight wire
+/// voice names; any other key is ignored. A row shorter than `length` is
+/// zero-padded, a longer one is cut, and a velocity must be a whole 0..=100 or
+/// the field is refused by name (`drums.steps.kick[3]`), never clamped.
+fn parse_drums(value: Option<&Value>) -> Result<Option<DrumChart>, String> {
+    let fields = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Obj(fields)) => fields,
+        _ => return Err("drums must be an object with \"length\"".to_string()),
+    };
+    let length = match get(fields, "length") {
+        Some(Value::Num(value))
+            if value.is_finite()
+                && value.fract() == 0.0
+                && *value >= 1.0
+                && *value <= DrumChart::MAX_STEPS as f64 =>
+        {
+            *value as usize
+        }
+        None | Some(Value::Null) => {
+            return Err(
+                "drums \"length\" is required: a whole number of sixteenth steps from 1 to 128"
+                    .to_string(),
+            )
+        }
+        _ => {
+            return Err(
+                "drums \"length\" must be a whole number from 1 to 128 sixteenth steps"
+                    .to_string(),
+            )
+        }
+    };
+    let kit = match get(fields, "kit") {
+        None | Some(Value::Null) => Kit::Acoustic,
+        Some(Value::Str(name)) => Kit::from_name_or_acoustic(name),
+        _ => return Err("drums \"kit\" must be a kit name".to_string()),
+    };
+    let looped = match get(fields, "loop") {
+        None | Some(Value::Null) => true,
+        Some(Value::Num(value)) if *value == 0.0 => false,
+        Some(Value::Num(value)) if *value == 1.0 => true,
+        _ => return Err("drums \"loop\" must be 0 or 1".to_string()),
+    };
+    let mut steps = vec![[0u8; Voice::COUNT]; length];
+    if let Some(value) = get(fields, "steps") {
+        match value {
+            Value::Null => {}
+            Value::Obj(rows) => {
+                for (name, row) in rows {
+                    let Some(voice) = Voice::from_name(name) else {
+                        // An unknown row name is not an error: the page may send
+                        // a future voice the engine does not know yet.
+                        continue;
+                    };
+                    let cells = match row {
+                        Value::Arr(cells) => cells,
+                        Value::Null => continue,
+                        _ => {
+                            return Err(format!(
+                                "drums.steps.{name} must be an array of velocities"
+                            ))
+                        }
+                    };
+                    for (index, cell) in cells.iter().take(length).enumerate() {
+                        let velocity = match cell {
+                            Value::Num(value)
+                                if value.is_finite()
+                                    && value.fract() == 0.0
+                                    && *value >= 0.0
+                                    && *value <= 100.0 =>
+                            {
+                                *value as u8
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "drums.steps.{name}[{index}] must be a whole number from 0 to 100"
+                                ))
+                            }
+                        };
+                        steps[index][voice.index()] = velocity;
+                    }
+                }
+            }
+            _ => return Err("drums \"steps\" must be an object of voice rows".to_string()),
+        }
+    }
+    Ok(Some(DrumChart::new(kit, length, looped, steps)))
+}
+
 /// The array form: one object per track. Every insert is parsed here, before
 /// any file is created, and a name the engine does not have is refused by
 /// name.
@@ -5603,6 +5745,10 @@ struct TransportSession {
     clips: usize,
     /// How many mastering inserts are armed on the clip mix. Zero is a dry sum.
     master: usize,
+    /// The drum chart's length in sixteenth steps; zero is no chart.
+    drums: usize,
+    /// The kit the drum machine actually loaded, or `"off"` for no chart.
+    drum_kit: String,
     /// Replacement plans to the render thread. A send never waits for the audio
     /// thread; the receiver's `try_recv` at a block edge is the only consumer.
     plan_tx: Sender<TransportPlan>,
@@ -5704,7 +5850,7 @@ impl TransportSession {
             .map(|gain| f32::from_bits(gain.load(Ordering::Acquire)))
             .unwrap_or(1.0);
         format!(
-            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"monitor_input\":{},\"monitor_gain\":{}{}}}",
+            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"monitor_input\":{},\"monitor_gain\":{}{}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
@@ -5713,6 +5859,8 @@ impl TransportSession {
             control.loop_end() as f64 / rate,
             self.clips,
             self.master,
+            self.drums,
+            jawn_audio::loopback::json_escape(&self.drum_kit),
             self.monitor_input,
             monitor_gain,
             error
@@ -5724,7 +5872,7 @@ impl TransportSession {
 /// default tempo and signature, with no loop. The route always has a shape to
 /// answer with, exactly as an idle `status` does.
 fn default_transport_line() -> String {
-    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"monitor_input\":false,\"monitor_gain\":1}}"
+    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"drums\":0,\"drum_kit\":\"off\",\"monitor_input\":false,\"monitor_gain\":1}}"
         .to_string()
 }
 
@@ -5742,15 +5890,19 @@ fn run_transport(
     clips: Vec<TransportClip>,
     master: Vec<InsertKind>,
     master_values: Vec<(String, f32)>,
+    drums: Option<DrumChart>,
     plans: std::sync::mpsc::Receiver<TransportPlan>,
     live: std::sync::mpsc::Receiver<TransportLive>,
 ) {
-    let source = TransportSource::new(Arc::clone(&control))
+    let mut source = TransportSource::new(Arc::clone(&control))
         .with_clips(clips)
         .with_master(master)
         .with_master_values(master_values)
         .with_plan_rx(plans)
         .with_live_rx(live);
+    if let Some(chart) = drums {
+        source = source.with_drums(chart);
+    }
     let outcome = match config.backend {
         BackendKind::Null => transport_null(&config, source, &control),
         BackendKind::Alsa | BackendKind::PipeWire => {
@@ -9001,6 +9153,8 @@ break"}"#).is_err());
             error: Arc::new(Mutex::new(String::new())),
             clips: 0,
             master: 0,
+            drums: 0,
+            drum_kit: "off".to_string(),
             plan_tx,
             live_tx,
             monitor_input: false,
@@ -9207,6 +9361,106 @@ break"}"#).is_err());
             assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
             assert!(answer.contains(needle), "{line}: {answer}");
         }
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_transport_start_carries_a_drum_chart() {
+        let mut server = socket_server();
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"start","position":0,"drums":{"kit":"metal","length":16,"loop":1,"steps":{"kick":[70],"snare":[0,90]}}}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+        assert!(line.contains("\"drums\":16"), "{line}");
+        assert!(line.contains("\"drum_kit\":\"metal\""), "{line}");
+        // Every existing key still rides the same line.
+        assert!(line.contains("\"clips\":0"), "{line}");
+        assert!(line.contains("\"master\":0"), "{line}");
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_transport_refuses_a_malformed_drum_chart_by_name() {
+        let mut server = socket_server();
+        for (line, needle) in [
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"kit":"acoustic"}}"#,
+                "length",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":0}}"#,
+                "length",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":129}}"#,
+                "length",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":2.5}}"#,
+                "length",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"loop":2}}"#,
+                "loop",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"steps":{"kick":[0,0,0,101]}}}"#,
+                "drums.steps.kick[3]",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"steps":{"snare":[0,0,0,2.5]}}}"#,
+                "drums.steps.snare[3]",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"steps":{"snare":[0,0,"loud"]}}}"#,
+                "drums.steps.snare[2]",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"steps":{"snare":7}}}"#,
+                "drums.steps.snare",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":[1,2,3]}"#,
+                "drums",
+            ),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+            assert!(server.transport.is_none(), "{line} started a transport");
+        }
+    }
+
+    #[test]
+    fn a_drum_only_update_reaches_a_running_transport() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"drums\":0"), "{started}");
+        assert!(started.contains("\"drum_kit\":\"off\""), "{started}");
+
+        // A `start` on the playing transport may carry a chart: it is applied
+        // as a plan, never refused and never a device reopen.
+        let carried = reply(server.handle(
+            r#"{"cmd":"transport","action":"start","position":0,"drums":{"length":4,"steps":{"kick":[100]}}}"#,
+        ));
+        assert!(carried.contains("\"ok\":true"), "{carried}");
+        assert!(carried.contains("\"drums\":4"), "{carried}");
+        assert!(carried.contains("\"drum_kit\":\"acoustic\""), "{carried}");
+
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","drums":{"kit":"techno","length":8,"steps":{"kick":[80]}}}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+        assert!(line.contains("\"drums\":8"), "{line}");
+        assert!(line.contains("\"drum_kit\":\"techno\""), "{line}");
+
+        // An update with no field at all is still refused.
+        let empty = reply(server.handle(r#"{"cmd":"transport","action":"update"}"#));
+        assert!(empty.contains("\"ok\":false"), "{empty}");
+        assert!(empty.contains("drums"), "{empty}");
 
         let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
     }

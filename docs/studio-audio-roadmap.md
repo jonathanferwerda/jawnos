@@ -1261,6 +1261,22 @@ crates' tests inside the suite (`t/332`), and `t/412` pins the workspace wiring 
 and ten kit wire names. The next step is the bridge: a `player` source fed by these crates instead
 of the browser's WebAudio graph.
 
+**The kit plays on the engine's clock (2026-11-24, in the tree).** The drum chart rides the
+transport plan: `start` and every `update` carry `drums` (kit, length, loop flag and eight velocity
+rows), the manager validates the shape, and the engine schedules each sixteenth step inside the block
+with `jawn-drums`' `trigger_at`, anchored at the transport's start or seek position. A loop wrap
+restarts the chart at step 0 at `loop_start`; a tempo change keeps the cursor; a chart or kit edit
+rides the existing plan channel, so the device never reopens and a step placed while playing is
+heard at the next block. The drum bus joins the mix before the master rack, like the takes. A retune
+at the playhead is no longer a seek: a metronome or tempo knob used to reset every strip's tail (and
+would have restarted the chart), and now only a move of more than 20 ms is honoured. The page
+suppresses its own scheduler while the engine owns the transport - the step highlight follows the
+engine's chart - and a fallback hands the schedule back to the browser. The ten kits were redesigned
+for identity rather than small EQ deltas: Gretsch is woody, the 808 is a sub-heavy powerhouse with a
+long kick, Metal is gated and cracky, and the crate's tests pin those differences so a kit cannot
+quietly collapse back into "all the same". `t/413` covers the wire shape, the manager, the page and
+the engine seams.
+
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
 turning `manage` off returns the machine to today's behaviour with nothing stranded.

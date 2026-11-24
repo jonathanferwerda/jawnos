@@ -60,6 +60,8 @@ var studioDrums = {
 	nextTime: 0,
 	step: 0,
 	anchor: 0,
+	engineAnchor: 0,
+	enginePos: 0,
 	stepDur: 0.125,
 	sources: [],
 	learn: null,
@@ -155,7 +157,7 @@ function studioDrumsSetLength(length) {
 function studioDrumsChangeLength(delta) {
 	if (!studioDrumsSetLength(studioDrums.lengthSteps + delta)) { return; }
 	studioDrumsRender();
-	studioSaver();
+	studioDrumsSaver();
 }
 
 function studioDrumsSave() {
@@ -166,6 +168,17 @@ function studioDrumsSave() {
 		if (studioDrums.keys[v.name]) { keys[v.name] = studioDrums.keys[v.name]; }
 	});
 	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '', kit: studioDrums.kit, length: studioDrums.lengthSteps };
+}
+
+// Every chart edit is saved and, while the engine owns the transport, sent as
+// a plan update: the engine is the clock and the player, so a step placed now
+// must reach it or it would not sound until the next start.
+function studioDrumsSaver() {
+	studioSaver();
+	if (mixer && mixer['time'] && mixer['time']['engine_transport']
+		&& typeof studioEngineClipsChanged === 'function') {
+		studioEngineClipsChanged();
+	}
 }
 
 function studioDrumsRestore(data) {
@@ -739,8 +752,18 @@ function studioDrumsRecording() {
 function studioDrumsCurrentStep() {
 	if (!studioDrums.running || !studioDrums.stepDur) { return 0; }
 	var steps = studioDrums.lengthSteps || 16;
-	var elapsed = (studioDrums.ctx.currentTime - studioDrums.anchor) / studioDrums.stepDur;
-	var step = Math.floor(elapsed) % steps;
+	var elapsed;
+	if (mixer && mixer['time'] && mixer['time']['engine_transport']) {
+		// The engine's chart is anchored where the transport started (or was
+		// seeked), so a recorded hit lands on the same grid it is hearing.
+		var pos = studioKnobNumber(mixer['time']['position'], 0);
+		var anchor = studioKnobNumber(studioDrums.engineAnchor, 0);
+		if (pos < anchor) { studioDrums.engineAnchor = anchor = 0; }
+		elapsed = Math.max(0, pos - anchor);
+	} else {
+		elapsed = Math.max(0, studioDrums.ctx.currentTime - studioDrums.anchor);
+	}
+	var step = Math.floor(elapsed / studioDrums.stepDur) % steps;
 	return (step + steps) % steps;
 }
 
@@ -756,7 +779,7 @@ function studioDrumsTrigger(voice, velocity, record) {
 	if (record !== false && studioDrumsRecording()) {
 		studioDrums.steps[voice][step] = percent;
 		studioDrumsRenderSteps(voice);
-		studioSaver();
+		studioDrumsSaver();
 	}
 	studioDrumsHighlightStep(studioDrums.running ? step : -1);
 }
@@ -795,6 +818,13 @@ function studioDrumsSchedule() {
 	var stepDur = 60 / bpm / 4;
 	var steps = studioDrums.lengthSteps || 16;
 	studioDrums.stepDur = stepDur;
+	// The engine schedules the chart on its own clock while it owns the
+	// transport; the browser must not play a second copy. The step highlight
+	// still follows, from the engine's position.
+	if (mixer['time']['engine_transport']) {
+		studioDrumsHighlightEngineStep(stepDur, steps);
+		return;
+	}
 	var now = ctx.currentTime;
 	var guard = 0;
 	while (studioDrums.nextTime < now + 0.1 && guard++ < 64) {
@@ -828,6 +858,26 @@ function studioDrumsHighlightStep(step) {
 	if (step >= 0) {
 		row.find('.studio_drums_step[data-step="' + step + '"]').addClass('studio_drums_playing');
 	}
+}
+
+// The engine's chart is anchored where the transport started or was seeked,
+// and restarts at step 0 when a loop wraps. Mirror that with the position the
+// page already polls, so the highlight agrees with the sound.
+function studioDrumsHighlightEngineStep(stepDur, steps) {
+	var pos = studioKnobNumber(mixer['time']['position'], 0);
+	var anchor = studioKnobNumber(studioDrums.engineAnchor, 0);
+	// The position going backwards is a loop wrap (the engine restarts the
+	// chart at step 0 there) or a seek the page already anchored.
+	var wrapped = studioDrums.enginePos > pos + 0.001;
+	if (wrapped || pos < anchor) {
+		var loop = studioEngineTransportLoop();
+		var looping = !!(loop && loop.end > loop.start);
+		studioDrums.engineAnchor = anchor = (wrapped && looping) ? loop.start : Math.max(0, pos);
+	}
+	studioDrums.enginePos = pos;
+	var elapsed = Math.max(0, pos - anchor);
+	var step = Math.floor(elapsed / stepDur) % steps;
+	studioDrumsHighlightStep((step + steps) % steps);
 }
 
 // ---- the key map ----------------------------------------------------------
@@ -878,7 +928,7 @@ $(document).on('click', '.studio_drums_lamp', function (e) {
 	var voice = $(this).attr('data-voice');
 	studioDrums.muted[voice] = !studioDrums.muted[voice];
 	studioDrumsRender();
-	studioSaver();
+	studioDrumsSaver();
 });
 
 $(document).on('click', '.studio_drums_step', function (e) {
@@ -892,7 +942,7 @@ $(document).on('click', '.studio_drums_step', function (e) {
 	studioDrums.steps[voice][step] = current ? 0 : (e.shiftKey ? 100 : 70);
 	studioDrumsRenderSteps(voice);
 	if (studioDrums.steps[voice][step]) { studioDrumsTrigger(voice, studioDrums.steps[voice][step], false); }
-	studioSaver();
+	studioDrumsSaver();
 });
 
 // ---- a beat's velocity ----------------------------------------------------
@@ -961,7 +1011,7 @@ $(document).on('click', '#studio_drums_velocity button', function (e) {
 	studioDrumsRenderSteps(voice);
 	menu.find('[data-value]').text(String(value));
 	studioDrumsTrigger(voice, value, false);
-	studioSaver();
+	studioDrumsSaver();
 });
 
 // The next press elsewhere, Escape, a scroll or a cleared chart closes it.
@@ -983,12 +1033,12 @@ $(document).on('change', '#studio_drums_kit', function () {
 	studioDrums.buildState = 'idle';
 	if (studioDrums.ctx) { studioDrumsBuild(studioDrums.ctx); }
 	studioDrumsRender();
-	studioSaver();
+	studioDrumsSaver();
 });
 
 $(document).on('change', '#studio_drums_loop', function () {
 	studioDrums.loop = $(this).prop('checked');
-	studioSaver();
+	studioDrumsSaver();
 });
 
 $(document).on('click', '#studio_drums_clear', function (e) {
@@ -998,7 +1048,7 @@ $(document).on('click', '#studio_drums_clear', function (e) {
 		studioDrums.steps[v.name] = studioDrumsZeroRow(studioDrums.lengthSteps);
 	});
 	studioDrumsRender();
-	studioSaver();
+	studioDrumsSaver();
 });
 
 // ---- the chart length -----------------------------------------------------
@@ -1104,7 +1154,7 @@ function studioDrumsLoadLoop() {
 		if (studioDrums.ctx) { studioDrumsBuild(studioDrums.ctx); }
 	}
 	studioDrumsRender();
-	studioSaver();
+	studioDrumsSaver();
 	return true;
 }
 
@@ -1314,7 +1364,7 @@ $(document).on('keydown', function (e) {
 		studioDrums.learn = null;
 		$('.studio_drums_key').attr('aria-pressed', 'false');
 		studioDrumsFocusState();
-		studioSaver();
+		studioDrumsSaver();
 		e.preventDefault();
 		return;
 	}
@@ -1404,7 +1454,7 @@ $(document).on('click', '#studio_drums_midi', function (e) {
 
 $(document).on('change', '#studio_drums_midi_input', function () {
 	studioDrums.midiInput = $(this).val() || '';
-	studioSaver();
+	studioDrumsSaver();
 });
 
 // The drum bus follows the selected track, so arming that track captures the

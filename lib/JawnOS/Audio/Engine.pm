@@ -371,7 +371,7 @@ sub audio_engine_status {
 # trimmed, split, deleted or added is heard at the next block, and a knob turn
 # never re-reads a take.
 our @audio_engine_transport_fields = qw(
-	position bpm beats_per_bar gain loop_start loop_end clips master master_values
+	position bpm beats_per_bar gain loop_start loop_end clips master master_values drums
 );
 
 sub audio_engine_transport {

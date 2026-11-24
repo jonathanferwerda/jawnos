@@ -1616,6 +1616,74 @@ sub studio_transport_clips {
 	return (undef, \@clips);
 }
 
+# The drum chart rides a transport `start` and every later `update`: eight
+# voice rows of sixteenth-note velocities, so the engine schedules the Studio
+# kit on its own clock instead of the browser's. The shape is checked here; the
+# engine is the authority on the kit name and the voices it knows (an unknown
+# row is ignored there, so a future voice does not make an older engine refuse
+# the whole chart).
+sub studio_transport_drums {
+	my ($c) = @_;
+
+	my $raw = $c->param('drums_json');
+	$raw = $c->param('drums') unless defined $raw && length $raw;
+	return (undef, undef) unless defined $raw && length $raw;
+
+	my $data = eval { decode_json $raw };
+	return ('transport drums must be a JSON object', undef) unless ref $data eq 'HASH';
+
+	my $length = $data->{'length'};
+	return ('transport drums needs "length": a whole number of sixteenth steps from 1 to 128', undef)
+		unless defined $length && !ref $length && $length =~ /\A\s*\d+\s*\z/
+			&& $length >= 1 && $length <= 128;
+
+	my %out = (length => int($length));
+
+	my $kit = $data->{'kit'};
+	if (defined $kit) {
+		return ('transport drums "kit" must be a name', undef)
+			unless !ref $kit && $kit =~ /\A[a-z0-9_]{1,32}\z/;
+		$out{'kit'} = $kit;
+	}
+
+	# A JSON boolean decodes to a blessed scalar, so a number test alone would
+	# refuse the page's `true`; both spellings mean the same fact.
+	my $loop = $data->{'loop'};
+	if (defined $loop) {
+		my $on = ref $loop ? ($loop ? 1 : 0)
+			: ($loop =~ /\A\s*[01]\s*\z/ ? int($loop) : undef);
+		return ('transport drums "loop" must be 0 or 1', undef) unless defined $on;
+		$out{'loop'} = $on;
+	}
+
+	my $steps = $data->{'steps'};
+	if (defined $steps) {
+		return ('transport drums "steps" must be an object of voice rows', undef)
+			unless ref $steps eq 'HASH';
+		my %rows;
+		for my $name (sort keys %{$steps}) {
+			return ("transport drums row \"$name\" must be a name", undef)
+				unless $name =~ /\A[a-z0-9_]{1,16}\z/;
+			my $row = $steps->{$name};
+			return ("transport drums row \"$name\" must be an array", undef)
+				unless ref $row eq 'ARRAY';
+			return ("transport drums row \"$name\" has more than 128 steps", undef)
+				if @{$row} > 128;
+			my @cells;
+			for my $value (@{$row}) {
+				return ("transport drums row \"$name\" holds a value that is not a velocity 0..100", undef)
+					unless defined $value && !ref $value
+						&& $value =~ /\A\s*\d+\s*\z/ && $value >= 0 && $value <= 100;
+				push @cells, int($value);
+			}
+			$rows{$name} = \@cells;
+		}
+		$out{'steps'} = \%rows;
+	}
+
+	return (undef, \%out);
+}
+
 # One transport decimal: a finite JSON number, not a ref and not an empty
 # string. The exponent form is accepted, as the engine's parser accepts it.
 sub studio_transport_decimal {
@@ -1692,6 +1760,11 @@ sub studio_transport_fields {
 
 	my ($clips_error, $clips) = &studio_transport_clips($c);
 	return ($clips_error, undef) if defined $clips_error;
+	# The native drum chart: its own shape, sent beside the takes so the engine
+	# plays the Studio kit from the transport's clock.
+	my ($drums_error, $drums) = &studio_transport_drums($c);
+	return ($drums_error, undef) if defined $drums_error;
+	$fields{'drums'} = $drums if defined $drums;
 	my $raw_clips = $c->param('clips_json');
 	$raw_clips = $c->param('clips') unless defined $raw_clips && length $raw_clips;
 	if (@{$clips}) {
@@ -1729,8 +1802,9 @@ sub studio_transport_fields {
 	if ($action eq 'update'
 		&& !exists $fields{'clips'}
 		&& !exists $fields{'master'}
-		&& !exists $fields{'master_values'}) {
-		return ('update needs "clips", "master" or "master_values": the change for the running transport', undef);
+		&& !exists $fields{'master_values'}
+		&& !exists $fields{'drums'}) {
+		return ('update needs "clips", "master", "master_values" or "drums": the change for the running transport', undef);
 	}
 
 	return (undef, \%fields);
