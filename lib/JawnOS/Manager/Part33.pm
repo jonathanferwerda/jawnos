@@ -350,6 +350,25 @@ sub authentication_passer($c) {
 	my $session_server_time = $c->session('server_time') // 0;
 	my $gate_reason = '';
 
+	# A cookie that is present but yields no session did not fail one of the
+	# checks below: it could not be read at all (a different signing key, or a
+	# corrupt cookie). That failure is invisible to the reasons below, and it is
+	# exactly what a machine whose pinned key drifted looks like, so name it on
+	# the two requests that matter - the page load and an XHR - rather than on
+	# every asset that also carries the cookie.
+	my $cookie_name = eval { $c->app->sessions->cookie_name } // '';
+	my $present_cookie = length $cookie_name ? $c->cookie($cookie_name) : undef;
+	if (!$session_was_approved && !defined $c->session('authentication')
+		&& defined $present_cookie && length $present_cookie) {
+		my $xhr = (($c->req->headers->header('X-Requested-With') // '') =~ /XMLHttpRequest/i) ? 1 : 0;
+		if ($xhr || $app_path eq '/manager') {
+			$log->info('session gate: cookie-unreadable '
+				. ($c->req->method || 'GET') . ' ' . $app_path
+				. ' from ' . ($c->tx->remote_address || '?')
+				. ' answer=' . ($xhr ? 'xhr' : 'gate'));
+		}
+	}
+
 	my $authentication = $c->session('authentication') || 'revoked';
 	if ($c->session('authentication') eq 'denial' || $c->session('reject_count') > 3 || ($c->stash('no') && $c->stash('no') == 1)) {
 		my $denial = $c->render(template => 'guest_layouts/denial', message => '... access denied.');

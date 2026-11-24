@@ -51,6 +51,7 @@ foreach my $reason (qw(
 	like($text, qr/\Q$reason\E/, "the gate reason names $reason");
 }
 like($text, qr/'ticket-' \. \(\$ticket->\{'status'\} \|\| 'missing'\)/, 'a refused ticket names its status');
+like($text, qr/session gate: cookie-unreadable/, 'a cookie that cannot be read is named too');
 
 # The template really does use it - a rename would make the check above vacuous.
 my $template = "$FindBin::Bin/../templates/gate.html.ep";
