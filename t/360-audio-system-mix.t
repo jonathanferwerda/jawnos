@@ -1186,8 +1186,9 @@ PERSON
 printf '%s\n' "$*" >> "$AMIXER_LOG"
 control="$4"
 case "$control" in
-	Master) vol=30; sw=off ;;
+	Master) vol=30; sw=on ;;
 	PCM) vol=65; sw=on ;;
+	Headphone) vol=0; sw=off ;;
 	*) exit 1 ;;
 esac
 if [ "$3" = "sget" ]; then
@@ -1204,12 +1205,15 @@ AMIXER
 	my $written = read_file($log);
 	like($written, qr/sset Master 100% unmute/, 'the card Master is held at unity');
 	like($written, qr/sset PCM 100% unmute/, 'and its PCM too');
-	unlike($written, qr/sset Speaker|sset Headphone/,
+	unlike($written, qr/sset Speaker/,
 		'a control the card does not have is left alone');
+	unlike($written, qr/sset Headphone/,
+		'an output the person had switched off is not unmuted');
 	my $state = JSON::PP->new->decode(read_file("$card_dir/audio-system-mix.json"));
 	is($state->{previous_mixer}{card}, 0, 'the card is recorded for removal');
 	is($state->{previous_mixer}{controls}[0]{volume}, 30, 'with the level it had');
-	is($state->{previous_mixer}{controls}[0]{muted}, 1, 'and its mute');
+	is(scalar @{ $state->{previous_mixer}{controls} }, 2,
+		'and only the controls that were on are recorded');
 
 	# A repeat ensure holds unity again but must not overwrite the record.
 	write_file($log, '');
@@ -1222,8 +1226,8 @@ AMIXER
 	write_file($log, '');
 	my $off = JawnOS::Audio::SystemMix::remove($card_dir);
 	is($off->{ok}, 1, 'the mix removes');
-	like(read_file($log), qr/sset Master 30% mute/,
-		'and the card gets back the level and mute it had');
+	like(read_file($log), qr/sset Master 30% unmute/,
+		'and the card gets back the level it had');
 	like(read_file($log), qr/sset PCM 65% unmute/, 'for every control it touched');
 }
 

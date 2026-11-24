@@ -908,10 +908,14 @@ sub card_mixer_read {
 		my ($volume) = $out =~ /\[(\d+)%\]/;
 		next unless defined $volume;
 		my ($switch) = $out =~ /\[(on|off)\]/i;
+		# A control that is switched off is a path the person is not using
+		# (a laptop's Headphone control while the speakers play), not a level
+		# to scale. Hold only what is on and leave the rest exactly as it is.
+		next if defined $switch && lc $switch eq 'off';
 		push @controls, {
 			control => $control,
 			volume  => $volume + 0,
-			muted   => ( defined $switch && lc $switch eq 'off' ) ? 1 : 0,
+			muted   => 0,
 		};
 	}
 	return \@controls;
@@ -924,6 +928,9 @@ sub card_mixer_unity {
 	my $did = 0;
 	foreach my $control (@{ $controls || [] }) {
 		next unless ref $control eq 'HASH' && defined $control->{'control'};
+		# Records written before the mute rule skip these; a switched-off path
+		# is not a level, and `remove` still restores it.
+		next if $control->{'muted'};
 		JawnOS::Platform::Audio::run(
 			'amixer', '-c', $card, 'sset', $control->{'control'}, '100%', 'unmute');
 		$did = 1;
