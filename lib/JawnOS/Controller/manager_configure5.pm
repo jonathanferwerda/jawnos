@@ -175,18 +175,13 @@ sub action_19489 {
 	@{$creds} = grep { $_->{'level'} ne 'padlock' } @{$creds};
 	@{$creds} = reverse @{$creds};
 	my $disposition->{'status'} = 'fail';
-	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	foreach my $cred ( @{$creds} ) {
 		my $cr = &subs::decrypter(&subs::session_suds($c),$cred->{'credential'});
 		if ($path =~ /\.enc\z/i) {
 			$filename =~ s/\.enc\z//i;
 			my $t_database = &subs::database_path() . '.restoring';
 #			my $scrypt = `printf "$cr" | scrypt dec -P $path $t_database`;
-			my $tail_command = 'tail ' . &subs::shell_quote($path);
-			my $data = `$tail_command`;
-			my @split_data = split $universal_splitter, $data;
-			$encryption_standard = &subs::backup_standard($cr, $split_data[1]);
-			my $scrypt = &subs::openssl_file_crypt('d', $encryption_standard, $cr, $path, $t_database, 0, 1);
+			my $scrypt = &subs::backup_open_sealed($path, $cr, $t_database, 0);
 			# A database is per device: the backup row names the machine it came
 			# from, and restoring another one would leave this machine wearing
 			# that identity. A row with no destination predates the check.

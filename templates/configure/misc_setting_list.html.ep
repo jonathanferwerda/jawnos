@@ -393,7 +393,7 @@
 				[ 'scan_size', 'Scan Size', [ '', @{$photo_sizes} ] ],
 				[ 'thumbnail_size', 'Thumb Size', [ '', @{$thumbnail_sizes} ] ],
 				[ 'encryption_standard', 'Encryption Standard', [ '', @{$encryption_standards} ] ],
-				[ 'max_backups', 'Max Backups', [ 0..100 ] ],
+				[ 'max_backups', 'Backup Days', [ 0..100 ] ],
 			); %>
 			<% foreach my $g ( @general ) { %>
 				<% my ($key, $label, $opts) = @{$g}; %>
@@ -558,7 +558,7 @@
 				<% } %>
 			</select>
 		</div>
-		<p class="cfg-note">The drive this machine archives to, out of the folders in config.json. Blank means it is not an archive.</p>
+		<p class="cfg-note">The drive this machine archives to, out of the folders in config.json. Blank means it is not an archive. Sealed snapshots are copied to a Backups folder on that drive; Controllers -> Storage sets how much of the card they may use.</p>
 		</details>
 
 		<%# A board with a small disk keeps the row and not the bytes: the file is

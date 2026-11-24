@@ -136,8 +136,17 @@ like($controllers_js, qr/card: \(\$\('#controllers_card_choice'\)/, 'the card an
 like($controllers_js, qr/The board will join \{0\}\./, 'the page names the network it will join');
 like($controller, qr/card => \(\$card =~ \/\^\(adopt\|format\)\$\//, 'the token carries it to the board');
 
+# The storage card owns the archive folder, so it also owns the backup share
+# and the Backups folder the sealed snapshots are mirrored into.
+like($controller, qr/qw\/Documents Downloads Recordings Games Scans Pictures Videos Music Backups\//,
+	'the storage folder list includes Backups');
+like($controller, qr/backup_quota/, 'the storage route reads and writes the backup quota');
+like($controllers_js, qr/id="controllers_backup_quota"/, 'the storage card has a backup-space picker');
+like($controllers_js, qr/backup_quota: quota/, 'the save carries the chosen quota');
+like($body, qr/Backups folder/, 'the page explains where the backups live');
+
 # The storage walkthrough steps over the same answer Save produces, and the
-# route now says which of the eight folders are actually on the card.
+# route now says which of the folders are actually on the card.
 like($controller, qr/present => \(-d \(\$dir \. '\/' \. \$_\)\) \? 1 : 0/, 'the storage answer says which folders are on the card');
 like($body, qr/id="controllers_walkthrough_button"/, 'the Storage section offers the walkthrough');
 like($body, qr/id="controllers_walkthrough"/, 'and a panel for its steps');

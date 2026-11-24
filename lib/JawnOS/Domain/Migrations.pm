@@ -284,6 +284,9 @@ sub update_database($data) {
 		'alter table remote_machines add column dock_port VARCHAR(15)',
 		'alter table remote_machines add column archive LONGTEXT',
 		'alter table remote_machines add column archive_dir VARCHAR(255)',
+		# The share of the archive card backups may use, as a percentage. The
+		# controller storage card writes it and backup_archive_prune enforces it.
+		'alter table remote_machines add column backup_quota VARCHAR(10)',
 		'alter table remote_machines add column sync_cursor VARCHAR(50)',
 		'alter table remote_machines add column version VARCHAR(25)',
 		# the peer's cached Ollama model list, so Plat can offer models by the machine

@@ -68,7 +68,9 @@ like($part04, qr/path_is_within\(\$file/, '/file_open as_is confines the path to
 my $conf5 = source('lib/JawnOS/Controller/manager_configure5.pm');
 my $guards = () = $conf5 =~ /path_is_within/g;
 cmp_ok($guards, '>=', 3, 'restore, merge and delete each validate the backup path');
-like($conf5, qr/'tail ' \. &subs::shell_quote\(\$path\)/, 'the restore tail quotes its path');
+like($conf5, qr/backup_open_sealed\(\$path, \$cr, \$t_database, 0\)/, 'the restore uses the shared sealed reader');
+my $backup_reader = source('lib/JawnOS/Domain/Backup.pm');
+like($backup_reader, qr/'tail -c 1600 ' \. &subs::shell_quote\(\$path\)/, 'the sealed reader quotes its tail path');
 unlike($conf5, qr/`tail \$path`/, 'no raw restore path reaches the shell');
 
 my $conf = source('lib/JawnOS/Controller/manager_configure.pm');

@@ -202,7 +202,9 @@ $topic{'backup'} = {
 		title => 'Backup and restore', category => 'functions',
 		summary => 'Take a copy, and put it back.',
 		body => [
-			'Backup packs the database and the media into an archive that can be moved or stored elsewhere; restore puts one back. A "Backup now" button lives in the start menu, and the same machinery carries data between machines.'
+			'Backup packs the database and the media into an archive that can be moved or stored elsewhere; restore puts one back. A "Backup now" button lives in the start menu, and the same machinery carries data between machines.',
+			'Snapshots are sealed, and the latest are kept in database/backups. A daily snapshot uses fast compression; the first snapshot of each week, month and year is sealed with the strongest compression and is the one kept as that period\'s archive. The daily, weekly, monthly and yearly sets are kept together, so a bad row noticed today can still be compared with the house a year ago.',
+			'When an archive folder is set, the sealed files are also copied to a Backups folder on that card. The controller\'s Storage section sets Backup space, the percentage of the card those copies may use; the local snapshots stay in database/backups. A card that is unmounted simply receives no new copies, and a failed copy never fails the local backup.'
 		],
 		related => [ 'devices_and_mesh', 'folders' ]
 	};

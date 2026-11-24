@@ -108,7 +108,6 @@ for my $rel (qw(
 	lib/JawnOS/Domain/Backup.pm
 	lib/JawnOS/Domain/Records.pm
 	lib/JawnOS/Manager/Part17.pm
-	lib/JawnOS/Controller/sesh_check.pm
 	lib/JawnOS/Controller/manager_configure2.pm
 	lib/JawnOS/Controller/manager_mail2.pm
 	lib/JawnOS/Controller/manager_configure.pm
@@ -120,6 +119,10 @@ for my $rel (qw(
 	like($src, qr/`\$[A-Za-z_]\w*`/, "$rel runs the command variable");
 	unlike($code, qr/`[^`]*[[:space:]]`[[:space:]]*\./, "$rel does not concatenate a backtick command");
 }
+my $sesh = source('lib/JawnOS/Controller/sesh_check.pm');
+like($sesh, qr/&subs::backup_open_sealed\(\$backup, \$secret, \$database, 0\)/, 'sesh_check uses the shared sealed reader');
+unlike($sesh, qr/`tail \$backup`/, 'and no raw backup path reaches the shell');
+
 like(source('scripts/security_audit.pl'), qr/perl\.shell\.concat/, 'the audit names backtick concatenation');
 
 done_testing();

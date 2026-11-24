@@ -73,6 +73,7 @@
 	<div class="controller_section">
 		<h2><%= &subs::ui('Storage') %></h2>
 		<p class="controller_note"><%= &subs::ui('A blank archive folder merges nothing: the card has to be mounted for merging to work.') %></p>
+		<p class="controller_note"><%= &subs::ui('Snapshots are kept in the Backups folder. Backup space caps how much of the card they may use.') %></p>
 		<div id="controllers_selected" class="controller_selected" aria-live="polite"><%= &subs::ui('Select a controller above to set its storage and copy its ROMs.') %></div>
 		<div id="controllers_storage" class="controller_card">
 			<div class="controller_empty"><%= &subs::ui('Select a controller above to set its storage.') %></div>

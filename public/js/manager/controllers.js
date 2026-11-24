@@ -153,10 +153,10 @@ function controllerSelectionApply() {
 }
 
 // ---- storage ---------------------------------------------------------------
-// The eight folders the house keeps on a controller's card. The route may
+// The folders the house keeps on a controller's card. The route may
 // send their paths and presence; these names keep the grid complete even when
 // it sends only the folders it could see.
-var controllerFolderNames = ['Documents', 'Downloads', 'Recordings', 'Games', 'Scans', 'Pictures', 'Videos', 'Music'];
+var controllerFolderNames = ['Documents', 'Downloads', 'Recordings', 'Games', 'Scans', 'Pictures', 'Videos', 'Music', 'Backups'];
 
 function controllerBool(value) {
 	if (value === undefined || value === null) { return false; }
@@ -267,6 +267,24 @@ function controllerStorageDraw(data) {
 		.val(data.archive_dir || '')
 		.attr('placeholder', controllerT('Blank - nothing is merged')));
 	box.append(field);
+
+	var quotaField = $('<div class="controller_field"></div>');
+	quotaField.append($('<label class="controller_field_label" for="controllers_backup_quota"></label>').text(controllerT('Backup space')));
+	var quotaSelect = $('<select id="controllers_backup_quota"></select>');
+	var quotaValue = parseInt(data.backup_quota, 10);
+	if (!isFinite(quotaValue)) { quotaValue = 10; }
+	var quotaChoices = [[0, controllerT('Do not store backups on this card')], [2, controllerT('{0}% of the card', 2)], [5, controllerT('{0}% of the card', 5)], [10, controllerT('{0}% of the card', 10)], [20, controllerT('{0}% of the card', 20)], [50, controllerT('{0}% of the card', 50)]];
+	var quotaKnown = false;
+	for (var q = 0; q < quotaChoices.length; q++) {
+		if (quotaChoices[q][0] === quotaValue) { quotaKnown = true; }
+		quotaSelect.append($('<option></option>').attr('value', quotaChoices[q][0]).text(quotaChoices[q][1]).prop('selected', quotaChoices[q][0] === quotaValue));
+	}
+	if (!quotaKnown) {
+		quotaSelect.append($('<option></option>').attr('value', quotaValue).text(controllerT('{0}% of the card', quotaValue)).prop('selected', true));
+	}
+	quotaField.append(quotaSelect);
+	quotaField.append($('<div class="controller_note"></div>').text(controllerT('How much of the card the Backups folder may use.')));
+	box.append(quotaField);
 
 	var actions = $('<div class="controller_field"></div>');
 	var archive = $('<label class="controller_check"></label>');
@@ -399,6 +417,7 @@ $(document).on('click', '.controller_walkthrough_act', function() {
 	var act = $(this).attr('data-act') || '';
 	if (act === 'folder') { $('#controllers_archive_dir').focus(); }
 	else if (act === 'save') { controllerStorageSave(); }
+	else if (act === 'backup') { $('#controllers_backup_quota').focus(); }
 	else if (act === 'roms') {
 		var roms = $('#controllers_roms');
 		if (roms.length) { roms[0].scrollIntoView({ block: 'start' }); }
@@ -432,10 +451,16 @@ function controllerWalkthroughSteps(data) {
 			action: controllerT('Type the folder')
 		},
 		{
-			text: controllerT('Press Save. The house makes the eight folders on the card.'),
+			text: controllerT('Press Save. The house makes its folders on the card.'),
 			done: made >= controllerFolderNames.length,
 			act: 'save',
 			action: controllerT('Save')
+		},
+		{
+			text: controllerT('Choose how much of the card backups may use. The Backups folder stays under that cap.'),
+			done: !!(data && data.backup_quota !== undefined && data.backup_quota !== null && data.backup_quota !== ''),
+			act: 'backup',
+			action: controllerT('Set the backup space')
 		},
 		{
 			text: controllerT('Games go in Games. The ROMs section below copies them between the two cards.'),
@@ -490,12 +515,14 @@ function controllerStorageSave() {
 	if (!input.length) { return; }
 	var dir = (input.val() || '').replace(/^\s+|\s+$/g, '');
 	var archive = $('#controllers_archive_flag').prop('checked') ? 1 : 0;
+	var quota = parseInt($('#controllers_backup_quota').val(), 10);
+	if (!isFinite(quota)) { quota = 10; }
 	var button = $('#controllers_storage_save').prop('disabled', true);
 	controllerStatus('controllers_storage_status', controllerT('Saving...'), false);
 	$.ajax({
 		url: '/manager/controllers/storage',
 		type: 'POST',
-		data: { uuid: controllerSelection.uuid, archive_dir: dir, archive: archive, timestamp: Date.now() },
+		data: { uuid: controllerSelection.uuid, archive_dir: dir, archive: archive, backup_quota: quota, timestamp: Date.now() },
 		dataType: 'json',
 		success: function(response) {
 			button.prop('disabled', false);

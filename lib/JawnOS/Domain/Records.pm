@@ -643,18 +643,27 @@ sub records_backup_now {
 	my $database = &database_path();
 	my $secret = &suds_grabber();
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
-	my $out = "$dir/jawnos_" . &rightNow() . '.enc';
+	my $now = &rightNow();
+	my $out = "$dir/jawnos_" . $now . '.enc';
 	my $backup_command = 'sqlite3 ' . &subs::shell_quote($database) . ' ' . &subs::shell_quote(".backup '$tmp'");
 	`$backup_command`;
-	&openssl_file_crypt('e', $standard, $secret, $tmp, $out, 0, 1);
+	# The same tier rule as the scheduled backup: a quick recovery snapshot in
+	# the middle of a period is a daily, the first of the week/month/year is the
+	# archive and earns the strongest compression.
+	my $tier = &subs::backup_compression_tier($now, 'backup');
+	my ($coded, $codec) = &subs::backup_compress($tmp, $tier);
+	my $sealed = &openssl_file_crypt('e', $standard, $secret, $coded, $out, 0, 1);
 	chmod 0600, $out if -e $out;
-	my $appendage = $gb::universal_splitter . &encrypter($secret, $standard);
-	if (open(my $af, '>>', $out)) { print $af $appendage . "\n"; close $af; }
+	my $appendage = $gb::universal_splitter . &encrypter($secret, $standard)
+		. $gb::universal_splitter . &encrypter($secret, $codec);
+	if ($sealed && open(my $af, '>>', $out)) { print $af $appendage . "\n"; close $af; }
 	system('shred', '-u', $tmp) if -e $tmp;
+	system('shred', '-u', $coded) if $coded ne $tmp && -e $coded;
 	# A phone or tablet may have no shred, or a PATH without it; the temp
 	# is a full plaintext database, so the unlink must always run.
 	unlink $tmp if -e $tmp;
-	return undef unless -e $out && -s $out > 5000;
+	unlink $coded if $coded ne $tmp && -e $coded;
+	return undef unless $sealed && -e $out && -s $out > 5000;
 	return $out;
 }
 
@@ -680,19 +689,13 @@ sub records_backup_decrypt {
 	return undef unless $path && -e $path;
 	require File::Temp;
 	require File::Spec;
-	my $tail_command = 'tail -c 600 ' . &subs::shell_quote($path);
-	my $tail = `$tail_command`;
-	my @parts = split /\Q$gb::universal_splitter\E/, ($tail // '');
-	return undef unless scalar @parts > 1;
-	my $appendage = $parts[-1];
-	$appendage =~ s/\s+\z//;
 	my $secret = &suds_grabber();
-	my $standard = &decrypter($secret, $appendage);
-	$standard = 'aes-256-ctr' unless $standard && $standard =~ /^[a-z0-9-]+$/i;
 	my ($fh, $tmp) = File::Temp::tempfile('jawnos_old_XXXXXX', SUFFIX => '.db', DIR => File::Spec->tmpdir, UNLINK => 0);
 	return undef unless $fh && $tmp;
 	close $fh;
-	&openssl_file_crypt('d', $standard, $secret, $path, $tmp, 1, 1);
+	# A compressed archive is sealed without -nopad, so backup_open_sealed uses
+	# the old flag only for an uncompressed snapshot.
+	return undef unless &subs::backup_open_sealed($path, $secret, $tmp, 1);
 	return undef unless -e $tmp && -s $tmp > 5000;
 	return $tmp;
 }

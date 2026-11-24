@@ -135,7 +135,7 @@ sub action_54004 {
 # The eight folders the storage card shows, and makes when this machine holds
 # the drive. ROMs are the shelf under the one called Games.
 sub _controller_folders {
-	return qw/Documents Downloads Recordings Games Scans Pictures Videos Music/;
+	return qw/Documents Downloads Recordings Games Scans Pictures Videos Music Backups/;
 }
 
 sub _controller_rom_folder { return 'Games' }
@@ -291,11 +291,15 @@ sub action_54005 {
 		path => $dir . '/' . $_,
 		($readable ? (present => (-d ($dir . '/' . $_)) ? 1 : 0) : ()),
 	} } &_controller_folders() ];
+	my $quota = $machine->{'backup_quota'};
+	$quota = 10 unless defined $quota && $quota =~ /^\d{1,3}$/ && $quota <= 100;
 	$c->render(json => {
 		ok => 1,
 		uuid => $uuid,
 		archive_dir => $dir,
 		archive => (($machine->{'archive'} // '') eq '1' ? 1 : 0),
+		backup_quota => $quota + 0,
+		backup_dir => (length $dir ? $dir . '/Backups' : ''),
 		folders => $folders,
 		present => (($is_this && length $dir && -d $dir) ? 1 : 0),
 		card => &_controller_card_finding($device, $machine, $key),
@@ -381,16 +385,23 @@ sub action_54006 {
 	# not an archive, and every reader already honours that.
 	my $dir = &_controller_archive_dir($c->param('archive_dir'));
 	my $archive = ($c->param('archive') // '') eq '1' ? '1' : '0';
+	my $quota = $c->param('backup_quota');
+	$quota = 10 unless defined $quota && $quota =~ /^\d{1,3}$/ && $quota <= 100;
+	# An install that has not run the migration yet keeps the old two-column
+	# write; the next boot adds backup_quota and this starts persisting it.
+	my $has_quota = eval { &subs::db_query('select 1 from pragma_table_info(?) where name = ?', 'remote_machines', 'backup_quota')->hashes->[0] ? 1 : 0 } || 0;
 	my $now = &subs::rightNow();
 	if (keys %{$machine}) {
 		my $where = $machine->{'uuid'} ? { uuid => $machine->{'uuid'} } : { signatorial => $machine->{'signatorial'} };
-		&subs::db_update('remote_machines', { archive_dir => $dir, archive => $archive, server_time => $now }, $where);
+		my $set = { archive_dir => $dir, archive => $archive, server_time => $now };
+		$set->{'backup_quota'} = $quota if $has_quota;
+		&subs::db_update('remote_machines', $set, $where);
 	}
 	else {
 		# The roster row is the controller the house paired; the machine row is
 		# the one that carries a drive, and this is where it first appears.
 		my $signatorial = ($device && $device->{'signatorial'}) || ($uuid eq 'local' ? $key : '');
-		&subs::db_insert('remote_machines', {
+		my $row = {
 			uuid => $key,
 			signatorial => $signatorial,
 			hostname => ($device && $device->{'name'}) || '',
@@ -398,7 +409,9 @@ sub action_54006 {
 			archive => $archive,
 			timestamp => $now,
 			server_time => $now,
-		});
+		};
+		$row->{'backup_quota'} = $quota if $has_quota;
+		&subs::db_insert('remote_machines', $row);
 	}
 	my @created;
 	my $is_this = &_controller_is_this($uuid, $device, $machine);
@@ -411,12 +424,13 @@ sub action_54006 {
 			push @created, $name if mkdir $path;
 		}
 	}
-	$log->info('controller storage: ' . (($device && $device->{'name'}) || $uuid) . ' archive_dir ' . $dir . ' archive ' . $archive);
+	$log->info('controller storage: ' . (($device && $device->{'name'}) || $uuid) . ' archive_dir ' . $dir . ' archive ' . $archive . ' backup_quota ' . $quota);
 	$c->render(json => {
 		ok => 1,
 		uuid => $uuid,
 		archive_dir => $dir,
 		archive => ($archive eq '1' ? 1 : 0),
+		backup_quota => $quota + 0,
 		created => \@created,
 		present => (($is_this && length $dir && -d $dir) ? 1 : 0),
 	});

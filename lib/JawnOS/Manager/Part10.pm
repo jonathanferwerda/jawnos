@@ -262,7 +262,7 @@ sub remote_upgrade_plan($c,$params) {
 		my $lan = $remote_machine->{'manager_verified'} ? undef : &subs::peer_lan_address($remote_machine, 1);
 		$remote_machine->{'manager'} = $lan->{'manager'}
 			if $lan && $lan->{'manager'} && $lan->{'manager'} ne ($remote_machine->{'manager'} || '');
-		my $url = $remote_machine->{'manager'} . '/manager/configure/backup_now?reason=remote_update&async=1&timestamp=' . $timestamp . '&signatorial=' . $signatorial;
+		my $url = $remote_machine->{'manager'} . '/manager/configure/backup_now?reason=remote_update&async=1&compress=1&timestamp=' . $timestamp . '&signatorial=' . $signatorial;
 		# The per-table plan: each table is exported only above the point the
 		# caller already holds. A table the plan omits still rides the legacy
 		# window, so a peer on this code and one on older code behave alike.

@@ -77,7 +77,7 @@ sub backup_scratch_tidy {
 	return 0 unless -d $dir;
 	my $cutoff = time - (3 * 60 * 60);
 	my $gone = 0;
-	foreach my $f ( glob($dir . '*.sql'), glob($dir . '*.sql-journal') ) {
+	foreach my $f ( glob($dir . '*.sql'), glob($dir . '*.sql-journal'), glob($dir . '*.sql.zst'), glob($dir . '*.sql.gz'), glob($dir . '*.coded'), glob($dir . '*.cipher') ) {
 		my @st = stat $f;
 		next unless @st && -f _;
 		next unless $st[9] < $cutoff;
@@ -86,6 +86,426 @@ sub backup_scratch_tidy {
 	}
 	&subs::log_writer('backup scratch tidy: discarded ' . $gone . ' leftover copy(ies)') if $gone;
 	return $gone;
+}
+
+# ---- compression ------------------------------------------------------------
+#
+# A snapshot is compressed before it is sealed. Daily snapshots use the fast
+# setting; the first snapshot of a week, month or year is the one retention
+# keeps, so it is sealed with the strongest setting. zstd is preferred when it
+# is installed; gzip is the portable fallback. `none` is still a valid codec,
+# so an old snapshot and a machine with neither tool stay readable.
+
+# Find a program on PATH without a shell. Used for zstd/gzip so a path with a
+# space can never become a second command.
+sub backup_tool_path($name) {
+	return undef unless defined $name && length $name;
+	foreach my $dir ( split /:/, ($ENV{'PATH'} || '') ) {
+		next unless length $dir;
+		my $path = $dir . '/' . $name;
+		return $path if -x $path;
+	}
+	return undef;
+}
+
+# Compress $in and return ($path, $codec). On any failure return ($in, 'none').
+# The caller keeps $in until the sealed archive is written, then shreds both.
+sub backup_compress($in, $tier) {
+	return ($in, 'none') unless defined $in && length $in && -e $in;
+	my $tool = &backup_tool_path('zstd') ? 'zstd' : (&backup_tool_path('gzip') ? 'gzip' : '');
+	return ($in, 'none') unless length $tool;
+	my $best = (($tier // '') eq 'best') ? 1 : 0;
+	my $level = $tool eq 'zstd' ? ($best ? 19 : 1) : ($best ? 9 : 1);
+	my $out = $in . ($tool eq 'zstd' ? '.zst' : '.gz');
+	unlink $out if -e $out;
+	my $ok = 0;
+	if ($tool eq 'zstd') {
+		$ok = (system('zstd', '-q', '-f', '-T2', '-' . $level, '-o', $out, $in) == 0) ? 1 : 0;
+	}
+	elsif (open(my $fh, '-|', 'gzip', '-' . $level, '-c', $in)) {
+		if (open(my $oh, '>', $out)) {
+			binmode $oh;
+			my $buffer;
+			my $wrote = 0;
+			while (read($fh, $buffer, 1048576)) {
+				print $oh $buffer or last;
+				$wrote += length $buffer;
+			}
+			close $oh;
+			$ok = $wrote > 0 ? 1 : 0;
+		}
+		my $closed = close $fh;
+		$ok = 0 unless $closed;
+	}
+	$ok = 0 unless $ok && -e $out && -s $out > 0;
+	unless ($ok) {
+		unlink $out if -e $out;
+		return ($in, 'none');
+	}
+	chmod 0600, $out;
+	return ($out, $tool . '-' . $level);
+}
+
+# Reverse backup_compress into $out. Returns 1 only when $out holds bytes.
+sub backup_decompress($codec, $in, $out) {
+	return 0 unless defined $in && length $in && -e $in;
+	return 0 unless defined $out && length $out;
+	my $tool = ($codec // '') =~ /^([a-z0-9]+)/ ? $1 : 'none';
+	if ($tool eq 'none') {
+		unlink $out if -e $out && $out ne $in;
+		if ($out ne $in) {
+			File::Copy::copy($in, $out) or return 0;
+		}
+		chmod 0600, $out;
+		return (-e $out && -s $out > 0) ? 1 : 0;
+	}
+	unlink $out if -e $out;
+	if ($tool eq 'zstd') {
+		return 0 unless &backup_tool_path('zstd');
+		my $ok = (system('zstd', '-q', '-d', '-f', '-o', $out, $in) == 0) ? 1 : 0;
+		chmod 0600, $out if $ok && -e $out;
+		return ($ok && -e $out && -s $out > 0) ? 1 : 0;
+	}
+	if ($tool eq 'gzip') {
+		return 0 unless &backup_tool_path('gzip');
+		open(my $fh, '-|', 'gzip', '-d', '-c', $in) or return 0;
+		open(my $oh, '>', $out) or do { close $fh; return 0; };
+		binmode $oh;
+		my $buffer;
+		my $wrote = 0;
+		while (read($fh, $buffer, 1048576)) {
+			print $oh $buffer or last;
+			$wrote += length $buffer;
+		}
+		my $closed = close $fh;
+		close $oh;
+		chmod 0600, $out;
+		return ($closed && $wrote > 0 && -e $out) ? 1 : 0;
+	}
+	return 0;
+}
+
+# The codec names in the backup footer. The footer is attacker-controlled when
+# it arrives with a peer's snapshot, so only the codecs this build knows are
+# accepted. A missing third part is an older, uncompressed backup.
+sub backup_codec($secret, $content) {
+	return 'none' unless defined $content && length $content;
+	$content =~ s/\s+\z//;
+	my $codec = &subs::decrypter(undef, $content);
+	$codec = &subs::decrypter($secret, $content) unless defined $codec && length $codec;
+	return undef unless defined $codec && length $codec;
+	return undef unless $codec =~ /\A(?:none|(?:zstd|gzip)-\d{1,2})\z/;
+	return $codec;
+}
+
+# Shred a temporary that held plaintext or a compressed snapshot.
+sub backup_sensitive_remove($path) {
+	return 0 unless defined $path && length $path && -e $path;
+	my $shred = &backup_shred_tool();
+	system($shred, '-u', $path) if $shred ne '';
+	unlink $path if -e $path;
+	return -e $path ? 0 : 1;
+}
+
+# Decrypt and decompress a sealed snapshot into $dest. $legacy_nopad keeps the
+# old decrypt flag for an uncompressed archive; a compressed archive was always
+# sealed without -nopad, so it decrypts without it.
+sub backup_open_sealed($path, $secret, $dest, $legacy_nopad) {
+	return 0 unless defined $path && length $path && -e $path;
+	return 0 unless defined $dest && length $dest;
+	# A failed credential must not leave the previous attempt's database under
+	# the destination, where the caller's size check would accept it.
+	unlink $dest if $dest ne $path && -e $dest;
+	my $tail_command = 'tail -c 1600 ' . &subs::shell_quote($path);
+	my $tail = `$tail_command`;
+	my @parts = split /\Q$gb::universal_splitter\E/, ($tail // '');
+	return 0 unless scalar @parts > 1;
+	my $standard_blob = $parts[1] // '';
+	$standard_blob =~ s/\s+\z//;
+	my $standard = &subs::backup_standard($secret, $standard_blob);
+	return 0 unless defined $standard && length $standard;
+	my $codec = &backup_codec($secret, $parts[2]);
+	return 0 unless defined $codec;
+	my $nopad = ($codec eq 'none') ? (($legacy_nopad // 0) ? 1 : 0) : 0;
+	# The footer is appended after the ciphertext. Decrypting it as if it were
+	# more ciphertext left trailing garbage that SQLite happened to ignore, but
+	# a zstd frame does not. Find the footer's start in the tail and copy only
+	# the ciphertext before it. The new footer has two separators; an older one
+	# has one.
+	my @split_at;
+	while ($tail =~ /\Q$gb::universal_splitter\E/g) { push @split_at, $-[0]; }
+	return 0 unless scalar @split_at;
+	my $footer_start = scalar(@split_at) >= 2 ? $split_at[-2] : $split_at[-1];
+	my $footer_len = length($tail) - $footer_start;
+	my $file_size = -s $path;
+	my $cipher_len = $file_size - $footer_len;
+	return 0 unless defined $cipher_len && $cipher_len > 0;
+	my $dir = &subs::home('~/.president/');
+	File::Path::make_path($dir) unless -d $dir;
+	my $cipher = $dir . &subs::random_string_creator(20) . '.cipher';
+	my $coded = $dir . &subs::random_string_creator(20) . '.coded';
+	open(my $cguard, '>>', $cipher) or return 0;
+	close $cguard;
+	chmod 0600, $cipher;
+	open(my $in, '<', $path) or do { unlink $cipher; return 0; };
+	binmode $in;
+	open(my $out, '>', $cipher) or do { close $in; unlink $cipher; return 0; };
+	binmode $out;
+	my $left = $cipher_len;
+	my $buffer;
+	while ($left > 0) {
+		my $want = $left > 1048576 ? 1048576 : $left;
+		my $read = read($in, $buffer, $want);
+		last unless defined $read && $read > 0;
+		print $out $buffer or last;
+		$left -= $read;
+	}
+	close $out;
+	close $in;
+	unless ($left == 0) {
+		unlink $cipher;
+		return 0;
+	}
+	open(my $guard, '>>', $coded) or do { unlink $cipher; return 0; };
+	close $guard;
+	chmod 0600, $coded;
+	my $ok = &subs::openssl_file_crypt('d', $standard, $secret, $cipher, $coded, $nopad, 1);
+	unlink $cipher;
+	unless ($ok && -e $coded && -s $coded > 0) {
+		&backup_sensitive_remove($coded);
+		return 0;
+	}
+	my $opened = &backup_decompress($codec, $coded, $dest);
+	&backup_sensitive_remove($coded);
+	return $opened;
+}
+
+# ---- retention --------------------------------------------------------------
+#
+# The daily tier keeps the newest snapshot of each of the last N days. The
+# weekly, monthly and yearly tiers keep the first snapshot of each period: that
+# is the one backup_compression_tier sealed with the strongest setting, and it
+# gives a stable archive for the period rather than a moving choice.
+
+sub backup_file_stamp($file) {
+	return 0 unless defined $file;
+	my ($stamp) = $file =~ /_(\d{10,16})\.enc\z/;
+	return $stamp + 0 if defined $stamp;
+	my @st = stat $file;
+	return @st ? $st[9] * 1000 : 0;
+}
+
+sub backup_period_keys($stamp) {
+	my $ms = (defined $stamp && $stamp =~ /^\d+$/) ? $stamp + 0 : &subs::rightNow();
+	my $t = Time::Piece->new(int($ms / 1000));
+	my $week = eval { $t->strftime('%G-%V') };
+	$week = $t->strftime('%Y-%W') unless defined $week && length $week;
+	return {
+		day => $t->strftime('%Y-%m-%d'),
+		week => $week,
+		month => $t->strftime('%Y-%m'),
+		year => $t->strftime('%Y')
+	};
+}
+
+# The first snapshot of a period is the one worth the slow compressor. A backup
+# taken later in the same week/month/year is a daily.
+sub backup_compression_tier($stamp, $reason) {
+	return 'fast' if defined $reason && $reason eq 'remote_update';
+	my $keys = &backup_period_keys($stamp);
+	my $dir = &subs::backups_dir();
+	my ($saw_week, $saw_month, $saw_year) = (0, 0, 0);
+	foreach my $file ( glob($dir . '/jawnos_*.enc') ) {
+		my $k = &backup_period_keys(&backup_file_stamp($file));
+		$saw_week = 1 if $k->{'week'} eq $keys->{'week'};
+		$saw_month = 1 if $k->{'month'} eq $keys->{'month'};
+		$saw_year = 1 if $k->{'year'} eq $keys->{'year'};
+		last if $saw_week && $saw_month && $saw_year;
+	}
+	return ($saw_week && $saw_month && $saw_year) ? 'fast' : 'best';
+}
+
+# Return { keep => [paths], newest => path, daily => n } for a list of dated
+# archives. $daily_limit is the number of days in the daily tier; the weekly,
+# monthly and yearly tiers are kept in addition.
+sub backup_retention_keep {
+	my ($files, $daily_limit) = @_;
+	my @files = grep { defined $_ && length $_ && -f $_ } @{ $files || [] };
+	return { keep => [], newest => undef } unless @files;
+	my @newest_first = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) } @files;
+	my $newest = $newest_first[0];
+	my $limit = (defined $daily_limit && $daily_limit =~ /^\d+$/) ? $daily_limit + 0 : 7;
+	my (%day_seen, @daily);
+	foreach my $file (@newest_first) {
+		my $k = &backup_period_keys(&backup_file_stamp($file));
+		next if $day_seen{ $k->{'day'} }++;
+		push @daily, $file;
+		last if scalar @daily >= $limit;
+	}
+	my (@week_order, %week_oldest, @month_order, %month_oldest, @year_order, %year_oldest);
+	foreach my $file (reverse @newest_first) {
+		my $k = &backup_period_keys(&backup_file_stamp($file));
+		if (!exists $week_oldest{ $k->{'week'} }) { $week_oldest{ $k->{'week'} } = $file; push @week_order, $k->{'week'}; }
+		if (!exists $month_oldest{ $k->{'month'} }) { $month_oldest{ $k->{'month'} } = $file; push @month_order, $k->{'month'}; }
+		if (!exists $year_oldest{ $k->{'year'} }) { $year_oldest{ $k->{'year'} } = $file; push @year_order, $k->{'year'}; }
+	}
+	my @week_keys = scalar(@week_order) > 4 ? @week_order[-4 .. -1] : @week_order;
+	my @month_keys = scalar(@month_order) > 12 ? @month_order[-12 .. -1] : @month_order;
+	my @year_keys = scalar(@year_order) > 3 ? @year_order[-3 .. -1] : @year_order;
+	my @weekly = map { $week_oldest{$_} } @week_keys;
+	my @monthly = map { $month_oldest{$_} } @month_keys;
+	my @yearly = map { $year_oldest{$_} } @year_keys;
+	my @ordered = ($newest, @yearly, @monthly, @weekly, @daily);
+	my %seen;
+	@ordered = grep { defined $_ && !$seen{$_}++ } @ordered;
+	return { keep => \@ordered, newest => $newest, daily => scalar @daily };
+}
+
+# ---- the archive card's Backups folder --------------------------------------
+#
+# The archive root is the mounted drive the person chose in Configure. Backups
+# live in <root>/Backups and the controller row allocates a percentage of the
+# card to them. The local database/backups set stays the primary; this folder
+# is a second medium for the same sealed files.
+
+sub backup_archive_dir {
+	# The Controllers storage card writes archive_dir on this machine's
+	# remote_machines row, so that row is the first answer. A machine that has no
+	# row yet (or a blank cell) falls back to the misc/config archive root.
+	my $root;
+	my $sig = &subs::signatorial_designer() || '';
+	if (length $sig) {
+		my $row = eval { &subs::db_select('remote_machines', undef, { signatorial => $sig })->hash };
+		$row ||= eval { &subs::db_select('remote_machines', undef, { uuid => $sig })->hash };
+		$root = $row->{'archive_dir'} if $row && defined $row->{'archive_dir'} && length $row->{'archive_dir'} && lc($row->{'archive_dir'}) ne 'null';
+	}
+	$root = eval { &subs::archive_root() } unless defined $root && length $root;
+	return undef unless defined $root && length $root && lc($root) ne 'null';
+	$root = &subs::home($root);
+	$root =~ s{/+$}{} unless $root eq '/';
+	return undef unless -d $root;
+	my $dir = $root . '/Backups';
+	unless (-d $dir) {
+		File::Path::make_path($dir, { mode => 0700 });
+	}
+	return -d $dir ? $dir : undef;
+}
+
+# The percentage of the archive card backups may use. The controller row wins,
+# then a misc setting, then ten percent. Zero means no copies on the card; the
+# local backups still run.
+sub backup_quota_percent {
+	my $quota;
+	my $sig = &subs::signatorial_designer() || '';
+	if (length $sig) {
+		my $row = eval { &subs::db_select('remote_machines', undef, { signatorial => $sig })->hash };
+		$row ||= eval { &subs::db_select('remote_machines', undef, { uuid => $sig })->hash };
+		$quota = $row->{'backup_quota'} if $row;
+	}
+	unless (defined $quota && length $quota) {
+		$quota = eval { &subs::setting_grabber({ app => 'misc', setting => 'backup_quota' }) };
+	}
+	return 10 unless defined $quota && $quota =~ /^\d{1,3}$/ && $quota <= 100;
+	return $quota + 0;
+}
+
+sub backup_archive_capacity($dir) {
+	return undef unless defined $dir && length $dir && -d $dir;
+	open(my $df, '-|', 'df', '-Pk', $dir) or return undef;
+	my @lines = <$df>;
+	close $df;
+	my $line = $lines[1] // '';
+	my @fields = split ' ', $line;
+	return undef unless scalar @fields >= 2 && $fields[1] =~ /^\d+$/;
+	return $fields[1] * 1024;
+}
+
+sub backup_archive_usage($dir) {
+	return 0 unless defined $dir && length $dir && -d $dir;
+	my $sum = 0;
+	foreach my $file ( glob($dir . '/jawnos*.enc') ) {
+		next unless $file =~ m{/jawnos(?:_\d+)?\.enc\z};
+		next unless -f $file;
+		$sum += -s $file;
+	}
+	return $sum;
+}
+
+# Copy one sealed archive to the card. Returns 1 when the sealed bytes are in
+# place; a missing card or a zero quota is a quiet skip, never a failed backup.
+sub backup_mirror_archive($path) {
+	return 0 unless defined $path && length $path && -e $path;
+	return 0 unless &backup_sealed_ok($path);
+	return 0 if &backup_quota_percent() <= 0;
+	my $dir = &backup_archive_dir();
+	return 0 unless $dir;
+	my ($name) = $path =~ m{([^/]+)\z};
+	return 0 unless defined $name && $name =~ /^jawnos(?:_\d+)?\.enc\z/;
+	my $dest = $dir . '/' . $name;
+	return 1 if -e $dest && -s $dest == -s $path;
+	my $staged = $dest . '.new.' . $$;
+	File::Copy::copy($path, $staged) or do { unlink $staged if -e $staged; return 0; };
+	chmod 0600, $staged;
+	unless (-e $staged && -s $staged == -s $path) {
+		unlink $staged;
+		return 0;
+	}
+	unlink $dest if -e $dest;
+	unless (rename $staged, $dest) {
+		unlink $staged;
+		return 0;
+	}
+	chmod 0600, $dest;
+	return 1;
+}
+
+# Apply the same GFS plan to the card, then cap the folder at the controller's
+# quota. The card copies are mirrors: deleting one never deletes a registry row.
+sub backup_archive_prune {
+	my $dir = &backup_archive_dir();
+	return { enabled => 0, reason => 'no archive folder' } unless $dir;
+	my $quota = &backup_quota_percent();
+	return { enabled => 0, reason => 'backup quota is off', quota => $quota } if $quota <= 0;
+	my @backups = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) }
+		grep { -f $_ } glob($dir . '/jawnos_*.enc');
+	my $plan = &backup_retention_keep(\@backups, &backup_limit());
+	my %keep = map { $_ => 1 } @{ $plan->{'keep'} || [] };
+	my $removed = 0;
+	foreach my $file (@backups) {
+		next if $keep{$file};
+		$removed++ if &backup_prune_remove($file);
+	}
+	my $capacity = &backup_archive_capacity($dir);
+	my $cap = defined $capacity ? int($capacity * $quota / 100) : undef;
+	my $usage = &backup_archive_usage($dir);
+	my $newest = @backups ? $backups[0] : undef;
+	if (defined $cap && $usage > $cap) {
+		my @oldest = sort { &backup_file_stamp($a) <=> &backup_file_stamp($b) } @backups;
+		foreach my $file (@oldest) {
+			last if $usage <= $cap;
+			next if defined $newest && $file eq $newest;
+			next if $file =~ m{/jawnos\.enc\z};
+			next unless -e $file;
+			my $size = -s $file;
+			if (&backup_prune_remove($file)) {
+				$usage -= $size;
+				$removed++;
+			}
+		}
+	}
+	if (defined $cap && $usage > $cap) {
+		&subs::log_writer('backup archive: still over quota after pruning (' . $usage . ' > ' . $cap . ')') if $log;
+	}
+	return {
+		enabled => 1,
+		quota => $quota,
+		capacity => $capacity,
+		cap => $cap,
+		usage => $usage,
+		seen => scalar @backups,
+		kept => scalar(grep { -e $_ } keys %keep),
+		removed => $removed
+	};
 }
 
 sub backup_now {
@@ -223,13 +643,7 @@ sub backup_now {
 	$databaser =~ s/_\d+$//;
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
-	# The appended encryption-standard names the cipher, never a secret, so it is
-	# sealed with the public empty key. It must stay in the legacy Crypt::Simple
-	# shape every build can read: encrypter() writes JS1 now, and decrypter()
-	# refuses a JS1 blob under a different key, so a real credential - and an older
-	# peer - could no longer open the footer. v0.1.2691 made exactly that mistake
-	# and broke every snapshot merge and restore; backup_standard() reads this.
-	my $appendage = $gb::universal_splitter . &subs::encrypter_legacy(undef,$encryption_standard);
+
 	my $path = &subs::backups_dir() . '/' . (do { my $n = $databaser; $n =~ s{.*/}{}; $n });
 	my $temporary_path = &subs::home('~/.president/') . &subs::random_string_creator() . '.sql';
 	# Private from the instant it exists. sqlite3's .backup and the shell's `>`
@@ -444,7 +858,27 @@ sub backup_now {
 
 	my $archive_path = $path . '_' . $timestamp;
 	my $archive_enc = $archive_path . '.enc';
-	my $encrypt = &openssl_file_crypt('e', $encryption_standard, $secret, $temporary_path, $archive_enc, 0, 1);
+	# The first snapshot of a week, month or year is the one retention keeps, so
+	# it is compressed with the slow, strongest setting. A daily uses the fast
+	# setting. The temporary is compressed before it is sealed; the shredder
+	# below removes both the .sql and its .zst/.gz sibling.
+	my $tier = &backup_compression_tier($timestamp, $reason);
+	# A peer export is only compressed when the puller says it can read one.
+	# An older puller keeps the old uncompressed container and its old footer.
+	my $may_compress = ($reason ne 'remote_update' || (($c->param('compress') || '') eq '1')) ? 1 : 0;
+	my ($coded_path, $codec) = $may_compress
+		? &backup_compress($temporary_path, $tier)
+		: ($temporary_path, 'none');
+	# The appended standard and codec name the cipher and the compression, never
+	# a secret, so they are sealed with the public empty key. The standard must
+	# stay in the legacy Crypt::Simple shape every build can read: encrypter()
+	# writes JS1 now, and decrypter() refuses a JS1 blob under a different key, so
+	# a real credential - and an older peer - could no longer open the footer.
+	# v0.1.2691 made exactly that mistake and broke every snapshot merge and
+	# restore; backup_standard() reads the first part, backup_codec() the second.
+	my $appendage = $gb::universal_splitter . &subs::encrypter_legacy(undef,$encryption_standard);
+	$appendage .= $gb::universal_splitter . &subs::encrypter_legacy(undef,$codec) if $may_compress;
+	my $encrypt = &openssl_file_crypt('e', $encryption_standard, $secret, $coded_path, $archive_enc, 0, 1);
 	# Do not append the split footer to a ciphertext that is not there. A bare
 	# footer is 96 bytes, which the old code then copied over jawnos.enc and
 	# treated as a backup - leave() shredded the only copy of the house behind
@@ -458,7 +892,6 @@ sub backup_now {
 		return { status => 'failed', error => 'could not seal the database' };
 	}
 	chmod 0600, $archive_enc;
-	my $stat_path = `stat $temporary_path`;
 	`echo "$appendage" >> $archive_enc`;
 
 	unless ($reason eq 'remote_update') {
@@ -520,6 +953,13 @@ sub backup_now {
 	$backup_data->{'size'} = $size;
 	unless ($reason eq 'remote_update') {
 		&subs::db_update('backups', { size => $size }, { uuid => $uuid });
+		# The new archive is on disk now, so the prune can include it. Mirror the
+		# files the GFS plan keeps to the archive card, then apply the card's quota.
+		my $pruned = &backup_prune($archive_enc);
+		foreach my $keep ( @{ $pruned->{'keep'} || [] } ) {
+			&backup_mirror_archive($keep);
+		}
+		&backup_archive_prune();
 	}
 	my $raw_data;
 	if ($size < 2000000) {
@@ -636,13 +1076,12 @@ sub durable_settings_where {
 		. " and setting not like 'remote\\_%' escape '\\'";
 }
 
-# How many dated archives this machine keeps.
+# How many days of daily snapshots this machine keeps.
 #
 # The Misc setting is stored per device class (mobile, server, computer) and may
 # also carry an override for this machine's own signatorial. A machine with
-# neither keeps three. Resolved in one place so the prune and the panel cannot
-# disagree, and so a missing class row falls through to the next choice instead
-# of becoming an accidental 3.
+# neither keeps seven. Weekly, monthly and yearly archives are kept in addition
+# by backup_retention_keep; this number is the daily tier, not a total cap.
 sub backup_limit {
 	my $misc = &subs::misc_setting_list();
 	foreach my $key ( &subs::signatorial_designer(), &subs::device_setter() ) {
@@ -650,18 +1089,20 @@ sub backup_limit {
 		my $value = $misc->{$key}->{'max_backups'};
 		return $value + 0 if defined $value && $value =~ /^\d+$/;
 	}
-	return 3;
+	return 7;
 }
 
-# Delete the dated archives beyond this machine's limit. Shared by backup_now
-# (after the new archive is built) and by an operator run, so the panel, the
-# schedule and a manual prune agree on the limit and on what is removed.
+# Delete dated archives the GFS plan does not keep. Shared by backup_now (after
+# the new archive is built) and by an operator run, so the panel, the schedule
+# and a manual prune agree on the retention and on what is removed.
 #
-# Newest first: the newest `limit` archives survive, everything older goes with
-# its registry row (and a tombstone, so the deletion syncs). Read in Perl rather
+# The plan keeps the newest snapshot of each of the daily days, plus the first
+# snapshot of each recent week, month and year. Everything else goes with its
+# registry row (and a tombstone, so the deletion syncs). Read in Perl rather
 # than through `ls -t`, which word-splits a path with a space and used to leave
 # the archive list empty.
 sub backup_prune {
+	my $protect = shift;
 	my $database = ( &subs::database_grabber() )[1];
 	my $databaser = $database || '';
 	$databaser =~ s{.*/}{};
@@ -670,21 +1111,35 @@ sub backup_prune {
 	my $path = &subs::backups_dir() . '/' . $databaser;
 	my $enc_file = $path . '.enc';
 	my $limit = &backup_limit();
-	my @backups = sort { (stat $b)[9] <=> (stat $a)[9] }
+	my @backups = sort { &backup_file_stamp($b) <=> &backup_file_stamp($a) }
 		grep { $_ ne $enc_file } glob($path . '_*.enc');
-	my $kept = scalar @backups;
-	my $removed = 0;
-	if ($kept > $limit) {
-		for (my $n = $limit; $n < $kept; $n++) {
-			my $backs = &subs::db_select('backups', undef, { enc_file => $backups[$n] })->hashes || [];
-			foreach my $ba ( @{$backs} ) {
-				&subs::deletion_registration({ table => 'backups', uuid => $ba->{'uuid'}, scope => 'single', server_time => $ba->{'server_time'} });
-			}
-			&subs::db_delete('backups', { enc_file => $backups[$n] });
-			$removed++ if &backup_prune_remove($backups[$n]);
-		}
+	my $plan = &backup_retention_keep(\@backups, $limit);
+	my @keep = @{ $plan->{'keep'} || [] };
+	# The archive just written is protected even when a caller named an older
+	# timestamp: the post-write prune must never delete the backup it is part of.
+	if (defined $protect && length $protect && -e $protect && !grep { $_ eq $protect } @keep) {
+		push @keep, $protect;
 	}
-	return { limit => $limit, seen => $kept, kept => ($kept > $limit ? $limit : $kept), removed => $removed };
+	my %keep = map { $_ => 1 } @keep;
+	my $seen = scalar @backups;
+	my $removed = 0;
+	foreach my $file (@backups) {
+		next if $keep{$file};
+		my $backs = &subs::db_select('backups', undef, { enc_file => $file })->hashes || [];
+		foreach my $ba ( @{$backs} ) {
+			&subs::deletion_registration({ table => 'backups', uuid => $ba->{'uuid'}, scope => 'single', server_time => $ba->{'server_time'} });
+		}
+		&subs::db_delete('backups', { enc_file => $file });
+		$removed++ if &backup_prune_remove($file);
+	}
+	return {
+		limit => $limit,
+		seen => $seen,
+		kept => scalar(keys %keep),
+		removed => $removed,
+		keep => \@keep,
+		tiers => $plan
+	};
 }
 
 # Delete one dated archive.

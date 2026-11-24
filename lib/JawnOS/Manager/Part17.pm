@@ -850,7 +850,6 @@ sub merge_database($c,$configuration) {
 	$last_update_time = $configuration->{'gimme'} if $configuration->{'gimme'};
 	@{$creds} = grep { $_->{'level'} ne 'padlock' } @{$creds};
 	@{$creds} = reverse @{$creds};
-	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my @updateables;
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
 	my $merge_ctx;
@@ -860,12 +859,12 @@ sub merge_database($c,$configuration) {
 
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
 		if ($path =~ /\.enc\z/i) {
-			my $tail_command = 'tail ' . &subs::shell_quote($path);
+			# The footer is at the end; read only its window, not the whole
+			# encrypted snapshot, which can be gigabytes.
+			my $tail_command = 'tail -c 1600 ' . &subs::shell_quote($path);
 			my $data = `$tail_command`;
 
-			my @split_data = split $universal_splitter, $data;
-
-			unless ($data =~ /\Q$universal_splitter/gi) {
+			unless ($data =~ /\Q$universal_splitter/) {
 				# The marker is appended after the ciphertext. If it is not in the tail,
 				# the file we downloaded is not the finished container (truncated, or
 				# not the archive at all) - say so instead of silently skipping the key.
@@ -873,13 +872,12 @@ sub merge_database($c,$configuration) {
 				next;
 			}
 
-			$encryption_standard = &subs::backup_standard($crud, $split_data[1]);
-			&subs::openssl_file_crypt('d', $encryption_standard, $crud, $path, $temporary_file, 1, 1);
+			my $opened = &subs::backup_open_sealed($path, $crud, $temporary_file, 1);
 
 			my $tsql = Mojo::SQLite->new('sqlite:' . $temporary_file);
 			my $decrypted_size = (-s $temporary_file) || 0;
 			my $snapshot_db = eval { $tsql->db ? 1 : 0 };
-			my $snapshot_ok = ($decrypted_size > 5000 && $snapshot_db && $tsql->dsn !~ /:$/) ? 1 : 0;
+			my $snapshot_ok = ($opened && $decrypted_size > 5000 && $snapshot_db && $tsql->dsn !~ /:$/) ? 1 : 0;
 			# A merged table leaves a "merge <table>" line; a pull that never gets
 			# there has failed at the container itself, and used to leave only "merge
 			# did not finish" with no reason. Say which credential opened what.

@@ -96,17 +96,12 @@ sub action_7519 {
 	my $computer = $c->param('computer');
 	my $local_address = $c->tx->local_address;
 	my $remote_address = $c->tx->remote_address;
-	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	if ($backup =~ /\.enc\z/i) {
 		my $backup_file = $backup;
 		$backup_file =~ s/\.enc\z//i;
 		$database = $backup_file . '.db';
 		unless (-e $database && -s $database > 5000) {
-			my $tail_command = 'tail ' . &subs::shell_quote($backup);
-			my $data = `$tail_command`;
-			my @split_data = split $universal_splitter, $data;
-			$encryption_standard = &subs::backup_standard($secret, $split_data[1]);
-			&subs::openssl_file_crypt('d', $encryption_standard, $secret, $backup, $database, 0, 1);
+			&subs::backup_open_sealed($backup, $secret, $database, 0);
 
 		}
 		if (-e $database && -s $database > 5000) {
