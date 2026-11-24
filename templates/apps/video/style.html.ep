@@ -250,6 +250,10 @@
 			color: #eee;
 			font-size: 13px;
 		}
+		/* a native select popup can be refused in a fullscreen (the Qt view), so
+		   the big picture shows the same control as an inline list; the list must
+		   keep the rows the dropdown's 30px would hide */
+		.media_visualization.media_visualization_list { width: 150px; height: auto; }
 		/* the music player's own bar: it wraps to two rows - the full-width seek
 		   on top, then the transport, shuffle/repeat, title, theatre and extras.
 		   The controls that were absolutely placed in the foot are reset to static

@@ -1,4 +1,4 @@
-# tests-for: public/css/music.css public/js/music.js templates/apps/video/script.html.ep templates/apps/video/markup.html.ep
+# tests-for: public/css/music.css public/js/music.js templates/apps/video/script.html.ep templates/apps/video/markup.html.ep templates/apps/video/style.html.ep
 # covers:    The Music window's theatre chrome slides. #interface leaves the
 #            top edge and the player bar leaves the foot instead of fading.
 #            One class (music_chrome_hidden) is the state, because a bar moved
@@ -18,6 +18,7 @@ my $root = repo_root();
 my $css = read_file("$root/public/css/music.css");
 my $js = read_file("$root/public/js/music.js");
 my $video = read_file("$root/templates/apps/video/script.html.ep");
+my $style = read_file("$root/templates/apps/video/style.html.ep");
 my $markup = read_file("$root/templates/apps/video/markup.html.ep");
 
 # --- the motion: the top bar up, the bottom bar down ------------------------
@@ -60,6 +61,17 @@ like($js, qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\
 	'including the player bar over the album artwork');
 like($css, qr/#music \.media_controls\.music_player_bar \{ z-index: 16; \}/,
 	'the bar rides above the picture');
+
+# The visualization is the one native <select> in the player. A fullscreen
+# popup can be refused or painted behind the top layer, so in a big picture the
+# same control becomes an inline list whose options are ordinary clicks.
+like($js, qr/function musicVisualSelectSize\(\)/, 'the visualizer becomes a list in a big picture');
+like($js, qr/var want = musicPictureBig\(\) \? sel\.options\.length : 1;/,
+	'all choices inline there, the dropdown in the window');
+like($video, qr/musicVisualSelectSize\(\)/, 'the tools toggle sizes it as the panel opens');
+like($js, qr/toggleClass\('media_visualization_list', want > 1\)/, 'the list class follows the size');
+like($style, qr/\.media_visualization\.media_visualization_list \{ width: 150px; height: auto; \}/,
+	'the inline list can show its rows') || diag('list rule moved');
 
 # --- the include asks the state, not the display ----------------------------
 like($video, qr/musicChromeShow\(controls\)/, 'a mouse move slides the player bar in');

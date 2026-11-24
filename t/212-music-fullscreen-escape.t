@@ -85,5 +85,7 @@ like($help, qr/A reload comes back to the full-screen picture/,
 	'and says a reload returns to the full-screen picture');
 like($help, qr/in the JawnOS desktop app it returns to the real full screen/,
 	'with the desktop app needing no extra press');
+like($help, qr/the choices show as a list in that panel/,
+	'and names the fullscreen visualization list');
 
 done_testing();

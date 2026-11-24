@@ -4705,6 +4705,7 @@ $(document).on('fullscreenchange webkitfullscreenchange', function() {
 		musicFullscreenAsking = false;
 	}
 	musicPicturePlace();
+	musicVisualSelectSize();
 	// a fullscreen is the other time the picture is big enough for chapters
 	musicChaptersRefresh();
 	musicChromeArm();
@@ -4782,6 +4783,7 @@ function theatreModeOn() {
 		$('#music_album_cover').hide()
 	}
 	musicChaptersRefresh();
+	musicVisualSelectSize();
 	// the restored theatre arms the include's idle timer, so the bars can leave
 	// the picture without waiting for the pointer to move
 	musicChromeArm();
@@ -4813,6 +4815,7 @@ function theatreModeOff() {
 	$('#video').attr('theatre_mode', 'off'); 
 	// a stay in fullscreen keeps the chapters; a real leave from the big
 	// picture takes them with the rest of the theatre chrome
+	musicVisualSelectSize();
 	musicChaptersRefresh();
 }
 
@@ -6910,6 +6913,7 @@ function musicFullscreenOn() {
 	musicFullscreenIntent = true;
 	clearTimeout(musicFullscreenExitTimer);
 	musicPicturePlace();
+	musicVisualSelectSize();
 	musicChaptersRefresh();
 	musicChromeShow($('#interface'));
 	musicChromeShow($('#music .media_controls.music_player_bar'));
@@ -6923,6 +6927,7 @@ function musicFullscreenOff() {
 	musicFullscreenRestoreDisarm();
 	musicFullscreenGestureRemove();
 	musicPicturePlace();
+	musicVisualSelectSize();
 	musicChaptersRefresh();
 }
 // The window around the player: raised over the taskbar and dock, title bar
@@ -7627,6 +7632,25 @@ function musicVisualElements() {
 	};
 }
 
+// In a big picture the browser's own <select> popup can be refused or painted
+// behind the top layer (the Qt view does this), which leaves the visualization
+// unreachable while every ordinary button still works. The same control becomes
+// an inline list there, so its options are ordinary clicks; the windowed player
+// keeps the compact dropdown.
+function musicVisualSelectSize() {
+	var parts = musicVisualElements();
+	var sel = parts.miss ? document.getElementById(parts.miss + '_visualization') : null;
+	if (!sel) { return; }
+	var want = musicPictureBig() ? sel.options.length : 1;
+	if (sel.size == want) { return; }
+	sel.size = want;
+	// the stylesheet's 30px is the dropdown's; a list must show its rows
+	$(sel).toggleClass('media_visualization_list', want > 1);
+	// the open tools panel grows or shrinks with the list; keep the chapter row
+	// above it rather than under it
+	if (sel.offsetParent && typeof musicChaptersPlace == 'function') { musicChaptersPlace(); }
+}
+
 // The canvas as a picture: its stream, made once per canvas (a re-render hands
 // back a fresh one, and a spent stream with it), given to the muted feed video.
 //
@@ -7770,6 +7794,7 @@ function musicVisualFrame(ts) {
 	var select = document.getElementById(parts.miss + '_visualization');
 	if (select && select.value != musicVisual.mode) { select.value = musicVisual.mode; }
 	var big = musicPictureBig();
+	musicVisualSelectSize();
 	musicVisualFeed(parts);
 	musicVisualPlace(parts, big);
 	if (!musicVisualFit(parts.canvas, big)) {
