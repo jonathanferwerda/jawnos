@@ -228,6 +228,8 @@ function studioRackMoveInsert(from, to, name) {
 	studioRackRender(to);
 	studioUpdateFxBadges();
 	studioSaver();
+	studioListenRearm(from, chain);
+	studioListenRearm(to, chain);
 	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
@@ -257,6 +259,7 @@ function studioRackReorder(ch) {
 	studioRackRender(ch);
 	studioUpdatePedalLamps();
 	studioSaver();
+	studioListenRearm(ch, chain);
 	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
@@ -297,6 +300,7 @@ function studioSetInsertBypass(ch, name, on) {
 	studioRackRender(ch);
 	studioUpdatePedalLamps();
 	studioSaver();
+	studioListenRearm(ch, chain);
 	if (chain === 'out' && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 

@@ -409,6 +409,35 @@ function studioSetInsert(ch, name, on, chain) {
 	// Only the Out chain travels in an engine clip plan; an input-chain insert
 	// is baked into the take, so it needs no plan update.
 	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
+	studioListenRearm(ch, out ? 'out' : 'in');
+}
+
+// The engine's Listen reads the insert chain once, when it is armed, and keeps
+// it: only a knob turn is a live `param`. So a pedal added, removed, moved or
+// stomped on the track being monitored has to re-arm the Listen, or the pedal
+// is never heard until Monitor is pressed again. The Out chain is playback and
+// not the monitor's, so it is not this. A knob turn does not come through here.
+//
+// One re-arm after the last change: a song restore rebuilds its inserts one at
+// a time, and a burst of stop/start on the engine would be worse than the wait.
+var studioListenRearmTimer = null;
+function studioListenRearm(ch, chain) {
+	if (studioListenRearmTimer) { clearTimeout(studioListenRearmTimer); studioListenRearmTimer = null; }
+	if (chain === 'out') { return; }
+	if (typeof studioListenActive === 'undefined' || !studioListenActive) { return; }
+	if (typeof studioMonitoredChannel !== 'function' || typeof studioListenStop !== 'function') { return; }
+	var monitored = studioMonitoredChannel();
+	if (monitored === null || typeof monitored === 'undefined') { return; }
+	if (String(monitored) !== String(ch)) { return; }
+	studioListenRearmTimer = setTimeout(function () {
+		studioListenRearmTimer = null;
+		// The person may have stopped Monitor, or moved it, inside the wait.
+		if (typeof studioListenActive === 'undefined' || !studioListenActive) { return; }
+		if (typeof studioMonitoredChannel !== 'function') { return; }
+		var now = studioMonitoredChannel();
+		if (now === null || typeof now === 'undefined' || String(now) !== String(ch)) { return; }
+		studioListenStop(Number(ch), ch);
+	}, 300);
 }
 
 function studioApplyChannel(ch) {

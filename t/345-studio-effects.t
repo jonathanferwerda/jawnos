@@ -377,4 +377,20 @@ like($rack, qr/else \{ studioRackReorder\(to\); \}/, 'a drop in the same rack re
 like($rack, qr/studioUpdateFxBadges\(\);[\s\S]*?studioSaver\(\);/,
 	'the move repaints the badges and saves the song');
 
+# --- a pedal change on the monitored track re-arms the Listen ---------------
+# The engine keeps the strip it was armed with, so the browser has to re-arm it
+# when the chain changes; a knob turn is a live param and must not.
+like($js, qr/function studioListenRearm\(ch, chain\)/, 'the Listen re-arm helper exists');
+like($js, qr/studioListenRearm\(ch, out \? 'out' : 'in'\);/,
+	'adding or removing an insert re-arms the Listen');
+like($rack, qr/studioSaver\(\);\s*studioListenRearm\(ch, chain\);\s*if \(chain === 'out'/,
+	'a stomp re-arms it, on the chain the rack showed');
+like($rack, qr/studioSaver\(\);\s*studioListenRearm\(ch, chain\);\s*if \(out &&/,
+	'and reordering a rack re-arms it');
+like($rack, qr/studioListenRearm\(from, chain\);\s*studioListenRearm\(to, chain\);/,
+	'a moved insert re-arms both ends');
+like($js, qr/studioListenRearmTimer = setTimeout\(function \(\) \{/,
+	'a burst of changes produces one re-arm');
+unlike($knobs, qr/studioListenRearm/, 'a knob turn stays a live param and never re-arms');
+
 done_testing();
