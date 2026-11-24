@@ -6411,13 +6411,8 @@ impl listen::ListenSink for SocketListenSink<'_> {
     }
 
     fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
-        let frames = self.sink.block(input, output)?;
-        self.frames += frames as u64;
-        let mut current = self
-            .status
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        current.frames = self.frames;
+        self.sink.block(input, output)?;
+        self.record(output.len() / 2);
         Ok(())
     }
 
@@ -6427,14 +6422,25 @@ impl listen::ListenSink for SocketListenSink<'_> {
         system: &[f32],
         output: &mut [i16],
     ) -> Result<(), String> {
-        let frames = self.sink.block_with_system(input, system, output)?;
+        self.sink.block_with_system(input, system, output)?;
+        self.record(output.len() / 2);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alsa")]
+impl SocketListenSink<'_> {
+    /// Count the frames the unit actually rendered. The sink's trait method
+    /// returns only success or a sentence, so the width comes from the stereo
+    /// output the unit wrote; this is also why `block` cannot treat its
+    /// `Result` as a frame count.
+    fn record(&mut self, frames: usize) {
         self.frames += frames as u64;
         let mut current = self
             .status
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         current.frames = self.frames;
-        Ok(())
     }
 }
 
@@ -9453,6 +9459,41 @@ break"}"#).is_err());
             let _ = std::fs::remove_file(path);
         }
         let _ = std::fs::remove_file(&out);
+    }
+
+    #[cfg(feature = "alsa")]
+    #[test]
+    fn a_listen_sink_counts_the_frames_its_unit_processed() {
+        use jawn_audio::listen::ListenSink;
+        let plan = ListenPlan {
+            channel: 0,
+            channels: vec![0],
+            gain: 1.0,
+            pan: 0.0,
+            inserts: Vec::new(),
+        };
+        let mut unit = ListenUnit::new(&plan, None);
+        let status = Arc::new(Mutex::new(ListenStatus {
+            state: State::Listening,
+            channel: 0,
+            channels: vec![0],
+            frames: 0,
+            gain: 1.0,
+            pan: 0.0,
+            inserts: String::new(),
+            error: String::new(),
+        }));
+        let mut sink = SocketListenSink {
+            sink: &mut unit,
+            status: &status,
+            frames: 0,
+        };
+        sink.prepared(48_000, 4, 1).expect("prepare");
+        let mut output = [0i16; 8];
+        sink.block(&[1000i16; 4], &mut output).expect("block");
+        assert_eq!(sink.frames, 4, "the sink did not count the block");
+        assert_eq!(output.len() / 2, 4);
+        assert_eq!(status.lock().unwrap().frames, 4);
     }
 
     #[test]
