@@ -262,6 +262,10 @@ body.dark_theme .music_cfg_drawer {
 	pointer-events: none;
 	transition: transform .3s ease, opacity .3s ease, visibility 0s linear .3s;
 }
+/* The bar rides above the picture and the album cover; the More tools panel
+   (z-index 20) and the seek preview (30) stay above it, and the chapter strip
+   (15) inside it. A fullscreen album cover must never take the wrench away. */
+#music .media_controls.music_player_bar { z-index: 16; }
 @media (prefers-reduced-motion: reduce) {
 	#music #interface,
 	#music #interface.music_chrome_hidden,

@@ -80,6 +80,7 @@ like($on // '', qr/musicFullscreenIntent = true/, 'the choice is remembered');
 like($on // '', qr/musicPicturePlace\(\);/, 'the picture takes the big style');
 like($on // '', qr/musicChaptersRefresh\(\);/, 'and the chapter row comes with it');
 like($on // '', qr/musicChromeArm\(\);/, 'the bars can slide away again');
+like($on // '', qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\);/, 'and start in reach');
 
 my ($off) = $music =~ /(function musicFullscreenOff\(\)\s*\{.*?\n\})/s;
 ok(defined $off, 'musicFullscreenOff is found');
@@ -118,6 +119,7 @@ like($change // '', qr/if \(!document\.hidden\)/, 'a backgrounded page keeps the
 like($change // '', qr/musicFullscreenRestoreDisarm\(\)/, 'the top layer disarms the restored press');
 like($change // '', qr/removeClass\('music_fullscreen'\)/, 'the real fullscreen supplies the same dress');
 like($change // '', qr/musicFullscreenIntent = true/, 'and remembers it');
+like($change // '', qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\);/, 'the real fullscreen starts with the bar in reach');
 
 # --- the player toggle promotes and exits honestly --------------------------
 my ($player_fs) = $music =~ /(function musicPlayerFullscreen\(\)\s*\{.*?\n\})/s;

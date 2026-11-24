@@ -4268,6 +4268,10 @@ $(document).on('fullscreenchange webkitfullscreenchange', function() {
 		musicFullscreenAsking = false;
 		clearTimeout(musicFullscreenExitTimer);
 		musicFullscreenRestoreDisarm();
+		// a fullscreen starts with the controls in reach; the idle timer takes
+		// them away again when the pointer rests
+		musicChromeShow($('#interface'));
+		musicChromeShow($('#music .media_controls.music_player_bar'));
 		try { playerCacheSaver(undefined, true); } catch (e) {}
 	}
 	else if (musicWasFullscreen) {
@@ -4317,6 +4321,22 @@ function musicChromeHide(el) {
 function musicChromeArm() {
 	if (typeof window.jawnosMusicChromeArm == 'function') { window.jawnosMusicChromeArm(); }
 }
+// The picture's own mousemove handler lives in the video include. Keep a
+// window-level one as well: a window restored from a shell without that script,
+// or a second video include with the same element id, can leave the player bar
+// hidden over the album artwork with no way back. A tap has no mousemove at
+// all, so the same handler answers touchstart. Showing is idempotent; the
+// include's timer still owns the hide.
+var musicChromeGestureAt = 0;
+$(document).on('mousemove mouseenter touchstart pointerdown', '#music', function() {
+	if (!musicPictureBig()) { return; }
+	var now = Date.now();
+	if (now - musicChromeGestureAt < 250) { return; }
+	musicChromeGestureAt = now;
+	musicChromeShow($('#interface'));
+	musicChromeShow($('#music .media_controls.music_player_bar'));
+	musicChromeArm();
+});
 
 function theatreModeOn() {
 	$('#music_library').hide();
@@ -6405,6 +6425,8 @@ function musicFullscreenOn() {
 	clearTimeout(musicFullscreenExitTimer);
 	musicPicturePlace();
 	musicChaptersRefresh();
+	musicChromeShow($('#interface'));
+	musicChromeShow($('#music .media_controls.music_player_bar'));
 	musicChromeArm();
 }
 function musicFullscreenOff() {

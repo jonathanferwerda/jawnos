@@ -51,6 +51,16 @@ like($js, qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\
 like($js, qr/shell\.find\('#interface, \.media_controls\.music_player_bar'\)\.removeClass\('music_chrome_hidden'\)/,
 	'the cached shell does not keep a runtime-hidden bar');
 
+# The window itself brings the bars back on a move or a tap: the video
+# include's own binding can be missing on a restored shell (or removed by a
+# second include with the same element id), and a touch has no mousemove.
+like($js, qr/\$\(document\)\.on\('mousemove mouseenter touchstart pointerdown', '#music'/,
+	'the window brings its bars back by itself');
+like($js, qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\);/,
+	'including the player bar over the album artwork');
+like($css, qr/#music \.media_controls\.music_player_bar \{ z-index: 16; \}/,
+	'the bar rides above the picture');
+
 # --- the include asks the state, not the display ----------------------------
 like($video, qr/musicChromeShow\(controls\)/, 'a mouse move slides the player bar in');
 like($video, qr/musicChromeShow\(music_iface\)/, 'and the interface with it');
