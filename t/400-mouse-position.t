@@ -5,7 +5,9 @@
 #            gets the live point outside an event. The delegated jQuery handler
 #            that copied every move into window.event is gone; the point it
 #            copied is recorded once, natively. lastX/lastY/lastTs are the
-#            point and time the previous caller saw.
+#            point and time the previous caller saw. The window.event and
+#            window.mouse globals are still filled on every move, for a native
+#            side script that may read them; the page itself reads the record.
 
 use strict;
 use warnings;
@@ -31,14 +33,14 @@ like($js, qr/document\.addEventListener\('mousemove',[\s\S]*?\{ capture: true, p
 	'the pointer is recorded natively, in the capture phase, and passively');
 like($setter, qr/if \(!isFinite\(x\) \|\| !isFinite\(y\)\) \{ return; \}/,
 	'a non-pointer pair cannot corrupt the point');
-unlike($js, qr/window\.event\s*=/, 'no handler writes the event onto window.event any more');
-unlike($js, qr/\bmouse\s*=\s*e\b/, 'and nothing copies it into an unused global');
+like($recorder, qr/window\.event = e;/, 'the old window.event is still filled for an injected reader');
+like($recorder, qr/window\.mouse = e;/, 'and window.mouse with it');
 unlike($fn, qr/window\.event/, 'mouse_position reads its own record, not whatever event is current');
 
 SKIP: {
-	skip 'node is not installed', 9 unless length(my $node = `command -v node 2>/dev/null`);
+	skip 'node is not installed', 11 unless length(my $node = `command -v node 2>/dev/null`);
 	chomp $node;
-	skip 'the helpers were not found', 9 unless defined $setter && defined $recorder && defined $fn;
+	skip 'the helpers were not found', 11 unless defined $setter && defined $recorder && defined $fn;
 
 	my $code = "var mLastX = 0, mLastY = 0, mLastTs = Date.now();\n"
 		. "var mPrevX = 0, mPrevY = 0, mPrevTs = mLastTs;\n"
@@ -50,7 +52,9 @@ SKIP: {
 		. $fn . "\n"
 		. "var out = {};\n"
 		. "out.opts = { capture: !!opts.capture, passive: !!opts.passive };\n"
-		. "moveFn({ clientX: 111, clientY: 222 });\n"
+		. "var ev1 = { clientX: 111, clientY: 222 };\n"
+		. "moveFn(ev1);\n"
+		. "out.globals = { event: window.event === ev1, mouse: window.mouse === ev1 };\n"
 		. "out.a = mouse_position();\n"
 		. "out.b = mouse_position();\n"
 		. "window.event = { type: 'resize' };\n"
@@ -77,6 +81,8 @@ SKIP: {
 
 	is_deeply($got->{'opts'}, { capture => JSON::PP::true, passive => JSON::PP::true },
 		'the recorder is registered in the capture phase and passively');
+	is($got->{'globals'}{'event'}, JSON::PP::true, 'the move is still left on window.event');
+	is($got->{'globals'}{'mouse'}, JSON::PP::true, 'and on window.mouse, for an injected reader');
 	is_deeply($field->('a', qw(x y lastX lastY)), [111, 222, 0, 0],
 		'the first ask is the recorded point, with no earlier one');
 	is_deeply($field->('b', qw(x y lastX lastY)), [111, 222, 111, 222],

@@ -3,8 +3,10 @@
 // element's own handlers, so a handler that asks mid-event gets this move and
 // not the one before it; the seek preview used to trail the pointer by a move
 // because it read window.event from a delegated handler that ran first.
-// Native and passive, too: the old delegated jQuery handler normalised an
-// event on every move just to copy it into a global nothing else reads.
+// Native and passive, too, instead of a delegated jQuery handler that
+// normalised every move. The old window.event/window.mouse pair is still
+// filled for an injected script that may read it; nothing in this tree does,
+// and mouse_position() no longer depends on it.
 var mLastX = 0;
 var mLastY = 0;
 var mLastTs = Date.now();
@@ -27,6 +29,10 @@ function mouse_position_set(x, y) {
 }
 document.addEventListener('mousemove', function (e) {
 	mouse_position_set(e.clientX, e.clientY);
+	// The old globals, kept for a native-side or injected reader. They are no
+	// longer how the page finds the pointer: that is the record above.
+	window.event = e;
+	window.mouse = e;
 }, { capture: true, passive: true });
 function mouse_position() {
 	var data = { 'lastX': mPrevX, 'lastY': mPrevY, lastTs: mPrevTs, x: mLastX, y: mLastY, ts: Date.now() };
