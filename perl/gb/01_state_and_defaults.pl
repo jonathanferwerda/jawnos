@@ -105,6 +105,10 @@ our $timeouts = {
 	# open. Its own interval (not a pool): the old page was hourly, and half an
 	# hour is the shortest sensible ask of a public forecast service.
 	'weather_observe' => { interval => 60 * 60, toggle => 'on', timeout => 240 },
+	# The Radar panel keeps a day of frames by recording a small tile window
+	# around the home plate every ten minutes. The job is cheap when the Weather
+	# pill turns recording off or when this machine is not the house server.
+	'weather_radar' => { interval => 10 * 60, toggle => 'on', timeout => 300, group => 'fast' },
 	# The moon's arithmetic and the space weather are hourly: cheap, local, and
 	# one small row a day, so the evaluation has a history to correlate with.
 	'astronomy' => { interval => 60 * 60, toggle => 'on', timeout => 90, group => 'slow' },

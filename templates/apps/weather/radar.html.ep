@@ -1,4 +1,4 @@
-<div id="weather_radar_panel" class="weather_card">
+<div id="weather_radar_card" class="weather_card">
 	<div id="weather_radar_head" class="weather_controls">
 		<b><%= &subs::ui('Radar') %></b>
 		<label for="weather_radar_basemap"><%= &subs::ui('Map') %></label>

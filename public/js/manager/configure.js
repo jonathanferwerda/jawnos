@@ -12,6 +12,7 @@
      10_home_plate_trace.js - trace water from a drawn line
      11_vacation.js         - the Away card: start and end a house-wide away period
      12_vacation_keep.js    - the Away card keep list: budgets, routines and notices
+     13_weather.js         - Plat's Weather pill: radar archive and model forecast
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var global_constraints = { 'video': false, 'audio': false };

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep templates/apps/weather/history.html.ep templates/apps/weather/radar.html.ep templates/apps/weather/accuracy.html.ep templates/apps/weather/style.html.ep templates/apps/weather/now.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_radar.js
+# tests-for: lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherRadar.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep templates/apps/weather/history.html.ep templates/apps/weather/radar.html.ep templates/apps/weather/accuracy.html.ep templates/apps/weather/style.html.ep templates/apps/weather/now.html.ep templates/configure/weather_setting_list.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_radar.js public/js/manager/configure/13_weather.js
 # covers:    The weather history backfill (old measures -> one row per day), the
 #            daily merge, the 1-7 day forecast/actual accuracy, and the app wiring.
 
@@ -10,12 +10,15 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use File::Path qw(remove_tree);
+use File::Temp qw(tempdir);
 use RepoSource;
 use Mojo::JSON qw(encode_json);
 
 my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Weather.pm";
 require "$root/lib/JawnOS/Domain/WeatherHistory.pm";
+require "$root/lib/JawnOS/Domain/WeatherRadar.pm";
 
 # A query result is only ever asked for its rows here; the history reader wraps
 # each query in eval, so a missing method would quietly look like "no rows".
@@ -348,11 +351,16 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 
 # --- the radar and the new charts are wired --------------------------------
 {
+	my $page = read_file("$root/templates/apps/weather.html.ep");
+	like($page, qr/data-tab="radar"/, 'the Weather app has a Radar tab');
+	like($page, qr{apps/weather/radar}, 'the page includes the radar panel');
+	like($page, qr/id="weather_radar_panel"/, 'the radar panel is its own tab panel');
 	my $history_template = read_file("$root/templates/apps/weather/history.html.ep");
-	like($history_template, qr{apps/weather/radar}, 'the history panel includes the radar');
 	like($history_template, qr/weather_history_precip_chart/, 'the history panel has a rainfall chart');
 	like($history_template, qr/weather_history_space_chart/, 'and a space weather chart');
+	unlike($history_template, qr{apps/weather/radar}, 'the radar left the history panel');
 	my $radar_template = read_file("$root/templates/apps/weather/radar.html.ep");
+	like($radar_template, qr/id="weather_radar_card"/, 'the radar card fills its tab');
 	like($radar_template, qr/id="weather_radar_canvas"/, 'the radar panel has a map canvas');
 	like($radar_template, qr/id="weather_radar_layers"/, 'and a row of layer switches');
 	foreach my $layer (qw(precipitation clouds winds magnetic smoke temperature snow)) {
@@ -364,7 +372,7 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	my $style = read_file("$root/templates/apps/weather/style.html.ep");
 	like($style, qr/#weather_radar_layers[^}]*overflow-x:\s*auto/s, 'the layer row scrolls sideways');
 	like($style, qr/#weather_radar_timeline[^}]*display:\s*flex/s, 'the time slider shares a row');
-	like($style, qr/#weather_history_split[^}]*display:\s*flex/s, 'radar and history share a row');
+	like($style, qr/#weather_radar_panel[^}]*display:\s*flex/s, 'the radar panel is a column');
 	my $radar_js = read_file("$root/public/js/manager/weather_radar.js");
 	like($radar_js, qr/jawnosMap\.create/, 'the radar uses the Travel canvas map');
 	like($radar_js, qr/setProvider/, 'and its provider picker');
@@ -376,11 +384,145 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	like($radar_js, qr/weatherRadarFrameSelect/, 'and can show any one of them');
 	like($radar_js, qr/nowcast/, 'the forecast side is the nowcast the source publishes');
 	like($radar_js, qr/weatherRadarStopPlay/, 'play can be stopped');
+	like($radar_js, qr{/manager/weather/radar_frames}, 'the recorded archive is read from the house');
+	like($radar_js, qr{/manager/weather/radar_forecast}, 'and the model forecast is its own request');
+	like($radar_js, qr/weatherRadarDrawModel/, 'the model field has its own draw');
+	like($radar_js, qr/weatherRadarFrames\.local/, 'recorded frames use the house tiles');
+	like($radar_js, qr/provider === 'none'/, 'Travel set to no map falls back to a tile service');
+	like($radar_js, qr/showing OpenStreetMap here/, 'and says so rather than leaving a white box');
 	my $history_js = read_file("$root/public/js/manager/weather_history.js");
 	like($history_js, qr/weatherHistoryPrecipChart/, 'the history draws rainfall');
 	like($history_js, qr/weatherHistoryPrecipLoad/, 'and asks for it separately from the days');
 	like($history_js, qr/weatherHistorySpaceChart/, 'and space weather');
 	like($history_js, qr/lat:\s*lat,\s*lon:\s*lon/, 'the rainfall request carries the coordinate');
+	my $configure_template = read_file("$root/templates/configure/weather_setting_list.html.ep");
+	like($configure_template, qr/radar_record/, 'Plat has a radar recording switch');
+	like($configure_template, qr/radar_hours/, 'a retention choice');
+	like($configure_template, qr/radar_forecast/, 'a model forecast switch');
+	like($configure_template, qr/radar_forecast_hours/, 'and a forecast length');
+	my $configure_js = read_file("$root/public/js/manager/configure/13_weather.js");
+	like($configure_js, qr/weather_setting/, 'the Weather pill saves its settings');
+	like($configure_js, qr{/manager/weather/radar_frames}, 'and can refresh the archive status');
+}
+
+# --- the radar archive and model forecast -----------------------------------
+{
+	my ($tiles, $n) = subs::weather_radar_tile_window(43, -81.9, 7, 5);
+	is($n, 128, 'a zoom-seven window has 128 tiles across');
+	is(scalar @{$tiles}, 25, 'five across is twenty-five tiles');
+	my $inside = grep { $_->[0] >= 0 && $_->[0] < $n && $_->[1] >= 0 && $_->[1] < $n } @{$tiles};
+	is($inside, 25, 'every tile is inside the world');
+}
+
+{
+	my $saved;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		my $s = $q->{'setting'} || '';
+		return 'on' if $s eq 'radar_forecast' || $s eq 'radar_record';
+		return '72' if $s eq 'radar_forecast_hours';
+		return '24' if $s eq 'radar_hours';
+		return '';
+	};
+	local *subs::cache_get = sub { undef };
+	local *subs::cache_set = sub { $saved = $_[1]; 1 };
+	local *subs::rightNow = sub { 1794010000000 };
+	local *subs::weather_http_get = sub {
+		my @locations;
+		for my $p (0 .. 288) {
+			my @values = (0) x 72;
+			$values[0] = $p == 0 ? 1.5 : 0.5;
+			push @locations, { hourly => {
+				time => [ map { sprintf('2026-11-24T%02d:00', $_ % 24) } (0 .. 71) ],
+				precipitation => \@values,
+			} };
+		}
+		return \@locations;
+	};
+	my $grid = subs::weather_radar_forecast_grid({ lat => 43, lon => -81.9 });
+	is($grid->{'cols'}, 17, 'the model grid is seventeen by seventeen');
+	is($grid->{'rows'}, 17, 'and the same across');
+	is(scalar @{ $grid->{'frames'} }, 72, 'the forecast carries seventy-two hourly frames');
+	is($grid->{'max'}, 1.5, 'the highest model rate is kept');
+	is($grid->{'frames'}[0]{'values'}[0], 1.5, 'the first grid point is the first value');
+	is($grid->{'frames'}[0]{'values'}[1], 0.5, 'the next point keeps its own value');
+	ok($saved && $saved->{'source'} eq 'Open-Meteo', 'the grid is cached');
+}
+
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $saved;
+	my $now = 1794010000000;
+	my $old = int($now / 1000) - 23 * 3600;
+	my $new = int($now / 1000) - 22 * 3600;
+	my $feed = {
+		host => 'https://tilecache.rainviewer.com',
+		radar => {
+			past => [
+				{ time => $old, path => '/v2/radar/old' },
+				{ time => $new, path => '/v2/radar/new' },
+			],
+			nowcast => [],
+		},
+	};
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		my $s = $q->{'setting'} || '';
+		return 'on' if $s eq 'radar_record';
+		return '24' if $s eq 'radar_hours';
+		return '';
+	};
+	local *subs::device_setter = sub { 'computer' };
+	local *subs::weather_home_plate = sub { { lat => 43, lon => -81.9 } };
+	local *subs::weather_http_get = sub { $feed };
+	local *subs::weather_radar_image_bytes = sub { 'PNG' };
+	local *subs::cache_get = sub { {} };
+	local *subs::cache_set = sub { $saved = $_[1]; 1 };
+	local *subs::rightNow = sub { $now };
+	my $first = subs::weather_radar_record_tick({ dir => $dir });
+	is($first->{'added'}, 2, 'both unseen frames are recorded');
+	is($first->{'frames'}, 2, 'the manifest keeps both');
+	ok(-d "$dir/$old/7", 'a frame is a directory of tiles');
+	ok($saved && $saved->{'frames'} && scalar @{ $saved->{'frames'} } == 2, 'the manifest is cached');
+
+	# A later tick sees the old frames and prunes the one past the retention.
+	my $later = $now + 25 * 60 * 60 * 1000;
+	$feed->{'radar'}{'past'} = [ { time => int($later / 1000), path => '/v2/radar/fresh' } ];
+	local *subs::cache_get = sub { $saved };
+	local *subs::rightNow = sub { $later };
+	my $second = subs::weather_radar_record_tick({ dir => $dir });
+	is($second->{'frames'}, 1, 'only the fresh frame survives the retention');
+	ok(!-d "$dir/$old", 'an old frame directory is removed');
+
+	local *subs::device_setter = sub { 'mobile' };
+	my $handheld = subs::weather_radar_record_tick({ dir => $dir });
+	like($handheld->{'skipped'}, qr/handheld/, 'a phone does not fill its storage with the archive');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::cache_get = sub {
+		return {
+			frames => [ { time => 1794009000, local => 1, bytes => 100 } ],
+			z => 7, bytes => 100, at => 1794010000000,
+		};
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		my $s = $q->{'setting'} || '';
+		return 'on' if $s eq 'radar_record' || $s eq 'radar_forecast';
+		return '72' if $s eq 'radar_forecast_hours';
+		return '24' if $s eq 'radar_hours';
+		return '';
+	};
+	local *subs::device_setter = sub { 'computer' };
+	my $state = subs::weather_radar_archive_state();
+	is(scalar @{ $state->{'frames'} }, 1, 'the archive state lists the recorded frame');
+	is($state->{'frames'}[0]{'local'}, 1, 'and marks it local');
+	is($state->{'z'}, 7, 'at the recorded zoom');
+	is($state->{'recorder'}, 1, 'and says this machine keeps the archive');
 }
 
 # --- wiring ------------------------------------------------------------------
@@ -391,11 +533,15 @@ like($loader, qr/JawnOS::Domain::Weather' for qw\([^)]*weather_daily_merge/, 'th
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_weather.pm");
 	like($controller, qr/sub action_52322\b/, 'the history route action exists');
 	like($controller, qr/sub action_52332\b/, 'the rainfall route action exists');
+	like($controller, qr/sub action_52333\b/, 'the radar archive route action exists');
+	like($controller, qr/sub action_52334\b/, 'the model forecast route action exists');
 like($controller, qr/sub action_52013\b/, 'the backfill route action exists');
 like($controller, qr/sub action_52014\b/, 'the accuracy route action exists');
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_weather.pm");
 	like($routes, qr{/manager/weather/history}, 'the history route is registered');
 	like($routes, qr{/manager/weather/precipitation}, 'the rainfall route is registered');
+	like($routes, qr{/manager/weather/radar_frames}, 'the radar archive route is registered');
+	like($routes, qr{/manager/weather/radar_forecast}, 'the model forecast route is registered');
 like($routes, qr{/manager/weather/backfill}, 'the backfill route is registered');
 like($routes, qr{/manager/weather/accuracy}, 'the accuracy route is registered');
 my $template = read_file("$root/templates/apps/weather.html.ep");
@@ -411,5 +557,11 @@ like($js, qr/show_city/, 'the source list can hide the separate city');
 my $help = read_file("$root/perl/help/topics_apps.pl");
 like($help, qr{The History tab reads}, 'the help topic explains history');
 like($help, qr{The Accuracy tab compares}, 'and the accuracy comparison');
+like($help, qr{The Radar tab}, 'and the radar tab');
+like($loader, qr/JawnOS::Domain::WeatherRadar' for qw\([^)]*weather_radar_record_tick/, 'the radar module is mapped');
+my $defaults = read_file("$root/perl/gb/01_state_and_defaults.pl");
+like($defaults, qr/'weather_radar'\s*=>/, 'the radar recorder has a scheduled slot');
+my $jobs = read_file("$root/perl/utility_jobs.pl");
+like($jobs, qr/weather_radar_record_tick/, 'and the utility attaches it');
 
 done_testing();

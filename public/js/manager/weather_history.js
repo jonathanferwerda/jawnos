@@ -6,11 +6,11 @@ function weatherShowTab(name) {
 	$w.find('.weather_panel').hide();
 	$w.find('#weather_' + name + '_panel').show();
 	if (name === 'history' && !weatherHistoryLoaded) { weatherHistoryLoad(); }
-	if (name === 'history' && typeof weatherRadarStart === 'function') {
+	if (name === 'radar' && typeof weatherRadarStart === 'function') {
 		// the canvas needs a laid-out parent; the panel was just shown
 		setTimeout(function() { weatherRadarStart(); }, 30);
 	}
-	if (name !== 'history' && typeof weatherRadarStopPlay === 'function') { weatherRadarStopPlay(); }
+	if (name !== 'radar' && typeof weatherRadarStopPlay === 'function') { weatherRadarStopPlay(); }
 	if (name === 'accuracy' && !weatherAccuracyLoaded) { weatherAccuracyLoad(); }
 	if (name === 'automations' && !weatherAutomationLoaded) { weatherAutomationLoad(); }
 }

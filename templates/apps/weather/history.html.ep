@@ -15,13 +15,8 @@
 		<span id="weather_history_status" class="weather_muted"></span>
 	</div>
 	<div id="weather_history_note" class="weather_muted"></div>
-	<div id="weather_history_split">
-		<%= include 'apps/weather/radar' %>
-		<div id="weather_history_body">
-			<div id="weather_history_chart" class="weather_card"></div>
-			<div id="weather_history_precip_chart" class="weather_card"></div>
-			<div id="weather_history_space_chart" class="weather_card"></div>
-			<div id="weather_history_table" class="weather_table_wrap"></div>
-		</div>
-	</div>
+	<div id="weather_history_chart" class="weather_card"></div>
+	<div id="weather_history_precip_chart" class="weather_card"></div>
+	<div id="weather_history_space_chart" class="weather_card"></div>
+	<div id="weather_history_table" class="weather_table_wrap"></div>
 </div>

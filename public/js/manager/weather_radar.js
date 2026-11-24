@@ -1,4 +1,4 @@
-// The radar panel in the Weather app's History tab. It is the same canvas map
+// The radar panel in the Weather app's Radar tab. It is the same canvas map
 // Travel draws (window.jawnosMap): the Travel provider is the base, and the
 // weather layers are painted over it by the engine's onDraw hook. Every layer is
 // keyless, so a new house has a radar before it has signed up for anything.
@@ -29,6 +29,18 @@ var weatherRadarTimeline = [];
 var weatherRadarFrameIndex = -1;
 var weatherRadarPlayTimer = null;
 var weatherRadarFramesLoading = false;
+var weatherRadarArchive = null;
+var weatherRadarLiveFrames = [];
+var weatherRadarArchiveAt = 0;
+var weatherRadarArchiveNote = '';
+var weatherRadarRadarFrames = [];
+var weatherRadarModel = null;
+var weatherRadarModelFrame = null;
+var weatherRadarModelNote = '';
+var weatherRadarModelKey = '';
+var weatherRadarModelAt = 0;
+var weatherRadarModelLoading = false;
+var weatherRadarModelSeq = 0;
 
 function weatherRadarGibs(layer, level) {
 	return 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' + layer
@@ -72,9 +84,10 @@ function weatherRadarStart() {
 			}
 		}
 		weatherRadarBasemapLoad($w);
+		setTimeout(function() { if (weatherRadarMap) { weatherRadarMap.draw(); } }, 250);
 	}
 	weatherRadarRecenter(weatherLastLocation && weatherLastLocation.lat, weatherLastLocation && weatherLastLocation.lon);
-	if (weatherRadarLayers.precipitation) { weatherRadarFramesLoad(false); }
+	if (weatherRadarLayers.precipitation) { weatherRadarTimelineLoad(false); }
 	if (weatherRadarLayers.magnetic) { weatherRadarAuroraLoad(false); }
 	if (weatherRadarLayers.winds) { weatherRadarWindLoad(false); }
 	weatherRadarTimelineRefresh();
@@ -87,6 +100,9 @@ function weatherRadarRecenter(lat, lon) {
 	if (!isFinite(la) || !isFinite(lo)) { return; }
 	weatherRadarMap.center(la, lo);
 	weatherRadarMap.setPosition({ lat: la, lon: lo, label: jawnosT('Weather here') });
+	if ($('.wind[app="weather"]').last().find('#weather_radar_panel').is(':visible')) {
+		weatherRadarForecastLoad(false);
+	}
 	// The first time the tab opens, frame the place rather than whatever zoom
 	// the freshly built engine happened to start with.
 	if (!weatherRadarCentered) {
@@ -156,7 +172,20 @@ function weatherRadarBasemapFill($w, data) {
 			provider = 'osm';
 			fallback = jawnosT('The house street map is not drawn here; showing OpenStreetMap.');
 		}
-		if (!engines[provider]) { provider = 'none'; }
+		else if (provider === 'none') {
+			// Travel may deliberately show no basemap; a radar panel with no ground
+			// is a white box, so fall back to a tile service instead of None.
+			provider = 'osm';
+			fallback = jawnosT('Travel is set to no map; showing OpenStreetMap here.');
+		}
+		else if ((provider === 'custom' || provider === 'lambton') && !(data && data.custom_url)) {
+			provider = 'osm';
+			fallback = jawnosT('The saved tile URL is empty; showing OpenStreetMap.');
+		}
+		else if (!engines[provider]) {
+			provider = 'osm';
+			fallback = jawnosT('The saved map is unavailable; showing OpenStreetMap.');
+		}
 		select.val(provider);
 	}
 	weatherRadarApplyProvider($w, data || weatherRadarContinent || {});
@@ -210,12 +239,18 @@ function weatherRadarImage(url) {
 
 function weatherRadarRadarUrl(z, x, y) {
 	if (!weatherRadarFrames) { return ''; }
+	if (weatherRadarFrames.local) {
+		return '/radar/' + weatherRadarFrames.time + '/' + z + '/' + x + '/' + y + '.png';
+	}
 	return weatherRadarFrames.host + weatherRadarFrames.path + '/256/' + z + '/' + x + '/' + y + '/2/1_1.png';
 }
 
 function weatherRadarDrawTileLayer(ctx, map, spec) {
 	var view = map.view();
 	var z = Math.min(Math.round(view.z), spec.maxZ || 12);
+	if (spec.radar && weatherRadarFrames && weatherRadarFrames.local) {
+		z = weatherRadarFrames.z || spec.maxZ || 7;
+	}
 	var n = Math.pow(2, z);
 	var bounds = map.viewBounds();
 	var latNorth = Math.max(-85.0511, Math.min(85.0511, bounds.nw.lat));
@@ -250,68 +285,174 @@ function weatherRadarDrawTileLayer(ctx, map, spec) {
 	}
 }
 
-// RainViewer publishes the past two hours in ten-minute steps and, when it has
-// one, a short nowcast. That is the whole timeline this keyless feed offers; the
-// slider is built from exactly those frames rather than pretending to hold a day
-// of radar the service does not provide.
-function weatherRadarFramesLoad(force) {
+// The radar timeline is three sources in one list: the recorded frames the
+// house server keeps (24 h by default), the live RainViewer frames for the last
+// two hours and its short nowcast, and hourly model rain from Open-Meteo for the
+// forecast part. Live frames win over a recorded frame at the same time because
+// they cover the whole view, not only the recorded window.
+function weatherRadarTimelineLoad(force) {
 	if (!weatherRadarLayers.precipitation) { return; }
 	var now = Date.now();
 	if (!force && weatherRadarTimeline.length && now - weatherRadarFramesAt < 10 * 60 * 1000) { return; }
 	weatherRadarFramesLoading = true;
+	var pending = 2;
+	var finished = function() {
+		if (--pending > 0) { return; }
+		weatherRadarFramesLoading = false;
+		weatherRadarMergeRadarFrames();
+	};
+	$.ajax({
+		url: '/manager/weather/radar_frames',
+		type: 'GET',
+		dataType: 'json',
+		timeout: 15000,
+		success: function(state) {
+			weatherRadarArchive = state || {};
+			weatherRadarArchiveAt = Date.now();
+			if (weatherRadarArchive.forecast) { weatherRadarForecastLoad(false); }
+			finished();
+		},
+		error: function() {
+			weatherRadarArchive = { frames: [], z: 7 };
+			weatherRadarForecastLoad(false);
+			finished();
+		}
+	});
 	$.ajax({
 		url: 'https://api.rainviewer.com/public/weather-maps.json',
 		type: 'GET',
 		dataType: 'json',
 		timeout: 15000,
 		success: function(response) {
-			weatherRadarFramesLoading = false;
-			var host = (response && response.host) || 'https://tilecache.rainviewer.com';
-			var radar = (response && response.radar) || {};
-			var frames = [];
-			var seen = {};
-			var add = function(list, forecast) {
-				(list || []).forEach(function(frame) {
-					if (!frame || !frame.path || !frame.time || seen[frame.time]) { return; }
-					seen[frame.time] = 1;
-					frames.push({ time: Number(frame.time), path: String(frame.path), host: host, forecast: !!forecast });
-				});
-			};
-			add(radar.past, false);
-			add(radar.nowcast, true);
-			frames.sort(function(a, b) { return a.time - b.time; });
-			if (!frames.length) {
-				weatherRadarTimeline = [];
-				weatherRadarFrames = null;
-				weatherRadarTimelineRefresh();
-				weatherRadarLegend(jawnosT('Rain radar is unavailable right now.'));
-				return;
-			}
-			var keep = weatherRadarFrames ? weatherRadarFrames.time : null;
-			weatherRadarTimeline = frames;
-			weatherRadarFramesAt = now;
-			var index = -1;
-			if (keep !== null) {
-				for (var i = 0; i < frames.length; i++) {
-					if (frames[i].time >= keep) { index = i; break; }
-				}
-			}
-			if (index < 0) {
-				var seconds = Date.now() / 1000;
-				for (var j = 0; j < frames.length; j++) {
-					if (frames[j].time <= seconds) { index = j; }
-				}
-				if (index < 0) { index = 0; }
-			}
-			weatherRadarFrameSelect(index, true);
-			weatherRadarTimelineRefresh();
-			weatherRadarLegend();
-			weatherRadarSafeDraw();
+			weatherRadarLiveFrames = weatherRadarLiveFramesFrom(response);
+			finished();
 		},
 		error: function() {
-			weatherRadarFramesLoading = false;
-			weatherRadarTimelineRefresh();
-			weatherRadarLegend(jawnosT('Rain radar is unavailable right now.'));
+			weatherRadarLiveFrames = [];
+			finished();
+		}
+	});
+}
+
+function weatherRadarLiveFramesFrom(response) {
+	var host = (response && response.host) || 'https://tilecache.rainviewer.com';
+	var radar = (response && response.radar) || {};
+	var frames = [];
+	var seen = {};
+	var add = function(list, forecast) {
+		(list || []).forEach(function(frame) {
+			if (!frame || !frame.path || !frame.time || seen[frame.time]) { return; }
+			seen[frame.time] = 1;
+			frames.push({ time: Number(frame.time), path: String(frame.path), host: host, forecast: !!forecast, local: false });
+		});
+	};
+	add(radar.past, false);
+	add(radar.nowcast, true);
+	frames.sort(function(a, b) { return a.time - b.time; });
+	return frames;
+}
+
+function weatherRadarMergeRadarFrames() {
+	var frames = [];
+	var seen = {};
+	(weatherRadarLiveFrames || []).forEach(function(frame) {
+		if (!frame || seen[frame.time]) { return; }
+		seen[frame.time] = 1;
+		frames.push(frame);
+	});
+	var archive = (weatherRadarArchive && weatherRadarArchive.frames) || [];
+	var z = (weatherRadarArchive && weatherRadarArchive.z) || 7;
+	// The archive is recorded around the home plate. A place far from it would
+	// draw the wrong ground for old frames, so it gets its live two hours only.
+	weatherRadarArchiveNote = '';
+	var useArchive = true;
+	if (archive.length && weatherRadarArchive.center && typeof weatherLastLocation !== 'undefined' && weatherLastLocation) {
+		var dlat = Math.abs(Number(weatherLastLocation.lat) - Number(weatherRadarArchive.center.lat));
+		var dlon = Math.abs(Number(weatherLastLocation.lon) - Number(weatherRadarArchive.center.lon));
+		if (dlon > 180) { dlon = 360 - dlon; }
+		useArchive = dlat <= 6 && dlon <= 6;
+	}
+	if (!useArchive) {
+		archive = [];
+		weatherRadarArchiveNote = jawnosT('The recorded day is around the home plate; this place shows the live two hours.');
+	}
+	archive.forEach(function(frame) {
+		if (!frame || !frame.time || seen[frame.time]) { return; }
+		seen[frame.time] = 1;
+		frames.push({ time: Number(frame.time), local: true, z: z, forecast: false });
+	});
+	frames.sort(function(a, b) { return a.time - b.time; });
+	weatherRadarRadarFrames = frames;
+	weatherRadarTimelineBuild();
+}
+
+function weatherRadarTimelineBuild() {
+	var frames = (weatherRadarRadarFrames || []).slice();
+	var lastRadar = frames.length ? frames[frames.length - 1].time : 0;
+	var model = (weatherRadarModel && weatherRadarModel.frames) || [];
+	model.forEach(function(frame) {
+		var time = Date.parse(String(frame.time) + 'Z') / 1000;
+		if (!isFinite(time) || time <= lastRadar) { return; }
+		frames.push({ time: time, model: true, values: frame.values, forecast: true });
+	});
+	frames.sort(function(a, b) { return a.time - b.time; });
+	var keep = weatherRadarModelFrame ? weatherRadarModelFrame.time
+		: (weatherRadarFrames ? weatherRadarFrames.time : null);
+	weatherRadarTimeline = frames;
+	weatherRadarFramesAt = Date.now();
+	var index = -1;
+	if (keep !== null) {
+		for (var i = 0; i < frames.length; i++) {
+			if (frames[i].time >= keep) { index = i; break; }
+		}
+	}
+	if (index < 0) {
+		var seconds = Date.now() / 1000;
+		for (var j = 0; j < frames.length; j++) {
+			if (frames[j].time <= seconds) { index = j; }
+		}
+		if (index < 0) { index = 0; }
+	}
+	weatherRadarFrameSelect(index, true);
+	weatherRadarTimelineRefresh();
+	weatherRadarLegend();
+	weatherRadarSafeDraw();
+}
+
+function weatherRadarForecastLoad(force) {
+	if (!weatherRadarLayers.precipitation) { return; }
+	if (weatherRadarArchive && weatherRadarArchive.forecast === 0) { return; }
+	if (typeof weatherLastLocation === 'undefined' || !weatherLastLocation) { return; }
+	var lat = Number(weatherLastLocation.lat);
+	var lon = Number(weatherLastLocation.lon);
+	if (!isFinite(lat) || !isFinite(lon)) { return; }
+	var key = lat.toFixed(3) + ',' + lon.toFixed(3);
+	if (weatherRadarModelLoading && !force && key === weatherRadarModelKey) { return; }
+	if (!force && key === weatherRadarModelKey && weatherRadarModel && Date.now() - weatherRadarModelAt < 30 * 60 * 1000) { return; }
+	weatherRadarModelKey = key;
+	weatherRadarModelLoading = true;
+	var seq = ++weatherRadarModelSeq;
+	$.ajax({
+		url: '/manager/weather/radar_forecast',
+		type: 'GET',
+		data: { lat: lat, lon: lon },
+		dataType: 'json',
+		timeout: 30000,
+		success: function(response) {
+			if (seq !== weatherRadarModelSeq) { return; }
+			weatherRadarModelLoading = false;
+			weatherRadarModel = response || null;
+			weatherRadarModelAt = Date.now();
+			weatherRadarModelNote = (response && response.note) || '';
+			weatherRadarModelFrame = null;
+			weatherRadarTimelineBuild();
+		},
+		error: function() {
+			if (seq !== weatherRadarModelSeq) { return; }
+			weatherRadarModelLoading = false;
+			weatherRadarModel = null;
+			weatherRadarModelNote = jawnosT('The model rain forecast is unavailable right now.');
+			weatherRadarTimelineBuild();
 		}
 	});
 }
@@ -320,10 +461,21 @@ function weatherRadarFrameSelect(index, quiet) {
 	if (!weatherRadarTimeline.length) { return; }
 	index = Math.max(0, Math.min(weatherRadarTimeline.length - 1, parseInt(index, 10) || 0));
 	var frame = weatherRadarTimeline[index];
-	weatherRadarFrames = { host: frame.host, path: frame.path, time: frame.time, forecast: !!frame.forecast };
 	weatherRadarFrameIndex = index;
+	if (frame.model) {
+		weatherRadarFrames = null;
+		weatherRadarModelFrame = frame;
+	}
+	else {
+		weatherRadarModelFrame = null;
+		weatherRadarFrames = {
+			host: frame.host, path: frame.path, time: frame.time,
+			forecast: !!frame.forecast, local: !!frame.local, z: frame.z
+		};
+	}
 	var $w = $('.wind[app="weather"]').last();
-	var label = weatherTime(frame.time * 1000) + (frame.forecast ? ' · ' + jawnosT('Forecast') : '');
+	var label = weatherTime(frame.time * 1000)
+		+ (frame.model ? ' · ' + jawnosT('Model forecast') : (frame.forecast ? ' · ' + jawnosT('Forecast') : ''));
 	$w.find('#weather_radar_time').val(index).attr('aria-valuetext', label);
 	$w.find('#weather_radar_time_label').text(label);
 	if (!quiet) {
@@ -346,18 +498,36 @@ function weatherRadarTimelineRefresh() {
 			: jawnosT('Rain radar is unavailable right now.'));
 		return;
 	}
-	var past = [], forecast = [];
+	var past = [], forecast = [], model = [];
 	for (var i = 0; i < frames.length; i++) {
-		(frames[i].forecast ? forecast : past).push(frames[i]);
+		if (frames[i].model) { model.push(frames[i]); }
+		else if (frames[i].forecast) { forecast.push(frames[i]); }
+		else { past.push(frames[i]); }
 	}
 	var minutes = function(list) {
 		if (!list.length) { return 0; }
 		return Math.max(0, Math.round((list[list.length - 1].time - list[0].time) / 60));
 	};
 	var bits = [];
-	if (past.length) { bits.push(jawnosT('Past {0} min', minutes(past))); }
-	if (forecast.length) { bits.push(jawnosT('Forecast {0} min', minutes(forecast))); }
-	else { bits.push(jawnosT('No forecast frames from this source right now.')); }
+	if (past.length) {
+		var pastMinutes = minutes(past);
+		bits.push(pastMinutes >= 120
+			? jawnosT('Past {0} h', (pastMinutes / 60).toFixed(1))
+			: jawnosT('Past {0} min', pastMinutes));
+	}
+	if (model.length) {
+		bits.push(jawnosT('Forecast {0} h (model)', Math.round(minutes(model) / 60)));
+	}
+	else if (forecast.length) {
+		bits.push(jawnosT('Forecast {0} min', minutes(forecast)));
+	}
+	else if (weatherRadarModelNote) {
+		bits.push(weatherRadarModelNote);
+	}
+	else {
+		bits.push(jawnosT('No forecast frames from this source right now.'));
+	}
+	if (weatherRadarArchiveNote) { bits.push(weatherRadarArchiveNote); }
 	$w.find('#weather_radar_range_note').text(bits.join(' · '));
 }
 
@@ -526,6 +696,42 @@ function weatherRadarDrawWinds(ctx, map) {
 
 // ---- the draw hook ----------------------------------------------------------
 
+// The model field is a coarse heat field, not radar tiles: one soft circle for
+// each grid point, coloured by millimetres per hour. The grid is 17x17 at a
+// quarter degree, so it covers the view around the weather place.
+function weatherRadarDrawModel(ctx, map) {
+	var grid = weatherRadarModel;
+	var frame = weatherRadarModelFrame;
+	if (!grid || !frame || !grid.center || !frame.values) { return; }
+	var max = Number(grid.max) || 0;
+	if (!(max > 0)) { return; }
+	var cols = Number(grid.cols) || 0;
+	var rows = Number(grid.rows) || 0;
+	var step = Number(grid.step) || 0;
+	if (!(cols > 0 && rows > 0 && step > 0)) { return; }
+	var width = map.canvas.width, height = map.canvas.height;
+	for (var r = 0; r < rows; r++) {
+		for (var c = 0; c < cols; c++) {
+			var value = Number(frame.values[r * cols + c]);
+			if (!(value > 0.02)) { continue; }
+			var lat = grid.center.lat + (r - (rows - 1) / 2) * step;
+			var lon = grid.center.lon + (c - (cols - 1) / 2) * step;
+			var screen = map.project(lat, lon);
+			if (screen[0] < -60 || screen[0] > width + 60 || screen[1] < -60 || screen[1] > height + 60) { continue; }
+			var next = map.project(lat, lon + step);
+			var radius = Math.max(4, Math.min(44, Math.abs(next[0] - screen[0]) * 0.85));
+			var level = Math.min(1, value / max);
+			var hue = 220 - 180 * level;
+			ctx.save();
+			ctx.fillStyle = 'hsla(' + hue + ',85%,55%,0.5)';
+			ctx.beginPath();
+			ctx.arc(screen[0], screen[1], radius, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.restore();
+		}
+	}
+}
+
 function weatherRadarDrawOverlays() {
 	if (!weatherRadarMap) { return; }
 	var ctx = weatherRadarMap.canvas.getContext('2d');
@@ -534,7 +740,11 @@ function weatherRadarDrawOverlays() {
 		var name = order[i];
 		if (!weatherRadarLayers[name]) { continue; }
 		var spec = WEATHER_RADAR_LAYERS[name];
-		if (spec.radar && !weatherRadarFrames) { continue; }
+		if (spec.radar) {
+			if (weatherRadarModelFrame) { weatherRadarDrawModel(ctx, weatherRadarMap); }
+			else if (weatherRadarFrames) { weatherRadarDrawTileLayer(ctx, weatherRadarMap, spec); }
+			continue;
+		}
 		weatherRadarDrawTileLayer(ctx, weatherRadarMap, spec);
 	}
 	if (weatherRadarLayers.magnetic) { weatherRadarDrawAurora(ctx, weatherRadarMap); }
@@ -547,7 +757,7 @@ $(document).on('change', '#weather_radar_layers input', function() {
 	var name = $(this).attr('data-layer') || '';
 	weatherRadarLayers[name] = this.checked;
 	if (this.checked) {
-		if (name === 'precipitation') { weatherRadarFramesLoad(false); }
+		if (name === 'precipitation') { weatherRadarTimelineLoad(false); }
 		if (name === 'magnetic') { weatherRadarAuroraLoad(false); }
 		if (name === 'winds') { weatherRadarWindLoad(false); }
 	}
@@ -585,11 +795,18 @@ function weatherRadarLegend(message) {
 	if (message) { bits.push(message); }
 	else {
 		if (weatherRadarLayers.precipitation) {
-			var label = '';
-			if (weatherRadarFrames) {
-				label = weatherTime(weatherRadarFrames.time * 1000) + (weatherRadarFrames.forecast ? ' · ' + jawnosT('Forecast') : '');
+			if (weatherRadarModelFrame) {
+				var modelMax = Number(weatherRadarModel && weatherRadarModel.max) || 0;
+				bits.push(jawnosT('Model rain {0}', weatherTime(weatherRadarModelFrame.time * 1000))
+					+ (modelMax > 0 ? ' · ' + jawnosT('up to {0} mm/h', modelMax) : ''));
 			}
-			bits.push(weatherRadarFrames ? jawnosT('Radar {0}', label) : jawnosT('Loading radar\u2026'));
+			else {
+				var label = '';
+				if (weatherRadarFrames) {
+					label = weatherTime(weatherRadarFrames.time * 1000) + (weatherRadarFrames.forecast ? ' · ' + jawnosT('Forecast') : '');
+				}
+				bits.push(weatherRadarFrames ? jawnosT('Radar {0}', label) : jawnosT('Loading radar\u2026'));
+			}
 		}
 		if (weatherRadarLayers.clouds) { bits.push(jawnosT('Cloud fraction')); }
 		if (weatherRadarLayers.temperature) { bits.push(jawnosT('Land surface temperature')); }

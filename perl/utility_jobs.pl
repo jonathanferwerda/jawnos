@@ -614,6 +614,15 @@ sub utility_functions() {
 			eval { &subs::weather_observe_tick(); };
 		};
 
+		# The radar archive: one small tile window every ten minutes, kept for the
+		# hours the Weather pill names. The domain helper checks the pill and that
+		# this machine is the house server.
+		$gb::timeouts->{'weather_radar'}->{'subroutine'} = sub {
+			my $r = eval { &subs::weather_radar_record_tick() };
+			return $@ ? 'weather radar: failed: ' . $@
+				: 'weather radar: ' . (($r && $r->{'ok'}) ? ($r->{'added'} . ' new, ' . $r->{'frames'} . ' kept') : (($r && $r->{'skipped'}) || 'no answer'));
+		};
+
 		# The moon and the geomagnetic field, recorded locally so a new house has
 		# history without a scraper or an API key.
 		$gb::timeouts->{'astronomy'}->{'subroutine'} = sub {

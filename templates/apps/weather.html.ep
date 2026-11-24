@@ -83,6 +83,7 @@
 	<div id="weather_tabs">
 		<button type="button" class="weather_tab active" data-tab="now"><%= &subs::ui('Now') %></button>
 		<button type="button" class="weather_tab" data-tab="history"><%= &subs::ui('History') %></button>
+		<button type="button" class="weather_tab" data-tab="radar"><%= &subs::ui('Radar') %></button>
 		<button type="button" class="weather_tab" data-tab="accuracy"><%= &subs::ui('Accuracy') %></button>
 		<button type="button" class="weather_tab" data-tab="automations"><%= &subs::ui('Automations') %></button>
 	</div>
@@ -90,6 +91,9 @@
 		<%= include 'apps/weather/now' %>
 	</div>
 	<%= include 'apps/weather/history' %>
+	<div id="weather_radar_panel" class="weather_panel" style="display:none;">
+		<%= include 'apps/weather/radar' %>
+	</div>
 	<%= include 'apps/weather/accuracy' %>
 	<%= include 'apps/weather/automations' %>
 	<%= include 'apps/weather/map' %>

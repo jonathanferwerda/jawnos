@@ -1,0 +1,53 @@
+<% no warnings 'uninitialized'; %>
+<%
+	my $record = &subs::setting_grabber({ app => 'weather', setting => 'radar_record', device => 'all' }) || 'on';
+	my $hours = &subs::setting_grabber({ app => 'weather', setting => 'radar_hours', device => 'all' }) || 24;
+	my $forecast = &subs::setting_grabber({ app => 'weather', setting => 'radar_forecast', device => 'all' }) || 'on';
+	my $forecast_hours = &subs::setting_grabber({ app => 'weather', setting => 'radar_forecast_hours', device => 'all' }) || 72;
+	my $state = &subs::weather_radar_archive_state();
+	my $frames = scalar @{ $state->{frames} || [] };
+	my $mb = sprintf('%.1f', ($state->{bytes} || 0) / 1048576);
+	my $status = $frames
+		? &subs::ui(sprintf('%d frames, %s MB', $frames, $mb)) . ($state->{'at'} ? ' · ' . &subs::weather_stamp_text($state->{'at'}) : '')
+		: &subs::ui('No frames recorded yet.');
+	$status .= ' · ' . &subs::ui('this handheld reads live radar; a computer keeps the archive') unless $state->{'recorder'};
+%>
+<p class="cfg-note"><%= &subs::ui('The Weather app\'s Radar tab keeps a day of past radar by recording a five-by-five tile window around the home plate every ten minutes. RainViewer only publishes the last two hours, so this archive is what makes the longer slider possible. The model rain forecast is Open-Meteo\'s hourly grid, drawn as a heat field rather than radar imagery. Recording runs on computers and servers; a phone reads its own live two hours and the model forecast.') %></p>
+<div class="cfg-card">
+	<h3 style="margin-top:0;"><%= &subs::ui('Weather radar') %></h3>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Record radar history') %></label>
+		<input type="checkbox" class="weather_setting" app="weather" setting="radar_record"<% if ($record ne 'off') { %> checked<% } %>>
+		<span class="cfg-note" style="margin:0;"><%= &subs::ui('A tile window around the home plate every ten minutes.') %></span>
+	</div>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Hours to keep') %></label>
+		<select class="weather_setting" app="weather" setting="radar_hours">
+			<% foreach my $h (6, 12, 24, 48, 72) { %>
+				<option value="<%= $h %>"<% if ("$hours" eq "$h") { %> selected<% } %>><%= $h %> <%= &subs::ui('hours') %></option>
+			<% } %>
+		</select>
+	</div>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Model rain forecast') %></label>
+		<input type="checkbox" class="weather_setting" app="weather" setting="radar_forecast"<% if ($forecast ne 'off') { %> checked<% } %>>
+		<span class="cfg-note" style="margin:0;"><%= &subs::ui('Open-Meteo hourly rain on a grid around the place on screen.') %></span>
+	</div>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Forecast hours') %></label>
+		<select class="weather_setting" app="weather" setting="radar_forecast_hours">
+			<% foreach my $h (24, 48, 72) { %>
+				<option value="<%= $h %>"<% if ("$forecast_hours" eq "$h") { %> selected<% } %>><%= $h %> <%= &subs::ui('hours') %></option>
+			<% } %>
+		</select>
+	</div>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Archive') %></label>
+		<span id="weather_radar_archive_status" class="cfg-note" style="margin:0;"><%= $status %></span>
+		<button type="button" id="weather_radar_status_refresh" class="button" style="padding:4px 10px;border-radius:8px;border:1px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::ui('Refresh') %></button>
+	</div>
+	<div class="cfg-row">
+		<span id="weather_radar_setting_status" class="cfg-note" style="margin:0;"></span>
+	</div>
+	<p class="cfg-note"><%= &subs::ui('The five-by-five window at zoom seven covers roughly a thousand kilometres around the home plate; panning beyond it shows the live two hours only. Tiles are kept under public/radar and pruned after the hours above.') %></p>
+</div>

@@ -363,6 +363,34 @@ sub action_52332 {
 	});
 }
 
+# GET /manager/weather/radar_frames
+# The recorded radar timeline (24 hours by default) plus the settings the Radar
+# panel needs to know whether the model forecast is on. A client that is not the
+# house server has no archive of its own; it still gets the live frame list from
+# RainViewer directly.
+sub action_52333 {
+	my $c = shift;
+	my $state = eval { &subs::weather_radar_archive_state() };
+	$c->render(json => $state || { frames => [], z => 7, record => 0, forecast => 0 });
+}
+
+# GET /manager/weather/radar_forecast
+# A 17x17 grid of hourly model rain for the place on screen, out to the hours
+# the Weather pill allows. Its own request, so the radar frames draw first.
+sub action_52334 {
+	my $c = shift;
+	my $grid = eval {
+		&subs::weather_radar_forecast_grid({
+			lat => $c->param('lat'),
+			lon => $c->param('lon'),
+		})
+	};
+	$c->render(json => $grid || {
+		enabled => 0, frames => [], source => 'Open-Meteo',
+		note => &subs::ui('The model rain forecast is unavailable right now.'),
+	});
+}
+
 # POST /manager/weather/sources
 sub action_52023 {
 	my $c = shift;

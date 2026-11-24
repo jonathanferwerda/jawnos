@@ -40,6 +40,10 @@ releases/
 # --- from OpenStreetMap, so it lives in the store beside releases/. ---
 basemaps/
 
+# --- Recorded weather radar frames. A 24-hour window of PNG tiles is a build ---
+# --- artifact rebuilt from RainViewer, kept beside the basemaps. ---
+public/radar/
+
 # --- Windows build output (build-portable.ps1, the release workflow). ---
 # --- The Setup.exe is a build artifact; release copies live in releases/. ---
 dist/

@@ -288,25 +288,15 @@
 .wind[app="weather"] #weather_sources_key { flex: 1 1 240px; }
 .wind[app="weather"] #weather_sources_nearby { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .wind[app="weather"] #weather_source_detail { display: flex; flex-wrap: wrap; gap: 4px 14px; }
-.wind[app="weather"] #weather_history_split {
+.wind[app="weather"] #weather_radar_panel {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: flex-start;
+	flex-direction: column;
 	gap: 9px;
 }
-.wind[app="weather"] #weather_radar_panel {
-	flex: 1 1 340px;
-	min-width: 280px;
+.wind[app="weather"] #weather_radar_card {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-}
-.wind[app="weather"] #weather_history_body {
-	flex: 1 1 380px;
-	min-width: 280px;
-	display: flex;
-	flex-direction: column;
-	gap: 9px;
 }
 .wind[app="weather"] #weather_radar_basemap { max-width: 14em; }
 .wind[app="weather"] #weather_radar_layers {

@@ -20,6 +20,8 @@ sub routes {
 		[52325, 'get', '/manager/weather/sources', 'action_52325'],
 		[52331, 'get', '/manager/weather/space_weather', 'action_52331'],
 		[52332, 'get', '/manager/weather/precipitation', 'action_52332'],
+		[52333, 'get', '/manager/weather/radar_frames', 'action_52333'],
+		[52334, 'get', '/manager/weather/radar_forecast', 'action_52334'],
 		[52023, 'post', '/manager/weather/sources', 'action_52023'],
 	);
 }
