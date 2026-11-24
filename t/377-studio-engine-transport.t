@@ -764,6 +764,27 @@ like(
 	'closing the window stops it as well'
 );
 like(
+	$transport_js,
+	qr/var was = !!\(mixer\['time'\] && mixer\['time'\]\['engine_transport'\]\)/,
+	'stopping the engine transport tolerates a first open with no mixer'
+);
+like(
+	$transport_js,
+	qr/if \(mixer\['time'\]\) \{ mixer\['time'\]\['engine_transport'\] = false; \}/,
+	'stopping writes the transport only when the mixer has one'
+);
+unlike(
+	$transport_js,
+	qr/var was = !!mixer\['time'\]\['engine_transport'\];/,
+	'stopping never dereferences a transport the first open has not built'
+);
+my $knobs_js = read_file("$root/public/js/manager/studio/04_knobs.js");
+like(
+	$knobs_js,
+	qr/studioTeardown\(\);[\s\S]{0,300}mixer = \{/,
+	'the first open tears the previous window down before replacing mixer'
+);
+like(
 	$controls,
 	qr/function studioTime\(command, fromEngine\)/,
 	'the transport start can be told to leave the engine clock alone'

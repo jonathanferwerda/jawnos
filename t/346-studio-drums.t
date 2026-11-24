@@ -187,6 +187,8 @@ like($code, qr/\$\('#studio_drums \.studio_drums_head, #studio_drums \.studio_dr
 	'every row gets the inline grid');
 like($code, qr/\$\(this\)\.css\('display', step < length \? '' : 'none'\)/,
 	'steps past the length are hidden and the rest are shown');
+like($knobs, qr/studioApplyLayoutSettings\(\);[\s\S]{0,1200}studioDrumsInit\(\);/,
+	'a first open lays the panels out before it trims the drum chart');
 like($code, qr/bars \+ ' ' \+ \(bars === 1 \? 'bar' : 'bars'\)/,
 	'the readout counts bars with the right plural');
 like($code, qr/beats \+ ' ' \+ \(beats === 1 \? 'beat' : 'beats'\)/,

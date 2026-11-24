@@ -697,8 +697,11 @@ function studioEngineTransportSync() {
 function studioEngineTransportStop() {
 	studioEngineTransportPollStop();
 	studioEngineClipsCancel();
-	var was = !!mixer['time']['engine_transport'];
-	mixer['time']['engine_transport'] = false;
+	// studioTeardown runs before the first mixer exists: studioInit replaces it
+	// after tearing the previous window down. A first open has no transport to
+	// stop, and must not throw out of the rest of studioInit.
+	var was = !!(mixer['time'] && mixer['time']['engine_transport']);
+	if (mixer['time']) { mixer['time']['engine_transport'] = false; }
 	if (!was) { return; }
 	studioEngineTransportPost('stop', {}, function () {});
 }
