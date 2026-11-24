@@ -30,7 +30,14 @@ jack = { version = "0.13", optional = true }
 # engine still builds on a machine with no sound card (docs/studio-audio-roadmap.md P3).
 hmac = "0.12"
 sha2 = "0.10"
+# The app voices live in their own crates so the DSP has tests of its own and
+# no device: a synth patch and a drum kit are rendered by pure Rust, not by the
+# browser (docs/studio-audio-roadmap.md P5).
+jawn-synth = { path = "crates/jawn-synth" }
+jawn-drums = { path = "crates/jawn-drums" }
 
 # Its own workspace root: engine/ must build without dragging the repository's
-# tree into a Cargo workspace, and without being one itself (docs/studio-audio-roadmap.md).
+# tree into a Cargo workspace. The app voices are members, so `cargo test
+# --workspace` covers them and the engine binary links them when they are wired.
 [workspace]
+members = ["crates/jawn-synth", "crates/jawn-drums"]

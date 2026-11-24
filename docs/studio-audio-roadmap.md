@@ -1247,6 +1247,20 @@ needs: `lead_ms` (how far ahead of arrival the first frame is anchored; default 
 declares). `t/411` pins the compile, the stereo mix and the plan fields; the manager's forwarder and
 the browser tap are the next step.
 
+**The voices are crates now (2026-11-24, in the tree; inert).** The synth and the drum machine
+are native Rust crates in the engine's workspace (`engine/crates/jawn-synth`,
+`engine/crates/jawn-drums`): pure Rust, no dependencies, no device, and no allocation in either
+render path. `jawn-synth` reproduces the browser's subtractive and pluck voices from the same patch
+JSON - two oscillators, the four harmonic-table waves, a resonant filter with its own envelope and
+keytrack, amp and filter ADSRs, one shared LFO, drive and compression - with voice stealing, a
+clamped patch and a bit-identical render. `jawn-drums` transcribes the Studio base spec and all ten
+kit override tables, renders each of the eighty voices offline from oscillators and filtered noise
+with a fixed PRNG, and plays them from a fixed hit pool (`trigger`, `trigger_at`) with a `Pattern`
+a transport can schedule. Neither is wired to the transport yet. `cargo test --workspace` runs both
+crates' tests inside the suite (`t/332`), and `t/412` pins the workspace wiring and the eight voice
+and ten kit wire names. The next step is the bridge: a `player` source fed by these crates instead
+of the browser's WebAudio graph.
+
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
 turning `manage` off returns the machine to today's behaviour with nothing stranded.

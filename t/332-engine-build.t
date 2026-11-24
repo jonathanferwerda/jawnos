@@ -307,9 +307,11 @@ SKIP: {
 	like( $text, qr/"blocks":75/, 'and counts its blocks' );
 
 	# The crate's own tests are the only guard on the graph and the header, so
-	# the suite runs them too rather than trusting a manual `cargo test`.
+	# the suite runs them too rather than trusting a manual `cargo test`. The
+	# app voices (synth, drums) are workspace members and their tests run here
+	# too, so a DSP crate is never a file the suite skips.
 	my ( $tcode, $ttext, $terr ) = capture(
-		'cargo', 'test', '--offline', '--manifest-path', "$dir/engine/Cargo.toml"
+		'cargo', 'test', '--offline', '--workspace', '--manifest-path', "$dir/engine/Cargo.toml"
 	);
 	is( $tcode, 0, q{the crate's own tests pass} ) or diag( $ttext . $terr );
 }

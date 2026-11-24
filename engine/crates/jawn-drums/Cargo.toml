@@ -1,0 +1,15 @@
+[package]
+name = "jawn-drums"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "The JawnOS native drum machine: the Studio kit rendered from oscillators and noise"
+publish = false
+
+[lib]
+name = "jawn_drums"
+path = "src/lib.rs"
+
+# Pure Rust, like the engine: no samples, no C dependency and no allocation in
+# the audio path. A crate of its own so the kit can be tested without a device.
+[dependencies]

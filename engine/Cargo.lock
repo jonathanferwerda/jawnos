@@ -134,8 +134,18 @@ dependencies = [
  "alsa",
  "hmac",
  "jack",
+ "jawn-drums",
+ "jawn-synth",
  "sha2",
 ]
+
+[[package]]
+name = "jawn-drums"
+version = "0.1.0"
+
+[[package]]
+name = "jawn-synth"
+version = "0.1.0"
 
 [[package]]
 name = "lazy_static"

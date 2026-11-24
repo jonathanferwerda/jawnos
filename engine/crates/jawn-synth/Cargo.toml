@@ -1,0 +1,15 @@
+[package]
+name = "jawn-synth"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "The JawnOS native synth: a deterministic polyphonic subtractive voice, built from the browser patch"
+publish = false
+
+[lib]
+name = "jawn_synth"
+path = "src/lib.rs"
+
+# Pure Rust, like the engine: no C dependency and no allocation in the audio
+# path. A crate of its own so the DSP can be tested without a device.
+[dependencies]
