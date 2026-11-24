@@ -727,6 +727,15 @@ sub utility_functions() {
 		$gb::timeouts->{'sync_kick'}->{'subroutine'} = sub {
 			return &subs::sync_kick({ only_if_stalled => 1 });
 		};
+		# The app's embedded tailnet can lose its TUN while its status still says
+		# connected. The watch reads that report and asks the app to start the
+		# tunnel again through its own exported receiver. On a computer the status
+		# file is absent, so the sub is a no-op.
+		$gb::timeouts->{'tailnet_watch'}->{'subroutine'} = sub {
+			my $r = eval { &subs::tailnet_watch() } || {};
+			return undef unless (($r->{'action'} || '') eq 'revive');
+			return 'tailnet: ' . ($r->{'sent'} ? 'asked the app to restart the tunnel' : 'the restart broadcast failed');
+		};
 		# The headless relay: drain the queue a job or a CLI leaves (see
 		# subs::remote_relay_queue_run), so a machine with no browser can still
 		# hand a change on to its peers over the same rail the browser uses.

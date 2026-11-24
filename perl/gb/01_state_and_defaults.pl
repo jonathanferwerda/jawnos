@@ -112,6 +112,12 @@ our $timeouts = {
 	'email_sender' => { interval => 1 * 30, toggle => 'off', timeout => 90, group => 'fast' },
 	'email_receiver' => { interval => 5 * 60, toggle => 'off', timeout => 390, group => 'fast' },
 	'tunnels' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), ip_addresses => [], network => {}, toggle => 'off', timeout => 390, group => 'fast' },
+	# The Android app's embedded tailnet can lose its TUN while its status file
+	# still says connected. This reads the app's report and asks the app to start
+	# the tunnel again when it says connected but the machine has no 100.64/10
+	# address; at most one ask every five minutes. A computer has no app status,
+	# so it does nothing there.
+	'tailnet_watch' => { interval => (2 * 60), toggle => 'on', timeout => 30, group => 'fast' },
 	# The headless relay is a queue drain, not a background chore: it keeps its
 	# own minute instead of waking with a pool (the Fast pool's fifteen minutes
 	# once held a relayed change for a quarter of an hour).

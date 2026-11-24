@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Warehouse.pm scripts/jawnos_network.pl
+# tests-for: lib/JawnOS/Domain/Warehouse.pm scripts/jawnos_network.pl perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl
 # covers:    the Android app's tailnet status file: Warehouse::tailnet_status
 #           reports the app's state from it and falls back to
 #           `tailscale status --json` when it is missing, and the network
@@ -10,6 +10,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use File::Slurp qw(read_file);
 
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
@@ -153,5 +154,74 @@ write_file($status, $connected);
 	unlike($data->{'error'} // '', qr/not installed/i,
 		'and it never says Tailscale is not installed');
 }
+
+
+# ---------------------------------------- the watcher revives a lost TUN ----
+# A connected app status with no 100.64/10 interface is the shape a lost TUN
+# leaves; the watcher asks the app to start it again, at most once per five
+# minutes.
+subs::preload(qw(network_interface_reporter cache_get cache_set));
+
+write_file($status, $connected);
+{
+	local $ENV{'HOME'} = $home;
+	local $ENV{'TAILSCALE_BIN'} = "$scratch/no-tailscale-here";
+	reset_memo();
+	my %cache;
+	local *subs::cache_get = sub {
+		my ($k) = @_;
+		return $cache{($k->{'context'} || '') . '|' . ($k->{'subcontext'} || '')};
+	};
+	local *subs::cache_set = sub {
+		my ($k, $v) = @_;
+		$cache{($k->{'context'} || '') . '|' . ($k->{'subcontext'} || '')} = $v;
+		return 1;
+	};
+	local *subs::network_interface_reporter = sub { return { wlan0 => { ip => '192.168.1.84' } } };
+	my @sent;
+	my $notify = sub { push @sent, $_[0]; return 1 };
+	my $now = 1750000100000;
+	my $r = subs::tailnet_watch({ notify => $notify, now => $now });
+	is $r->{'action'}, 'revive', 'connected with no tailnet address asks for a restart';
+	is_deeply \@sent, ['com.jawnos.app.JAWN_TAILNET'], 'through the app tailnet receiver action';
+	my $again = subs::tailnet_watch({ notify => $notify, now => $now + 60_000 });
+	is $again->{'action'}, 'throttled', 'a second ask within five minutes waits';
+	is scalar @sent, 1, 'and does not broadcast again';
+	my $later = subs::tailnet_watch({ notify => $notify, now => $now + 6 * 60_000 });
+	is $later->{'action'}, 'revive', 'after five minutes it tries again';
+	is scalar @sent, 2, 'with another broadcast';
+}
+{
+	local $ENV{'HOME'} = $home;
+	reset_memo();
+	local *subs::network_interface_reporter = sub { return { tun1 => { ip => '100.64.0.8' } } };
+	my @sent;
+	my $r = subs::tailnet_watch({ notify => sub { push @sent, $_[0]; return 1 }, now => 1750000200000 });
+	is $r->{'action'}, 'none', 'a tun address is not a lost tunnel';
+	is scalar @sent, 0, 'and nothing is broadcast';
+}
+write_file($status, '{"state":"needs_key","online":false,"has_key":false,"attempts":2,"at":1750000001000,"backend":"NeedsLogin"}');
+{
+	local $ENV{'HOME'} = $home;
+	reset_memo();
+	my @sent;
+	my $r = subs::tailnet_watch({ notify => sub { push @sent, $_[0]; return 1 }, now => 1750000300000 });
+	is $r->{'action'}, 'none', 'a needs_key state is left to the app';
+	is scalar @sent, 0, 'and nothing is broadcast';
+}
+{
+	unlink $status;
+	local $ENV{'HOME'} = $home;
+	local $ENV{'TAILSCALE_BIN'} = "$scratch/no-tailscale-here";
+	reset_memo();
+	my @sent;
+	my $r = subs::tailnet_watch({ notify => sub { push @sent, $_[0]; return 1 }, now => 1750000400000 });
+	is $r->{'action'}, 'none', 'a machine with no app status is a no-op';
+	is scalar @sent, 0, 'and nothing is broadcast';
+}
+like(read_file("$FindBin::Bin/../perl/gb/01_state_and_defaults.pl"),
+	qr/'tailnet_watch'\s*=>\s*\{[^}]*toggle\s*=>\s*'on'/, 'the tailnet watch is an on-by-default job');
+like(read_file("$FindBin::Bin/../perl/utility_jobs.pl"),
+	qr/timeouts->\{'tailnet_watch'\}->\{'subroutine'\}/, 'the utility runner defines the tailnet watch');
 
 done_testing();

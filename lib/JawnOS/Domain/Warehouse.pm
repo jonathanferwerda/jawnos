@@ -950,6 +950,57 @@ sub tailnet_set_exit {
 	return { ok => ($rc == 0 ? 1 : 0), exit => $ip, error => ($rc == 0 ? undef : ($out || 'tailscale set failed')) };
 }
 
+# The app's embedded tailnet can lose its TUN while its status file still says
+# "connected": the VpnService keeps running, but no 100.64/10 interface exists,
+# so peers cannot reach this machine. The app's own supervisor only acts on a
+# status change (or a wake), so a lost TUN can sit for hours. This watches the
+# app's report: a connected status with no local tailnet address asks the app
+# to start the tunnel again through its exported wake receiver. On a computer
+# there is no app status file, so tailnet_status answers from the CLI and the
+# watch does nothing. A five-minute brake keeps a failed restart from hammering
+# the app; the next scheduled turn tries again.
+sub tailnet_watch {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $status = &tailnet_status();
+	# Only the app's own report can say "connected" while its TUN is gone; the
+	# CLI answer is read from the interface the kernel already has.
+	unless (ref $status eq 'HASH' && ($status->{'source'} || '') eq 'app') {
+		return { ok => 1, action => 'none', reason => 'no app tailnet' };
+	}
+	my $state = $status->{'state'} || '';
+	return { ok => 1, action => 'none', reason => 'state ' . ($state ne '' ? $state : 'unknown') }
+		unless $state eq 'connected';
+	my $net = eval { &network_interface_reporter() } || {};
+	foreach my $nic ( sort keys %{$net} ) {
+		my $ip = ref $net->{$nic} eq 'HASH' ? ($net->{$nic}->{'ip'} // '') : '';
+		return { ok => 1, action => 'none', reason => 'tailnet address present' }
+			if $ip =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+	}
+	my $now = (defined $opts->{'now'} && $opts->{'now'} =~ /^\d+$/) ? 0 + $opts->{'now'} : &rightNow();
+	my $last = &cache_get({ app => '__president', context => 'tailnet_watch', subcontext => 'last' }) || 0;
+	$last = 0 unless $last =~ /^\d+$/;
+	return { ok => 1, action => 'throttled', reason => 'asked within five minutes' }
+		if $last && $now - $last < 5 * 60 * 1000;
+	&cache_set({ app => '__president', context => 'tailnet_watch', subcontext => 'last', warranty => '+1d' }, $now);
+	my $notify = ref $opts->{'notify'} eq 'CODE' ? $opts->{'notify'} : \&tailnet_notify_app;
+	my $sent = $notify->(&app_action('JAWN_TAILNET')) ? 1 : 0;
+	return { ok => 1, action => 'revive', sent => $sent, reason => 'connected with no tailnet address' };
+}
+
+# Ask the Android app to start its embedded tailnet. The receiver is the app's
+# exported door (the VpnService itself is not exported), and `am` runs the
+# broadcast in the app's own process, where the start is permitted.
+sub tailnet_notify_app {
+	my ($action) = @_;
+	$action ||= &app_action('JAWN_TAILNET');
+	my $component = &app_component('JawnWakeReceiver');
+	return 0 unless defined $component && length $component;
+	return 0 unless -x '/system/bin/am';
+	my $rc = system('/system/bin/am', 'broadcast', '-a', $action, '-n', $component);
+	return $rc == 0 ? 1 : 0;
+}
+
 # The tailnet address a roster row advertises, from its own network map first
 # (a peer's ip column is often the LAN address) and its ip column second.
 # The name this machine calls itself on. It is the configured domain with its
