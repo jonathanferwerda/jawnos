@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep templates/apps/weather/history.html.ep templates/apps/weather/accuracy.html.ep templates/apps/weather/style.html.ep templates/apps/weather/now.html.ep public/js/manager/weather.js public/js/manager/weather_history.js
+# tests-for: lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep templates/apps/weather/history.html.ep templates/apps/weather/radar.html.ep templates/apps/weather/accuracy.html.ep templates/apps/weather/style.html.ep templates/apps/weather/now.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_radar.js
 # covers:    The weather history backfill (old measures -> one row per day), the
 #            daily merge, the 1-7 day forecast/actual accuracy, and the app wiring.
 
@@ -274,17 +274,121 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	is($day->{'count'}, 2, 'with the place-less house reading as the second temperature');
 }
 
+# --- recorded precipitation folds into the day -------------------------------
+{
+	my $agg = subs::weather_history_aggregate([
+		{ app => 'weather_station', timestamp => '1700000000000', measures => [
+			{ ts => '1700000000000', precip_total => '2.5', precip_rate => '1.2', precip_prob => '40', precipitation => 'rain', uuid => 'p1' },
+			{ ts => '1700000005000', precip_total => '1.5', precip_rate => '2.4', precip_prob => '60', precipitation => 'rain', uuid => 'p2' },
+		] },
+	]);
+	my $day = $agg->{'days'}[0];
+	is($day->{'precipitation_mm'}, 4, 'the day adds its precipitation totals');
+	is($day->{'precipitation_rate'}, 2.4, 'the rate is the day peak');
+	is($day->{'precipitation_prob'}, 60, 'and the chance of rain is its peak');
+	is($day->{'precipitation'}, 'rain', 'the derived state is kept');
+}
+
+# --- space weather days read the measure rows -------------------------------
+{
+	my $now = 1794010000000;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::db_query = sub {
+		my ($query, @args) = @_;
+		return bless { rows => [] }, 'FakeResult' unless ($query // '') =~ /app = 'space_weather'/;
+		return bless { rows => [
+			{ timestamp => $now - 2 * 86400000, measures => Mojo::JSON::encode_json([
+				{ ts => $now - 2 * 86400000, kp => '4', kp_max_24h => '5', dst => '-18', dst_min => '-40', f107 => '112', sunspot_number => '60', uuid => 's1' },
+			]) },
+			{ timestamp => $now - 86400000, measures => Mojo::JSON::encode_json([
+				{ ts => $now - 86400000, kp => 2.5, dst => -8, f107 => 110, uuid => 's2' },
+			]) },
+		] }, 'FakeResult';
+	};
+	local *subs::weather_day_key = sub { my $ts = shift; my @t = gmtime(int($ts / 1000)); sprintf('%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3]); };
+	my $days = subs::weather_history_space_days($now - 3 * 86400000, $now);
+	is(scalar @{$days}, 2, 'one row a day is kept');
+	is($days->[0]{'kp'}, 4, 'Kp is read');
+	is($days->[0]{'kp_max'}, 5, 'the 24-hour peak is read');
+	is($days->[0]{'dst'}, -18, 'Dst is read');
+	is($days->[0]{'sunspots'}, 60, 'the sunspot number is read');
+	is($days->[1]{'f107'}, 110, 'F10.7 is read');
+}
+
+# --- rainfall comes from Open-Meteo and is cached ----------------------------
+{
+	my $now = 1794010000000;
+	my $saved;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::cache_get = sub { undef };
+	local *subs::cache_set = sub { $saved = $_[0]; 1 };
+	local *subs::ui = sub { return defined $_[0] ? "$_[0]" : '' };
+	local *subs::weather_http_get = sub {
+		my ($url) = @_;
+		if ($url =~ /archive-api/) {
+			return { daily => { time => [ '2026-08-01' ], precipitation_sum => [ 4.2 ] } };
+		}
+		return { daily => {
+			time => [ '2026-11-20', '2026-11-21', '2026-11-22' ],
+			precipitation_sum => [ 0, 1.5, 3 ],
+			precipitation_probability_max => [ 0, 55, 80 ],
+		} };
+	};
+	my $rain = subs::weather_history_precipitation_days(43, -81.9, '2026-11-20', '2026-11-22');
+	is(scalar @{ $rain->{'days'} }, 3, 'three daily rainfall rows');
+	is($rain->{'days'}[1]{'mm'}, 1.5, 'the millimetres are read');
+	is($rain->{'days'}[2]{'prob'}, 80, 'the chance of rain is read');
+	like($rain->{'note'}, qr/Open-Meteo/, 'the note names the source');
+	ok($saved && $saved->{'context'} eq 'precipitation', 'the answer is cached');
+	my $long = subs::weather_history_precipitation_days(43, -81.9, '2026-08-01', '2026-11-22');
+	is($long->{'days'}[0]{'mm'}, 4.2, 'a long range uses the archive');
+}
+
+# --- the radar and the new charts are wired --------------------------------
+{
+	my $history_template = read_file("$root/templates/apps/weather/history.html.ep");
+	like($history_template, qr{apps/weather/radar}, 'the history panel includes the radar');
+	like($history_template, qr/weather_history_precip_chart/, 'the history panel has a rainfall chart');
+	like($history_template, qr/weather_history_space_chart/, 'and a space weather chart');
+	my $radar_template = read_file("$root/templates/apps/weather/radar.html.ep");
+	like($radar_template, qr/id="weather_radar_canvas"/, 'the radar panel has a map canvas');
+	like($radar_template, qr/id="weather_radar_layers"/, 'and a row of layer switches');
+	foreach my $layer (qw(precipitation clouds winds magnetic smoke temperature snow)) {
+		like($radar_template, qr/data-layer="$layer"/, "the $layer layer can be switched");
+	}
+	like($radar_template, qr/id="weather_radar_basemap"/, 'the radar has a map dropdown');
+	my $style = read_file("$root/templates/apps/weather/style.html.ep");
+	like($style, qr/#weather_radar_layers[^}]*overflow-x:\s*auto/s, 'the layer row scrolls sideways');
+	like($style, qr/#weather_history_split[^}]*display:\s*flex/s, 'radar and history share a row');
+	my $radar_js = read_file("$root/public/js/manager/weather_radar.js");
+	like($radar_js, qr/jawnosMap\.create/, 'the radar uses the Travel canvas map');
+	like($radar_js, qr/setProvider/, 'and its provider picker');
+	like($radar_js, qr/RainViewer/, 'precipitation comes from RainViewer');
+	like($radar_js, qr/gibs\.earthdata\.nasa\.gov/, 'the satellite layers come from NASA GIBS');
+	like($radar_js, qr/ovation_aurora_latest/, 'the magnetic layer is the aurora grid');
+	like($radar_js, qr/open-meteo/, 'the wind layer uses Open-Meteo');
+	my $history_js = read_file("$root/public/js/manager/weather_history.js");
+	like($history_js, qr/weatherHistoryPrecipChart/, 'the history draws rainfall');
+	like($history_js, qr/weatherHistoryPrecipLoad/, 'and asks for it separately from the days');
+	like($history_js, qr/weatherHistorySpaceChart/, 'and space weather');
+	like($history_js, qr/lat:\s*lat,\s*lon:\s*lon/, 'the rainfall request carries the coordinate');
+}
+
 # --- wiring ------------------------------------------------------------------
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::WeatherHistory' for qw\([^)]*weather_history_build/, 'the history module is mapped');
 like($loader, qr/weather_history_source_label/, 'the source naming is mapped');
 like($loader, qr/JawnOS::Domain::Weather' for qw\([^)]*weather_daily_merge/, 'the daily merge is mapped');
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_weather.pm");
-like($controller, qr/sub action_52322\b/, 'the history route action exists');
+	like($controller, qr/sub action_52322\b/, 'the history route action exists');
+	like($controller, qr/sub action_52332\b/, 'the rainfall route action exists');
 like($controller, qr/sub action_52013\b/, 'the backfill route action exists');
 like($controller, qr/sub action_52014\b/, 'the accuracy route action exists');
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_weather.pm");
-like($routes, qr{/manager/weather/history}, 'the history route is registered');
+	like($routes, qr{/manager/weather/history}, 'the history route is registered');
+	like($routes, qr{/manager/weather/precipitation}, 'the rainfall route is registered');
 like($routes, qr{/manager/weather/backfill}, 'the backfill route is registered');
 like($routes, qr{/manager/weather/accuracy}, 'the accuracy route is registered');
 my $template = read_file("$root/templates/apps/weather.html.ep");

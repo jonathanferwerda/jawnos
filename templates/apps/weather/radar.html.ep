@@ -1,0 +1,20 @@
+<div id="weather_radar_panel" class="weather_card">
+	<div id="weather_radar_head" class="weather_controls">
+		<b><%= &subs::ui('Radar') %></b>
+		<label for="weather_radar_basemap"><%= &subs::ui('Map') %></label>
+		<select id="weather_radar_basemap" hint="<%= &subs::ui('Change the map under the weather layers') %>"></select>
+		<span id="weather_radar_status" class="weather_muted"></span>
+	</div>
+	<div id="weather_radar_layers" role="group" aria-label="<%= &subs::ui('Weather layers') %>">
+		<label class="weather_radar_layer"><input type="checkbox" data-layer="precipitation" checked> <%= &subs::ui('Precipitation') %></label>
+		<label class="weather_radar_layer"><input type="checkbox" data-layer="clouds"> <%= &subs::ui('Clouds') %></label>
+		<label class="weather_radar_layer"><input type="checkbox" data-layer="winds"> <%= &subs::ui('Winds') %></label>
+		<label class="weather_radar_layer"><input type="checkbox" data-layer="magnetic"> <%= &subs::ui('Magnetic') %></label>
+		<label class="weather_radar_layer"><input type="checkbox" data-layer="smoke"> <%= &subs::ui('Wildfire smoke') %></label>
+		<label class="weather_radar_layer"><input type="checkbox" data-layer="temperature"> <%= &subs::ui('Temperature') %></label>
+		<label class="weather_radar_layer"><input type="checkbox" data-layer="snow"> <%= &subs::ui('Snow') %></label>
+	</div>
+	<canvas id="weather_radar_canvas" aria-label="<%= &subs::ui('Weather layers over the map') %>"></canvas>
+	<div id="weather_radar_legend" class="weather_muted"></div>
+	<div class="weather_muted weather_radar_credit"><%= &subs::ui('Radar © RainViewer · clouds, temperature, snow and smoke © NASA GIBS · winds © Open-Meteo · aurora © NOAA SWPC') %></div>
+</div>

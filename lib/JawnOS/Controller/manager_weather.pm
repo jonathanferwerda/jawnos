@@ -339,6 +339,30 @@ sub action_52331 {
 	$c->render(json => { space_weather => $space || { error => &subs::ui('Space weather is unavailable right now.') } });
 }
 
+# GET /manager/weather/precipitation
+# The rainfall chart is its own request: the History tab draws the days first and
+# the gridded rain fills in when Open-Meteo answers, so a slow feed never holds
+# the temperature chart shut.
+sub action_52332 {
+	my $c = shift;
+	my $range = $c->param('range') || '30';
+	my $now = &subs::rightNow();
+	my $from = $now - 30 * 86400000;
+	if ($range =~ /^\d+$/ && $range > 0) { $from = $now - $range * 86400000; }
+	else { $from = $now - 365 * 86400000; }
+	$from = $now - 366 * 86400000 if $from < $now - 366 * 86400000;
+	my $result = eval {
+		&subs::weather_history_precipitation_days(
+			$c->param('lat'), $c->param('lon'),
+			&subs::weather_day_key($from), &subs::weather_day_key($now)
+		)
+	};
+	$c->render(json => $result || {
+		days => [], source => 'Open-Meteo',
+		note => &subs::ui('Rainfall is unavailable right now.'),
+	});
+}
+
 # POST /manager/weather/sources
 sub action_52023 {
 	my $c = shift;

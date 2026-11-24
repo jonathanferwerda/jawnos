@@ -136,11 +136,30 @@ sub utc_ms {
 	is($spots->{'sunspot_number'}, 45.7, 'the latest monthly sunspot number wins');
 
 	my $alerts = &subs::space_weather_alerts([
-		{ product_id => 'K05A', issue_datetime => '2026-11-19 01:08:54', message => "ALERT: Geomagnetic K-index of 5\r\nThreshold Reached" },
-		{ product_id => 'X1', issue_datetime => '2026-11-20 01:00:00', message => 'Nothing to act on' },
-	]);
+		{ product_id => 'K05A', issue_datetime => '2026-11-22 20:00:00', message => "ALERT: Geomagnetic K-index of 5\r\nThreshold Reached" },
+		{ product_id => 'X1', issue_datetime => '2026-11-22 20:30:00', message => 'Nothing to act on' },
+	], $now);
 	is(scalar @{$alerts}, 1, 'only the actionable bulletin is kept');
 	like($alerts->[0]{'text'}, qr/Geomagnetic K-index/, 'and its text is readable');
+
+	# A bulletin leaves the card when its own end is behind us. NOAA's file keeps
+	# the whole day's products, so without this the newest three are yesterday's.
+	my $expired = &subs::space_weather_alerts([
+		{ product_id => 'OLD', issue_datetime => '2026-11-22 19:00:00',
+			message => "WARNING: Geomagnetic K-index of 5 expected\r\nValid To: 2026 Nov 22 2000 UTC" },
+	], $now);
+	is(scalar @{$expired}, 0, 'a bulletin whose stated end has passed is dropped');
+	my $extended = &subs::space_weather_alerts([
+		{ product_id => 'EXT', issue_datetime => '2026-11-22 19:00:00',
+			message => "EXTENDED WARNING: Geomagnetic K-index of 5 expected\r\nValid To: 2026 Nov 22 2000 UTC\r\nNow Valid Until: 2026 Nov 23 0300 UTC" },
+	], $now);
+	is(scalar @{$extended}, 1, 'an extended warning is kept while its new end is ahead');
+	is($extended->[0]{'valid_to'}, utc_ms(2026, 11, 23, 3, 0, 0), 'and carries the new end');
+	my $stale = &subs::space_weather_alerts([
+		{ product_id => 'STALE', issue_datetime => '2026-11-20 12:00:00', message => 'ALERT: Geomagnetic K-index of 5' },
+	], $now);
+	is(scalar @{$stale}, 0, 'an open-ended bulletin issued days ago is dropped');
+	is(&subs::_noaa_utc('2026 Nov 22 2100 UTC'), utc_ms(2026, 11, 22, 21, 0, 0), 'the alert body time parses');
 
 	# A tiny aurora grid: the real one is longitude-major, but the nearest-point
 	# fallback must work when the index assumption does not.

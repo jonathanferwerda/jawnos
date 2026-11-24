@@ -336,6 +336,12 @@ function weatherRender(data) {
 	var cur = data.current || {};
 	if (data.lat !== undefined && data.lon !== undefined) {
 		weatherLastLocation = { lat: data.lat, lon: data.lon, city: data.location_name || '', region: data.location_region || data.region || '', location: data.source_location || '' };
+		if (typeof weatherRadarRecenter === 'function') { weatherRadarRecenter(data.lat, data.lon); }
+		// The History tab is scoped to the place on screen: when it is open, its
+		// charts and rainfall follow the new place instead of staying behind.
+		if (typeof weatherHistoryLoad === 'function' && $w.find('#weather_history_panel').is(':visible')) {
+			weatherHistoryLoad();
+		}
 	}
 	$w.find('#weather_place').text(weatherPlaceText(data));
 	$w.find('#weather_check_here').toggle(!!data.needs_place);
@@ -510,7 +516,8 @@ function weatherSpaceRender(space) {
 	var alertHtml = '';
 	if (alerts.length) {
 		alertHtml = '<div class="weather_space_alerts">' + alerts.map(function(a) {
-			return '<div class="weather_space_alert"><b>' + weatherEsc(a.id || '') + '</b> ' + weatherEsc(String(a.text || '').slice(0, 240)) + '</div>';
+			var ends = a.valid_to ? '<div class="weather_space_alert_ends">' + jawnosT('Valid until') + ' ' + weatherTime(a.valid_to) + '</div>' : '';
+			return '<div class="weather_space_alert"><b>' + weatherEsc(a.id || '') + '</b> ' + weatherEsc(String(a.text || '').slice(0, 240)) + ends + '</div>';
 		}).join('') + '</div>';
 	}
 	$w.find('#weather_space_body').html(stats.join('') + bar + local + alertHtml);

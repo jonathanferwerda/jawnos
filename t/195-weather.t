@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Manager/Part15.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/weather_sources.js public/js/manager/mapengine/01_engine.js perl/utility_jobs.pl
+# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Manager/Part15.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep templates/apps/weather/radar.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/weather_radar.js public/js/manager/weather_sources.js public/js/manager/mapengine/01_engine.js perl/utility_jobs.pl
 # covers:    The Weather app's pure parsers for Environment Canada and Open-Meteo,
 #            the country-to-provider choice, and the app's route/menu/help wiring.
 
@@ -2332,7 +2332,7 @@ like($auto_partial, qr/id="weather_automation_list"/, 'the panel has a rule list
 like($auto_partial, qr/id="weather_automation_check"/, 'the panel can check now');
 my $core_auto = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($core_auto, qr{/js/manager/weather_automation\.js}, 'the lazy app loads the automation script');
-like($core_auto, qr{weather\s*=>\s*\[qw\(/js/manager/weather\.js /js/manager/weather_history\.js /js/manager/weather_automation\.js /js/manager/weather_map\.js /js/manager/weather_sources\.js\)\]}, 'the automation, map and sources scripts are in the Weather chunk');
+like($core_auto, qr{weather\s*=>\s*\[qw\(/js/manager/weather\.js /js/manager/weather_history\.js /js/manager/weather_automation\.js /js/manager/weather_map\.js /js/manager/weather_sources\.js /js/manager/weather_radar\.js\)\]}, 'the automation, map, radar and sources scripts are in the Weather chunk');
 my $loader_auto = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader_auto, qr/JawnOS::Domain::WeatherAutomation' for qw\([^)]*weather_observe_record/, 'the domain loader maps the observer');
 my $president = read_file("$root/perl/utility_jobs.pl");
@@ -2458,6 +2458,7 @@ like($weather_js, qr/weather_alert_areas/, 'the alert shows where the statement 
 like($weather_js, qr/weather_alert_toggle/, 'the statement body is an accordion');
 like($weather_js, qr/weatherAlertToggle/, 'and the title toggles it');
 like($weather_js, qr/weatherAlertLabel/, 'the accordion uses the statement first line');
+like($weather_js, qr/weather_space_alert_ends/, 'a space weather alert names the end that still stands');
 like($weather_js, qr/weatherDayName/, 'and a weekday name');
 like($weather_js, qr/weatherLoading/, 'the app asks once at a time');
 like($weather_style, qr/overscroll-behavior-x/, 'the hourly strip scrolls sideways');

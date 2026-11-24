@@ -75,8 +75,8 @@ my %NOAA = (
 		{ 'time-tag' => '2026-10', ssn => undef },
 	],
 	'products/alerts.json' => [
-		{ product_id => 'K05A', issue_datetime => '2026-11-22 01:00:00', message => "ALERT: Geomagnetic K-index of 5\r\nThreshold Reached" },
-		{ product_id => 'NONE', issue_datetime => '2026-11-22 02:00:00', message => 'Nothing to act on' },
+		{ product_id => 'K05A', issue_datetime => '2026-11-23 01:00:00', message => "ALERT: Geomagnetic K-index of 5\r\nThreshold Reached" },
+		{ product_id => 'NONE', issue_datetime => '2026-11-23 02:00:00', message => 'Nothing to act on' },
 	],
 	'json/ovation_aurora_latest.json' => {
 		'Observation Time' => '2026-11-23T11:00:00Z',

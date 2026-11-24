@@ -204,6 +204,23 @@ sub _noaa_number ($v) {
 	return 0 + $v;
 }
 
+# The alert bodies write a time as "2026 Nov 19 0900 UTC" rather than the
+# ISO stamp the JSON fields use. A bulletin with no readable end cannot be
+# called current, so an unparsed time is 0 and the caller decides.
+my %NOAA_MONTH = (
+	jan => 1, feb => 2, mar => 3, apr => 4, may => 5, jun => 6,
+	jul => 7, aug => 8, sep => 9, oct => 10, nov => 11, dec => 12,
+);
+sub _noaa_utc ($text) {
+	return 0 unless defined $text && length $text;
+	my ($year, $mon, $day, $hm) = $text =~ /(\d{4})\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{3,4})/;
+	return 0 unless $year && defined $mon && defined $NOAA_MONTH{lc $mon};
+	my $hour = int($hm / 100);
+	my $minute = $hm % 100;
+	return 0 if $hour > 23 || $minute > 59;
+	return timegm(0, $minute, $hour, $day, $NOAA_MONTH{lc $mon} - 1, $year) * 1000;
+}
+
 # The Kp bands a person reads. Kp is a 0-9 scale, updated every three hours.
 sub space_weather_label ($kp) {
 	return ('Unknown', 0) unless defined $kp && $kp =~ /^-?[0-9.]+$/;
@@ -364,19 +381,38 @@ sub space_weather_sunspots ($json) {
 # Only the bulletins a person would act on: geomagnetic, radiation, radio
 # blackout and aurora. The full alert file is text, so the card keeps three and
 # the full text is not stored in a measure.
-sub space_weather_alerts ($json) {
+#
+# NOAA leaves every bulletin it issued in this file, so the newest three used
+# to be a warning that ended days ago. A bulletin with a stated end is kept
+# only while that end is ahead; one with no end (an "ALERT" for an event that
+# has happened) is kept only when it was issued in the last day. The comparison
+# is against the fetch time, not the cache's, so a cached card cannot age back
+# into the past.
+sub space_weather_alerts ($json, $now = undef) {
 	return [] unless ref $json eq 'ARRAY';
+	$now = &rightNow() unless defined $now;
+	my $oldest = $now - 24 * 60 * 60 * 1000;
 	my @out;
 	foreach my $alert ( @{$json} ) {
 		next unless ref $alert eq 'HASH';
 		my $msg = $alert->{'message'} // '';
 		next unless $msg =~ /GEOMAGNETIC|K-INDEX|K INDEX|SOLAR RADIATION|RADIO BLACKOUT|AURORA/i;
+		# An extended warning names both its old "Valid To" and the newer
+		# "Now Valid Until"; the last readable end is the one that still stands.
+		my $end_text;
+		while ($msg =~ /(?:Now\s+Valid\s+Until|Valid\s+Until|Valid\s+To|\bEnd\s*Time\b|\bENDS?\b)\s*:?\s*(\d{4}\s+[A-Za-z]{3}\s+\d{1,2}\s+\d{3,4})/ig) {
+			$end_text = $1;
+		}
+		my $ends_at = &_noaa_utc($end_text);
+		my $issued_at = &_noaa_time($alert->{'issue_datetime'});
+		next if $ends_at ? ($ends_at <= $now) : !($issued_at && $issued_at >= $oldest);
 		my $text = $msg;
 		$text =~ s/\r//g;
 		$text =~ s/\s+/ /g;
 		push @out, {
 			id => $alert->{'product_id'} // '',
 			issue => $alert->{'issue_datetime'} // '',
+			($ends_at ? (valid_to => $ends_at) : ()),
 			text => substr($text, 0, 600),
 		};
 	}

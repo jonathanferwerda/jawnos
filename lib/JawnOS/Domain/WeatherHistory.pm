@@ -16,6 +16,7 @@ no warnings 'experimental::args_array_with_signatures';
 
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::UserAgent;
+use Mojo::Util qw(md5_sum);
 use Time::Piece;
 
 our $device;
@@ -313,6 +314,9 @@ sub weather_history_aggregate($rows, $opts = {}) {
 					source => $source, date => $day, temps => [], conditions => {},
 					humidity_sum => 0, humidity_n => 0, wind_sum => 0, wind_n => 0,
 					wind_directions => {}, visibility => '', readings => 0,
+					precip_total_sum => 0, precip_total_n => 0,
+					precip_rate_max => undef, precip_prob_max => undef,
+					precipitation_states => {},
 				};
 				$d->{'readings'}++;
 				$sources{$source}{'readings'}++;
@@ -340,6 +344,24 @@ sub weather_history_aggregate($rows, $opts = {}) {
 				elsif ($name eq 'visibility') {
 					my $t = &weather_history_visibility_text($value);
 					$d->{'visibility'} = $t if length $t;
+				}
+				elsif ($name eq 'precip_total') {
+					my $n = &weather_number($value);
+					if (defined $n) { $d->{'precip_total_sum'} += $n; $d->{'precip_total_n'}++; }
+				}
+				elsif ($name eq 'precip_rate') {
+					my $n = &weather_number($value);
+					$d->{'precip_rate_max'} = $n
+						if defined $n && (!defined $d->{'precip_rate_max'} || $n > $d->{'precip_rate_max'});
+				}
+				elsif ($name eq 'precip_prob' || $name eq 'precipitation_probability') {
+					my $n = &weather_number($value);
+					$d->{'precip_prob_max'} = $n
+						if defined $n && (!defined $d->{'precip_prob_max'} || $n > $d->{'precip_prob_max'});
+				}
+				elsif ($name eq 'precipitation') {
+					my $t = lc(&weather_text($value));
+					$d->{'precipitation_states'}{$t}++ if length $t;
 				}
 			}
 		}
@@ -373,6 +395,10 @@ sub weather_history_aggregate($rows, $opts = {}) {
 			wind => $d->{'wind_n'} ? $d->{'wind_sum'} / $d->{'wind_n'} : undef,
 			wind_direction => &weather_history_top_text($d->{'wind_directions'}),
 			visibility => $d->{'visibility'},
+			precipitation_mm => $d->{'precip_total_n'} ? $d->{'precip_total_sum'} : undef,
+			precipitation_rate => $d->{'precip_rate_max'},
+			precipitation_prob => $d->{'precip_prob_max'},
+			precipitation => &weather_history_top_text($d->{'precipitation_states'}),
 			readings => $d->{'readings'},
 		};
 		$sources{$d->{'source'}}{'days'}{$d->{'date'}} = 1;
@@ -511,6 +537,15 @@ sub weather_history_hourly($app, $hours, $location = '') {
 				my $text = &weather_history_condition_text($measure->{'condition'});
 				$bucket{$hour}{'conditions'}{$text}++ if length $text;
 			}
+			foreach my $pair ([precip_total => 'precip_sum'], [precip_rate => 'precip_rate_max'], [precip_prob => 'precip_prob_max']) {
+				my $n = &weather_number($measure->{ $pair->[0] });
+				next unless defined $n;
+				if ($pair->[1] eq 'precip_sum') { $bucket{$hour}{'precip_sum'} += $n; }
+				else {
+					$bucket{$hour}{ $pair->[1] } = $n
+						if !defined $bucket{$hour}{ $pair->[1] } || $n > $bucket{$hour}{ $pair->[1] };
+				}
+			}
 		}
 	}
 	my @out;
@@ -527,6 +562,9 @@ sub weather_history_hourly($app, $hours, $location = '') {
 			ts => $hour,
 			temperature => $temperature,
 			condition => &weather_history_top_text($b->{'conditions'} || {}),
+			precipitation_mm => (defined $b->{'precip_sum'} ? $b->{'precip_sum'} : undef),
+			precipitation_rate => $b->{'precip_rate_max'},
+			precipitation_prob => $b->{'precip_prob_max'},
 			readings => scalar @temps,
 		};
 	}
@@ -554,6 +592,123 @@ sub weather_history_pick_source($sources, $city, $region) {
 	return $best ? $best->{'app'} : '';
 }
 
+# The planetary measures are already one row a day in `appointments`; the
+# history tab charts them beside the weather without a second feed. The keys are
+# the measure names Astronomy writes, renamed only where the chart wants a
+# shorter word.
+my %SPACE_DAY_FIELDS = (
+	kp => 'kp', kp_max_24h => 'kp_max', kp_forecast_max => 'kp_forecast_max',
+	dst => 'dst', dst_min => 'dst_min', ap => 'ap', bz => 'bz', bt => 'bt',
+	solar_wind_speed => 'solar_wind_speed', solar_wind_density => 'solar_wind_density',
+	g_scale => 'g_scale', s_scale => 's_scale', r_scale => 'r_scale',
+	f107 => 'f107', sunspot_number => 'sunspots', aurora_probability => 'aurora',
+);
+
+sub weather_history_space_days($from, $to) {
+	my ($begin, $end) = (&weather_number($from), &weather_number($to));
+	return [] unless defined $begin && defined $end && $end > $begin;
+	my $rows = eval {
+		&db_query(
+			"select timestamp, measures from appointments where app = 'space_weather' "
+			. "and type = 'measure' and measures is not null "
+			. "and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ? "
+			. "order by cast(timestamp as integer) asc",
+			$begin, $end
+		)->hashes;
+	} || [];
+	my %by_day;
+	foreach my $row (@{$rows}) {
+		next unless ref $row eq 'HASH';
+		my $list = eval { decode_json($row->{'measures'} // '[]') } || [];
+		next unless ref $list eq 'ARRAY';
+		foreach my $entry (@{$list}) {
+			next unless ref $entry eq 'HASH';
+			my $day = &weather_day_key($entry->{'ts'} || $row->{'timestamp'});
+			next unless length $day;
+			my $d = $by_day{$day} ||= { date => $day };
+			foreach my $key (sort keys %SPACE_DAY_FIELDS) {
+				my $n = &weather_number($entry->{$key});
+				$d->{ $SPACE_DAY_FIELDS{$key} } = $n if defined $n;
+			}
+		}
+	}
+	return [ map { $by_day{$_} } sort keys %by_day ];
+}
+
+# Rain, for the chart, is a gridded reanalysis rather than an old page's
+# reading: the station never logged a gauge, and the old weather apps only kept
+# a condition word. Open-Meteo's archive covers the long ranges and its forecast
+# endpoint covers the last 92 days (including today). The answer is cached for a
+# few hours, keyed on the box, so changing tabs is not another download.
+sub weather_history_precipitation_days($lat, $lon, $from_date, $to_date) {
+	my $empty = { days => [], source => 'Open-Meteo', note => &subs::ui('No gridded rainfall is available for this place.') };
+	my ($la, $lo) = (&weather_number($lat), &weather_number($lon));
+	return $empty unless defined $la && defined $lo
+		&& ($from_date // '') =~ /^\d{4}-\d{2}-\d{2}$/ && ($to_date // '') =~ /^\d{4}-\d{2}-\d{2}$/;
+	my $from_ts = eval { Time::Piece->strptime($from_date, '%Y-%m-%d')->epoch * 1000 } || 0;
+	my $to_ts = eval { Time::Piece->strptime($to_date, '%Y-%m-%d')->epoch * 1000 } || 0;
+	return $empty unless $from_ts && $to_ts && $to_ts >= $from_ts;
+	my $span = int(($to_ts - $from_ts) / 86400000);
+	$span = 365 if $span > 365;
+	my $key = substr(md5_sum("precipitation|$la|$lo|$from_date|$to_date"), 0, 24);
+	my $cached = eval { &cache_get({ app => 'weather', context => 'precipitation', subcontext => $key }) };
+	if (ref $cached eq 'HASH' && ($cached->{'server_time'} || 0) > &rightNow() - 6 * 60 * 60 * 1000) {
+		return $cached;
+	}
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 6, request_timeout => 10);
+	my %by_date;
+	my $take = sub {
+		my ($json) = @_;
+		my $daily = ref $json eq 'HASH' ? ($json->{'daily'} || {}) : {};
+		my $times = ref $daily->{'time'} eq 'ARRAY' ? $daily->{'time'} : [];
+		my $sums = ref $daily->{'precipitation_sum'} eq 'ARRAY' ? $daily->{'precipitation_sum'} : [];
+		my $probs = ref $daily->{'precipitation_probability_max'} eq 'ARRAY' ? $daily->{'precipitation_probability_max'} : [];
+		for my $i (0 .. $#{$times}) {
+			my $date = $times->[$i] // '';
+			next unless $date =~ /^\d{4}-\d{2}-\d{2}$/ && $date ge $from_date && $date le $to_date;
+			my $row = $by_date{$date} ||= { date => $date };
+			my $mm = &weather_number($sums->[$i]);
+			$row->{'mm'} = $mm if defined $mm;
+			my $prob = &weather_number($probs->[$i]);
+			$row->{'prob'} = $prob if defined $prob;
+		}
+	};
+	if ($span <= 92) {
+		my ($json) = &weather_http_get(sprintf(
+			'https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f'
+			. '&daily=precipitation_sum,precipitation_probability_max&timezone=auto&past_days=%d&forecast_days=1',
+			$la, $lo, $span + 1
+		), $ua);
+		$take->($json);
+	}
+	else {
+		my ($archive) = &weather_http_get(sprintf(
+			'https://archive-api.open-meteo.com/v1/archive?latitude=%.4f&longitude=%.4f'
+			. '&start_date=%s&end_date=%s&daily=precipitation_sum&timezone=auto',
+			$la, $lo, $from_date, $to_date
+		), $ua);
+		$take->($archive);
+		# The archive lags the last few days; the forecast endpoint fills them.
+		my ($recent) = &weather_http_get(sprintf(
+			'https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f'
+			. '&daily=precipitation_sum,precipitation_probability_max&timezone=auto&past_days=7&forecast_days=1',
+			$la, $lo
+		), $ua);
+		$take->($recent);
+	}
+	my @days = map { $by_date{$_} } sort keys %by_date;
+	my $out = {
+		days => \@days,
+		source => 'Open-Meteo',
+		from => $from_date,
+		to => $to_date,
+		server_time => &rightNow(),
+		note => &subs::ui('Rainfall is Open-Meteo\'s gridded rainfall for this coordinate, in millimetres per day; the chance of rain is its daily maximum probability.'),
+	};
+	eval { &cache_set({ app => 'weather', context => 'precipitation', subcontext => $key, warranty => '-1d' }, $out) };
+	return $out;
+}
+
 sub weather_history_read($opts) {
 	$opts ||= {};
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
@@ -579,6 +734,20 @@ sub weather_history_read($opts) {
 	my $hours = ($range eq '1')
 		? &weather_history_hourly($hourly_app, 24, $hourly_app eq 'weather_station' ? $source_location : '')
 		: undef;
+	# The space weather chart shares the tab's range. "All" starts at the
+	# source's first day, but a chart more than a year wide is a smear, so the
+	# series stop there. Rainfall is its own request (the tab must not wait on
+	# Open-Meteo for the temperature chart), with the same range rule.
+	my $now = &rightNow();
+	my $from_ts = $now - 30 * 86400000;
+	if ($range =~ /^\d+$/ && $range > 0) {
+		$from_ts = $now - $range * 86400000;
+	}
+	elsif ($source_meta && ($source_meta->{'from'} // '') =~ /^\d{4}-\d{2}-\d{2}$/) {
+		$from_ts = eval { Time::Piece->strptime($source_meta->{'from'}, '%Y-%m-%d')->epoch * 1000 } || $from_ts;
+	}
+	if ($from_ts < $now - 366 * 86400000) { $from_ts = $now - 366 * 86400000; }
+	my $space_days = &weather_history_space_days($from_ts, $now + 86400000);
 	return {
 		built_at => $history->{'built_at'},
 		sources => $history->{'sources'} || [],
@@ -591,6 +760,10 @@ sub weather_history_read($opts) {
 		(defined $hours ? (hours => $hours) : ()),
 		from => @days ? $days[0]->{'date'} : '',
 		to => @days ? $days[-1]->{'date'} : '',
+		space_weather => {
+			days => $space_days,
+			note => &subs::ui('Kp and Dst are the planetary indices recorded once a day by the space weather pass.'),
+		},
 		note => $history->{'note'} || '',
 	};
 }
