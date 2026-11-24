@@ -89,6 +89,94 @@ sub weather_distance_km($lat1, $lon1, $lat2, $lon2) {
 	return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
 }
 
+# The present weather a raw METAR names. A report is "KJFK 241151Z 27010KT
+# 10SM -SN BKN020 OVC035 01/M02 A3012 RMK AO2": the weather groups sit between
+# the wind and the sky, and remarks are cut off first so an RMK mention cannot
+# be read as weather. The groups are the same codes weather_precipitation_word
+# already knows, so the two sources agree on the vocabulary.
+sub weather_metar_word($raw) {
+	my $text = uc($raw // '');
+	return '' unless length $text;
+	$text =~ s/\s+RMK\b.*$//s;
+	my @tokens = split(/\s+/, $text);
+	shift @tokens if @tokens;   # the report type or station
+	my @codes;
+	foreach my $token (@tokens) {
+		# A weather group: intensity and vicinity, descriptors, then one or more
+		# precipitation or obscuration codes. Wind, visibility, sky, temperature
+		# and altimeter groups do not have this shape.
+		next unless $token =~ /^(?:[+-])?(?:VC)?(?:MI|PR|BC|DR|BL|SH|TS|FZ)*(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP)+$/;
+		push @codes, ($token =~ /(DZ|RA|SN|SG|IC|PL|GR|GS|UP)/g);
+	}
+	return '' unless @codes;
+	return eval { &weather_precipitation_word(join(' ', @codes)) } || '';
+}
+
+# The nearest airport's present weather, when one is close enough. A METAR is a
+# human observation of what is falling at that station, usually a better answer
+# than a forecast's condition word. The free Aviation Weather service takes a
+# bounding box, so one small request finds the stations around the place; the
+# nearest fresh report is kept. The answer is cached for ten minutes.
+sub weather_metar_near($lat, $lon, $opts = {}) {
+	$opts ||= {};
+	my ($la, $lo) = (&weather_number($lat), &weather_number($lon));
+	return {} unless defined $la && defined $lo;
+	my $key = sprintf('%.2f_%.2f', $la, $lo);
+	unless ($opts->{'force'}) {
+		my $cached = eval { &cache_get({ app => 'weather', context => 'metar', subcontext => $key }) };
+		return $cached if ref $cached eq 'HASH' && ($cached->{'fetched_at'} || 0) > &rightNow() - 10 * 60 * 1000;
+	}
+	my $pad = 1;
+	my ($south, $north) = ($la - $pad, $la + $pad);
+	my ($west, $east) = ($lo - $pad, $lo + $pad);
+	$south = -90 if $south < -90;
+	$north = 90 if $north > 90;
+	$west = -180 if $west < -180;
+	$east = 180 if $east > 180;
+	my $url = 'https://aviationweather.gov/api/data/metar?bbox='
+		. join(',', map { sprintf('%.4f', $_) } ($south, $west, $north, $east))
+		. '&format=json&hours=2';
+	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 4, request_timeout => 6);
+	my ($json) = &weather_http_get($url, $ua);
+	my $max_km = defined $opts->{'max_km'} ? 0 + $opts->{'max_km'} : 60;
+	my $fresh = &rightNow() - 90 * 60 * 1000;
+	my %best;
+	if (ref $json eq 'ARRAY') {
+		foreach my $report (@{$json}) {
+			next unless ref $report eq 'HASH';
+			my $id = $report->{'icaoId'} // '';
+			next unless length $id;
+			my $seen = &weather_number($report->{'obsTime'});
+			next unless defined $seen;
+			$seen *= 1000;
+			next unless $seen >= $fresh;
+			my $lat2 = &weather_number($report->{'lat'});
+			my $lon2 = &weather_number($report->{'lon'});
+			next unless defined $lat2 && defined $lon2;
+			my $distance = &weather_distance_km($la, $lo, $lat2, $lon2);
+			next unless defined $distance && $distance <= $max_km;
+			my $candidate = {
+				id => $id,
+				name => $report->{'name'} // '',
+				lat => $lat2,
+				lon => $lon2,
+				distance_km => 0 + $distance,
+				at => $seen,
+				raw => $report->{'rawOb'} // '',
+				word => &weather_metar_word($report->{'rawOb'}),
+			};
+			$best{$id} = $candidate if !$best{$id} || $candidate->{'at'} > $best{$id}{'at'};
+		}
+	}
+	my ($nearest) = sort {
+		$a->{'distance_km'} <=> $b->{'distance_km'} || $b->{'at'} <=> $a->{'at'}
+	} values %best;
+	$nearest ||= { empty => 1, word => '' };
+	$nearest->{'fetched_at'} = &rightNow();
+	eval { &cache_set({ app => 'weather', context => 'metar', subcontext => $key, warranty => '-10m' }, $nearest) };
+	return $nearest;
+}
+
 # A rule states pressure in kPa (the unit Environment Canada sends); the US and
 # Open-Meteo send hPa. Keep one unit so a rule reads the same under every
 # provider.

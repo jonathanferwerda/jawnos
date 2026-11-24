@@ -180,6 +180,10 @@ sub weather_measure_values($weather) {
 	$v{'wind_direction'} = &subs::unformat_name($direction) if defined $direction && length $direction;
 	my $pressure = &subs::weather_pressure_kpa($cur->{'pressure'}, $cur->{'pressure_unit'});
 		$v{'pressure'} = $pressure if defined $pressure;
+		# The nearest airport's present weather, when one was attached to the
+		# fetch, is the strongest type signal; the condition word is the fallback.
+		my $metar = ref $weather eq 'HASH' && ref $weather->{'metar'} eq 'HASH' ? $weather->{'metar'} : {};
+		$v{'metar'} = $metar->{'word'} if length($metar->{'word'} // '');
 		my $state = &weather_precipitation_state(\%v);
 		$v{'precipitation'} = $state if defined $state;
 		return \%v;
@@ -213,6 +217,8 @@ sub weather_measure_values($weather) {
 	# the derived measure existed still has to be read the same way.
 	sub weather_precipitation_state($v) {
 		return undef unless ref $v eq 'HASH';
+		my $metar = $v->{'metar'} // '';
+		return $metar if $metar eq 'snow' || $metar eq 'rain';
 		my $word = &weather_precipitation_word($v->{'condition'});
 		return $word if length $word;
 		my $rate = $v->{'precip_rate'};
@@ -2048,6 +2054,10 @@ sub weather_observe_now($opts) {
 		$log->warn("weather observe: fetch for $lat,$lon failed: $why") if $log;
 		return { error => $why };
 	}
+	# The nearest airport's present weather is the best answer to "what is
+	# falling"; a failed lookup must not hold the observation.
+	my $metar = eval { &weather_metar_near($lat, $lon) } || {};
+	$weather->{'metar'} = $metar if ref $metar eq 'HASH' && scalar keys %{$metar};
 	my $result = &weather_observe_record($weather, $opts);
 	$result->{'lat'} = $lat;
 	$result->{'lon'} = $lon;

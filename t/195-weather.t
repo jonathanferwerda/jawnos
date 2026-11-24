@@ -726,6 +726,89 @@ is($metar_snow->{'precipitation'}, 'snow', 'a snow code needs no gauge');
 my $metar_rain = subs::weather_measure_values({ current => { condition => 'RA', temperature => -2 } });
 is($metar_rain->{'precipitation'}, 'rain', 'a rain code needs no gauge');
 
+# --- a nearby METAR names the present weather -------------------------------
+{
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 15SM -SN BKN038 M01/M01 A3005 RMK AO2'),
+		'snow', 'a METAR snow group is read');
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 2SM RA BR OVC008 01/01 A3005'),
+		'rain', 'rain with mist reads as rain');
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 15SM BKN038 01/M01 A3005 RMK AO2'),
+		'', 'a report with no weather group names nothing');
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 15SM VCSH BKN038 01/M01 A3005'),
+		'', 'showers in the vicinity are not at the station');
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 15SM -RASN BKN038 01/M01 A3005'),
+		'snow', 'a rain-and-snow group counts as snow');
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 2SM TSRA BKN038 01/M01 A3005'),
+		'rain', 'a thunderstorm with rain is rain');
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 2SM TS BKN038 01/M01 A3005'),
+		'', 'a thunderstorm with no precipitation is not rain');
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 2SM BLSN BKN038 M05/M08 A3005'),
+		'snow', 'blowing snow is snow');
+	is(subs::weather_metar_word('METAR CYKF 241200Z AUTO 30008KT 15SM BKN038 01/M01 A3005 RMK TSRA'),
+		'', 'the remarks are not read');
+
+	my $metar_snow_values = subs::weather_measure_values({ current => { condition => 'Cloudy', temperature => 3 }, metar => { word => 'snow' } });
+	is($metar_snow_values->{'precipitation'}, 'snow', 'the airport word beats a cloudy forecast');
+	my $metar_over_rain = subs::weather_measure_values({ current => { condition => 'Rain', temperature => 3 }, metar => { word => 'snow' } });
+	is($metar_over_rain->{'precipitation'}, 'snow', 'and beats the forecast rain');
+	my $metar_clear = subs::weather_measure_values({ current => { condition => 'Snow', temperature => 3 }, metar => { word => '' } });
+	is($metar_clear->{'precipitation'}, 'snow', 'a clear METAR leaves the forecast word alone');
+}
+
+# --- the nearest airport is found and cached --------------------------------
+{
+	my %cache;
+	my $calls = 0;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $cache{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $value) = @_;
+		$cache{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $value;
+		return 1;
+	};
+	local *subs::weather_http_get = sub {
+		$calls++;
+		return ([
+			{ icaoId => 'KNEAR', name => 'Near', lat => 43.0, lon => -81.9, obsTime => 1_799_999_000,
+			  rawOb => 'METAR KNEAR 240500Z AUTO 28007KT 9SM -SN BKN025 M01/M04 A3023 RMK AO2' },
+			{ icaoId => 'KNEAR', name => 'Near', lat => 43.0, lon => -81.9, obsTime => 1_799_998_000,
+			  rawOb => 'SPECI KNEAR 240440Z AUTO 28007KT 9SM RA BKN025 M01/M04 A3023' },
+			{ icaoId => 'KFAR', name => 'Far', lat => 44.5, lon => -81.9, obsTime => 1_799_999_500,
+			  rawOb => 'METAR KFAR 240500Z AUTO 28007KT 9SM RA BKN025 M01/M04 A3023' },
+		], undef);
+	};
+	my $metar = subs::weather_metar_near(43.0, -81.9);
+	is($metar->{'id'}, 'KNEAR', 'the nearest station is chosen');
+	is($metar->{'word'}, 'snow', 'and its newest report is read');
+	is($metar->{'distance_km'}, 0, 'the distance is kept');
+	like($metar->{'raw'}, qr/-SN/, 'the raw report is kept');
+	is($calls, 1, 'one request');
+	subs::weather_metar_near(43.0, -81.9);
+	is($calls, 1, 'the answer is cached for ten minutes');
+}
+
+# --- a stale or distant report is not used ----------------------------------
+{
+	no warnings 'redefine';
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	local *subs::cache_get = sub { return undef };
+	local *subs::cache_set = sub { return 1 };
+	local *subs::weather_http_get = sub {
+		return ([
+			{ icaoId => 'KOLD', name => 'Old', lat => 43.0, lon => -81.9, obsTime => 1_799_000_000,
+			  rawOb => 'METAR KOLD 232000Z 28007KT 9SM -SN BKN025 M01/M04 A3023' },
+			{ icaoId => 'KFAR', name => 'Far', lat => 44.5, lon => -81.9, obsTime => 1_799_999_000,
+			  rawOb => 'METAR KFAR 240500Z 28007KT 9SM RA BKN025 M01/M04 A3023' },
+		], undef);
+	};
+	my $metar = subs::weather_metar_near(43.0, -81.9);
+	ok(!defined $metar->{'id'}, 'an old or distant report leaves no station');
+}
+
 my $measure_defs = subs::weather_measure_definitions();
 is($measure_defs->{'precip_rate'}{'unit'}, 'mm/h', 'the rate is a measure in mm/h');
 is($measure_defs->{'precip_total'}{'unit'}, 'mm', 'the total is a measure in mm');

@@ -135,6 +135,11 @@ sub action_52321 {
 	$weather->{'source_at'} = $seen_at;
 	$weather->{'source_device'} = $device;
 	$weather->{'source_location'} = $location_key;
+	# A saved place gets the nearest airport's present weather too; the rule
+	# check below reads it before the forecast's condition word.
+	if (($location_key // '') =~ /^loc:/) {
+		$weather->{'metar'} = eval { &subs::weather_metar_near($use_lat, $use_lon) } || {};
+	}
 	# The pass keeps the home plate; looking at a place must not quietly save a
 	# new one. Away from every saved place the page offers "Check weather here",
 	# which records through /manager/weather/observe.
