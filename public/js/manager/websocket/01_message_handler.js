@@ -492,8 +492,9 @@ function wsMessageDispatch(raw) {
 				else if (data['control'] == 'volume_control') {
 					// the bar now follows the machine's mixer when one is exposed, so
 					// the remote control moves the same channel a person would
-					if (typeof musicVolumeSet == 'function') {
-						musicVolumeSet(parseFloat(data['value']) || 0);
+					var set_volume = (typeof musicVolumeSetLocal == 'function') ? musicVolumeSetLocal : musicVolumeSet;
+					if (typeof set_volume == 'function') {
+						set_volume(parseFloat(data['value']) || 0);
 					}
 					else {
 						master_volume = parseFloat(data['value']) || 0;

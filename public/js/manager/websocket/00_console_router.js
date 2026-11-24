@@ -67,10 +67,20 @@ var jawnosConsoleCommands = {
 		if (typeof musicSettingApply === 'function') { musicSettingApply(String(a[0]), a[1]); }
 	},
 	musicVolumeSet: function (a) {
-		if (typeof musicVolumeSet === 'function') {
-			musicVolumeSet(parseFloat(a[0]));
+		// a level aimed at this machine never forwards to a machine this window
+		// happens to be controlling
+		var set_level = (typeof musicVolumeSetLocal === 'function') ? musicVolumeSetLocal : musicVolumeSet;
+		if (typeof set_level === 'function') {
+			set_level(parseFloat(a[0]));
 			// the widget reads the level back from the player cache, and a paused
 			// player would not write it on its own
+			if (typeof playerCacheSaver === 'function') { playerCacheSaver(undefined, true); }
+		}
+	},
+	musicMuteSet: function (a) {
+		if (typeof musicMuteSet === 'function') {
+			musicMuteSet(parseFloat(a[0]) ? 1 : 0);
+			// the controller reads the mute back from the player cache
 			if (typeof playerCacheSaver === 'function') { playerCacheSaver(undefined, true); }
 		}
 	},

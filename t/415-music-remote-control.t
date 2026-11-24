@@ -23,6 +23,7 @@ my $music_tpl = read_file("$root/templates/apps/music/music.html.ep");
 my $remote_tpl = read_file("$root/templates/apps/music/remote.html.ep");
 my $video_tpl = read_file("$root/templates/apps/video/script.html.ep");
 my $music_css = read_file("$root/public/css/music.css");
+my $help = read_file("$root/perl/help/topics_apps.pl");
 my $manager_css = read_file("$root/public/css/manager.css");
 my $boot = read_file("$root/perl/Music.pl");
 
@@ -49,6 +50,29 @@ like($taskbar, qr/data-music-volume/, 'the widget has a remote volume slider');
 like($taskbar, qr/action: 'volume', value: level/, 'the slider rides the transport route');
 like($router, qr/playerCacheSaver\(undefined, true\)/, 'the peer writes the level back for the widget');
 like($music, qr/volume: musicVolumeLevel\(\)/, 'the player cache records the level the player is using');
+
+# --- the Music window's own bar is the controlled machine's -----------------
+like($music, qr/function musicVolumeSetLocal\(level\)/, 'the level that acts on this machine is its own function');
+like($music, qr/function musicVolumeSet\(level\) \{\s*\n\tlevel = musicVolumeClamp\(level\);\s*\n\tif \(musicRemoteTarget\(\)\) \{ musicRemoteLevelSend\(level\); return; \}/,
+	'the player bar forwards while the window shows a peer');
+like($music, qr/function musicRemoteLevelSend\(level\)/, 'the controlled machine gets the level');
+like($music, qr/musicRemoteSend\('volume', \{ value: level \}\)/, 'over the same volume action the widget uses');
+like($music, qr/function musicRemoteMuteSend\(on\)/, 'and gets the mute too');
+like($music, qr/musicRemoteSend\('mute', \{ value: on \? 1 : 0 \}\)/, 'as its own mute action');
+like($remote, qr/\$action eq 'mute'/, 'the transport can mute the controlled player');
+like($remote, qr/console_command\('musicMuteSet'/, 'the mute crosses as a named instruction');
+like($router, qr/musicMuteSet: function/, 'the browser router whitelists the mute');
+like($music, qr/function musicMuteSet\(on\)/, 'the peer applies it in its own player');
+like($router, qr/musicVolumeSetLocal/, 'a level aimed at this machine applies here, it never forwards');
+like($music, qr/function musicVolumeBase\(\)/, 'a wheel nudge starts from the bar that is shown');
+like($music, qr/music_remote_state\.volume/, 'the bar is painted from the controlled player');
+like($music, qr/music_remote_state\.muted/, 'and its mute is too');
+like($music, qr/if \(!musicRemoteTarget\(\)\) \{ \$\('#music_volume'\)\.val\(musicSystemLevel\); \}/,
+	'a local mixer read does not repaint a peer bar');
+like($music, qr/\$\('#music_volume'\)\.val\(musicVolumeLevel\(\)\);\s*\n\t\tupdateMusicMuteIcon\(\);\s*\n\t\treturn;/,
+	'leaving the peer puts this machine\'s own bar back');
+like($remote, qr/volume => \(defined \$volume \? \$volume \+ 0 : undef\)/, 'a peer that never saved a level answers null');
+like($help, qr/its volume and its mute/, 'the Music help says the bar is the controlled machine\'s');
 
 # --- only playback settings travel -----------------------------------------
 like($remote, qr/my %music_remote_setting = map \{ \$_ => 1 \} qw\(normalize video equalizer subtitles\);/,

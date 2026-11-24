@@ -2396,6 +2396,9 @@ function musicContentCache(html) {
 // the volume itself: muted when the user muted it or the machine's own output is
 // switched off in the configuration panel.
 function updateMusicMuteIcon() {
+	// A window that shows a peer's Music app wears that peer's mute state on the
+	// bar, not this machine's: the local player keeps the level it had.
+	if (musicRemoteTarget()) { musicRemoteLevelPaint(); return; }
 	var button = $('#music_mute');
 	if (!button.length) { return; }
 	var muted = (music_muted || mao['me'] == 'off');
@@ -2586,8 +2589,9 @@ function musicTransportStateLocal() {
 	};
 }
 
-var music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0 };
+var music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0 };
 var music_remote_poll_timer = 0;
+var music_remote_level_timer = 0;
 var music_remote_snapshot = null;
 function musicRemoteSnapshotSave() {
 	if (music_remote_snapshot) { return; }
@@ -2613,8 +2617,11 @@ function musicRemotePaint() {
 	if (!mode) {
 		clearInterval(music_remote_poll_timer);
 		music_remote_poll_timer = 0;
-		music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0 };
+		music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0 };
 		$('#music_remote_now').hide().text('');
+		// the bar goes back to this machine's own level and mute
+		$('#music_volume').val(musicVolumeLevel());
+		updateMusicMuteIcon();
 		return;
 	}
 	musicRemoteSnapshotSave();
@@ -2682,6 +2689,45 @@ function musicRemoteApplyState(r) {
 	$('#total_progress').text(clock(music_remote_state.duration));
 	$('#video_time_display').text(clock(music_remote_state.currentTime));
 	$('#video_full_title').text((r.title || ''));
+	if (typeof r.volume != 'undefined' && r.volume !== null) {
+		music_remote_state.volume = musicVolumeClamp(r.volume);
+	}
+	music_remote_state.muted = r.muted ? 1 : 0;
+	musicRemoteLevelPaint();
+}
+// The bar in a window that shows a peer is the peer's bar: its level and mute,
+// never this machine's. The poll repaints it, and a press paints it at once so
+// the thumb follows the finger while the command crosses.
+function musicRemoteLevelPaint() {
+	var slider = $('#music_volume');
+	var button = $('#music_mute');
+	var level = music_remote_state.volume;
+	// a slider under the person's finger must not be pulled back by a poll
+	if (slider.length && level != null && slider[0] !== document.activeElement) {
+		slider.val(musicVolumeClamp(level));
+	}
+	if (button.length) {
+		var muted = !!music_remote_state.muted;
+		button.attr('src', muted ? button.attr('mute_icon') : button.attr('speaker_icon'));
+		button.attr('muted', muted ? 'yes' : 'no');
+	}
+}
+// A drag is many events; one POST per settle keeps the peer's player from being
+// re-tuned on every pixel while still feeling immediate.
+function musicRemoteLevelSend(level) {
+	level = musicVolumeClamp(level);
+	music_remote_state.volume = level;
+	if (level > 0) { music_remote_state.muted = 0; }
+	musicRemoteLevelPaint();
+	clearTimeout(music_remote_level_timer);
+	music_remote_level_timer = setTimeout(function() {
+		musicRemoteSend('volume', { value: level });
+	}, 180);
+}
+function musicRemoteMuteSend(on) {
+	music_remote_state.muted = on ? 1 : 0;
+	musicRemoteLevelPaint();
+	musicRemoteSend('mute', { value: on ? 1 : 0 });
 }
 function musicRemoteSettingsLoad() {
 	var target = musicRemoteTarget();
@@ -5204,9 +5250,17 @@ function musicVolumeClamp(level) {
 function musicVolumeLevel() {
 	return musicSystemWired ? musicSystemLevel : master_volume;
 }
+// What a wheel nudge starts from: the bar's level, which is the controlled
+// machine's while the window shows its face.
+function musicVolumeBase() {
+	if (musicRemoteTarget() && music_remote_state.volume != null) { return musicVolumeClamp(music_remote_state.volume); }
+	return musicVolumeLevel();
+}
 function musicSystemVolumePaint(level, user) {
 	musicSystemLevel = musicVolumeClamp(level);
-	$('#music_volume').val(musicSystemLevel);
+	// the mixer read is still this machine's; while the window shows a peer the
+	// bar carries that peer's level, and its own poll paints it
+	if (!musicRemoteTarget()) { $('#music_volume').val(musicSystemLevel); }
 	if (user && musicSystemLevel > 0) { music_muted = false; }
 	updateMusicMuteIcon();
 	musicVolumeApply();
@@ -5226,8 +5280,16 @@ function musicSystemVolumeSend(level) {
 		});
 	}, 140);
 }
-// A person (or the remote media control) moved the bar.
+// A person (or the remote media control) moved the bar. In a window that is
+// showing a peer's Music app the bar is that peer's, so the level crosses and
+// this machine's player is left alone; musicVolumeSetLocal() is the one that
+// acts here, and the phone remote and a peer's console instruction use it too.
 function musicVolumeSet(level) {
+	level = musicVolumeClamp(level);
+	if (musicRemoteTarget()) { musicRemoteLevelSend(level); return; }
+	musicVolumeSetLocal(level);
+}
+function musicVolumeSetLocal(level) {
 	level = musicVolumeClamp(level);
 	musicSystemTouchedAt = Date.now();
 	if (musicSystemWired) {
@@ -5238,6 +5300,13 @@ function musicVolumeSet(level) {
 	master_volume = level;
 	if (master_volume > 0) { music_muted = false; }
 	$('#music_volume').val(master_volume);
+	musicVolumeApply();
+	updateMusicMuteIcon();
+}
+// Mute is a switch of its own, not a level of zero: the level is kept for the
+// next play.
+function musicMuteSet(on) {
+	music_muted = !!on;
 	musicVolumeApply();
 	updateMusicMuteIcon();
 }
@@ -5362,7 +5431,10 @@ $(document).on('wheel', '#music_volume', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
 	var scale = musicWheelFine(e) ? 0.35 : 1;
-	musicVolumeSet(musicVolumeLevel() + amount * 0.04 * scale);
+	// a nudge starts from the bar's own level, which is a peer's while the
+	// window shows that peer
+	var base = musicVolumeBase();
+	musicVolumeSet(base + amount * 0.04 * scale);
 });
 $(document).on('wheel', '.music_seek', function(e) {
 	var amount = musicWheelAmount(e, true);
@@ -5417,9 +5489,8 @@ $(document).on('change', '#music_stream_codec', function() {
 	musicStreamRestart();
 });
 $(document).on('click', '#music_mute', function() {
-	music_muted = !music_muted;
-	musicVolumeApply();
-	updateMusicMuteIcon();
+	if (musicRemoteTarget()) { musicRemoteMuteSend(!music_remote_state.muted); return; }
+	musicMuteSet(!music_muted);
 });
 
 $(document).on('click', '.music_artist', function(e) {

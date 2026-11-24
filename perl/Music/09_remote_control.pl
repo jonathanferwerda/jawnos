@@ -73,6 +73,10 @@ sub music_transport_state {
 	$title = &subs::format_name($title) if length $title;
 	my $duration = $player->{'duration'};
 	$duration = 0 unless defined $duration && $duration =~ /^\d+(?:\.\d+)?$/;
+	# A level the peer never wrote is not a level: null lets a controller show
+	# its own bar until the peer's player has saved one.
+	my $volume = $player->{'volume'};
+	$volume = undef unless defined $volume && $volume =~ /^-?\d+(?:\.\d+)?$/;
 	return {
 		ok => 1,
 		playing => ($player->{'state'} ? 1 : 0),
@@ -81,7 +85,7 @@ sub music_transport_state {
 		title => $title,
 		currentTime => ($player->{'currentTime'} || 0),
 		duration => ($duration + 0),
-		volume => ($player->{'volume'} || 0),
+		volume => (defined $volume ? $volume + 0 : undef),
 		muted => ($player->{'muted'} ? 1 : 0)
 	};
 }
@@ -91,7 +95,7 @@ sub music_transport_state {
 sub music_transport_local($action, $opts = {}) {
 	$action = '' unless defined $action;
 	$action = lc $action;
-	return 0 unless $action =~ /^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files|volume)$/;
+	return 0 unless $action =~ /^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files|volume|mute)$/;
 	if ($action eq 'play_files') {
 		my $files = $opts->{'files'};
 		return 0 unless ref $files eq 'ARRAY' && scalar @{$files};
@@ -113,6 +117,14 @@ sub music_transport_local($action, $opts = {}) {
 		$level = 0 if $level < 0;
 		$level = 1 if $level > 1;
 		&Websocket::send('server', { console => &Websocket::console_command('musicVolumeSet', $level + 0) });
+		return 1;
+	}
+	# Mute keeps the level for the next play, so it is a switch of its own, not a
+	# volume of zero. Only 0 or 1 crosses.
+	if ($action eq 'mute') {
+		my $on = $opts->{'value'};
+		return 0 unless defined $on && $on =~ /^(?:0|1)$/;
+		&Websocket::send('server', { console => &Websocket::console_command('musicMuteSet', $on + 0) });
 		return 1;
 	}
 	my @args = ($action);
