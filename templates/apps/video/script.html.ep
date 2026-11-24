@@ -763,8 +763,21 @@
 				var x = e.originalEvent.offsetX;
 				var h = $('#<%= $miss %>_position_preview').height();
 				var w = $('#<%= $miss %>_position_preview').width();
-				var wl = numeral($(this).closest('.wind').css('left')).value();
-				var wr = ($(window).width() - numeral($(this).closest('.wind').css('right')).value());
+				// The preview is fixed to the viewport, so a fullscreen player fills
+				// the space the pointer is in. The window's frame is still behind it
+				// at its old size, and clamping to that box parked the thumb over
+				// the window's own seek bar instead of the fullscreen one.
+				var fullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+				var wl, wr;
+				if (fullscreen && fullscreen.contains(this)) {
+					var full = fullscreen.getBoundingClientRect();
+					wl = full.left;
+					wr = full.right;
+				}
+				else {
+					wl = numeral($(this).closest('.wind').css('left')).value();
+					wr = ($(window).width() - numeral($(this).closest('.wind').css('right')).value());
+				}
 				var m = mouse_position();
 				var left = (m['x'] - (w / 2));
 				if ((m['x'] + (w / 2)) > wr) {
