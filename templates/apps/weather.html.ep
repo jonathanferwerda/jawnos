@@ -18,7 +18,7 @@
 				<option value="loc:<%= $home_loc->{'uuid'} %>" data-lat="<%= $home_loc->{'lat'} %>" data-lon="<%= $home_loc->{'lon'} %>" data-anchor="<%= $home_loc->{'anchor'} ? 1 : 0 %>" data-home="1" title="<%= &subs::ui('The house\'s home plate, read every hour') %>"><%= length $home_label ? $home_label . ' — ' : '' %><%= &subs::ui('Home, always checked') %></option>
 			<% } %>
 			<% if (!$has_me) { %>
-				<option value="me" data-lat="" data-lon="" <% if ($default eq 'me') { %>selected<% } %>><%= &subs::ui('This device') %></option>
+				<option value="me" data-lat="" data-lon="" <% if (!$home_loc && $default eq 'me') { %>selected<% } %>><%= &subs::ui('This device') %></option>
 			<% } %>
 			<% foreach my $g ( @{$places} ) { %>
 				<% my $value = $g->{'me'} ? 'me' : $g->{'signatorial'}; %>

@@ -55,7 +55,7 @@ def setting(app, key, value, device="computer", subsetting=""):
     cur.execute(
         "insert into settings (setting,value,timestamp,app,server_time,device,subsetting,uuid,ost) "
         "values (?,?,?,?,?,?,?,?,?)",
-        (key, str(value), now, app, now, device, subsetting, uid(32), now),
+        (key, json.dumps(value) if isinstance(value, (dict, list)) else str(value), now, app, now, device, subsetting, uid(32), now),
     )
 
 
@@ -558,6 +558,79 @@ for name, price, cost, unit, desc in store_items:
          str(now - 10 * DAY), str(now), uid(24), "", cost, desc, "0", "0", str(now),
          "Mara Ellison", "on", "1", unit, "store"),
     )
+
+
+# ---------------------------------------------------------------- demo shelves
+# The Store is made of apps: a category is an app with pos=category, and an item
+# is an app with a category setting plus a model row for its price. The gallery
+# needs a few shelves that actually hold something, so the Store shot is the
+# store, not an empty room.
+shelf_categories = {
+    "prints": ("#c5f1f1", "#93c4c4"),
+    "objects": ("#b48ead", "#8f6f8a"),
+    "services": ("#a3be8c", "#7d966b"),
+}
+for slug, (colour, dark) in shelf_categories.items():
+    setting(slug, "pos", "category")
+    setting(slug, "public", "on")
+    setting(slug, "uuid", uid(27))
+    setting(slug, "colour", colour)
+    setting(slug, "dark_colour", dark)
+    setting(slug, "movement", "income")
+    setting(slug, "warranty", "-10d")
+
+shelf_items = [
+    ("archival_print_small", "145.00", "48.00", "product", "prints", "editions",
+     "Edition of 25, cotton rag, signed."),
+    ("archival_print_large", "320.00", "96.00", "product", "prints", "editions",
+     "Edition of 10, 60 x 80 cm, signed."),
+    ("hand_bound_sketchbook", "65.00", "22.00", "product", "objects", "bindings",
+     "Linen cover, 120 pages, made in the studio."),
+    ("studio_consultation", "180.00", "0.00", "service", "services", "sessions",
+     "Two hours on a project, portfolio or wall."),
+    ("studio_printing", "95.00", "18.00", "service", "services", "sessions",
+     "Archival printing on the house's own paper."),
+]
+for app_name, price, cost, kind, category, subcategory, desc in shelf_items:
+    setting(app_name, "category", category)
+    setting(app_name, "pos", kind)
+    setting(app_name, "public", "on")
+    setting(app_name, "subcategory", subcategory)
+    setting(app_name, "currency", "CAD")
+    setting(app_name, "description", desc)
+    setting(app_name, "uuid", uid(27))
+    setting(app_name, "warranty", "-10d")
+    cur.execute(
+        "insert or replace into model (app,name,price,characteristics,timestamp,server_time,uuid,"
+        "files,cost,description,discount,markup,ost,manufacturer,def,quantity,unit,save_app) "
+        "values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (app_name, "standard", price, json.dumps({"edition": "25"}),
+         str(now - 10 * DAY), str(now), uid(24), "", cost, desc, "0", "0",
+         str(now), "Mara Ellison", "on", "1", "ea" if kind == "product" else "hour", "store"),
+    )
+
+# ---------------------------------------------------------------- demo shopping
+# Market reads one JSON shopping list; the list itself is the app's own row.
+market_list = [
+    {"text": "Coffee - filter roast", "kind": "need", "vendor": "Cedar & Co.", "list": "groceries", "uuid": uid(24)},
+    {"text": "Olive oil", "kind": "want", "vendor": "Cedar & Co.", "list": "groceries", "uuid": uid(24)},
+    {"text": "Packing tape", "kind": "need", "vendor": "Cedar & Co.", "list": "groceries", "uuid": uid(24)},
+    {"text": "Archival paper - cold press", "kind": "need", "vendor": "Cedar & Co.", "list": "groceries", "uuid": uid(24)},
+    {"text": "Milk", "kind": "want", "vendor": "Cedar & Co.", "list": "groceries", "uuid": uid(24)},
+]
+setting("market", "market_lists", json.dumps({"groceries": {"name": "Groceries", "vendors": {"Cedar & Co.": 1}}}))
+setting("market", "shopping_list", json.dumps(market_list))
+
+# ---------------------------------------------------------------- demo weather place
+# A saved home place means Weather opens on a real reading instead of asking for
+# a GPS fix the demo machine does not have.
+weather_place = uid(24)
+setting("home", "home_plate", {"latitude": 42.9745, "longitude": -82.4049, "label": "Sarnia", "legend": "Home"})
+setting("weather", "locations", json.dumps([{
+    "lat": 42.9745, "lon": -82.4049, "name": "Sarnia", "uuid": weather_place,
+}]))
+setting("weather", "home_place", weather_place)
+setting("weather", "home_label", "Sarnia")
 
 db.commit()
 counts = {t: cur.execute(f"select count(*) from {t}").fetchone()[0]

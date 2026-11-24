@@ -71,6 +71,60 @@
       "title": "Clock",
       "description": "Alarms, wake ramps and a wind-down, each with its own switch.",
       "alt": "The JawnOS Clock on Android, with three alarms, each with its own switch."
+    },
+    {
+      "id": "weather",
+      "app": "weather",
+      "file": "weather",
+      "slug": "android-weather",
+      "title": "Weather",
+      "description": "The forecast for the pocket: now, the next hours and the week.",
+      "alt": "The JawnOS Weather app on Android showing current conditions, hourly cards and a five-day forecast."
+    },
+    {
+      "id": "store",
+      "app": "store",
+      "file": "store",
+      "slug": "android-store",
+      "title": "Store",
+      "description": "The shelves and the current sale, sized for a thumb.",
+      "alt": "The JawnOS Store on Android showing product cards, a current sale and a review button."
+    },
+    {
+      "id": "market",
+      "app": "market",
+      "file": "market",
+      "slug": "android-market",
+      "title": "Market",
+      "description": "Point the phone at a receipt; Market reads it and matches the lines.",
+      "alt": "The JawnOS Market on Android scanning a receipt, with a scan frame and matched line items."
+    },
+    {
+      "id": "marker",
+      "app": "marker",
+      "file": "marker",
+      "slug": "android-marker",
+      "title": "Marker",
+      "description": "The same drawing surface and the same landscape, on the phone.",
+      "alt": "The JawnOS Marker on Android showing the landscape drawing with the logo as the sun, plus brush and layer controls."
+    },
+    {
+      "id": "calculator",
+      "app": "calculator",
+      "file": "calculator",
+      "slug": "android-calculator",
+      "title": "Calculator",
+      "description": "A full keypad and the last result, with history one tap away.",
+      "alt": "The JawnOS Calculator on Android with a full keypad and the last result."
+    },
+    {
+      "id": "keyboard",
+      "app": "keyboard",
+      "file": "keyboard",
+      "slug": "android-keyboard",
+      "title": "Soft keyboard",
+      "description": "The house's keyboard, with suggestions and the conversation above it.",
+      "alt": "The JawnOS soft keyboard on Android beneath a message being composed."
     }
   ]
 }

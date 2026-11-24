@@ -19,11 +19,11 @@ TABLE_SSH=${TABLE_SSH:-8022}
 ADB=/home/jawn/android-sdk/platform-tools/adb
 OUT=${OUT:-$ROOT/.shots/android-scenes}
 SITE=${SITE:-$ROOT/../jawnos-website}
-DEVICE_HOME=/data/data/com.termux/files/home
 # The capture host's app package. Relative components below (".app.X") follow
 # this, so one value covers a device on the JawnOS app (com.jawnos) and the old
-# fork (com.termux).
-APP_PACKAGE=${APP_PACKAGE:-com.termux}
+# Termux fork (com.termux).
+APP_PACKAGE=${APP_PACKAGE:-com.jawnos}
+DEVICE_HOME=/data/data/${APP_PACKAGE}/files/home
 
 DO_SEED=0
 DO_PUSH=0
@@ -62,7 +62,7 @@ adb() {
 
 emu() {
   ssh -o BatchMode=yes -p "$TABLE_SSH" "$TABLE" \
-    "export PATH=\$HOME/android-sdk/platform-tools:\$PATH; $ADB shell 'run-as com.termux sh -s'"
+    "export PATH=\$HOME/android-sdk/platform-tools:\$PATH; $ADB shell 'run-as $APP_PACKAGE sh -s'"
 }
 
 say() { printf '%s\n' "$*"; }
@@ -104,8 +104,8 @@ if [ "$DO_PUSH" = 1 ]; then
   adb shell input tap 630 1167 >/dev/null 2>&1 || true
   sleep 4
   emu <<'REMOTE'
-export HOME=/data/data/com.termux/files/home
-export PREFIX=/data/data/com.termux/files/usr
+export HOME=/data/data/com.jawnos/files/home
+export PREFIX=/data/data/com.jawnos/files/usr
 export PATH=$PREFIX/bin:/system/bin
 cd "$HOME/jawnos" || exit 1
 cp -f /data/local/tmp/phone-demo.db database/jawnos.db
@@ -113,8 +113,8 @@ chmod 600 database/jawnos.db
 rm -f database/jawnos.db-wal database/jawnos.db-shm
 REMOTE
   emu <<'REMOTE'
-export HOME=/data/data/com.termux/files/home
-export PREFIX=/data/data/com.termux/files/usr
+export HOME=/data/data/com.jawnos/files/home
+export PREFIX=/data/data/com.jawnos/files/usr
 export PATH=$PREFIX/bin:/system/bin
 cd "$HOME/jawnos" || exit 1
 perl -MJSON::PP -0777 -i -pe 'my $d = decode_json($_); $d->{live} = JSON::PP::true; $_ = encode_json($d)' config.json 2>/dev/null || true
@@ -124,8 +124,8 @@ REMOTE
   i=0
   while [ $i -lt 60 ]; do
     if emu <<'REMOTE' 2>/dev/null | grep -q 'manager=200'
-export HOME=/data/data/com.termux/files/home
-export PREFIX=/data/data/com.termux/files/usr
+export HOME=/data/data/com.jawnos/files/home
+export PREFIX=/data/data/com.jawnos/files/usr
 export PATH=$PREFIX/bin:/system/bin
 code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 2 https://127.0.0.1:45545/manager 2>/dev/null || true)
 echo "manager=$code"

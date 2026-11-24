@@ -3,6 +3,73 @@
 One command captures the JawnOS UI from the demo VM on the table and rebuilds
 the `#screenshots` wall on jawnos.ca.
 
+## Hosts (current)
+
+The table used to be the capture host — the QEMU demo guest for the desktop and
+the x86_64 emulator for the phone. As of 2026-11-23 the table no longer carries
+`~/android-sdk`, the `jawnos` AVD or the prepared `/etc/jawnos-demo-image`, so
+the working hosts are:
+
+**Seed.** Both hosts start from the same throwaway demo database, built on
+`jawnos-dev` from a pristine schema + settings file:
+
+```sh
+python3 scripts/gallery/seed/demo_seed.py --seed .shots/seed.db --out .shots/demo.db
+```
+
+Copy it to the desktop guest, stop jawn, keep a backup of
+`database/jawnos.db`, put the demo file in its place, start jawn, then run the
+extra and gallery seeds **in the guest**:
+
+```sh
+python3 scripts/gallery/seed/demo_extra_seed.py ~/jawnos/database/jawnos.db
+python3 scripts/gallery/seed/gallery_seed.py     ~/jawnos/database/jawnos.db
+```
+
+Never point this at a house database.
+
+**Desktop** — VM 103 (`jawn-image`, `10.20.0.40`) on ks5, reachable only
+through `jawnos-dev`. One persistent master opens the manager tunnel:
+
+```sh
+ssh jawnos-dev 'ssh -M -S /tmp/vm103.sock -N -f \
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  -i ~/.ssh/id_ed25519_github -p 22 \
+  -L 14650:127.0.0.1:45545 jawn@10.20.0.40'
+```
+
+`capture.mjs` then runs on `jawnos-dev` against a headless Chromium on
+`CDP_PORT` with a **fresh** profile (`https://127.0.0.1:14650/manager`):
+
+```sh
+ssh jawnos-dev 'SCENES=/tmp/scenes.json CDP_PORT=9236 \
+  JAWNOS_URL=https://127.0.0.1:14650/manager OUT=.shots/scenes-live \
+  /home/jawn/.local/opt/node/bin/node ~/jawnos/scripts/gallery/capture.mjs'
+```
+
+`node` from `~/.local/opt/node` is required: the system node 20 has no
+`WebSocket`. Publish with `publish.py --shots .shots/scenes-live --site <site>`
+and the **full** manifest, because publish drops every WebP it did not
+generate.
+
+**Phone** — the x86_64 emulator on `jawnos-dev` (AVD `jawn`, 1080x2400). The
+installed package is **`com.jawnos`**, home
+`/data/data/com.jawnos/files/home`; `android.sh` defaults to both. Seed, shoot
+and publish:
+
+```sh
+export TABLE=jawnos-dev TABLE_SSH=8022 APP_PACKAGE=com.jawnos
+scripts/gallery/android.sh --seed --push
+scripts/gallery/android.sh --shoot --publish
+```
+
+Note that `--push` swaps the phone database through the admin panel and sets
+`"live": true` in the app's `config.json`; it is for the emulator's throwaway
+tree only.
+
+The rest of this file describes the original table pipeline and is still the
+reference for `run.sh` if the table is reprovisioned.
+
 ```sh
 scripts/gallery/run.sh --boot --sync --all --deploy-both   # from a cold table
 scripts/gallery/run.sh --all --sync            # update the guest, reseed, capture, publish
@@ -103,13 +170,13 @@ manager log in the guest (`~/manager.log`).
 ## Android screenshots
 
 The Android app (`~/jawnos-app/termux-app`) runs the same tree on a phone. The
-capture host is the table's x86_64 emulator:
+capture host is the x86_64 emulator on the dev box:
 
 ```
-table.jonathanferwerda.com (SSH 8022)
+jawnos-dev (100.64.0.4, SSH 8022)
   ~/android-sdk                    SDK + emulator
-  ~/.android/avd/jawnos.avd        AVD (android-36, x86_64, 1080x2400)
-    com.termux (jawnos-x86.apk)    the app; tree at files/home/jawnos
+  ~/.android/avd/jawn.avd          AVD (android-36, x86_64, 1080x2400)
+    com.jawnos (jawnos-x86.apk)    the app; tree at files/home/jawnos
 ```
 
 Start it headless with
@@ -128,9 +195,8 @@ then install `Mojo::IOLoop::ReadWriteFork`.
 Seed the phone-side demo database:
 
 ```sh
-scripts/gallery/seed/media.sh --stage-only
-python3 scripts/gallery/seed/phone_seed.py \
-  --home /data/data/com.termux/files/home
+TABLE=jawnos-dev TABLE_SSH=8022 APP_PACKAGE=com.jawnos \
+  scripts/gallery/android.sh --seed --push
 ```
 
 `phone_seed.py` runs the extra and gallery seeds, gives each album an app-named
@@ -138,7 +204,7 @@ copy (`Pictures/plein_air`, etc.) with its `.thumbs`, and points every row at
 the phone's own home. Push `Pictures`, `Music` and `Documents` from
 `.shots/demo_media` plus `.shots/phone-demo.db` into the app tree. The emulator's
 app cannot read `/sdcard`; exchange files through `/data/local/tmp`, which
-`run-as com.termux` can read. Copy the database over
+`run-as $APP_PACKAGE` can read. Copy the database over
 `database/jawnos.db` while jawn is stopped, and set `"live": true` in
 `config.json` so the app's own loopback opens the manager without a ticket (the
 demo database's vault canary does not match this emulator's key). Restart from
@@ -149,7 +215,7 @@ Capture: `--es app <name>` opens the manager and then the app's own window. Use
 instance:
 
 ```sh
-adb shell am start -n com.termux/com.termux.app.JawnAppActivity \
+adb shell am start -n com.jawnos/com.jawnos.app.JawnAppActivity \
   --activity-clear-task --es app gallery
 adb shell screencap -p /sdcard/android-gallery.png
 ```

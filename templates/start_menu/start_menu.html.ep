@@ -158,7 +158,7 @@
 				<br>
 				<img class="medium_thumb jonathan" id="store_toggle" category="business" hint="Store" src="<%= &subs::icon_for($gb::known_appts->{'resident'}->{'icon'}) %>">
 				<img class="jonathan measures_toggle" category="accessories" src="<%= &subs::icon_for('/images/decipherable/measures.png') %>" hint="Measures">
-				<img class="jonathan market_toggle" category="business" src="<%= &subs::icon_for('/icons/pos/vendor.png') %>" hint="Market">
+				<img id="market_toggle" class="jonathan market_toggle" category="business" src="<%= &subs::icon_for('/icons/pos/vendor.png') %>" hint="Market">
 				<img class="jonathan warehouse_toggle" category="business" src="<%= &subs::icon_for('/icons/pos/manufacturer.png') %>" hint="Warehouse">
 					<img class="jonathan process_monitor_toggle" category="system" src="<%= &subs::icon_for($gb::known_appts->{'process_monitor'}->{'icon'}) %>" hint="Process Monitor">
 				<div class="nfc_read_status" style="width:100%;"></div>

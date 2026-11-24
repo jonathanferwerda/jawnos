@@ -243,6 +243,94 @@
         "description": "Five decks on one table: tarot, solitaire, spider, mahjong and blackjack.",
         "alt": "The JawnOS Cards app showing a five-layer mahjong turtle of ivory tiles, with the timer, tiles left and moves above the board."
       }
+    },
+    {
+      "id": "30-weather",
+      "kind": "app",
+      "app": "weather",
+      "settle": 2500,
+      "after": "(function(){var $w=$('.wind[app=\"weather\"]').last();$w.find('#weather_lat').val('42.9745');$w.find('#weather_lon').val('-82.4049');$w.find('#weather_source').val('Sarnia, Ontario');weatherLoad(true);return 'ok';})()",
+      "after_settle": 9000,
+      "site": {
+        "include": true,
+        "slug": "weather",
+        "crop": "window",
+        "title": "Weather",
+        "description": "Current conditions for the house's saved place, with the space weather above it.",
+        "alt": "The JawnOS Weather app showing current conditions in Sarnia and the space weather above it."
+      }
+    },
+    {
+      "id": "31-store",
+      "kind": "app",
+      "app": "store",
+      "settle": 3000,
+      "site": {
+        "include": true,
+        "slug": "store",
+        "crop": "window",
+        "title": "Store",
+        "description": "The shelves: categories, priced items and the register a tap away.",
+        "alt": "The JawnOS Store showing category shelves and two priced archival prints."
+      }
+    },
+    {
+      "id": "32-market",
+      "kind": "app",
+      "app": "market",
+      "settle": 3000,
+      "site": {
+        "include": true,
+        "slug": "market",
+        "crop": "window",
+        "title": "Market",
+        "description": "The shopping list: needs, wants and the cart, with the shop's own list and vendor.",
+        "alt": "The JawnOS Market with a shopping list of needs and wants, each row with a cart and a vendor."
+      }
+    },
+    {
+      "id": "33-marker",
+      "kind": "app",
+      "app": "marker",
+      "settle": 3000,
+      "site": {
+        "include": true,
+        "slug": "marker",
+        "crop": "window",
+        "title": "Marker",
+        "description": "A drawing surface with layers, brushes, shapes and a page waiting for a drawing.",
+        "alt": "The JawnOS Marker with its drawing tools, layers and a blank page."
+      }
+    },
+    {
+      "id": "34-calculator",
+      "kind": "layout",
+      "prep": { "layout": "timeline", "scope": "day", "sorts": "timestamp", "bg": "off", "theme": "nord" },
+      "after": "(function(){$('.wind').remove();$('#taskbar_windows').empty();if(typeof softKbDockOpen==='function'){softKbDockOpen('calc');return 'ok';}return 'ERR: no soft keyboard';})()",
+      "after_settle": 1500,
+      "site": {
+        "include": true,
+        "slug": "calculator",
+        "crop": "full",
+        "title": "Calculator",
+        "description": "The calculator in the soft keyboard: a full pad and the running result, kept beside the books.",
+        "alt": "The JawnOS Calculator in the soft keyboard, with a full keypad and the running result."
+      }
+    },
+    {
+      "id": "35-keyboard",
+      "kind": "layout",
+      "prep": { "layout": "timeline", "scope": "day", "sorts": "timestamp", "bg": "off", "theme": "nord" },
+      "after": "(function(){$('.wind').remove();$('#taskbar_windows').empty();if(typeof softKbDockOpen==='function'){softKbDockOpen('letters');return 'ok';}return 'ERR: no soft keyboard';})()",
+      "after_settle": 1500,
+      "site": {
+        "include": true,
+        "slug": "keyboard",
+        "crop": "full",
+        "title": "Soft keyboard",
+        "description": "One on-screen keyboard for the desktop and the phone, docked over the house's own desktop.",
+        "alt": "The JawnOS soft keyboard docked over the desktop, with a full QWERTY layout."
+      }
     }
   ]
 }
