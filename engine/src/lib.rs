@@ -55,7 +55,7 @@ pub use effect::{
 };
 pub use graph::{mix_mono_into_stereo, peak, GraphError, Strip};
 pub use loopback::LoopbackReport;
-pub use mixer::{Mixer, ParamName, ParamQueue, Track, MASTER_ORDER};
+pub use mixer::{send_order, Mixer, ParamName, ParamQueue, Track, MASTER_ORDER};
 pub use monbus::{Consumer, MonitorBus, Producer};
 pub use playback::{
     monitor_json, monitor_start, ClickSpec, MonitorSpec, PlayTrack, Playback, TransportClip,

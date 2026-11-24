@@ -1199,6 +1199,41 @@ impl Channel {
         self.chain.prepare(rate, max_frames);
     }
 
+    /// Run the trim and the insert chain over one mono block, in place, and
+    /// stop before the pan. This is the tap a channel send takes: the
+    /// destination's strip receives what the source's pedals made, and the
+    /// destination's own pan places it, exactly as the page's send leaves a
+    /// channel before its `playPan`. Longer than the prepared block is an
+    /// error, never a reallocation.
+    pub fn process_mono(&mut self, block: &mut [f32]) -> Result<(), GraphError> {
+        let max_frames = self.scratch.len();
+        if block.len() > max_frames {
+            return Err(GraphError::BlockTooLong {
+                max_frames,
+                found: block.len(),
+            });
+        }
+        let gain = self.strip.gain.get();
+        for sample in block.iter_mut() {
+            *sample *= gain;
+        }
+        self.chain.process(block)
+    }
+
+    /// Place one prepared mono block with the channel's equal-power pan.
+    /// `stereo` is overwritten and must be twice the block's length.
+    pub fn pan_into(&self, mono: &[f32], stereo: &mut [f32]) -> Result<(), GraphError> {
+        if stereo.len() != mono.len() * 2 {
+            return Err(GraphError::BadBlock {
+                expected: mono.len() * 2,
+                found: stereo.len(),
+            });
+        }
+        let (left, right) = pan_coefficients(self.strip.pan.get());
+        stereo.fill(0.0);
+        mix_mono_into_stereo_with_gains(stereo, mono, left, right)
+    }
+
     /// `input` is one mono block; `stereo` must be twice as long and is
     /// overwritten. Longer than the prepared block is an error, never a
     /// reallocation.
@@ -1215,19 +1250,17 @@ impl Channel {
                 found: input.len(),
             });
         }
-        let scratch = &mut self.scratch[..input.len()];
-        scratch.copy_from_slice(input);
+        self.scratch[..input.len()].copy_from_slice(input);
+        let frames = input.len();
         let gain = self.strip.gain.get();
-        for sample in scratch.iter_mut() {
+        for sample in self.scratch[..frames].iter_mut() {
             *sample *= gain;
         }
         self.chain
-            .process(scratch)
+            .process(&mut self.scratch[..frames])
             .expect("a prepared channel block is never too long");
         // Gain was applied before the inserts; the output only needs the pan.
-        let (left, right) = pan_coefficients(self.strip.pan.get());
-        stereo.fill(0.0);
-        mix_mono_into_stereo_with_gains(stereo, scratch, left, right)
+        self.pan_into(&self.scratch[..frames], stereo)
     }
 
     pub fn reset(&mut self) {
@@ -1842,5 +1875,35 @@ mod tests {
         assert_eq!(InsertKind::parse("stereowidener"), None);
         assert_eq!(InsertKind::parse("master_stereowidener"), None);
         assert_eq!(InsertKind::parse("banana"), None);
+    }
+
+    #[test]
+    fn a_channel_taps_after_the_inserts_and_before_the_pan() {
+        let mut channel = Channel::new(0.5, 1.0);
+        channel.prepare(RATE, 4);
+        let mut mono = [0.5f32, -0.5, 0.25, 0.0];
+        channel.process_mono(&mut mono).expect("mono tap");
+        // Trim is applied; the pan has not been.
+        assert_eq!(mono, [0.25, -0.25, 0.125, 0.0]);
+        let mut stereo = [9.0f32; 8];
+        channel.pan_into(&mono, &mut stereo).expect("pan");
+        // Hard right: the prepared block lands in the right speaker only.
+        for frame in 0..4 {
+            assert!(stereo[frame * 2].abs() < 1e-6);
+            assert!((stereo[frame * 2 + 1] - mono[frame]).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn a_mono_tap_refuses_a_block_longer_than_prepared() {
+        let mut channel = Channel::new(1.0, 0.0);
+        channel.prepare(RATE, 2);
+        assert_eq!(
+            channel.process_mono(&mut [0.0f32; 3]),
+            Err(GraphError::BlockTooLong {
+                max_frames: 2,
+                found: 3,
+            })
+        );
     }
 }

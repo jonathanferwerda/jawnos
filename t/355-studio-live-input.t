@@ -313,6 +313,32 @@ sub run_take {
 	]));
 	is($error, 'tracks_json track 2 names input 0 twice',
 		'a repeated input keeps the duplicate sentence');
+
+	# A channel send: the destination names the source track instead of a
+	# device input, and keeps its own insert chain.
+	($error, $plan) = Manager::studio_take_json_plan(encode_json([
+		{ input => 0, inserts => ['tone'] },
+		{ from => 0, inserts => ['delay'] },
+	]));
+	is($error, undef, 'a track fed by another track is accepted');
+	is_deeply($plan, [
+		{ input => 0, inserts => ['tone'] },
+		{ from => 0, inserts => ['delay'] },
+	], 'and the send reaches the engine instead of an input');
+
+	for my $case (
+		[ 'its own output', [ { from => 0 } ], qr/cannot take its own output/ ],
+		[ 'a missing track', [ { input => 0 }, { from => 4 } ], qr/outside the take's 2 tracks/ ],
+		[ 'an input too', [ { input => 1 }, { from => 0, input => 1 } ], qr/cannot also name "input"/ ],
+		[ 'channels too', [ { input => 1 }, { from => 0, channels => 2 } ], qr/cannot also name "channels"/ ],
+		[ 'one source twice', [ { input => 0 }, { from => 0 }, { from => 0 } ], qr/one destination/ ],
+		[ 'a loop', [ { from => 1 }, { from => 0 } ], qr/channel send loop/ ],
+	) {
+		my ($why, $entries, $error_match) = @$case;
+		my ($refused) = Manager::studio_take_json_plan(encode_json($entries));
+		ok(defined $refused, "a send with $why is refused");
+		like($refused, $error_match, "and the sentence names $why");
+	}
 }
 
 # --- the start route validates and forwards the monitor ----------------------

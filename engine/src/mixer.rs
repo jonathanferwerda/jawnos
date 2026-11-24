@@ -407,13 +407,19 @@ impl MasterSlot {
 
 /// One input and the strip that records it.
 pub struct Track {
-    /// The device input index this track records, 0-based.
+    /// The device input index this track records, 0-based. It is read only
+    /// when the track has no send; a track fed by another track ignores it.
     pub input: usize,
     /// How many device channels this track claims: `1` mono, `2` stereo. A
     /// stereo pair is averaged at `0.5` each *before* the mono strip.
     pub channels: usize,
     /// The name a take report and a file name use, e.g. `ch1`.
     pub label: String,
+    /// Another track whose post-insert, pre-pan block feeds this track's strip.
+    /// `None` reads the device input named by [`input`](Track::input); a send
+    /// replaces that input, exactly as a Studio channel send releases the
+    /// destination's own plug.
+    pub from: Option<usize>,
     /// Trim -> inserts in order -> equal-power pan.
     pub channel: Channel,
 }
@@ -425,6 +431,10 @@ pub struct Track {
 /// label and the first entry in `inputs`.
 pub struct Mixer {
     tracks: Vec<Track>,
+    /// The send evaluation order: a track that is fed by another always runs
+    /// after it. All tracks are present, so a take's files and monitor sum keep
+    /// one order whether or not a send exists.
+    order: Vec<usize>,
     /// One stereo block shared by [`Mixer::mix`], sized by `prepare`.
     scratch: Vec<f32>,
     /// The master rack, applied to the summed stereo bus after every channel.
@@ -446,23 +456,62 @@ impl Mixer {
     /// builds the strips (a `Box<dyn Effect>` need not be `Send`), but the
     /// socket has to be able to push to them before that thread exists.
     pub fn with_queue(inputs: &[usize], labels: &[&str], params: Arc<ParamQueue>) -> Self {
-        let tracks = labels
+        let tracks: Vec<Track> = labels
             .iter()
             .enumerate()
             .map(|(index, label)| Track {
                 input: inputs.get(index).copied().unwrap_or(index),
                 channels: 1,
                 label: (*label).to_string(),
+                from: None,
                 channel: Channel::new(1.0, 0.0),
             })
             .collect();
+        let order = (0..tracks.len()).collect();
         Mixer {
             tracks,
+            order,
             scratch: Vec::new(),
             master: Vec::new(),
             master_scratch: Vec::new(),
             params,
         }
+    }
+
+    /// Arm the channel sends: `sends[i]` is the upstream track whose
+    /// post-insert, pre-pan block feeds track `i`, or `None` for a track that
+    /// reads its device input. The shape is one edge per destination and one
+    /// destination per source, a function rather than a fan-out, which is what
+    /// Studio's two jacks write. A self edge, a repeated source, an out-of-range
+    /// index or a loop is refused here rather than left for the block to
+    /// discover.
+    pub fn set_sends(&mut self, sends: &[Option<usize>]) -> Result<(), String> {
+        let order = send_order(sends)?;
+        if sends.len() != self.tracks.len() {
+            return Err(format!(
+                "the send plan names {} track(s), the mixer has {}",
+                sends.len(),
+                self.tracks.len()
+            ));
+        }
+        for (track, from) in self.tracks.iter_mut().zip(sends) {
+            track.from = *from;
+        }
+        self.order = order;
+        Ok(())
+    }
+
+    /// The send evaluation order, upstream before downstream. Without sends it
+    /// is `0..tracks`.
+    pub fn order(&self) -> &[usize] {
+        &self.order
+    }
+
+    /// Whether track `index` feeds another track. Its output is still written
+    /// to its own file, but it is heard through the destination rather than
+    /// summed into the monitor twice.
+    pub fn has_outgoing(&self, index: usize) -> bool {
+        self.tracks.iter().any(|track| track.from == Some(index))
     }
 
     /// Add one insert to the end of the master chain. Call it before
@@ -632,6 +681,93 @@ impl Mixer {
             .map_err(|error| format!("track {index}: {error:?}"))
     }
 
+    /// Run track `index`'s trim and inserts over one mono block, in place,
+    /// without the pan. This is the block a channel send hands to its
+    /// destination; [`pan_into`](Mixer::pan_into) places it once the
+    /// destination's strip has run.
+    pub fn process_mono(&mut self, index: usize, mono: &mut [f32]) -> Result<(), String> {
+        self.apply_pending();
+        let count = self.tracks.len();
+        let track = self
+            .tracks
+            .get_mut(index)
+            .ok_or_else(|| format!("no track {index} (the mixer has {count})"))?;
+        track
+            .channel
+            .process_mono(mono)
+            .map_err(|error| format!("track {index}: {error:?}"))
+    }
+
+    /// Place one prepared mono block with track `index`'s pan.
+    pub fn pan_into(&self, index: usize, mono: &[f32], stereo: &mut [f32]) -> Result<(), String> {
+        let count = self.tracks.len();
+        let track = self
+            .tracks
+            .get(index)
+            .ok_or_else(|| format!("no track {index} (the mixer has {count})"))?;
+        track
+            .channel
+            .pan_into(mono, stereo)
+            .map_err(|error| format!("track {index}: {error:?}"))
+    }
+
+    /// Run one block through every track in send order, writing each track's
+    /// panned stereo output. `raw` fills the mono block for a track with no
+    /// send; a track with a send takes the upstream track's post-insert block
+    /// instead, so a send is placed before the destination's pan and its own
+    /// file. `mono` and `stereo` are indexed by track and sized by the caller
+    /// for at least `frames` (and `frames * 2`). Allocation stays outside the
+    /// block loop, as everywhere else on the audio path.
+    pub fn process_tracks<F>(
+        &mut self,
+        frames: usize,
+        mut raw: F,
+        mono: &mut [Vec<f32>],
+        stereo: &mut [Vec<f32>],
+    ) -> Result<(), String>
+    where
+        F: FnMut(usize, &mut [f32]) -> Result<(), String>,
+    {
+        let count = self.tracks.len();
+        if mono.len() < count || stereo.len() < count {
+            return Err(format!(
+                "the track graph needs {count} mono and stereo blocks, found {} and {}",
+                mono.len(),
+                stereo.len()
+            ));
+        }
+        // A device-fed track is read once, before any strip runs. A sent track
+        // is not read from the device at all: its input is the send.
+        for index in 0..count {
+            let width = stereo[index].len() / 2;
+            if mono[index].len() < frames || width < frames {
+                return Err(format!(
+                    "track {index} has {} mono and {} stereo frames, the block has {frames}",
+                    mono[index].len(),
+                    width
+                ));
+            }
+            if self.tracks[index].from.is_none() {
+                raw(index, &mut mono[index][..frames])?;
+            }
+        }
+        for step in 0..count {
+            let index = self.order[step];
+            if let Some(from) = self.tracks[index].from {
+                copy_mono(&mut mono[..count], from, index, frames);
+            }
+            self.tracks[index]
+                .channel
+                .process_mono(&mut mono[index][..frames])
+                .map_err(|error| format!("track {index}: {error:?}"))?;
+            self.tracks[index]
+                .channel
+                .pan_into(&mono[index][..frames], &mut stereo[index][..frames * 2])
+                .map_err(|error| format!("track {index}: {error:?}"))?;
+        }
+        Ok(())
+    }
+
     /// Sum every track's panned output into one stereo bus (monitoring).
     ///
     /// `bus` is overwritten with the sum and must hold whole stereo frames;
@@ -758,6 +894,87 @@ impl Mixer {
         }
         Ok(())
     }
+}
+
+/// Copy a processed upstream block into a downstream track's input. The two
+/// entries are distinct, so the split borrows are the whole reason this is not
+/// one indexing expression.
+fn copy_mono(mono: &mut [Vec<f32>], from: usize, to: usize, frames: usize) {
+    if from == to {
+        return;
+    }
+    if from < to {
+        let (before, after) = mono.split_at_mut(to);
+        after[0][..frames].copy_from_slice(&before[from][..frames]);
+    } else {
+        let (before, after) = mono.split_at_mut(from);
+        before[to][..frames].copy_from_slice(&after[0][..frames]);
+    }
+}
+
+/// Validate a channel-send plan and return the order its tracks must run in.
+/// `sends[i]` names the upstream track for track `i`, or `None` for a device
+/// input. One destination per source, a source that exists and an acyclic graph
+/// are the three rules; the error names the tracks by their 1-based labels, the
+/// way a take report does.
+pub fn send_order(sends: &[Option<usize>]) -> Result<Vec<usize>, String> {
+    let count = sends.len();
+    let mut destination: Vec<Option<usize>> = vec![None; count];
+    for (index, from) in sends.iter().enumerate() {
+        let Some(from) = *from else { continue };
+        if from >= count {
+            return Err(format!(
+                "track {} is fed by track {}, but the take has only {count} track(s)",
+                index + 1,
+                from + 1
+            ));
+        }
+        if from == index {
+            return Err(format!(
+                "track {} cannot take its own output as its input",
+                index + 1
+            ));
+        }
+        if let Some(other) = destination[from] {
+            return Err(format!(
+                "track {} feeds track {} and track {}; a channel send has one destination",
+                from + 1,
+                other + 1,
+                index + 1
+            ));
+        }
+        destination[from] = Some(index);
+    }
+
+    let mut order = Vec::with_capacity(count);
+    let mut placed = vec![false; count];
+    while order.len() < count {
+        let mut progressed = false;
+        for index in 0..count {
+            if placed[index] {
+                continue;
+            }
+            match sends[index] {
+                Some(from) if !placed[from] => continue,
+                _ => {
+                    order.push(index);
+                    placed[index] = true;
+                    progressed = true;
+                }
+            }
+        }
+        if !progressed {
+            let pending: Vec<String> = (0..count)
+                .filter(|index| !placed[*index])
+                .map(|index| (index + 1).to_string())
+                .collect();
+            return Err(format!(
+                "tracks {} form a channel send loop",
+                pending.join(", ")
+            ));
+        }
+    }
+    Ok(order)
 }
 
 #[cfg(test)]
@@ -1062,5 +1279,99 @@ mod tests {
             bus.iter().all(|sample| sample.abs() <= ceiling + 2e-2),
             "the master chain did not see the live input: {bus:?}"
         );
+    }
+
+    #[test]
+    fn a_send_order_puts_the_source_before_its_destination() {
+        assert_eq!(send_order(&[None, None, None]).expect("no sends"), vec![0, 1, 2]);
+        let order = send_order(&[None, Some(0), Some(1)]).expect("a chain");
+        assert_eq!(order, vec![0, 1, 2]);
+        // A destination declared before its source still runs after it: the
+        // order is the graph's, not the plan's array order.
+        let order = send_order(&[Some(2), None, None]).expect("a back reference");
+        assert_eq!(order, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn a_send_plan_refuses_a_self_edge_a_loop_a_repeat_and_a_missing_track() {
+        assert!(send_order(&[Some(0)]).expect_err("self").contains("own output"));
+        assert!(send_order(&[Some(1), Some(0)]).expect_err("loop").contains("loop"));
+        assert!(
+            send_order(&[None, Some(0), Some(0)])
+                .expect_err("two destinations")
+                .contains("one destination")
+        );
+        assert!(
+            send_order(&[None, Some(4)])
+                .expect_err("out of range")
+                .contains("only 2 track")
+        );
+    }
+
+    #[test]
+    fn a_send_hands_the_source_block_to_the_destination_before_its_pan() {
+        let mut mixer = Mixer::new(&[0, 1], &["ch1", "ch2"]);
+        // The source is quiet and hard left; the destination is loud and hard
+        // right. The send is the source's pre-pan block, so the source's pan
+        // must not decide where the destination hears it.
+        mixer.tracks_mut()[0].channel = Channel::new(0.5, -1.0);
+        mixer.tracks_mut()[1].channel = Channel::new(2.0, 1.0);
+        mixer.set_sends(&[None, Some(0)]).expect("send");
+        mixer.prepare(48_000, 4);
+
+        let mut mono = vec![vec![0.0f32; 4]; 2];
+        let mut stereo = vec![vec![0.0f32; 8]; 2];
+        let mut read = Vec::new();
+        mixer
+            .process_tracks(
+                4,
+                |track, out| {
+                    read.push(track);
+                    out.fill(0.25);
+                    Ok(())
+                },
+                &mut mono,
+                &mut stereo,
+            )
+            .expect("a sent block");
+
+        assert_eq!(read, vec![0], "only the source reads the device");
+        assert!(mixer.has_outgoing(0), "the source is heard through the destination");
+        assert!(!mixer.has_outgoing(1), "the destination is a terminal track");
+        // Source: 0.25 * 0.5 = 0.125, hard left on its own file.
+        assert!((stereo[0][0] - 0.125).abs() < 1e-6);
+        assert!(stereo[0][1].abs() < 1e-6);
+        // Destination: the same 0.125 through gain 2 and hard right.
+        assert!(stereo[1][0].abs() < 1e-6);
+        assert!((stereo[1][1] - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_chain_runs_every_strip_once_in_order() {
+        let mut mixer = Mixer::new(&[0, 1, 2], &["a", "b", "c"]);
+        mixer.set_sends(&[None, Some(0), Some(1)]).expect("chain");
+        mixer.prepare(48_000, 2);
+        let mut mono = vec![vec![0.0f32; 2]; 3];
+        let mut stereo = vec![vec![0.0f32; 4]; 3];
+        mixer
+            .process_tracks(
+                2,
+                |_, out| {
+                    out.fill(1.0);
+                    Ok(())
+                },
+                &mut mono,
+                &mut stereo,
+            )
+            .expect("a chain");
+        for track in 0..3 {
+            assert_eq!(mono[track], vec![1.0, 1.0], "track {track} was processed once");
+        }
+    }
+
+    #[test]
+    fn a_send_plan_must_match_the_mixer() {
+        let mut mixer = Mixer::new(&[0], &["ch1"]);
+        assert!(mixer.set_sends(&[None, Some(0)]).is_err());
     }
 }

@@ -223,6 +223,12 @@ unlike($plan, qr/outInserts/, 'and never the output chain');
 like($plan, qr/if \(studioEffectKind\(ins\.name\) === 'stereowidener'\) \{ return; \}/,
 	'an enabled Stereo Widener is left out of the engine track plan');
 like($plan, qr/inserts\.push\(studioEffectKind\(ins\.name\)\);/, 'every other insert still reaches the take');
+like($plan, qr/var from = studioEngineTrackSend\(index \+ 1\);/, 'the take plan asks whether the channel has a send');
+like($plan, qr/entry\.from = from;/, 'a send travels as `from` instead of an interface input');
+unlike($plan, qr/outInserts/, 'the Out chain is still browser playback only');
+like($js, qr/function studioEngineTrackSend\(ch\)/, 'the plan reads the destination input jack');
+like($js, qr/studioPlugInfo\(ch, 'input'\)/, 'through the same saved plug the two jacks share');
+like($js, qr/return source - 1;/, 'the engine track is the 0-based channel number');
 my $master = body($js, 'studioEngineMasterList');
 like($master, qr/return record && record\['on'\]\n\t\t\t&& studioEffectKind\(record\['name'\]\) !== 'stereowidener';/,
 	'and the master list drops the browser-only Stereo Widener, named directly or as master_stereowidener');

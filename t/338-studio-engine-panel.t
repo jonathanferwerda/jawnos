@@ -432,8 +432,8 @@ like($studio_js, qr/studioAudioLabel\('Input'\)/, 'the Input picker options are 
 like($studio_js, qr/studioAudioLabel\('Mono'\)/, 'the Source picker offers Mono');
 like($studio_js, qr/studioAudioLabel\('Stereo'\)/, 'and Stereo');
 like($studio_js, qr/data\.device_channels/, 'the input list follows the engine\'s capture width');
-like($studio_js, qr/channels: \(index < sources\.length/,
-	'the track plan sends each track\'s channels');
+like($studio_js, qr/entry\.channels = \(index < sources\.length/,
+	'the track plan sends each device-fed track\'s channels');
 like($studio_js, qr/monitor_input:/, 'starting a take sends monitor_input');
 like($studio_js, qr/monitor_gain:/, 'and monitor_gain');
 like($studio_js, qr/function studioEngineMonitorGain\(/,

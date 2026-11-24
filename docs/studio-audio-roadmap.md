@@ -822,6 +822,16 @@ model — a device whose clock runs slightly fast or slow over a long take is st
 device that starts late by a different amount each time is not predicted. With no measurement the
 take reports `align_from: "none"` and shifts nothing rather than guessing.
 
+**Channel sends in a take (2026-11-23, in the tree):** the page's channel send is now a take-plan
+edge, not only a browser graph. A track may carry `from` (the 0-based track it takes as its input)
+instead of `input`/`channels`; the engine compiles the tracks into a send order, runs each upstream
+strip once, and copies its **post-insert, pre-pan** block into the destination's strip, so Channel 2's
+input is Channel 1's output. The source still writes its own file and is heard through the
+destination, not twice. A self edge, a track outside the take, a source feeding two destinations and
+a loop are refused by name at the route and again in the engine. This is the take-time chain (trim
+plus the In pedals); the browser's Out chain stays playback-only. `t/350`, `t/355` and the mixer's
+unit tests pin the edge, the cycle guard and the pre-pan tap.
+
 ### P3 — Peers on one clock (2 weeks)
 
 Engine-to-engine over UDP: `table` as master, one peer, one shared transport. Offset and drift

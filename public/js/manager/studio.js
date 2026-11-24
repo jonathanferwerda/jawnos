@@ -1025,6 +1025,11 @@ function studioEngineRow(index) {
 // from the plan this page armed.
 function studioEngineTrackSummary(track, index) {
 	var armed = (studioEnginePlanArmed && studioEnginePlanArmed[index]) ? studioEnginePlanArmed[index] : null;
+	// A channel send has no device input: the engine reports the upstream
+	// track instead, so the row names what feeds it rather than an empty input.
+	if (typeof track.from === 'number') {
+		return studioAudioLabel('from') + ' ' + (track.from + 1);
+	}
 	var input = (typeof track.input === 'number') ? track.input : (armed ? armed.input : null);
 	if (typeof input !== 'number' || isNaN(input)) { return ''; }
 	var channels = (armed && armed.channels === 2) ? 2 : 1;
@@ -1177,13 +1182,36 @@ function studioEngineTrackPlan() {
 				inserts.push(studioEffectKind(ins.name));
 			});
 		}
-		plan.push({
-			input: (index < inputs.length ? inputs[index] : index),
-			channels: (index < sources.length ? sources[index] : 1),
-			inserts: inserts
-		});
+		var from = studioEngineTrackSend(index + 1);
+		var entry = { inserts: inserts };
+		if (from !== null) {
+			// A channel send replaces the destination's interface input: the
+			// source track's post-pedal block becomes this track's input, and
+			// the engine places it in send order. `input`/`channels` would be a
+			// second, contradictory answer, so they are left out.
+			entry.from = from;
+		}
+		else {
+			entry.input = (index < inputs.length ? inputs[index] : index);
+			entry.channels = (index < sources.length ? sources[index] : 1);
+		}
+		plan.push(entry);
 	}
 	return plan;
+}
+
+// The take's track number is the Studio channel number (channel 1 is track 0).
+// A saved channel send on the destination's input jack names its source on the
+// same edge, so the take plan can carry `from` instead of an interface input.
+// A send that points outside the take's track count is left for the route to
+// refuse by name rather than silently recording a different input.
+function studioEngineTrackSend(ch) {
+	if (typeof studioPlugInfo !== 'function') { return null; }
+	var plug = studioPlugInfo(ch, 'input');
+	if (!plug || plug['type'] !== 'channel' || plug['sid'] === undefined || plug['sid'] === '') { return null; }
+	var source = parseInt(plug['sid'], 10);
+	if (!(source >= 1) || source === ch) { return null; }
+	return source - 1;
 }
 
 // The enabled master effects the page has now; the engine builds them in the

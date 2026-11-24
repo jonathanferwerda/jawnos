@@ -3041,6 +3041,11 @@ impl Server {
         // one: a source can split into more than one chain through the same
         // input. The per-track bound is the only device bound.
         for (index, plan) in plans.iter().enumerate() {
+            // A sent track takes the upstream track's block, not a device
+            // channel, so the capture width is not its question.
+            if plan.from.is_some() {
+                continue;
+            }
             let claimed = plan.input + plan.channels;
             if claimed > self.config.channels {
                 // A stereo track claims both channels, so the refusal names the
@@ -3224,6 +3229,7 @@ impl Server {
             .map(|(path, plan)| TrackStatus {
                 path: path.clone(),
                 input: plan.input,
+                from: plan.from,
                 frames: 0,
                 dropped: 0,
                 gain: plan.gain,
@@ -4389,6 +4395,10 @@ struct TrackPlan {
     /// -1 left ..= 1 right.
     pan: f32,
     inserts: Vec<InsertKind>,
+    /// Another track whose post-insert, pre-pan block feeds this track. When
+    /// present the track reads no device input: the send replaces its plug, as
+    /// a Studio channel send releases the destination's input.
+    from: Option<usize>,
 }
 
 impl TrackPlan {
@@ -4401,6 +4411,7 @@ impl TrackPlan {
             gain: 1.0,
             pan: 0.0,
             inserts: Vec::new(),
+            from: None,
         }
     }
 
@@ -5003,12 +5014,46 @@ fn track_plans(values: &[Value]) -> Result<Vec<TrackPlan>, String> {
         };
         plans.push(track_plan(index, fields)?);
     }
+    // A send is an edge between two tracks. Range, self, a repeated source and
+    // a loop are refused before any device opens or file exists.
+    let sends: Vec<Option<usize>> = plans.iter().map(|plan| plan.from).collect();
+    jawn_audio::send_order(&sends)?;
     Ok(plans)
 }
 
 /// One object from the `tracks` plan. A missing field takes the CLI's default;
 /// gain and pan are clamped exactly as the CLI clamps them.
 fn track_plan(index: usize, fields: &Object) -> Result<TrackPlan, String> {
+    let from = match get(fields, "from") {
+        None | Some(Value::Null) => None,
+        Some(Value::Num(value))
+            if value.is_finite()
+                && *value >= 0.0
+                && *value <= MAX_TRACKS as f64
+                && value.fract() == 0.0 =>
+        {
+            Some(*value as usize)
+        }
+        _ => {
+            return Err(format!(
+                "track {} \"from\" must be a whole, non-negative track number",
+                index + 1
+            ))
+        }
+    };
+    // A send replaces the device input: the source's post-pedal block is this
+    // track's input. Carrying both would leave two answers to one question, so
+    // a plan that gives `from` and an input is refused rather than guessed.
+    if from.is_some() {
+        for key in ["input", "channels"] {
+            if matches!(get(fields, key), Some(value) if !matches!(value, Value::Null)) {
+                return Err(format!(
+                    "track {} takes its input from another track, so it cannot also name \"{key}\"",
+                    index + 1
+                ));
+            }
+        }
+    }
     let input = match get(fields, "input") {
         None | Some(Value::Null) => index,
         Some(Value::Num(value))
@@ -5091,6 +5136,7 @@ fn track_plan(index: usize, fields: &Object) -> Result<TrackPlan, String> {
         gain,
         pan,
         inserts,
+        from,
     })
 }
 
@@ -5098,6 +5144,8 @@ fn track_plan(index: usize, fields: &Object) -> Result<TrackPlan, String> {
 struct TrackStatus {
     path: String,
     input: usize,
+    /// The upstream track when this track takes a channel send, else `None`.
+    from: Option<usize>,
     frames: u64,
     dropped: u64,
     /// The strip's trim, mirrored from the last `param` this socket accepted.
@@ -5135,7 +5183,9 @@ struct Status {
 
 /// The `tracks` array for a take. A one-track take keeps its historical line
 /// and omits the array; a two-track take carries both files so a caller can
-/// find the second one without guessing the naming scheme.
+/// find the second one without guessing the naming scheme. A track fed by a
+/// channel send reports `from` instead of `input`, because it reads no device
+/// channel at all.
 fn tracks_json(tracks: &[TrackStatus]) -> String {
     if tracks.len() <= 1 {
         return String::new();
@@ -5143,10 +5193,14 @@ fn tracks_json(tracks: &[TrackStatus]) -> String {
     let entries: Vec<String> = tracks
         .iter()
         .map(|track| {
+            let source = match track.from {
+                Some(from) => format!("\"from\":{from}"),
+                None => format!("\"input\":{}", track.input),
+            };
             format!(
-                "{{\"path\":\"{}\",\"input\":{},\"frames\":{},\"dropped\":{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\"}}",
+                "{{\"path\":\"{}\",{},\"frames\":{},\"dropped\":{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\"}}",
                 jawn_audio::loopback::json_escape(&track.path),
-                track.input,
+                source,
                 track.frames,
                 track.dropped,
                 track.gain,
@@ -6744,27 +6798,34 @@ fn run_take(
         track.channels = plan.channels;
         track.channel = channel;
     }
-    let outcome = match config.backend {
-        BackendKind::Null => capture_null(
-            &config,
-            seconds,
-            &mut disks,
-            &mut mixer,
-            &status,
-            &stop,
-            live.as_ref(),
-            &armed,
-        ),
-        BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => capture_hardware(
-            &config,
-            seconds,
-            &mut disks,
-            &mut mixer,
-            &status,
-            &stop,
-            live.as_ref(),
-            &armed,
-        ),
+    // The send graph was validated when the plan was read. Repeating it here is
+    // the same defence the patchbay uses: a hand-built plan cannot reach the
+    // block with a loop or an out-of-range edge.
+    let sends: Vec<Option<usize>> = plans.iter().map(|plan| plan.from).collect();
+    let outcome = match mixer.set_sends(&sends) {
+        Err(error) => Err(error),
+        Ok(()) => match config.backend {
+            BackendKind::Null => capture_null(
+                &config,
+                seconds,
+                &mut disks,
+                &mut mixer,
+                &status,
+                &stop,
+                live.as_ref(),
+                &armed,
+            ),
+            BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => capture_hardware(
+                &config,
+                seconds,
+                &mut disks,
+                &mut mixer,
+                &status,
+                &stop,
+                live.as_ref(),
+                &armed,
+            ),
+        },
     };
     // A stop is the caller's choice, not a failure: the take ends where it was
     // asked to, with a finished header.
@@ -6968,12 +7029,24 @@ fn capture_null(
     mixer.prepare(config.rate, config.period);
     let total = take_frames(seconds, config.rate);
     let mut source = vec![0.0f32; config.period * config.channels];
-    let mut mono = vec![0.0f32; config.period];
-    let mut stereo = vec![0.0f32; config.period * TAKE_CHANNELS];
+    // One mono and one stereo block per track: a send hands the upstream mono
+    // block to the downstream strip, so the two cannot share one buffer.
+    let mut mono: Vec<Vec<f32>> = (0..track_count).map(|_| vec![0.0f32; config.period]).collect();
+    let mut stereo: Vec<Vec<f32>> = (0..track_count)
+        .map(|_| vec![0.0f32; config.period * TAKE_CHANNELS])
+        .collect();
     let mut pcm = vec![0i16; config.period * TAKE_CHANNELS];
-    // The monitoring bus is the sum of every track's processed stereo output,
-    // pushed once per block so the monitor hears the whole take, not one stem.
+    // The monitoring bus is the sum of every terminal track's processed stereo
+    // output, pushed once per block so the monitor hears the whole take, not
+    // one stem. A track that feeds another is heard through it, never twice.
     let mut live_block = vec![0.0f32; config.period * TAKE_CHANNELS];
+    // The device shape each track reads. A sent track reads no channel, so its
+    // entry is unused; the closure below only runs for a track with no send.
+    let track_inputs: Vec<(usize, usize)> = mixer
+        .tracks()
+        .iter()
+        .map(|track| (track.input, track.channels))
+        .collect();
     let mut remaining = total;
     let mut pushed = 0u64;
     while remaining > 0 {
@@ -6988,35 +7061,39 @@ fn capture_null(
         if live.is_some() {
             live_block[..samples].fill(0.0);
         }
-        for track in 0..track_count {
-            let input = mixer.tracks()[track].input;
-            let track_channels = mixer.tracks()[track].channels;
-            if input + track_channels > config.channels {
-                return Err(channel_error(
-                    track + 1,
+        mixer.process_tracks(
+            frames,
+            |track, out| {
+                let (input, track_channels) = track_inputs[track];
+                if input + track_channels > config.channels {
+                    return Err(channel_error(
+                        track + 1,
+                        input,
+                        track_channels,
+                        config.channels,
+                        "the device has",
+                    ));
+                }
+                read_mono_f32(
+                    &source,
+                    frames,
+                    config.channels,
                     input,
                     track_channels,
-                    config.channels,
-                    "the device has",
-                ));
-            }
-            read_mono_f32(
-                &source,
-                frames,
-                config.channels,
-                input,
-                track_channels,
-                &mut mono[..frames],
-            );
-            mixer
-                .process(track, &mono[..frames], &mut stereo[..samples])
-                .map_err(|error| format!("track {track}: {error}"))?;
-            if live.is_some() {
-                for (out, sample) in live_block[..samples].iter_mut().zip(&stereo[..samples]) {
+                    out,
+                );
+                Ok(())
+            },
+            &mut mono,
+            &mut stereo,
+        )?;
+        for track in 0..track_count {
+            if live.is_some() && !mixer.has_outgoing(track) {
+                for (out, sample) in live_block[..samples].iter_mut().zip(&stereo[track][..samples]) {
                     *out += sample;
                 }
             }
-            for (out, sample) in pcm[..samples].iter_mut().zip(&stereo[..samples]) {
+            for (out, sample) in pcm[..samples].iter_mut().zip(&stereo[track][..samples]) {
                 *out = to_i16(*sample);
             }
             disks[track].push(&pcm[..samples]);
@@ -7051,8 +7128,9 @@ struct ServeSink<'a> {
     pushed: u64,
     /// Device channels per frame, learned in `prepared`.
     channels: usize,
-    mono: Vec<f32>,
-    stereo: Vec<f32>,
+    mono: Vec<Vec<f32>>,
+    stereo: Vec<Vec<f32>>,
+    track_inputs: Vec<(usize, usize)>,
     live_block: Vec<f32>,
     pcm: Vec<i16>,
 }
@@ -7065,7 +7143,7 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
             .mixer
             .tracks()
             .iter()
-            .position(|track| track.input + track.channels > channels)
+            .position(|track| track.from.is_none() && track.input + track.channels > channels)
         {
             let track = &self.mixer.tracks()[index];
             return Err(channel_error(
@@ -7077,8 +7155,17 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
             ));
         }
         self.mixer.prepare(rate, period);
-        self.mono = vec![0.0; period];
-        self.stereo = vec![0.0; period * TAKE_CHANNELS];
+        let count = self.mixer.tracks().len();
+        self.mono = (0..count).map(|_| vec![0.0; period]).collect();
+        self.stereo = (0..count)
+            .map(|_| vec![0.0; period * TAKE_CHANNELS])
+            .collect();
+        self.track_inputs = self
+            .mixer
+            .tracks()
+            .iter()
+            .map(|track| (track.input, track.channels))
+            .collect();
         self.live_block = vec![0.0; period * TAKE_CHANNELS];
         self.pcm = vec![0i16; period * TAKE_CHANNELS];
         Ok(())
@@ -7091,7 +7178,6 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
             return Err("stopped".to_string());
         }
         let channels = self.channels;
-        let frames = (block.len() / channels).min(self.mono.len());
         let track_count = self.mixer.tracks().len();
         if self.disks.len() != track_count {
             return Err(format!(
@@ -7099,42 +7185,42 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
                 self.disks.len()
             ));
         }
+        let frames = (block.len() / channels).min(
+            self.mono.first().map(|block| block.len()).unwrap_or(0),
+        );
         let samples = frames * TAKE_CHANNELS;
         if self.live.is_some() {
             self.live_block[..samples].fill(0.0);
         }
+        self.mixer.process_tracks(
+            frames,
+            |track, out| {
+                let (input, track_channels) = self.track_inputs[track];
+                if input + track_channels > channels {
+                    return Err(channel_error(
+                        track + 1,
+                        input,
+                        track_channels,
+                        channels,
+                        "the device has",
+                    ));
+                }
+                read_mono_i16(block, frames, channels, input, track_channels, out);
+                Ok(())
+            },
+            &mut self.mono,
+            &mut self.stereo,
+        )?;
         for track in 0..track_count {
-            let input = self.mixer.tracks()[track].input;
-            let track_channels = self.mixer.tracks()[track].channels;
-            if input + track_channels > channels {
-                return Err(channel_error(
-                    track + 1,
-                    input,
-                    track_channels,
-                    channels,
-                    "the device has",
-                ));
-            }
-            read_mono_i16(
-                block,
-                frames,
-                channels,
-                input,
-                track_channels,
-                &mut self.mono[..frames],
-            );
-            self.mixer
-                .process(track, &self.mono[..frames], &mut self.stereo[..samples])
-                .map_err(|error| format!("track {track}: {error}"))?;
-            if self.live.is_some() {
+            if self.live.is_some() && !self.mixer.has_outgoing(track) {
                 for (out, sample) in self.live_block[..samples]
                     .iter_mut()
-                    .zip(&self.stereo[..samples])
+                    .zip(&self.stereo[track][..samples])
                 {
                     *out += sample;
                 }
             }
-            for (out, sample) in self.pcm[..samples].iter_mut().zip(&self.stereo[..samples]) {
+            for (out, sample) in self.pcm[..samples].iter_mut().zip(&self.stereo[track][..samples]) {
                 *out = to_i16(*sample);
             }
             self.disks[track].push(&self.pcm[..samples]);
@@ -7175,6 +7261,7 @@ fn capture_hardware(
         channels: config.channels,
         mono: Vec::new(),
         stereo: Vec::new(),
+        track_inputs: Vec::new(),
         live_block: Vec::new(),
         pcm: Vec::new(),
     };
@@ -7815,6 +7902,7 @@ break"}"#).is_err());
             tracks: vec![TrackStatus {
                 path: "/tmp/take.wav".to_string(),
                 input: 0,
+                from: None,
                 frames: 0,
                 dropped: 0,
                 gain: 1.0,
@@ -7968,6 +8056,54 @@ break"}"#).is_err());
         assert_eq!(plans[0].inserts, vec![InsertKind::Tone, InsertKind::Delay]);
         assert_eq!(plans[1].input, 1);
         assert_eq!(plans[1].inserts, vec![InsertKind::Flanger, InsertKind::Amp]);
+    }
+
+    #[test]
+    fn a_take_plan_may_feed_a_track_from_another() {
+        let object = parse_object(
+            r#"{"tracks":[{"input":0,"inserts":["tone"]},{"from":0,"inserts":["delay"]}]}"#,
+        )
+        .expect("parse");
+        let values = match get(&object, "tracks") {
+            Some(Value::Arr(values)) => values,
+            other => panic!("tracks is not an array: {other:?}"),
+        };
+        let plans = track_plans(values).expect("a send plan");
+        assert_eq!(plans[0].from, None);
+        assert_eq!(plans[0].input, 0);
+        assert_eq!(plans[1].from, Some(0));
+        assert_eq!(plans[1].inserts, vec![InsertKind::Delay]);
+
+        for (body, sentence) in [
+            (
+                r#"[{"input":0},{"from":0,"input":1}]"#,
+                "track 2 takes its input from another track, so it cannot also name \"input\"",
+            ),
+            (
+                r#"[{"from":0}]"#,
+                "track 1 cannot take its own output as its input",
+            ),
+            (
+                r#"[{"input":0},{"from":4}]"#,
+                "track 2 is fed by track 5, but the take has only 2 track(s)",
+            ),
+            (
+                r#"[{"input":0},{"from":0},{"from":0}]"#,
+                "track 1 feeds track 2 and track 3; a channel send has one destination",
+            ),
+            (
+                r#"[{"from":1},{"from":0}]"#,
+                "tracks 1, 2 form a channel send loop",
+            ),
+        ] {
+            let object = parse_object(&format!(r#"{{"tracks":{body}}}"#)).expect("parse");
+            let values = match get(&object, "tracks") {
+                Some(Value::Arr(values)) => values,
+                other => panic!("tracks is not an array: {other:?}"),
+            };
+            let error = track_plans(values).err().expect("a bad send plan");
+            assert_eq!(error, sentence);
+        }
     }
 
     #[test]
@@ -9261,6 +9397,61 @@ break"}"#).is_err());
         assert!(status.contains("\"monitor_input\":false"), "{status}");
 
         let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_take_records_a_channel_send_into_the_destination_file() {
+        // Channel 2's input is Channel 1's output: track 2 names no device
+        // channel, and the take still writes one body per track. The null
+        // backend gives silence, so this proves the graph, the files and the
+        // report, not the samples; the mixer's own tests prove the block.
+        let mut server = socket_server();
+        server.config.channels = 2;
+        let out = temp_take("send");
+        let request = format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":0.05,"tracks":[{{"input":0}},{{"from":0}}]}}"#
+        );
+        let line = reply(server.handle(&request));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(
+            line.contains("\"from\":0"),
+            "the report does not name the send: {line}"
+        );
+        assert!(
+            !line.contains("\"input\":1"),
+            "a sent track reported a device input: {line}"
+        );
+
+        let produced = |line: &str| -> bool {
+            match parse_object(line) {
+                Ok(object) => {
+                    matches!(get(&object, "frames"), Some(Value::Num(frames)) if *frames > 0.0)
+                }
+                Err(_) => false,
+            }
+        };
+        let mut status = reply(server.handle(r#"{"cmd":"status"}"#));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !produced(&status) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+            status = reply(server.handle(r#"{"cmd":"status"}"#));
+        }
+        assert!(
+            status.contains("\"from\":0"),
+            "the status lost the send: {status}"
+        );
+
+        let stopped = reply(server.handle(r#"{"cmd":"stop"}"#));
+        assert!(stopped.contains("\"state\":\"done\""), "{stopped}");
+        for track in 1..=2 {
+            let path = out.replace(".wav", &format!("-ch{track}.wav"));
+            let written = std::fs::metadata(&path)
+                .map(|meta| meta.len() > 44)
+                .unwrap_or(false);
+            assert!(written, "track {track} wrote no WAV body: {path}");
+            let _ = std::fs::remove_file(path);
+        }
         let _ = std::fs::remove_file(&out);
     }
 

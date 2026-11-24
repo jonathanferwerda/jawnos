@@ -1974,12 +1974,15 @@ sub studio_input_param {
 	return (undef, 'gain', &studio_listen_clamp($number, 0, $studio_listen_gain_max));
 }
 
-# The page's per-track plan, as a JSON array of `{ input, channels, inserts }`. The
-# engine accepts that shape directly, so this only refuses what it could not
-# build: an input outside 0..31, an insert the engine does not have, a duplicate
-# input, or more tracks than the engine takes. When this field is present it
-# wins: the scalar `tracks`/`inputs`/`inserts` fields describe the older page's
-# one global chain and are ignored here.
+# The page's per-track plan, as a JSON array of
+# `{ input, channels, inserts }`, or `{ from, inserts }` for a track that takes
+# another track's output. The engine accepts that shape directly, so this only
+# refuses what it could not build: an input outside 0..31, an insert the engine
+# does not have, a duplicate input, a send that names itself, a missing track,
+# a source feeding two destinations, a send loop, or more tracks than the
+# engine takes. When this field is present it wins: the scalar
+# `tracks`/`inputs`/`inserts` fields describe the older page's one global chain
+# and are ignored here.
 sub studio_take_json_plan {
 	my ($tracks_json) = @_;
 	my $decoded = eval { decode_json($tracks_json) };
@@ -1988,14 +1991,52 @@ sub studio_take_json_plan {
 	return ('tracks_json must name between 1 and 32 tracks', undef)
 		unless @$decoded >= 1 && @$decoded <= $studio_take_tracks_max;
 
-	my (@plan, %seen_input, %claimed);
+	my (@plan, %seen_input, %claimed, %source_of, %feeds);
 	for my $index (0 .. $#$decoded) {
 		my $entry = $decoded->[$index];
 		my $label = 'tracks_json track ' . ($index + 1);
 		return ("$label must be an object", undef) unless ref $entry eq 'HASH';
 
+		my $inserts = $entry->{'inserts'};
+		$inserts = [] unless defined $inserts;
+		return ("$label inserts must be an array", undef)
+			unless ref $inserts eq 'ARRAY';
+		my @chain;
+		for my $name (@$inserts) {
+			return ("$label inserts must hold insert names", undef)
+				unless defined $name && !ref $name;
+			return ("no such insert: $name", undef)
+				unless $studio_take_inserts{$name};
+			push @chain, $name;
+		}
+
+		# A channel send replaces the track's device input: the source's
+		# post-pedal block is this track's input. The two answers cannot
+		# coexist, so a `from` with an `input` or `channels` is refused
+		# rather than guessed.
+		if (defined $entry->{'from'}) {
+			my $from = $entry->{'from'};
+			return ("$label from must be a whole track number", undef)
+				unless !ref $from && $from =~ /\A\+?\d+\z/;
+			$from += 0;
+			return ("$label from $from is outside the take's " . scalar(@$decoded) . ' tracks', undef)
+				if $from >= @$decoded;
+			return ("$label cannot take its own output as its input", undef)
+				if $from == $index;
+			for my $other (qw(input channels)) {
+				return ("$label takes its input from another track, so it cannot also name \"$other\"", undef)
+					if defined $entry->{$other};
+			}
+			return ("$label is fed by track " . ($from + 1) . ' twice; a channel send has one destination', undef)
+				if exists $feeds{$from};
+			$feeds{$from} = $index;
+			$source_of{$index} = $from;
+			push @plan, { from => $from, inserts => \@chain };
+			next;
+		}
+
 		my $input = $entry->{'input'};
-		return ("$label needs an input between 0 and 31", undef)
+		return ("$label needs an input between 0 and 31, or \"from\": another track", undef)
 			unless defined $input && !ref $input && $input =~ /\A\+?\d+\z/
 				&& $input <= $studio_take_input_max;
 		$input += 0;
@@ -2025,22 +2066,23 @@ sub studio_take_json_plan {
 		}
 		$claimed{$_} = $index for $input .. $last;
 
-		my $inserts = $entry->{'inserts'};
-		$inserts = [] unless defined $inserts;
-		return ("$label inserts must be an array", undef)
-			unless ref $inserts eq 'ARRAY';
-		my @chain;
-		for my $name (@$inserts) {
-			return ("$label inserts must hold insert names", undef)
-				unless defined $name && !ref $name;
-			return ("no such insert: $name", undef)
-				unless $studio_take_inserts{$name};
-			push @chain, $name;
-		}
 		my %track = (input => $input, inserts => \@chain);
 		$track{'channels'} = 2 if $channels == 2;
 		push @plan, \%track;
 	}
+
+	# A send graph is a function: one source feeds at most one destination
+	# (checked above), so a loop is a chain that never reaches a device-fed
+	# track. Walk every chain once and refuse the first repeat.
+	for my $start (0 .. $#$decoded) {
+		my %seen;
+		my $at = $start;
+		while (defined $at) {
+			return ('tracks_json forms a channel send loop', undef) if $seen{$at}++;
+			$at = $source_of{$at};
+		}
+	}
+
 	return (undef, \@plan);
 }
 
