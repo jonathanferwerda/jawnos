@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/websocket.js
+# tests-for: public/js/manager/websocket.js perl/Websocket.pl
 # covers:    A page that fell back to its own origin while the websocket
 #            listener was between boots goes back to the configured listener.
 #            The origin answers the page's beats, so the page looked alive while
@@ -13,6 +13,7 @@ use Test::More;
 use File::Slurp qw(read_file);
 
 my $js = read_file("$FindBin::Bin/../public/js/manager/websocket.js");
+my $sender = read_file("$FindBin::Bin/../perl/Websocket.pl");
 
 # The fallback remembers when it happened, so the status beat can time the retry.
 like($js, qr/var ws_origin_only_at = 0;/, 'the origin fallback is stamped');
@@ -33,5 +34,14 @@ like($js, qr/ws_origin_only = 0;\s*\n\s*ws_origin_only_at = 0;\s*\n\s*ws_origin_
 # A socket that opens on the configured listener forgets the fallback backoff.
 like($js, qr/if \(!ws_origin_only\) \{\s*\n\s*ws_origin_only_at = 0;\s*\n\s*ws_origin_retry_delay = 30000;\s*\n\s*\}/,
 	'a configured-listener open resets the fallback backoff');
+
+# A worker that served the page's socket can hand its pushes to that page
+# directly. The shared push socket only reaches the websocket worker's pages.
+like($sender, qr/\(\$ENV\{PURPOSE\} \|\| ''\) ne 'websocket'/, 'a main worker may deliver locally');
+like($sender, qr/ref \$gb::ws eq 'HASH'/, 'only when it actually holds page sockets');
+like($sender, qr/\$gb::ws->\{\$app\}/, 'and for the app the frame names');
+like($sender, qr/eval \{ &Manager::websocket_sender\(\$wsm\) \};/, 'the local registry gets the frame');
+like($sender, qr/!\$original_msg->\{'pty'\}/, 'a pty frame is left to the terminal worker');
+like($sender, qr/\$wsm->\{'environment'\} eq 'papers'/, 'and a papers frame to its own bus');
 
 done_testing();

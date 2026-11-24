@@ -95,6 +95,24 @@ sub send() {
 		}
 		$wsm->{'token'} = JawnOS::Transport::token() if JawnOS::Transport::tcp();
 
+		# A page that fell back to its own origin after a restart has its
+		# socket in a main worker, whose registry the websocket worker cannot
+		# see. The shared push socket therefore reaches only the websocket
+		# worker's pages. This process can deliver to the pages it holds itself;
+		# the websocket worker skips the call so no page hears a frame twice.
+		# A pty frame belongs to a terminal session in the websocket worker,
+		# and a papers frame goes to its own bus, so neither is replayed here.
+		if (($ENV{PURPOSE} || '') ne 'websocket'
+			&& !$original_msg->{'pty'}
+			&& !(defined $wsm->{'environment'} && $wsm->{'environment'} eq 'papers')
+			&& ref $gb::ws eq 'HASH') {
+			my $held = $gb::ws->{$app};
+			my $held_remote = ref $gb::remote_ws eq 'HASH' ? $gb::remote_ws->{$app} : undef;
+			if (($held && scalar keys %{$held}) || ($held_remote && scalar keys %{$held_remote})) {
+				eval { &Manager::websocket_sender($wsm) };
+			}
+		}
+
 		my $file = &subs::ws_socket_path($app);
 		# Report whether the frame actually went. The worker can be between
 		# restarts, and a device command that treats a dropped frame as delivered
