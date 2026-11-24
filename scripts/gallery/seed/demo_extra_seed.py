@@ -74,7 +74,7 @@ for m in MAPS:
         },
     })
 setting('travel', 'maps', maps)
-setting('travel', 'map_provider', 'none')
+setting('travel', 'map_provider', 'esri')
 setting('travel', 'home_plate_enabled', 'enabled')
 setting('travel', 'guess_enabled', 'off')
 

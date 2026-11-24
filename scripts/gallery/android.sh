@@ -148,10 +148,18 @@ for s in m['scenes']:
     print(s['id'], s.get('activity', ''), s.get('app', ''), s['file'], sep='|')
 PY
 
+  # The first Travel open asks for location; grant it so the shot is the map,
+  # not the system dialog.
+  adb shell pm grant "$APP_PACKAGE" android.permission.ACCESS_FINE_LOCATION >/dev/null 2>&1 || true
+  adb shell pm grant "$APP_PACKAGE" android.permission.ACCESS_COARSE_LOCATION >/dev/null 2>&1 || true
+
   while IFS='|' read -r id activity app file <&3; do
     [ -n "$ONLY" ] && [ "$ONLY" != "$id" ] && continue
     say "  $id"
     if [ "$activity" = "home" ]; then
+      # A fresh AVD has no home app set; without this the launcher draws its
+      # "not your Home screen yet" banner over the shot.
+      adb shell cmd package set-home-activity "$APP_PACKAGE/.app.JawnHomeActivity" >/dev/null 2>&1 || true
       adb shell am start -n "$APP_PACKAGE/.app.JawnHomeActivity" >/dev/null 2>&1 || true
       sleep 6
       adb shell uiautomator dump /sdcard/jawn-ui.xml >/dev/null 2>&1 || true
