@@ -23,7 +23,8 @@ use std::sync::Arc;
 use jawn_drums::{Kit, Machine, Voice};
 use jawn_synth::{Patch, Synth};
 
-use crate::effect::{Channel, InsertKind};
+use crate::effect::{Channel, EffectChain, InsertKind};
+use crate::graph::{mix_mono_into_stereo_with_gains, pan_coefficients, Strip};
 use crate::mixer::{Mixer, ParamQueue};
 use crate::monbus::Consumer;
 use crate::wav_read::{read_wav, WavAudio};
@@ -788,6 +789,36 @@ impl TransportControl {
     }
 }
 
+/// One routing tap on the pre-master app bus: the three facts a Studio
+/// channel puts between an app and the mix — a fader gain, an equal-power pan
+/// and an insert chain.
+///
+/// A patched app follows its channel's OUT chain. The browser's one-output
+/// model lets one app fan out to several channels, so the routing is a list:
+/// each entry is one strip and the app is heard through every one of them,
+/// summed. An empty list means the app is not patched into a channel and is
+/// summed straight into the bus, exactly as the engine sounded before routing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppRoute {
+    /// Fader gain, `0..=1` (the socket refuses anything outside that range).
+    pub gain: f32,
+    /// `-1.0` (hard left) ..= `1.0` (hard right), equal-power.
+    pub pan: f32,
+    /// The channel's inserts, in the order the page gave them.
+    pub inserts: Vec<InsertKind>,
+}
+
+impl AppRoute {
+    /// A wire: unity gain, centre pan and no inserts.
+    pub fn wire() -> Self {
+        AppRoute {
+            gain: 1.0,
+            pan: 0.0,
+            inserts: Vec::new(),
+        }
+    }
+}
+
 /// A sixteenth-note drum chart the transport plays through the native
 /// [`jawn_drums::Machine`].
 ///
@@ -805,6 +836,9 @@ pub struct DrumChart {
     pub looped: bool,
     /// Exactly `length` rows; each row is one velocity per voice.
     pub steps: Vec<[u8; Voice::COUNT]>,
+    /// The channels this app is patched into, each rendered through its own
+    /// strip on the pre-master app bus. Empty is the unpatched wire.
+    pub routing: Vec<AppRoute>,
 }
 
 impl DrumChart {
@@ -824,7 +858,15 @@ impl DrumChart {
             length,
             looped,
             steps,
+            routing: Vec::new(),
         }
+    }
+
+    /// Attach the Studio channel strips this chart's kit is patched into. A
+    /// chart built without one plays through the unpatched wire.
+    pub fn with_routing(mut self, routing: Vec<AppRoute>) -> Self {
+        self.routing = routing;
+        self
     }
 
     /// The kit's wire name, as the status line reports it.
@@ -833,12 +875,89 @@ impl DrumChart {
     }
 }
 
+/// One prepared app-bus strip: the fader and pan pair plus the channel's
+/// inserts. Built only at a plan edge (an insert's `prepare` allocates);
+/// [`route_app_source`] runs it in the steady-state block with no allocation.
+struct AppStrip {
+    strip: Strip,
+    chain: EffectChain,
+    /// One mono block, sized when the strip is built.
+    scratch: Vec<f32>,
+}
+
+/// Build the strips for a routing list. Everything here allocates, so it runs
+/// in `prepared` or at a plan edge, never in the block loop.
+fn build_app_strips(routing: &[AppRoute], rate: u32, period: usize) -> Vec<AppStrip> {
+    routing
+        .iter()
+        .map(|route| {
+            let mut chain = EffectChain::new();
+            for kind in &route.inserts {
+                chain.push(*kind);
+            }
+            chain.prepare(rate, period);
+            AppStrip {
+                strip: Strip::new(route.gain, route.pan.clamp(-1.0, 1.0)),
+                chain,
+                scratch: vec![0.0; period],
+            }
+        })
+        .collect()
+}
+
+/// Add one rendered app source into the pre-master bus.
+///
+/// An empty routing is the unpatched wire: the source's dual-mono block is
+/// summed as it is, exactly as before routing existed. Otherwise the source's
+/// left sample is the mono signal; it takes the strip's fader trim, runs the
+/// channel's inserts, then fans out through the equal-power pan. Each entry is
+/// one strip, so an app patched into several channels is summed through all of
+/// them. Nothing here allocates.
+fn route_app_source(
+    strips: &mut [AppStrip],
+    stereo: &[f32],
+    frames: usize,
+    app: &mut [f32],
+) -> Result<(), String> {
+    let samples = frames * 2;
+    if strips.is_empty() {
+        for (out, sample) in app[..samples].iter_mut().zip(stereo[..samples].iter()) {
+            *out += sample;
+        }
+        return Ok(());
+    }
+    for strip in strips.iter_mut() {
+        let scratch = &mut strip.scratch[..frames];
+        for (frame, sample) in scratch.iter_mut().enumerate() {
+            *sample = stereo[frame * 2];
+        }
+        // The channel order is trim -> inserts -> pan, so the fader is applied
+        // before the chain. The output then needs only the pan coefficients,
+        // or the gain would be counted a second time.
+        let gain = strip.strip.gain.get();
+        for sample in scratch.iter_mut() {
+            *sample *= gain;
+        }
+        strip
+            .chain
+            .process(scratch)
+            .map_err(|error| format!("app routing: {error:?}"))?;
+        let (left, right) = pan_coefficients(strip.strip.pan.get());
+        mix_mono_into_stereo_with_gains(&mut app[..samples], scratch, left, right)
+            .map_err(|error| format!("app routing: {error:?}"))?;
+    }
+    Ok(())
+}
+
 /// The transport's live drum state: the loaded kit, the pool of hits and the
 /// sixteenth-step cursor. Built in `prepared` or at a plan edge, never per
 /// block, because loading a kit renders every voice and allocates.
 struct DrumRender {
     machine: Machine,
     chart: DrumChart,
+    /// The strips this chart's routing built, kept across a step-only edit so
+    /// an insert tail (a reverb, a delay) is not reset mid-phrase.
+    strips: Vec<AppStrip>,
     /// The next chart step to trigger.
     step: usize,
     /// Frames elapsed since the chart's step 0, kept in frames so a tempo
@@ -857,9 +976,11 @@ impl DrumRender {
     fn new(chart: DrumChart, rate: u32, period: usize) -> Self {
         let mut machine = Machine::new(rate, period);
         machine.load_kit(chart.kit);
+        let strips = build_app_strips(&chart.routing, rate, period);
         DrumRender {
             machine,
             chart,
+            strips,
             step: 0,
             phase: 0.0,
             next_phase: 0.0,
@@ -896,15 +1017,23 @@ pub struct TransportPlan {
     pub synth: Option<SynthPlan>,
 }
 
-/// A patch for the transport's native synth, applied at a block edge.
+/// A patch and/or routing for the transport's native synth, applied at a
+/// block edge.
 ///
-/// The socket sends one when the page changes a patch. The render thread keeps
-/// the synth across blocks, so a later plan calls
-/// [`jawn_synth::Synth::set_patch`] rather than rebuilding it: running voices
-/// finish with the patch they started with, exactly as the browser does.
+/// The socket sends one when the page changes a patch or Studio re-patches the
+/// synth into a channel. The render thread keeps the synth across blocks, so a
+/// later plan calls [`jawn_synth::Synth::set_patch`] rather than rebuilding it:
+/// running voices finish with the patch they started with, exactly as the
+/// browser does. A routing-only plan carries no patch, and a later patch plan
+/// carries no routing, so neither clears the other.
 pub struct SynthPlan {
-    /// The browser patch. The crate clamps every field on load.
-    pub patch: Patch,
+    /// The browser patch, or `None` for a routing-only update that must not
+    /// retune or rebuild the sounding synth.
+    pub patch: Option<Patch>,
+    /// Replacement routing strips, or `None` to keep the current routing.
+    /// Studio sends this because the synth app does not know which channel it
+    /// feeds.
+    pub routing: Option<Vec<AppRoute>>,
 }
 
 /// A note edge for the transport's native synth, read at a block edge.
@@ -1017,6 +1146,11 @@ pub struct TransportSource {
     /// The patch the page last sent, kept so `prepared` can build the synth when
     /// the device opens.
     synth_patch: Option<Patch>,
+    /// The channels Studio patched the synth into, and the strips built from
+    /// them. They arrive separately from the patch, so a patch change never
+    /// clears the routing and a routing change never retunes the patch.
+    synth_routes: Vec<AppRoute>,
+    synth_strips: Vec<AppStrip>,
     /// The native synth, built in `prepared` and retuned at a plan edge.
     synth: Option<Synth>,
     /// The synth's planar block (left half, then right half), sized in
@@ -1066,6 +1200,8 @@ impl TransportSource {
             drum_block: Vec::new(),
             drum_stereo: Vec::new(),
             synth_patch: None,
+            synth_routes: Vec::new(),
+            synth_strips: Vec::new(),
             synth: None,
             synth_block: Vec::new(),
             synth_stereo: Vec::new(),
@@ -1246,23 +1382,35 @@ impl TransportSource {
         }
     }
 
-    /// Load or retune the synth at a plan edge. A synth that is already loaded
-    /// takes the patch with [`Synth::set_patch`], so a page that keeps editing
-    /// the patch never cuts a held note; the first patch builds the synth here,
-    /// which is the only allocation this path performs.
+    /// Load or retune the synth at a plan edge, and/or replace its routing.
+    ///
+    /// A synth that is already loaded takes the patch with
+    /// [`Synth::set_patch`], so a page that keeps editing the patch never cuts
+    /// a held note; the first patch builds the synth here, which is the only
+    /// allocation this path performs. The two halves are independent: a patch
+    /// plan leaves the routing alone, and a routing plan (the synth's own
+    /// `routing` command) never touches the patch or the sounding voices.
     fn apply_synth_plan(&mut self, plan: SynthPlan) {
-        match self.synth.as_mut() {
-            Some(synth) => synth.set_patch(plan.patch),
-            None if self.period > 0 && self.rate > 0 => {
-                let mut synth = Synth::new(plan.patch, self.rate as f32);
-                synth.prepare(self.period);
-                self.synth = Some(synth);
+        if let Some(patch) = plan.patch {
+            match self.synth.as_mut() {
+                Some(synth) => synth.set_patch(patch),
+                None if self.period > 0 && self.rate > 0 => {
+                    let mut synth = Synth::new(patch, self.rate as f32);
+                    synth.prepare(self.period);
+                    self.synth = Some(synth);
+                }
+                // A plan that arrives before `prepared` only records the patch;
+                // the synth is built when the device rate and period are known.
+                None => {}
             }
-            // A plan that arrives before `prepared` only records the patch; the
-            // synth is built when the device rate and period are known.
-            None => {}
+            self.synth_patch = Some(patch);
         }
-        self.synth_patch = Some(plan.patch);
+        if let Some(routing) = plan.routing {
+            if routing != self.synth_routes {
+                self.synth_routes = routing;
+                self.rebuild_synth_strips();
+            }
+        }
     }
 
     /// Apply one note edge. The synth lives on this thread, so an edge that
@@ -1319,6 +1467,8 @@ impl TransportSource {
     /// rows in place, so an edit never allocates on the audio thread. The
     /// cursor keeps its place unless the new chart is shorter than it.
     fn apply_drum_chart(&mut self, chart: DrumChart) {
+        let rate = self.rate;
+        let period = self.period;
         let same_kit = self
             .drum_render
             .as_ref()
@@ -1334,6 +1484,11 @@ impl TransportSource {
             // plays it). Start the new chart at step 0 here, so a mid-song
             // switch begins on a downbeat rather than at a stale phase.
             let relength = render.chart.length != chart.length;
+            // A step-only edit keeps the same routing, so the strips (and their
+            // tails) stay; only a genuine routing change rebuilds them.
+            if render.chart.routing != chart.routing {
+                render.strips = build_app_strips(&chart.routing, rate, period);
+            }
             render.chart = chart.clone();
             if relength {
                 render.step = 0;
@@ -1344,8 +1499,8 @@ impl TransportSource {
                 render.step %= render.chart.length;
                 render.finished = false;
             }
-        } else if self.period > 0 && self.rate > 0 {
-            self.drum_render = Some(DrumRender::new(chart.clone(), self.rate, self.period));
+        } else if period > 0 && rate > 0 {
+            self.drum_render = Some(DrumRender::new(chart.clone(), rate, period));
         }
         self.drums = Some(chart);
     }
@@ -1424,6 +1579,15 @@ impl TransportSource {
             self.drum_stereo[frame * 2] = left[frame];
             self.drum_stereo[frame * 2 + 1] = right[frame];
         }
+    }
+
+    /// Rebuild the synth's routing strips after a routing plan. A plan-edge
+    /// call, never a steady-state one: building an insert allocates.
+    fn rebuild_synth_strips(&mut self) {
+        if self.period == 0 {
+            return;
+        }
+        self.synth_strips = build_app_strips(&self.synth_routes, self.rate, self.period);
     }
 
     /// Rebuild the clip strips and voices for the current plan. Called from
@@ -1553,6 +1717,9 @@ impl RenderSource for TransportSource {
         });
         self.rate = rate;
         self.period = period;
+        // A routing that arrived before the device opened builds its strips
+        // here, where an insert's `prepare` is allowed to allocate.
+        self.synth_strips = build_app_strips(&self.synth_routes, rate, period);
         self.clip_position = self.control.seek_frames();
         self.clip_loop = self.loop_bounds;
         Ok(())
@@ -1715,7 +1882,9 @@ impl RenderSource for TransportSource {
                 live_block,
                 clip_position,
                 clip_loop,
+                drum_render,
                 drum_stereo,
+                synth_strips,
                 synth_stereo,
                 app_stereo,
                 ..
@@ -1764,21 +1933,25 @@ impl RenderSource for TransportSource {
             // block behind, then each present source summed in. A mastering
             // insert therefore scales the drums and the synth alike.
             app_stereo[..samples].fill(0.0);
+            // Each source follows the Studio channel strips it is patched into;
+            // an empty routing is the unpatched wire and sums exactly as before.
             if has_drums {
-                for (out, sample) in app_stereo[..samples]
-                    .iter_mut()
-                    .zip(drum_stereo[..samples].iter())
-                {
-                    *out += sample;
+                if let Some(render) = drum_render.as_mut() {
+                    route_app_source(
+                        &mut render.strips,
+                        &drum_stereo[..samples],
+                        frames,
+                        &mut app_stereo[..samples],
+                    )?;
                 }
             }
             if has_synth {
-                for (out, sample) in app_stereo[..samples]
-                    .iter_mut()
-                    .zip(synth_stereo[..samples].iter())
-                {
-                    *out += sample;
-                }
+                route_app_source(
+                    synth_strips,
+                    &synth_stereo[..samples],
+                    frames,
+                    &mut app_stereo[..samples],
+                )?;
             }
             let app_samples = if has_drums || has_synth {
                 Some(&app_stereo[..samples])
@@ -2910,6 +3083,10 @@ mod tests {
         out.chunks_exact(2).map(|frame| frame[0]).collect()
     }
 
+    fn right_channel(out: &[f32]) -> Vec<f32> {
+        out.chunks_exact(2).map(|frame| frame[1]).collect()
+    }
+
     #[test]
     fn a_transport_clip_plays_at_its_timeline_start() {
         // Four loud frames placed at timeline frame 2: silent before, loud
@@ -3598,6 +3775,247 @@ mod tests {
         );
     }
 
+    // --- app routing: the Studio channel strips an app is patched into ------
+
+    /// A one-step kick through one routing list, rendered for its own period.
+    fn routed_drum_block(routing: Vec<AppRoute>) -> Vec<f32> {
+        let mut chart = drum_chart(Kit::Acoustic, 1, true, &[(Voice::Kick, &[100])]);
+        chart.routing = routing;
+        let (_, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 1_000);
+        drum_block(&mut source, 1_000)
+    }
+
+    #[test]
+    fn an_app_gain_of_zero_silences_the_drum_bus() {
+        let out = routed_drum_block(vec![AppRoute {
+            gain: 0.0,
+            pan: 0.0,
+            inserts: Vec::new(),
+        }]);
+        assert!(
+            out.iter().all(|sample| sample.abs() < 1e-9),
+            "a zero-gain strip let the drums through: {out:?}"
+        );
+    }
+
+    #[test]
+    fn an_app_gain_halves_the_peak() {
+        let unity = routed_drum_block(vec![AppRoute {
+            gain: 1.0,
+            pan: 0.0,
+            inserts: Vec::new(),
+        }]);
+        let half = routed_drum_block(vec![AppRoute {
+            gain: 0.5,
+            pan: 0.0,
+            inserts: Vec::new(),
+        }]);
+        let unity_peak = peak(&unity);
+        assert!(unity_peak > 1e-3, "the unity routing never sounded");
+        assert!(
+            (peak(&half) - unity_peak * 0.5).abs() < 1e-5,
+            "half the fader did not halve the peak: {} vs {}",
+            peak(&half),
+            unity_peak
+        );
+    }
+
+    #[test]
+    fn an_app_pan_places_the_source_hard_left_and_hard_right() {
+        // Equal-power: one side is exactly silent at either extreme.
+        let left = routed_drum_block(vec![AppRoute {
+            gain: 1.0,
+            pan: -1.0,
+            inserts: Vec::new(),
+        }]);
+        assert!(peak(&left_channel(&left)) > 1e-3, "hard left was silent");
+        assert!(
+            peak(&right_channel(&left)) < 1e-6,
+            "hard left leaked into the right: {:?}",
+            right_channel(&left)
+        );
+
+        let right = routed_drum_block(vec![AppRoute {
+            gain: 1.0,
+            pan: 1.0,
+            inserts: Vec::new(),
+        }]);
+        assert!(peak(&right_channel(&right)) > 1e-3, "hard right was silent");
+        assert!(
+            peak(&left_channel(&right)) < 1e-6,
+            "hard right leaked into the left: {:?}",
+            left_channel(&right)
+        );
+    }
+
+    #[test]
+    fn an_app_insert_runs_and_is_deterministic() {
+        let render = |inserts: Vec<InsertKind>| {
+            routed_drum_block(vec![AppRoute {
+                gain: 1.0,
+                pan: 0.0,
+                inserts,
+            }])
+        };
+        let dry = render(Vec::new());
+        let wet = render(vec![InsertKind::Fuzz]);
+        assert_ne!(dry, wet, "the routed insert did not change the sound");
+        assert!(peak(&wet) > 1e-4, "the routed insert left the drums silent");
+        assert_eq!(
+            wet,
+            render(vec![InsertKind::Fuzz]),
+            "the same routed insert was not deterministic"
+        );
+    }
+
+    #[test]
+    fn two_app_routing_entries_sum() {
+        let route = AppRoute {
+            gain: 0.5,
+            pan: -0.5,
+            inserts: Vec::new(),
+        };
+        let one = peak(&routed_drum_block(vec![route.clone()]));
+        let two = peak(&routed_drum_block(vec![route.clone(), route]));
+        assert!(one > 1e-3, "the single routing entry never sounded");
+        assert!(
+            (two - one * 2.0).abs() < 1e-5,
+            "two identical strips did not sum: {two} vs {one}"
+        );
+    }
+
+    #[test]
+    fn a_step_only_chart_update_keeps_the_routed_reverb_tail() {
+        // Eight steps at 8 kHz / 120 bpm are 1000 frames each; a 4096-frame
+        // block covers the kick on step 0 and leaves the reverb ringing into
+        // the next block.
+        let mut chart = drum_chart(Kit::Acoustic, 8, false, &[(Voice::Kick, &[100])]);
+        chart.routing = vec![AppRoute {
+            gain: 1.0,
+            pan: 0.0,
+            inserts: vec![InsertKind::Reverb],
+        }];
+        let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
+        let (plans, rx) = std::sync::mpsc::channel();
+        let mut source = TransportSource::new(Arc::clone(&control))
+            .with_drums(chart.clone())
+            .with_plan_rx(rx);
+        source.prepared(8_000, 4_096).expect("prepare");
+        let first = drum_block(&mut source, 4_096);
+        assert!(peak(&first) > 1e-4, "the routed kick never sounded");
+
+        // A step-only edit: same kit, same length, same routing, silent rows.
+        // The strips (and the reverb's tail) must survive it.
+        let mut silent = chart.clone();
+        silent.steps.iter_mut().for_each(|row| *row = [0u8; Voice::COUNT]);
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: Some(silent),
+                synth: None,
+            })
+            .expect("send the step-only update");
+        let second = drum_block(&mut source, 4_096);
+        assert!(
+            peak(&second) > 1e-6,
+            "a step-only edit reset the routed reverb tail: {:?}",
+            left_channel(&second)
+        );
+    }
+
+    #[test]
+    fn an_empty_routing_is_the_unpatched_unity_wire() {
+        // Unpatched, the machine's dual-mono block is summed unchanged: left
+        // and right are identical and no equal-power trim is applied.
+        let unpatched = routed_drum_block(Vec::new());
+        assert_eq!(
+            left_channel(&unpatched),
+            right_channel(&unpatched),
+            "the unpatched bus was no longer dual-mono"
+        );
+        let unity = peak(&unpatched);
+        assert!(unity > 1e-3, "the unpatched drums never sounded");
+
+        // One centre strip is the equal-power wire, so it sits at 1/√2 of the
+        // unpatched peak — proof the empty list took no strip at all.
+        let wired = routed_drum_block(vec![AppRoute::wire()]);
+        let expected = unity * std::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (peak(&wired) - expected).abs() < 1e-5,
+            "the routed wire was not equal-power centre: {} vs {expected}",
+            peak(&wired)
+        );
+    }
+
+    #[test]
+    fn the_synth_renders_through_its_routing_and_a_patch_keeps_it() {
+        let (plans, notes, _, mut source) = app_transport(None, Vec::new(), Vec::new(), 256);
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(synth_patch_plan(4_000.0)),
+            })
+            .expect("send the patch");
+        note_on(&notes, 60);
+        let dry = drum_block(&mut source, 256);
+        assert!(peak(&dry) > 1e-4, "the routed synth never sounded");
+
+        // A routing-only plan: the note keeps sounding but the strip's fader
+        // takes it to silence.
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(SynthPlan {
+                    patch: None,
+                    routing: Some(vec![AppRoute {
+                        gain: 0.0,
+                        pan: 0.0,
+                        inserts: Vec::new(),
+                    }]),
+                }),
+            })
+            .expect("send the routing");
+        let muted = drum_block(&mut source, 256);
+        assert!(
+            muted.iter().all(|sample| sample.abs() < 1e-9),
+            "the synth routing did not mute the app bus: {muted:?}"
+        );
+        assert_eq!(
+            source.synth.as_ref().expect("a synth").active_voices(),
+            1,
+            "the routing change touched the sounding voice"
+        );
+
+        // A later patch must not clear the routing: the synth is still muted.
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(synth_patch_plan(9_000.0)),
+            })
+            .expect("send the second patch");
+        let still_muted = drum_block(&mut source, 256);
+        assert!(
+            still_muted.iter().all(|sample| sample.abs() < 1e-9),
+            "a patch cleared the synth routing: {still_muted:?}"
+        );
+        assert_eq!(
+            source.synth.as_ref().expect("a synth").active_voices(),
+            1,
+            "the patch rebuild dropped the held voice"
+        );
+    }
+
     // --- transport synth and audition hits -----------------------------------
 
     /// A transport with the plan, note and hit channels attached before
@@ -3634,7 +4052,10 @@ mod tests {
     fn synth_patch_plan(cutoff: f32) -> SynthPlan {
         let mut patch = Patch::default();
         patch.filter.cutoff = cutoff;
-        SynthPlan { patch }
+        SynthPlan {
+            patch: Some(patch),
+            routing: None,
+        }
     }
 
     fn note_on(notes: &std::sync::mpsc::Sender<TransportNote>, note: u8) {

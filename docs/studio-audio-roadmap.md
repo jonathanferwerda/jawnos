@@ -1292,6 +1292,18 @@ any refusal falls back to the browser rather than to silence. The app buses reac
 not the patched channel's fader, pan or Out pedals yet; that is the next layer. `t/414` pins the
 commands, the routes, both choices, the muting and the guide.
 
+**An app follows its channel on the engine (2026-11-24, in the tree).** The engine's app bus now
+runs through the channel strip the app is patched into. The page sends `routing`: a list of taps,
+one per channel patched with that app, each carrying the fader (mute and solo folded into it), the
+pan and the enabled Out inserts. The drum chart carries its routing; the Synth app does not know the
+Studio channels, so Studio posts the synth's taps separately (`synth action=routing`) after a start
+and on every plan update. The engine builds a `Strip` and an `EffectChain` per tap at a plan edge -
+never per block - pans the mono app through each and sums them before the master rack, so the kit or
+the voice sits where the browser's would. A step-only chart edit keeps a strip's insert tails; a
+routing change rebuilds them. Inter-channel output cords are still not modelled, for the app bus or
+for the takes: that is the remaining routing seam. `t/414` pins the taps, the manager's bounds and
+the engine's strip count.
+
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
 turning `manage` off returns the machine to today's behaviour with nothing stranded.

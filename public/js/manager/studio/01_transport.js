@@ -333,6 +333,9 @@ function studioEngineClipsPost(seq) {
 				console.log('studio: engine clip update refused, keeping the current plan', (data && data.error) || '');
 			}
 		});
+		// The Synth app's voices play outside the take plan, so its channel strip
+		// rides its own command beside every plan update.
+		studioEngineSynthRoutingPost();
 	}).catch(function (error) {
 		console.log('studio: engine clip staging failed, keeping the current plan', error);
 	});
@@ -485,6 +488,38 @@ function studioEngineClipPlan() {
 	return { clips: clips, blocked: blocked };
 }
 
+// The engine's native app voices (drums, synth) are instruments rather than
+// takes, but their channel strip is the same one the clip plan folds into every
+// take: fader, pan and the enabled Out pedals, with mute and solo gating the
+// gain. A channel with no media or output has no strip to send, and a channel
+// patched to another app is left to that app. An empty list means the app is
+// unpatched, so the engine plays it at unity, centre and dry.
+function studioEngineAppRouting(app) {
+	var routing = [];
+	var anySolo = studioAnySolo();
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
+		var plug = studioChannelInput(ch);
+		if (!plug || plug.app !== app) { return; }
+		var silent = m.mute || (anySolo && !m.solo);
+		var gain = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()) * (silent ? 0 : 1);
+		var pan = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
+		// Only enabled inserts travel; the Stereo Widener is browser-only, so it
+		// is left out rather than refusing the app's voices.
+		var inserts = [];
+		var strip = studioAudio.channels[ch];
+		if (strip && strip.outInserts) {
+			strip.outInserts.forEach(function (ins) {
+				if (!ins || ins.bypassed || !ins.name) { return; }
+				if (studioEffectKind(ins.name) === 'stereowidener') { return; }
+				inserts.push(studioEffectKind(ins.name));
+			});
+		}
+		routing.push({ gain: gain, pan: pan, inserts: inserts });
+	});
+	return routing;
+}
+
 // A take's audio as an AudioBuffer, decoded once and kept. The engine needs a
 // file, and this is the one decode the browser already knows how to do.
 function studioEngineClipBuffer(take) {
@@ -587,7 +622,7 @@ function studioEngineDrumPlan() {
 	// playing; the length change also restarts the engine's cursor, so switching
 	// back begins on a downbeat.
 	if (typeof studioDrumsEngineChosen === 'function' && !studioDrumsEngineChosen()) {
-		return { kit: studioDrums.kit, length: 1, loop: 0, steps: {} };
+		return { kit: studioDrums.kit, length: 1, loop: 0, steps: {}, routing: studioEngineAppRouting('drums') };
 	}
 	var length = studioDrums.lengthSteps || 16;
 	var steps = {};
@@ -599,8 +634,40 @@ function studioEngineDrumPlan() {
 		kit: studioDrums.kit,
 		length: length,
 		loop: studioDrums.loop ? 1 : 0,
-		steps: steps
+		steps: steps,
+		routing: studioEngineAppRouting('drums')
 	};
+}
+
+// The Synth app's voices are rendered by the engine directly, so their channel
+// strip rides its own command rather than the take plan. A browser-chosen synth
+// keeps its audio in the page, so there is nothing to route. The choice is read
+// the same way the Synth app stores it. A refusal is never fatal: the engine
+// keeps the strip it has, and the warning is logged once per failing streak
+// (`warned` lives on this function, not a new global) until a post succeeds.
+function studioEngineSynthRoutingPost() {
+	if (!mixer['time'] || !mixer['time']['engine_transport']) { return; }
+	var sound = null;
+	try { sound = localStorage.getItem('jawnos_synth_sound'); } catch (e) { sound = null; }
+	if (sound === 'browser') { return; }
+	$.ajax({
+		url: '/manager/studio/synth',
+		type: 'POST',
+		data: { action: 'routing', routing_json: JSON.stringify(studioEngineAppRouting('synth')) },
+		dataType: 'json',
+		success: function (answer) {
+			if (answer && answer.ok === true) { studioEngineSynthRoutingPost.warned = false; return; }
+			if (studioEngineSynthRoutingPost.warned) { return; }
+			studioEngineSynthRoutingPost.warned = true;
+			console.log('studio: engine synth routing refused, keeping the current strip', (answer && answer.error) || '');
+		},
+		error: function (xhr) {
+			if (studioEngineSynthRoutingPost.warned) { return; }
+			studioEngineSynthRoutingPost.warned = true;
+			var answer = xhr && xhr.responseJSON;
+			console.log('studio: engine synth routing refused, keeping the current strip', (answer && answer.error) || '');
+		}
+	});
 }
 
 function studioEngineTransportPost(action, fields, done) {
@@ -708,6 +775,9 @@ function studioEngineTransportAnswer(data) {
 	studioFlushSources();
 	studioEngineTransportPollStart();
 	if (data.transport) { studioEngineTransportApply(data.transport); }
+	// The Synth app's voices are the engine's own, so hand their channel strip
+	// over once the transport is playing.
+	studioEngineSynthRoutingPost();
 	// An edit that arrived while the first plan was still staging could not be
 	// sent then; send it now that the engine is playing.
 	if (studioEngineClipsPending) {

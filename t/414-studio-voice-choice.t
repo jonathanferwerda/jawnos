@@ -49,7 +49,7 @@ like( $socket, qr/fn synth_command\(/, 'the synth command exists' );
 like( $socket, qr/fn drums_command\(/, 'the drums command exists' );
 like( $socket, qr/fn parse_synth_patch\(/, 'the browser patch is parsed, not passed through' );
 like( $socket, qr/\\"drums\\":\{\},\\"drum_kit\\":\\"\{\}\\",\\"synth\\":\{\}/, 'status reports the synth beside the drums' );
-like( $socket, qr/\\"synth\\":0,\\"monitor_input\\"/, 'a resting transport reports no synth' );
+like( $socket, qr/\\"synth\\":0,\\"apps\\":0,\\"monitor_input\\"/, 'a resting transport reports no synth and no app strips' );
 
 # --- the manager forwards them through one helper ---------------------------
 like( $engine_pm, qr/sub audio_engine_synth/, 'the Perl client speaks the synth command' );
@@ -101,8 +101,33 @@ like( $synth_tpl, qr/<option value="engine" selected>.*<option value="browser">/
 
 # --- the transport silences the engine chart for the browser choice ---------
 like( $transport, qr/typeof studioDrumsEngineChosen === 'function' && !studioDrumsEngineChosen\(\)/, 'the plan asks the choice' );
-like( $transport, qr/return \{ kit: studioDrums\.kit, length: 1, loop: 0, steps: \{\} \}/,
+like( $transport, qr/return \{ kit: studioDrums\.kit, length: 1, loop: 0, steps: \{\}, routing: studioEngineAppRouting\('drums'\) \}/,
 	'a silent chart turns the engine kit off' );
+
+# --- an app follows the channel it is patched into --------------------------
+like( $transport, qr/function studioEngineAppRouting\(app\)/, 'one helper reads a channel tap' );
+like( $transport, qr/studioVolumeFraction\(\$\('\.channel_volume/, 'the fader is the cap' );
+like( $transport, qr/anySolo && !m\.solo/, 'solo folds into the gain' );
+like( $transport, qr/studioEffectKind\(ins\.name\) === 'stereowidener'/, 'a browser-only effect stays out' );
+like( $transport, qr/routing: studioEngineAppRouting\('drums'\)/, 'the drum chart carries its taps' );
+like( $transport, qr/function studioEngineSynthRoutingPost\(\)/, 'the synth taps are posted on their own' );
+like( $transport, qr#url: '/manager/studio/synth'#, 'through the synth route' );
+like( $transport, qr/routing_json/, 'as a routing array' );
+like( $transport, qr/jawnos_synth_sound/, 'only when the synth app chose the engine' );
+is( scalar( () = $transport =~ /studioEngineSynthRoutingPost\(\)/g ), 3,
+	'posted from the start answer and every plan update, and defined once' );
+
+like( $playback, qr/pub struct AppRoute/, 'the engine has a channel tap' );
+like( $playback, qr/fn route_app_source/, 'and one place that applies it' );
+like( $playback, qr/routing: Vec<AppRoute>/, 'the drum chart carries taps' );
+like( $socket, qr/fn parse_app_routing/, 'the socket parses taps' );
+like( $socket, qr/fn synth_routing/, 'the synth routing action exists' );
+like( $socket, qr/\\"apps\\":/, 'status counts the app strips' );
+like( $controller, qr/sub studio_app_routing_data/, 'the manager validates the tap shape' );
+like( $controller, qr/gain must be a number from 0 to 1/, 'a gain is bounded' );
+like( $controller, qr/pan must be a number from -1 to 1/, 'a pan is bounded' );
+like( $controller, qr/\$action eq 'routing'/, 'the synth route accepts routing' );
+like( $engine_pm, qr/\@audio_engine_synth_fields = qw\([^)]*\brouting\b/s, 'and forwards it' );
 
 # --- the guide explains the choice ------------------------------------------
 like( $help, qr/Play the kit on the engine or in the browser/, 'the Studio guide names the drum choice' );

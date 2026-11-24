@@ -391,7 +391,7 @@ sub audio_engine_transport {
 # drum panel sends a one-shot `hit` so a pad auditions the kit the transport
 # will play. Only the promised fields are forwarded; the engine refuses every
 # one of them while no transport is playing, because the output is the song's.
-our @audio_engine_synth_fields = qw(patch note velocity on);
+our @audio_engine_synth_fields = qw(patch note velocity on routing);
 our @audio_engine_drum_fields  = qw(voice velocity);
 
 sub audio_engine_synth {

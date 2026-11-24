@@ -1571,6 +1571,23 @@ sub action_44035 {
 		return;
 	}
 
+	if ($action eq 'routing') {
+		my $raw = $c->param('routing_json');
+		$raw = $c->param('routing') unless defined $raw && length $raw;
+		unless (defined $raw && length $raw) {
+			$c->render(json => { ok => 0, error => 'a synth routing needs "routing_json": the channel taps' }, status => 400);
+			return;
+		}
+		my $data = eval { decode_json $raw };
+		my ($routing_error, $routing) = &studio_app_routing_data($data, 'synth routing');
+		unless (defined $routing) {
+			$c->render(json => { ok => 0, error => $routing_error }, status => 400);
+			return;
+		}
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_synth('routing', { routing => $routing }));
+		return;
+	}
+
 	if ($action eq 'note') {
 		my $note = &studio_transport_decimal($c->param('note'));
 		unless (defined $note && $note == int($note) && $note >= 0 && $note <= 127) {
@@ -1612,7 +1629,7 @@ sub action_44035 {
 		return;
 	}
 
-	$c->render(json => { ok => 0, error => 'choose a synth action: patch, note or all_off' }, status => 400);
+	$c->render(json => { ok => 0, error => 'choose a synth action: patch, note, all_off or routing' }, status => 400);
 	return;
 }
 
@@ -1712,6 +1729,53 @@ sub studio_transport_clips {
 	return (undef, \@clips);
 }
 
+# One app's channel taps: the Studio channels the app is patched into, each as
+# the fader, pan and enabled Out inserts the engine builds a strip from. An
+# empty list is "not patched": unity, centre, dry, which is how the app sounded
+# before it could follow a channel. The engine is the authority on the insert
+# names; this checks the shape and the ranges so a typo is a 400, not a plan
+# the engine refuses line by line.
+sub studio_app_routing_data {
+	my ($data, $label) = @_;
+	return (undef, []) unless defined $data;
+	return ("$label must be an array of channel taps", undef) unless ref $data eq 'ARRAY';
+	return ("$label may name at most 16 channels", undef) if @{$data} > 16;
+
+	my @routes;
+	for my $i (0 .. $#{$data}) {
+		my $entry = $data->[$i];
+		return ("$label\[$i\] must be an object", undef) unless ref $entry eq 'HASH';
+		my %out;
+		if (defined $entry->{'gain'}) {
+			my $value = &studio_transport_decimal($entry->{'gain'});
+			return ("$label\[$i\] gain must be a number from 0 to 1", undef)
+				unless defined $value && $value >= 0 && $value <= 1;
+			$out{'gain'} = $value;
+		}
+		if (defined $entry->{'pan'}) {
+			my $value = &studio_transport_decimal($entry->{'pan'});
+			return ("$label\[$i\] pan must be a number from -1 to 1", undef)
+				unless defined $value && $value >= -1 && $value <= 1;
+			$out{'pan'} = $value;
+		}
+		if (defined $entry->{'inserts'}) {
+			return ("$label\[$i\] inserts must be an array of names", undef)
+				unless ref $entry->{'inserts'} eq 'ARRAY';
+			return ("$label\[$i\] has more than 32 inserts", undef)
+				if @{ $entry->{'inserts'} } > 32;
+			my @names;
+			for my $name ( @{ $entry->{'inserts'} } ) {
+				return ("$label\[$i\] insert must be a name", undef)
+					unless defined $name && !ref $name && $name =~ /\A[a-z0-9_]{1,24}\z/;
+				push @names, $name;
+			}
+			$out{'inserts'} = \@names;
+		}
+		push @routes, \%out;
+	}
+	return (undef, \@routes);
+}
+
 # The drum chart rides a transport `start` and every later `update`: eight
 # voice rows of sixteenth-note velocities, so the engine schedules the Studio
 # kit on its own clock instead of the browser's. The shape is checked here; the
@@ -1776,6 +1840,13 @@ sub studio_transport_drums {
 		}
 		$out{'steps'} = \%rows;
 	}
+
+	# The channel taps the kit follows: its patched channel's fader, pan and Out
+	# inserts, so the engine's kit sits in the mix exactly where the browser's
+	# would. An empty list is an unpatched kit.
+	my ($routing_error, $routing) = &studio_app_routing_data($data->{'routing'}, 'transport drums routing');
+	return ($routing_error, undef) if defined $routing_error;
+	$out{'routing'} = $routing;
 
 	return (undef, \%out);
 }

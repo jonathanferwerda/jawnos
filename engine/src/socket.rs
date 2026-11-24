@@ -94,7 +94,7 @@ use jawn_audio::{
     PlayTrack, Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
     TransportSource, MASTER_ORDER,
 };
-use jawn_audio::playback::{DrumChart, SynthPlan, TransportHit, TransportNote};
+use jawn_audio::playback::{AppRoute, DrumChart, SynthPlan, TransportHit, TransportNote};
 use jawn_drums::{Kit, Voice};
 use jawn_synth::{Engine as SynthEngine, Envelope, FilterKind, Patch, Wave};
 use jawn_audio::uplink::{Uplink, UplinkConfig, UplinkSourceSpec, UplinkStatus};
@@ -3845,6 +3845,7 @@ impl Server {
                         );
                     }
                     session.drums = chart.length;
+                    session.drum_routes = chart.routing.len();
                     session.drum_kit = chart.kit_name().to_string();
                 }
                 return self.transport_status();
@@ -3910,6 +3911,7 @@ impl Server {
         let clip_count = clips.len();
         let master_count = master.len();
         let drum_count = drums.as_ref().map(|chart| chart.length).unwrap_or(0);
+        let drum_routes = drums.as_ref().map(|chart| chart.routing.len()).unwrap_or(0);
         let drum_kit = drums
             .as_ref()
             .map(|chart| chart.kit_name().to_string())
@@ -3967,6 +3969,8 @@ impl Server {
             // A start carries no synth patch; the page sends one with a
             // `synth` command once the transport is playing.
             synth: 0,
+            drum_routes,
+            synth_routes: 0,
             plan_tx,
             live_tx,
             note_tx,
@@ -4028,6 +4032,7 @@ impl Server {
         let clip_count = clips.as_ref().map(|clips| clips.len());
         let master_count = master.as_ref().map(|master| master.len());
         let drum_count = drums.as_ref().map(|chart| chart.length);
+        let drum_routes = drums.as_ref().map(|chart| chart.routing.len());
         let drum_kit = drums.as_ref().map(|chart| chart.kit_name().to_string());
         let plan = TransportPlan {
             clips,
@@ -4056,6 +4061,9 @@ impl Server {
         if let Some(count) = drum_count {
             session.drums = count;
         }
+        if let Some(count) = drum_routes {
+            session.drum_routes = count;
+        }
         if let Some(kit) = drum_kit {
             session.drum_kit = kit;
         }
@@ -4073,24 +4081,31 @@ impl Server {
     }
 
     /// `{"cmd":"synth","action":"patch","patch":{...}}`,
-    /// `{"cmd":"synth","action":"note","on":1,"note":60,"velocity":0.8}` and
-    /// `{"cmd":"synth","action":"all_off"}`: the native synth on the running
-    /// transport's app bus.
+    /// `{"cmd":"synth","action":"note","on":1,"note":60,"velocity":0.8}`,
+    /// `{"cmd":"synth","action":"all_off"}` and
+    /// `{"cmd":"synth","action":"routing","routing":[...]}`: the native synth on
+    /// the running transport's app bus.
     ///
-    /// A patch rides the plan channel and is applied at the next block edge; a
-    /// note rides its own channel and is applied before that block renders.
-    /// Every action needs a playing transport, because the synth lives on that
-    /// render thread and its output is the transport's output. A malformed
-    /// patch field is refused by name rather than defaulted.
+    /// A patch or routing rides the plan channel and is applied at the next
+    /// block edge; a note rides its own channel and is applied before that
+    /// block renders. Every action needs a playing transport, because the
+    /// synth lives on that render thread and its output is the transport's
+    /// output. A malformed patch field is refused by name rather than
+    /// defaulted.
     fn synth_command(&mut self, object: &Object) -> String {
         let action = match get(object, "action") {
             Some(Value::Str(action)) => action.as_str(),
-            _ => return error_line("synth needs \"action\": \"patch\", \"note\" or \"all_off\""),
+            _ => {
+                return error_line(
+                    "synth needs \"action\": \"patch\", \"note\", \"all_off\" or \"routing\"",
+                )
+            }
         };
         match action {
             "patch" => self.synth_patch(object),
             "note" => self.synth_note(object),
             "all_off" => self.synth_all_off(),
+            "routing" => self.synth_routing(object),
             other => error_line(&format!("no such synth action: {other}")),
         }
     }
@@ -4120,7 +4135,10 @@ impl Server {
             master: None,
             master_values: None,
             drums: None,
-            synth: Some(SynthPlan { patch }),
+            synth: Some(SynthPlan {
+                patch: Some(patch),
+                routing: None,
+            }),
         };
         if session.plan_tx.send(plan).is_err() {
             return error_line("the transport's render thread is no longer accepting plans");
@@ -4128,6 +4146,44 @@ impl Server {
         // The patch's own voice cap is the status line's `synth` value, exactly
         // as the page shows the knob rather than the live voice count.
         session.synth = voices;
+        self.transport_status()
+    }
+
+    /// Replace the synth's routing strips. The synth app does not know which
+    /// Studio channel it feeds, so Studio sends that channel's OUT chain here.
+    /// The routing rides a plan and is applied at a block edge; the patch and
+    /// any sounding voice are left alone.
+    fn synth_routing(&mut self, object: &Object) -> String {
+        if !self.transport_playing() {
+            return error_line("the transport is not playing; start it before routing the synth");
+        }
+        let routing = match parse_app_routing(get(object, "routing"), "synth routing") {
+            Ok(routing) => routing,
+            Err(error) => return error_line(&error),
+        };
+        let session = match self.transport.as_mut() {
+            Some(session) if session.is_playing() => session,
+            _ => {
+                return error_line(
+                    "the transport is not playing; start it before routing the synth",
+                )
+            }
+        };
+        let count = routing.len();
+        let plan = TransportPlan {
+            clips: None,
+            master: None,
+            master_values: None,
+            drums: None,
+            synth: Some(SynthPlan {
+                patch: None,
+                routing: Some(routing),
+            }),
+        };
+        if session.plan_tx.send(plan).is_err() {
+            return error_line("the transport's render thread is no longer accepting plans");
+        }
+        session.synth_routes = count;
         self.transport_status()
     }
 
@@ -5253,6 +5309,85 @@ fn parse_master_values(value: Option<&Value>) -> Result<Option<Vec<(String, f32)
     Ok(Some(out))
 }
 
+/// The largest fan-out an app's routing may carry. Each entry is one Studio
+/// channel strip, and sixteen is far above any real channel count while
+/// keeping the per-block strip list small.
+const MAX_APP_ROUTES: usize = 16;
+
+/// The `routing` field shared by `drums.routing` and the synth's `routing`
+/// action: one strip per channel the app is patched into.
+///
+/// ```text
+/// "routing":[{"gain":0.8,"pan":-0.5,"inserts":["fuzz","reverb"]}]
+/// ```
+///
+/// An absent or `null` routing is the empty list (unpatched: unity gain,
+/// centre pan, no inserts). A present entry must be an object; an absent
+/// `gain` is 1, an absent `pan` is 0 and an absent `inserts` is none. `gain`
+/// is in `0..=1`, `pan` in `-1..=1`, and every insert name must be one the
+/// engine can build. Each refusal names the path the page sent, e.g.
+/// `drums.routing[1].gain` or `synth routing[0].inserts[2]`.
+fn parse_app_routing(value: Option<&Value>, prefix: &str) -> Result<Vec<AppRoute>, String> {
+    let entries = match value {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Arr(entries)) => entries,
+        _ => return Err(format!("{prefix} must be an array of routing objects")),
+    };
+    if entries.len() > MAX_APP_ROUTES {
+        return Err(format!(
+            "{prefix} must hold at most {MAX_APP_ROUTES} routing entries"
+        ));
+    }
+    let mut routes = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let label = format!("{prefix}[{index}]");
+        let fields = match entry {
+            Value::Obj(fields) => fields,
+            _ => return Err(format!("{label} must be an object")),
+        };
+        let gain = match get(fields, "gain") {
+            None | Some(Value::Null) => 1.0,
+            Some(Value::Num(value)) if value.is_finite() && *value >= 0.0 && *value <= 1.0 => {
+                *value as f32
+            }
+            _ => return Err(format!("{label}.gain must be a number from 0 to 1")),
+        };
+        let pan = match get(fields, "pan") {
+            None | Some(Value::Null) => 0.0,
+            Some(Value::Num(value))
+                if value.is_finite() && *value >= -1.0 && *value <= 1.0 =>
+            {
+                *value as f32
+            }
+            _ => return Err(format!("{label}.pan must be a number from -1 to 1")),
+        };
+        let inserts = match get(fields, "inserts") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Arr(names)) => {
+                let mut inserts = Vec::with_capacity(names.len());
+                for (slot, name) in names.iter().enumerate() {
+                    let word = match name {
+                        Value::Str(word) => word.as_str(),
+                        _ => {
+                            return Err(format!(
+                                "{label}.inserts[{slot}] must be an insert name"
+                            ))
+                        }
+                    };
+                    let kind = InsertKind::parse(word).ok_or_else(|| {
+                        format!("{label}.inserts[{slot}]: no such insert: {word}")
+                    })?;
+                    inserts.push(kind);
+                }
+                inserts
+            }
+            _ => return Err(format!("{label}.inserts must be an array of insert names")),
+        };
+        routes.push(AppRoute { gain, pan, inserts });
+    }
+    Ok(routes)
+}
+
 /// The `drums` field: the native machine's chart.
 ///
 /// ```text
@@ -5348,7 +5483,10 @@ fn parse_drums(value: Option<&Value>) -> Result<Option<DrumChart>, String> {
             _ => return Err("drums \"steps\" must be an object of voice rows".to_string()),
         }
     }
-    Ok(Some(DrumChart::new(kit, length, looped, steps)))
+    let routing = parse_app_routing(get(fields, "routing"), "drums.routing")?;
+    Ok(Some(
+        DrumChart::new(kit, length, looped, steps).with_routing(routing),
+    ))
 }
 
 /// The `synth` command's `patch` field: the browser's patch JSON, field for
@@ -6180,6 +6318,10 @@ struct TransportSession {
     /// the patch's own limit, not the live voice count, exactly as the page
     /// shows the patch's `voices` knob.
     synth: usize,
+    /// How many routing strips the drum chart feeds through.
+    drum_routes: usize,
+    /// How many routing strips the synth feeds through.
+    synth_routes: usize,
     /// Replacement plans to the render thread. A send never waits for the audio
     /// thread; the receiver's `try_recv` at a block edge is the only consumer.
     plan_tx: Sender<TransportPlan>,
@@ -6285,7 +6427,7 @@ impl TransportSession {
             .map(|gain| f32::from_bits(gain.load(Ordering::Acquire)))
             .unwrap_or(1.0);
         format!(
-            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"synth\":{},\"monitor_input\":{},\"monitor_gain\":{}{}}}",
+            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"synth\":{},\"apps\":{},\"monitor_input\":{},\"monitor_gain\":{}{}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
@@ -6297,6 +6439,7 @@ impl TransportSession {
             self.drums,
             jawn_audio::loopback::json_escape(&self.drum_kit),
             self.synth,
+            self.drum_routes + self.synth_routes,
             self.monitor_input,
             monitor_gain,
             error
@@ -6308,7 +6451,7 @@ impl TransportSession {
 /// default tempo and signature, with no loop. The route always has a shape to
 /// answer with, exactly as an idle `status` does.
 fn default_transport_line() -> String {
-    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"drums\":0,\"drum_kit\":\"off\",\"synth\":0,\"monitor_input\":false,\"monitor_gain\":1}}"
+    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"drums\":0,\"drum_kit\":\"off\",\"synth\":0,\"apps\":0,\"monitor_input\":false,\"monitor_gain\":1}}"
         .to_string()
 }
 
@@ -9598,6 +9741,8 @@ break"}"#).is_err());
             drums: 0,
             drum_kit: "off".to_string(),
             synth: 0,
+            drum_routes: 0,
+            synth_routes: 0,
             plan_tx,
             live_tx,
             note_tx,
@@ -9617,6 +9762,7 @@ break"}"#).is_err());
         assert!(line.contains("\"loop_start\":0.000000"), "{line}");
         assert!(line.contains("\"loop_end\":0.000000"), "{line}");
         assert!(line.contains("\"synth\":0"), "{line}");
+        assert!(line.contains("\"apps\":0"), "{line}");
     }
 
     #[test]
@@ -9871,6 +10017,10 @@ break"}"#).is_err());
                 r#"{"cmd":"transport","action":"start","drums":[1,2,3]}"#,
                 "drums",
             ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"routing":[{"pan":-3}]}}"#,
+                "drums.routing[0].pan",
+            ),
         ] {
             let answer = reply(server.handle(line));
             assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
@@ -9907,6 +10057,145 @@ break"}"#).is_err());
         let empty = reply(server.handle(r#"{"cmd":"transport","action":"update"}"#));
         assert!(empty.contains("\"ok\":false"), "{empty}");
         assert!(empty.contains("drums"), "{empty}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_drum_routing_plan_parses_and_reports_the_strip_count() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"apps\":0"), "{started}");
+
+        // A playing `start` carries the chart, routing included, as a plan.
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"start","position":0,"drums":{"length":4,"steps":{"kick":[100]},"routing":[{"gain":0.8,"pan":-0.5,"inserts":["fuzz"]}]}}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"drums\":4"), "{line}");
+        assert!(line.contains("\"apps\":1"), "{line}");
+
+        // A chart update replaces the routing list, so the count follows it.
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","drums":{"length":4,"routing":[{"gain":1},{"gain":0.5,"pan":1,"inserts":["reverb","compressor"]}]}}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"apps\":2"), "{line}");
+
+        // A chart with no routing is unpatched again.
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","drums":{"length":4}}"#,
+        ));
+        assert!(line.contains("\"apps\":0"), "{line}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_synth_routing_action_parses_and_reports_the_strip_count() {
+        let mut server = socket_server();
+        // No transport: the routing has no render thread to reach.
+        let refused = reply(server.handle(
+            r#"{"cmd":"synth","action":"routing","routing":[{"gain":0.5}]}"#,
+        ));
+        assert!(refused.contains("\"ok\":false"), "{refused}");
+        assert!(refused.contains("not playing"), "{refused}");
+        assert!(server.transport.is_none(), "a routing action started a transport");
+
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"ok\":true"), "{started}");
+
+        let line = reply(server.handle(
+            r#"{"cmd":"synth","action":"routing","routing":[{"gain":1,"pan":1,"inserts":["delay"]}]}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+        assert!(line.contains("\"apps\":1"), "{line}");
+
+        // `null` is the empty list: the synth is unpatched again.
+        let line = reply(server.handle(
+            r#"{"cmd":"synth","action":"routing","routing":null}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"apps\":0"), "{line}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn an_app_routing_refuses_each_bad_shape_by_path() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        let too_many = format!(
+            r#"{{"cmd":"synth","action":"routing","routing":[{}]}}"#,
+            vec!["{}"; MAX_APP_ROUTES + 1].join(",")
+        );
+        let mut cases: Vec<(String, &str)> = vec![
+            (
+                r#"{"cmd":"synth","action":"routing","routing":"left"}"#.to_string(),
+                "synth routing must be an array",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[1]}"#.to_string(),
+                "synth routing[0] must be an object",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"gain":1.5}]}"#.to_string(),
+                "synth routing[0].gain",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"gain":-0.1}]}"#.to_string(),
+                "synth routing[0].gain",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"gain":"loud"}]}"#.to_string(),
+                "synth routing[0].gain",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"pan":2}]}"#.to_string(),
+                "synth routing[0].pan",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"pan":-2}]}"#.to_string(),
+                "synth routing[0].pan",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"inserts":["nope"]}]}"#.to_string(),
+                "synth routing[0].inserts[0]",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"inserts":["fuzz","nope"]}]}"#.to_string(),
+                "synth routing[0].inserts[1]",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"inserts":[3]}]}"#.to_string(),
+                "synth routing[0].inserts[0]",
+            ),
+            (
+                r#"{"cmd":"synth","action":"routing","routing":[{"inserts":"fuzz"}]}"#.to_string(),
+                "synth routing[0].inserts",
+            ),
+            (
+                r#"{"cmd":"transport","action":"update","drums":{"length":4,"routing":[{"gain":1},{"gain":2}]}}"#.to_string(),
+                "drums.routing[1].gain",
+            ),
+            (
+                r#"{"cmd":"transport","action":"update","drums":{"length":4,"routing":[{"inserts":["nope","fuzz"]}]}}"#.to_string(),
+                "drums.routing[0].inserts[0]",
+            ),
+            (too_many, "at most 16"),
+        ];
+        for (line, needle) in cases.drain(..) {
+            let answer = reply(server.handle(&line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+        }
+
+        // Every refusal left the transport playing.
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"state\":\"playing\""), "{status}");
 
         let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
     }
@@ -10156,6 +10445,7 @@ break"}"#).is_err());
             r#"{"cmd":"synth","action":"patch","patch":{"voices":8}}"#,
             r#"{"cmd":"synth","action":"note","on":1,"note":60}"#,
             r#"{"cmd":"synth","action":"all_off"}"#,
+            r#"{"cmd":"synth","action":"routing","routing":[]}"#,
             r#"{"cmd":"drums","action":"hit","voice":"kick","velocity":70}"#,
         ];
         // Never started: no transport exists, so each command is one sentence.
