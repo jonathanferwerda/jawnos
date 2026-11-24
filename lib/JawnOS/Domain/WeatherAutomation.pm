@@ -185,27 +185,42 @@ sub weather_measure_values($weather) {
 		return \%v;
 	}
 
-	# The rain/snow state a set of readings means. A gauge is authoritative only
-	# when it reports a rate above zero: many stations round light snow or
-	# drizzle to 0.0, so a zero rate is not evidence of dry weather and the
-	# condition word decides then. Kept apart from weather_measure_values because
-	# a stored reading made before the derived measure existed still has to be
-	# read the same way.
+	# The word a condition gives for what is falling: 'snow', 'rain', or '' when
+	# it names no type. This is the only reading that knows snow from rain: snow
+	# falls above freezing and freezing rain below it, so temperature cannot
+	# decide. The lists carry the providers' words (EC and NWS phrases, WMO's
+	# snow grains and snow showers) and the METAR codes for the same. A generic
+	# "precipitation" is deliberately not a type; the caller falls back only then.
+	sub weather_precipitation_word($condition) {
+		my $word = lc($condition // '');
+		return '' unless length $word;
+		# Words, codes and intensity signs arrive joined by underscores, hyphens
+		# or nothing; one separator makes the word boundaries work for all.
+		$word =~ s/[^a-z0-9]+/ /g;
+		return 'snow' if $word =~ /\b(?:snow\w*|flurr\w*|sleet|pellet\w*|blizzard\w*|graupel|ice|wintry|shsn|blsn|snra|rasn|sn|sg|pl|gs|ic)\b/;
+		return 'rain' if $word =~ /\b(?:rain\w*|shower\w*|drizzle\w*|downpour\w*|sprinkle\w*|wet|shra|tsra|fzra|fzdz|radz|dzra|ra|dz|sh|ts|thunder\w*|storm\w*)\b/;
+		# Hail after the storm words: a thunderstorm with hail is the rain app's,
+		# while bare hail is frozen precipitation.
+		return 'snow' if $word =~ /\b(?:hail\w*|gr)\b/;
+		return '';
+	}
+
+	# The rain/snow state a set of readings means. The condition word names the
+	# type and wins outright; the gauge only says something is falling, and the
+	# temperature is a last resort for a generic "precipitation" or a missing
+	# word (it is wrong often enough: snow above freezing, freezing rain below).
+	# Kept apart from weather_measure_values because a stored reading made before
+	# the derived measure existed still has to be read the same way.
 	sub weather_precipitation_state($v) {
 		return undef unless ref $v eq 'HASH';
+		my $word = &weather_precipitation_word($v->{'condition'});
+		return $word if length $word;
 		my $rate = $v->{'precip_rate'};
-		if (defined $rate && $rate > 0) {
+		my $generic = ($v->{'condition'} // '') =~ /precip|\bup\b/i;
+		if ((defined $rate && $rate > 0) || $generic) {
 			return (defined $v->{'temperature'} && $v->{'temperature'} <= 0) ? 'snow' : 'rain';
 		}
-		my $condition = $v->{'condition'} // '';
-		if (length $condition) {
-			return 'snow' if $condition =~ /snow|flurr|sleet|ice/;
-			if ($condition =~ /rain|shower|drizzle|precip/) {
-				return (defined $v->{'temperature'} && $v->{'temperature'} <= 0) ? 'snow' : 'rain';
-			}
-			return 'none';
-		}
-		return defined $rate ? 'none' : undef;
+		return (defined $rate || length($v->{'condition'} // '')) ? 'none' : undef;
 	}
 
 # ---- the measurement rules --------------------------------------------------
