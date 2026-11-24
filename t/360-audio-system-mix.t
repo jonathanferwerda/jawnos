@@ -157,6 +157,23 @@ if ($cmd eq 'info') {
 	exit 0;
 }
 if ($cmd eq 'list' && ($ARGV[1] // '') eq 'short' && ($ARGV[2] // '') eq 'sinks') {
+	# A removal reads this list straight after a WirePlumber restart, before
+	# the card's nodes are rebuilt. With a count in `sink_restore`, the output
+	# comes back on the read that takes it to zero.
+	if (-e "$dir/sink_restore") {
+		my $left = read_file("$dir/sink_restore");
+		$left =~ s/\s+//g;
+		$left = 0 unless $left =~ /\A\d+\z/;
+		if ($left > 0) {
+			$left--;
+			write_text("$dir/sink_restore", "$left\n");
+			if ($left == 0) {
+				open(my $sfh, '>>', "$dir/sinks") or exit 9;
+				print {$sfh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+				close $sfh;
+			}
+		}
+	}
 	print read_file("$dir/sinks");
 	exit 0;
 }
@@ -777,6 +794,45 @@ sub set_attempts {
 	ok(!-e $rule, 'remove unlinks the rule this module wrote');
 	is(read_file("$dir/default"), "alsa_output.real\n", 'and restores the previous output');
 	is(restart_count(), 2, 'WirePlumber is restarted again to read the removal');
+}
+
+# --- the handover waits for an output a restart has not rebuilt yet ---------
+# `systemctl --user restart wireplumber` returns before the card's nodes are in
+# the server's listing. A removal that read the listing once would skip the
+# level write, and the node would come back at the unity the engine held it at
+# - the burst of full scale this module exists to prevent. The wait is bounded,
+# so a card that never returns still ends the removal.
+{
+	reset_mix();
+	my $card_dir = tempdir(CLEANUP => 1);
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$card_dir/wireplumber";
+
+	my $on = JawnOS::Audio::SystemMix::ensure($card_dir, 'hw:0,0');
+	is($on->{ok}, 1, 'the card mix comes up for the late-output handover');
+	write_levels("alsa_output.real 100 no\njawn_system 35 no\n");
+
+	# The output is out of the listing until the fourth read, as it is while
+	# WirePlumber rebuilds the card.
+	write_file("$dir/sinks", "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sink_restore", "4\n");
+	write_file("$dir/pactl.log", '');
+
+	my $off = JawnOS::Audio::SystemMix::remove($card_dir);
+	unlink "$dir/sink_restore";
+
+	is($off->{ok}, 1, 'the removal succeeds with a late output');
+	is($off->{level_restored}, 1, 'and the level is written once the output is back');
+	is((level_of('alsa_output.real'))[0], 35,
+		'at the live mix level, not the unity the engine held');
+	is((level_of('alsa_output.real'))[1], 'no', 'and unmuted');
+	my $log    = read_file("$dir/pactl.log");
+	my $level  = index($log, 'set-sink-volume alsa_output.real 35%');
+	my $switch = index($log, 'set-default-sink alsa_output.real');
+	my $unload = index($log, 'unload-module 42');
+	ok($level >= 0, 'the level reaches the late output');
+	ok($level < $switch, 'before the default moves to it');
+	ok($switch < $unload, 'and the sink is unloaded after both');
+	write_levels('');
 }
 
 # --- a card that cannot be mapped is an error, never a guessed rule ---------

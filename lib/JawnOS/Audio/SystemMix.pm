@@ -511,6 +511,38 @@ sub restart_wireplumber {
 	return { ok => 1 };
 }
 
+# `systemctl --user restart wireplumber` returns before the card's nodes are
+# back in the server's listing, so a removal that read the list once could miss
+# the output it has to hand the level to - and a sink that appears after that
+# moment is heard at the unity the engine held it at. Wait for the output
+# (bounded: an unplugged card never comes back), then the caller's own order of
+# level, default and unload is the handover it was meant to be. With no name,
+# any sink that is neither the mix nor a null sink counts.
+sub _await_restored_output {
+	my ($want) = @_;
+	my $named = defined $want && length $want;
+	my %null;
+	unless ($named) {
+		%null = map { $_->{'sink'} => 1 }
+			grep { ref $_ eq 'HASH' && defined $_->{'sink'} } @{ _null_sink_modules() };
+	}
+	my $sinks = _sinks();
+	for my $attempt (0 .. 15) {
+		if ($named) {
+			return $sinks if $sinks->{$want};
+		}
+		else {
+			return $sinks
+				if grep { $_ ne $system_sink && !/\Ajawn_call_in\z/ && !/\.monitor\z/ && !$null{$_} }
+				keys %{$sinks};
+		}
+		last if $attempt == 15;
+		sleep 0.1;
+		$sinks = _sinks();
+	}
+	return $sinks;
+}
+
 # Record the rule before writing it, so a crash between the two leaves enough
 # for `remove` to find and undo. A file at the target path that names an ALSA
 # playback/capture node is the engine's rule and is adopted (unlinked on
@@ -1119,6 +1151,14 @@ sub _recover_without_state {
 	};
 	return $nothing unless available();
 
+	# A rule removal restarts WirePlumber, whose nodes can be back only after
+	# the server has answered `systemctl`. Wait for a real output before the
+	# listing picks one, or the level is skipped and the node returns at unity.
+	_await_restored_output(undef)
+		if ref $card->{'restart'} eq 'HASH'
+		&& $card->{'restart'}->{'ok'}
+		&& !$card->{'restart'}->{'skipped'};
+
 	my $order   = _sink_list();
 	my $sinks   = { map { $_ => 1 } @{$order} };
 	my $modules = _null_sink_modules();
@@ -1210,6 +1250,16 @@ sub remove {
 	my $unloaded   = 0;
 
 	my $sinks = available() ? _sinks() : {};
+	# A rule removal restarts WirePlumber, and the server can answer before the
+	# card's nodes are rebuilt. The output this removal hands the level to is one
+	# of those nodes: wait for it rather than skip the write and leave it at the
+	# unity the engine held.
+	if ( $sinks && available() && ref $card eq 'HASH'
+		&& ref $card->{'restart'} eq 'HASH'
+		&& $card->{'restart'}->{'ok'}
+		&& !$card->{'restart'}->{'skipped'} ) {
+		$sinks = _await_restored_output( length $previous ? $previous : undef );
+	}
 	# The mix carried the person's level while the hardware sink played at
 	# unity. Write that level back before the default moves: whatever stream
 	# lands on the output next must already find the person's level there, or
