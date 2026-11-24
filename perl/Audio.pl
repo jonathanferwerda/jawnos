@@ -1260,6 +1260,30 @@ sub ensure_engine_fresh {
 	print "audio supervisor: engine $summary\n";
 }
 
+# The first card that can play, as `hw:<id>,0`, from the kernel's own list.
+# A capture-only device (a webcam) is skipped: a fallback must not open a
+# microphone as an output. No list, or no card that plays, leaves the compiled
+# number in place.
+sub first_playback_pcm {
+	my $dir  = $ENV{'JAWNOS_ASOUND_DIR'} || '/proc/asound';
+	my $path = $ENV{'JAWNOS_ASOUND_CARDS'} || "$dir/cards";
+	open my $fh, '<', $path or return undef;
+	my @cards;
+	while (my $line = <$fh>) {
+		next unless $line =~ /^\s*(\d+)\s+\[([^\]]*)\]:/;
+		my ($index, $id) = ( $1 + 0, $2 );
+		$id =~ s/\s+\z//;
+		push @cards, [ $index, $id ];
+	}
+	close $fh;
+	foreach my $card (@cards) {
+		my ($index, $id) = @$card;
+		next unless -e "$dir/card$index/pcm0p";
+		return length $id ? "hw:$id,0" : "hw:$index,0";
+	}
+	return undef;
+}
+
 # What to use when no saved plan describes one. The compiled default
 # (`alsa hw:1,0`) opens a card exclusively; on a machine with a
 # PipeWire/PulseAudio server the shared `pipewire`/`default` pair coexists with
@@ -1276,7 +1300,7 @@ sub fallback_choice {
 	my $server = load_system_mix() && JawnOS::Audio::SystemMix::available();
 	$fallback_pair = $server
 		? { backend => 'pipewire', device => 'default' }
-		: { backend => 'alsa',     device => 'hw:1,0' };
+		: { backend => 'alsa',     device => ( first_playback_pcm() // 'hw:0,0' ) };
 	return $fallback_pair;
 }
 

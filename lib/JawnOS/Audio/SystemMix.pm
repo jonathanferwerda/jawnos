@@ -877,6 +877,78 @@ sub _hold_output_unity {
 	return 1;
 }
 
+# The playback controls an interface tends to offer, in the order a person
+# would reach for them. `amixer` names them per card, and a class-compliant
+# interface with only a physical knob answers none — which is a fine answer.
+our @card_mixer_controls = (
+	'Master', 'PCM', 'Speaker', 'Headphone', 'Master Playback Volume',
+);
+
+# On an ALSA plan the engine opens the card's PCM directly, so the PipeWire
+# sink's volume is not in the signal path at all; the card's own mixer is.
+# Leaving that mixer where it was multiplies the person's level twice (a mix at
+# 100% over a card at 30% is heard as 30%), and the hidden node gives them no
+# way to see or move it. So the card's playback controls are read once and
+# held at unity while the engine owns the card, and `remove` puts them back.
+#
+# `JAWNOS_AUDIO_SKIP_CARD_MIXER` exists for a test that models a card on a
+# machine where a real one is present: it must not move the real card's levels.
+sub card_mixer_skipped {
+	return $ENV{'JAWNOS_AUDIO_SKIP_CARD_MIXER'} ? 1 : 0;
+}
+
+sub card_mixer_read {
+	my ($card) = @_;
+	return [] if card_mixer_skipped();
+	return [] unless defined $card && $card =~ /\A\d+\z/;
+	my @controls;
+	foreach my $control (@card_mixer_controls) {
+		my $out = JawnOS::Platform::Audio::run('amixer', '-c', $card, 'sget', $control);
+		next unless defined $out && length $out;
+		my ($volume) = $out =~ /\[(\d+)%\]/;
+		next unless defined $volume;
+		my ($switch) = $out =~ /\[(on|off)\]/i;
+		push @controls, {
+			control => $control,
+			volume  => $volume + 0,
+			muted   => ( defined $switch && lc $switch eq 'off' ) ? 1 : 0,
+		};
+	}
+	return \@controls;
+}
+
+sub card_mixer_unity {
+	my ($card, $controls) = @_;
+	return 0 if card_mixer_skipped();
+	return 0 unless defined $card && $card =~ /\A\d+\z/;
+	my $did = 0;
+	foreach my $control (@{ $controls || [] }) {
+		next unless ref $control eq 'HASH' && defined $control->{'control'};
+		JawnOS::Platform::Audio::run(
+			'amixer', '-c', $card, 'sset', $control->{'control'}, '100%', 'unmute');
+		$did = 1;
+	}
+	return $did;
+}
+
+sub card_mixer_restore {
+	my ($card, $controls) = @_;
+	return 0 if card_mixer_skipped();
+	return 0 unless defined $card && $card =~ /\A\d+\z/;
+	my $did = 0;
+	foreach my $control (@{ $controls || [] }) {
+		next unless ref $control eq 'HASH' && defined $control->{'control'};
+		next unless defined $control->{'volume'};
+		JawnOS::Platform::Audio::run(
+			'amixer', '-c', $card, 'sset', $control->{'control'},
+			$control->{'volume'} . '%',
+			$control->{'muted'} ? 'mute' : 'unmute',
+		);
+		$did = 1;
+	}
+	return $did;
+}
+
 # Give the mix the person's level. It is written before the switch: a null sink
 # is born at the server's 100%, and a stream that lands on it the moment the
 # default moves must find the person's loudness already there. The hardware
@@ -1137,6 +1209,27 @@ sub ensure {
 		_hold_output_unity($previous, $sinks);
 	}
 
+	# The card's mixer, for the ALSA path the sink volume does not reach. The
+	# levels are recorded before anything is moved, and only once: a repeat
+	# ensure re-applies unity but keeps the first reading, so `remove` always
+	# has the levels the person actually had. If the record cannot be written,
+	# the card is left alone rather than held blind.
+	if (defined $card) {
+		my $mixer = ref $state->{'previous_mixer'} eq 'HASH'
+			? $state->{'previous_mixer'} : undef;
+		$mixer = undef if $mixer && "" . ( $mixer->{'card'} // '' ) ne "" . $card;
+		unless ($mixer) {
+			my $controls = card_mixer_read($card);
+			if ( @{$controls} ) {
+				my $candidate = { card => $card, controls => $controls };
+				$doc->{'previous_mixer'} = $candidate;
+				my $recorded = _write_state($state_dir, $doc);
+				$mixer = $recorded->{'ok'} ? $candidate : undef;
+			}
+		}
+		card_mixer_unity($card, $mixer->{'controls'}) if $mixer;
+	}
+
 	return {
 		ok               => 1,
 		sink             => $system_sink,
@@ -1293,6 +1386,16 @@ sub remove {
 			&& !$card->{'restart'}->{'skipped'} )
 			? _await_restored_output( length $previous ? $previous : undef )
 			: _sinks();
+	}
+	# The card's mixer was held at unity while the engine owned it on ALSA.
+	# Put the levels it had back first: the live mix level written below is the
+	# person's current loudness and wins when the server can read it, and this
+	# is the fallback when it cannot.
+	if ( ref $state->{'previous_mixer'} eq 'HASH' ) {
+		card_mixer_restore(
+			$state->{'previous_mixer'}{'card'},
+			$state->{'previous_mixer'}{'controls'},
+		);
 	}
 	# The mix carried the person's level while the hardware sink played at
 	# unity. Write that level back before the default moves: whatever stream

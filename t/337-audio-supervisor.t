@@ -24,7 +24,8 @@
 #            its socket file) gets TERM and is spawned over; a process it
 #            cannot identify is left alone. A refused spawn is recorded and
 #            retried, never an exit. With no saved plan the pair is
-#            pipewire/default when a sound server answers, alsa/hw:1,0 when
+#            pipewire/default when a sound server answers, alsa on the first
+#            card that can play (hw:0,0) when
 #            none does, and the choice is logged once. The plan defaults to
 #            the durable audio state dir, not the wiped ~/.president, and the
 #            system-mix state follows the plan beside it. The block the engine
@@ -51,6 +52,13 @@ use POSIX ();
 use Socket qw(SOCK_STREAM);
 use Test::More;
 use Time::HiRes qw(sleep time);
+
+# A supervisor test models an interface with a fake pactl on a machine that
+# may have a real sound card: the card-mixer hold must never touch it.
+local $ENV{JAWNOS_AUDIO_SKIP_CARD_MIXER} = 1;
+# And no card list, so the no-choice fallback's number is the compiled one on
+# every machine rather than whichever card the test box happens to have.
+local $ENV{JAWNOS_ASOUND_DIR} = tempdir(CLEANUP => 1);
 
 # FindBin, not RepoSource or Probe: the pre-push guard compiles a new test in a
 # scratch directory, so every path here comes from this file or a tempdir.
@@ -2121,15 +2129,15 @@ ENGINE
 	);
 	my $saw = wait_for(sub {
 		return 0 unless -s $args_log;
-		return read_text($args_log) =~ /--backend alsa --device hw:1,0/;
+		return read_text($args_log) =~ /--backend alsa --device hw:0,0/;
 	}, 10);
-	ok($saw, 'with no plan and no server the engine keeps alsa on hw:1,0')
+	ok($saw, 'with no plan and no server the engine keeps alsa on hw:0,0')
 		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
 
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the no-server fallback supervisor stops cleanly');
 	like(read_text("$dir/supervisor.log"),
-		qr/no saved plan at .*audio-plan\.json; choosing backend alsa on device hw:1,0/,
+		qr/no saved plan at .*audio-plan\.json; choosing backend alsa on device hw:0,0/,
 		'and logs the missing plan and the ALSA pair');
 }
 

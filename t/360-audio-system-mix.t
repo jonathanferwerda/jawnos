@@ -34,8 +34,9 @@ use Test::More;
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
 
-require JawnOS::Audio::SystemMix;
-require JawnOS::Platform::Audio;
+	require JawnOS::Audio::SystemMix;
+	require JawnOS::Platform::Audio;
+	use JSON::PP ();
 
 sub write_file {
 	my ($path, $text) = @_;
@@ -1165,6 +1166,65 @@ PERSON
 	is($map->{ok}, 1, 'a card named by id maps its playback node');
 	is($map->{card}, 1, 'through the number it has now');
 	is($map->{playback}, 'alsa_output.usb-card', 'and names the right node');
+}
+
+# --- an ALSA card's own mixer is in the path, so it is held at unity -------
+# The engine opens the card's PCM directly, so the PipeWire sink's volume is
+# not applied to it; the card's mixer is. Without this the person's level is
+# applied twice (a mix at 100% over a card at 30% is heard at 30%), and the
+# node the engine hides gives them no way to move it.
+{
+	reset_mix();
+	my $card_dir = tempdir(CLEANUP => 1);
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$card_dir/wireplumber";
+	my $mixbin = "$dir/mixbin";
+	make_path($mixbin);
+	my $log = "$dir/amixer.log";
+	write_file($log, '');
+	write_file("$mixbin/amixer", <<'AMIXER');
+#!/bin/sh
+printf '%s\n' "$*" >> "$AMIXER_LOG"
+control="$4"
+case "$control" in
+	Master) vol=30; sw=off ;;
+	PCM) vol=65; sw=on ;;
+	*) exit 1 ;;
+esac
+if [ "$3" = "sget" ]; then
+	printf "Simple mixer control '%s',0\n  Front Left: Playback %s [%s%%] [%s]\n" "$control" "$vol" "$vol" "$sw"
+fi
+exit 0
+AMIXER
+	chmod 0755, "$mixbin/amixer";
+	local $ENV{PATH} = "$mixbin:$ENV{PATH}";
+	local $ENV{AMIXER_LOG} = $log;
+
+	my $on = JawnOS::Audio::SystemMix::ensure($card_dir, 'hw:0,0');
+	is($on->{ok}, 1, 'a card mix comes up');
+	my $written = read_file($log);
+	like($written, qr/sset Master 100% unmute/, 'the card Master is held at unity');
+	like($written, qr/sset PCM 100% unmute/, 'and its PCM too');
+	unlike($written, qr/sset Speaker|sset Headphone/,
+		'a control the card does not have is left alone');
+	my $state = JSON::PP->new->decode(read_file("$card_dir/audio-system-mix.json"));
+	is($state->{previous_mixer}{card}, 0, 'the card is recorded for removal');
+	is($state->{previous_mixer}{controls}[0]{volume}, 30, 'with the level it had');
+	is($state->{previous_mixer}{controls}[0]{muted}, 1, 'and its mute');
+
+	# A repeat ensure holds unity again but must not overwrite the record.
+	write_file($log, '');
+	JawnOS::Audio::SystemMix::ensure($card_dir, 'hw:0,0');
+	my $again = JSON::PP->new->decode(read_file("$card_dir/audio-system-mix.json"));
+	is($again->{previous_mixer}{controls}[0]{volume}, 30,
+		'a repeat ensure keeps the level the person had');
+	like(read_file($log), qr/sset Master 100% unmute/, 'and holds unity again');
+
+	write_file($log, '');
+	my $off = JawnOS::Audio::SystemMix::remove($card_dir);
+	is($off->{ok}, 1, 'the mix removes');
+	like(read_file($log), qr/sset Master 30% mute/,
+		'and the card gets back the level and mute it had');
+	like(read_file($log), qr/sset PCM 65% unmute/, 'for every control it touched');
 }
 
 done_testing();

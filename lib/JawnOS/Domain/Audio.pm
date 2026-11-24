@@ -292,6 +292,21 @@ our %audio_backend_device = (
 	pipewire => 'default',
 	null     => 'null',
 );
+# The device a machine that has never chosen one would open. ALSA names the
+# first card that can play, so the answer is an interface that exists on this
+# machine rather than a number that was right on another one; every other
+# backend keeps its compiled default.
+sub _audio_default_device {
+	my ($backend) = @_;
+	$backend = '' unless defined $backend && !ref $backend;
+	if ( $backend eq 'alsa' ) {
+		require JawnOS::Platform::Audio;
+		my $first = JawnOS::Platform::Audio::first_playback_pcm();
+		return $first if defined $first && length $first;
+	}
+	return $audio_backend_device{$backend};
+}
+
 our $audio_engine_device_setting = 'audio_engine_device';
 our $audio_engine_profile_setting = 'audio_engine_profile';
 
@@ -344,7 +359,7 @@ sub audio_engine_device_read {
 	my $backend = $doc->{backend};
 	$backend = 'alsa' unless defined $backend && $audio_backend_ok{$backend};
 	my $device = $doc->{device};
-	$device = $audio_backend_device{$backend}
+	$device = &_audio_default_device($backend)
 		unless defined $device && length $device;
 	return { backend => $backend, device => $device }
 		unless $backend eq 'pipewire' && $profile;

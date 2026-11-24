@@ -1223,6 +1223,20 @@ that id to the number it has at that moment for the WirePlumber rule's `alsa.car
 change in enumeration order cannot move the engine to another card. A saved number still works, and
 a card with no id keeps its number. `t/344` pins the id spelling, `t/360` the resolution.
 
+**The card's own mixer, and no interface in particular (2026-11-24, in the tree).** A laptop that
+switched between the two backends heard a mix at 100% as loud as PipeWire's 30%: on an ALSA plan the
+engine opens the card's PCM directly, so the PipeWire sink's volume is not in the path at all, and
+the card's own mixer (at the level it had before the engine, 30%) stayed in it while the hidden node
+gave the person no way to see or move it. `SystemMix` now reads the card's playback controls once,
+records them in the state, and holds them at unity while the engine owns the card, putting them back
+on removal - the same shape as the sink-level handover, and the same result the PipeWire backend
+already had (the sink at unity, the mix carrying the level). A class-compliant interface with only a
+physical knob answers no controls and is left alone; `JAWNOS_AUDIO_SKIP_CARD_MIXER` keeps a test from
+touching a real card. In the same change, no interface is assumed anywhere: a machine that has never
+chosen one opens the first card that can play (the kernel's own `pcm0p` probe, so a webcam is skipped),
+by card id, instead of a compiled `hw:1,0`. The P2 gate's auto-detect still prefers the UM2 by name;
+that is a developer tool, and it is the one place left to generalize.
+
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
 turning `manage` off returns the machine to today's behaviour with nothing stranded.

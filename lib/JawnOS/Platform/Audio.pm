@@ -27,7 +27,7 @@ our @EXPORT_OK = qw(
 	backend reset_backend devices
 	pactl_devices parse_pactl_devices parse_pactl_short
 	parse_wpctl amixer_control amixer_devices
-	parse_pactl_cards card_profiles set_card_profile
+	parse_pactl_cards card_profiles set_card_profile first_playback_pcm
 	get_volume set_volume get_mute set_mute
 	default set_default
 	stream_inputs set_stream_input_volume set_stream_input_mute
@@ -262,6 +262,33 @@ sub set_card_profile {
 	return 0 unless ( $backend->{'kind'} || '' ) eq 'pactl';
 	my $rc = system($backend->{'bin'}, 'set-card-profile', $card, $profile);
 	return $rc == 0 ? 1 : 0;
+}
+
+# The first card that can play audio, as `hw:<id>,0` (or `hw:<n>,0` when the
+# card has no id), so a machine that has never picked an interface opens one
+# that exists instead of a number that happened to be right once. A
+# capture-only device - a webcam is the common one - is skipped: the fallback
+# must not open a microphone as an output. The probe is the card's own
+# `pcm0p`, which is what the kernel offers for playback first. A card list
+# with no such card answers undef, and the caller keeps its own default.
+sub first_playback_pcm {
+	my $dir  = $ENV{'JAWNOS_ASOUND_DIR'} || '/proc/asound';
+	my $path = $ENV{'JAWNOS_ASOUND_CARDS'} || "$dir/cards";
+	open my $fh, '<', $path or return undef;
+	my @cards;
+	while (my $line = <$fh>) {
+		next unless $line =~ /^\s*(\d+)\s+\[([^\]]*)\]:/;
+		my ($index, $id) = ( $1 + 0, $2 );
+		$id =~ s/\s+\z//;
+		push @cards, [ $index, $id ];
+	}
+	close $fh;
+	foreach my $card (@cards) {
+		my ($index, $id) = @$card;
+		next unless -e "$dir/card$index/pcm0p";
+		return length $id ? "hw:$id,0" : "hw:$index,0";
+	}
+	return undef;
 }
 
 # The default device's own verbs are the authority for its level and mute, even

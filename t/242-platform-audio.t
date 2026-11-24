@@ -228,6 +228,32 @@ OUT
 		'and an empty profile is refused');
 }
 
+# --- the first card that can play ------------------------------------------
+# A machine that has never picked an interface opens one that exists. The
+# kernel's own list is the source; a capture-only device (a webcam) is skipped
+# because a fallback must not open a microphone as an output.
+{
+	my $asound = "$scratch/asound";
+	make_path("$asound/card0", "$asound/card1", "$asound/card2");
+	write_file("$asound/cards",
+		" 0 [WEBCAM         ]: USB-Audio - C270 HD WEBCAM\n"
+			. " 1 [CODEC          ]: USB-Audio - USB Audio CODEC\n"
+			. " 2 [PCH            ]: HDA-Intel - HDA Intel PCH\n");
+	write_file("$asound/card1/pcm0p", '');
+	write_file("$asound/card2/pcm0p", '');
+	local $ENV{JAWNOS_ASOUND_DIR} = $asound;
+	local $ENV{JAWNOS_ASOUND_CARDS} = "$asound/cards";
+
+	is(JawnOS::Platform::Audio::first_playback_pcm(), 'hw:CODEC,0',
+		'the first card that can play, by its id');
+	unlink "$asound/card1/pcm0p";
+	is(JawnOS::Platform::Audio::first_playback_pcm(), 'hw:PCH,0',
+		'a capture-only interface is skipped even when it is first');
+	unlink "$asound/card2/pcm0p";
+	is(JawnOS::Platform::Audio::first_playback_pcm(), undef,
+		'a machine with no card that plays answers nothing');
+}
+
 # ============================================================================
 # wpctl
 # ============================================================================

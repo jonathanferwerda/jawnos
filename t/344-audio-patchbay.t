@@ -40,6 +40,13 @@ print {$cards_fh} " 1 [UM2            ]: USB-Audio - BEHRINGER UMC 202HD 192k\n"
 close $cards_fh;
 local $ENV{JAWNOS_ASOUND_CARDS} = $cards;
 
+# The kernel's playback probe, so the no-choice fallback names a card that
+# exists here: card 0 plays, card 1 does too, and the first one wins.
+local $ENV{JAWNOS_ASOUND_DIR} = "$scratch/asound";
+make_path("$scratch/asound/card0", "$scratch/asound/card1");
+write_file("$scratch/asound/card0/pcm0p", '');
+write_file("$scratch/asound/card1/pcm0p", '');
+
 # One in-memory settings table, keyed the way setting_grabber/setter write,
 # and this machine's name for the device-scoped rows. The domain module under
 # test reads only these three helpers, so this is the whole database it needs.
@@ -149,7 +156,8 @@ require JawnOS::Domain::Audio;
 	is($status->{engine}{frames}, 96, 'and the engine reading');
 	is($status->{latency}{out}, 2, 'the sink latency adds the source declaration');
 	is($status->{engine_device}{backend}, 'alsa', 'the status carries the saved engine backend');
-	is($status->{engine_device}{device}, 'hw:1,0', 'and the default device');
+	is($status->{engine_device}{device}, 'hw:PCH,0',
+		'and the first card that can play, by its id');
 	ok(scalar @{ $status->{devices} } > 0, 'and the picker choices');
 
 	subs::audio_manage_set(0);
@@ -521,8 +529,8 @@ require JawnOS::Domain::Audio;
 
 	is_deeply(
 		subs::audio_engine_device_read(),
-		{ backend => 'alsa', device => 'hw:1,0' },
-		'a machine with no saved choice uses the supervisor default'
+		{ backend => 'alsa', device => 'hw:PCH,0' },
+		'a machine with no saved choice opens the first card that can play'
 	);
 
 	my $devices = subs::audio_engine_devices();
