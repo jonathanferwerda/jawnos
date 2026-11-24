@@ -847,6 +847,18 @@ and the ±1-sample playback result is an ALSA-duplex measurement (both streams o
 not the PipeWire engine's separate playback and capture clocks. The A/B listening check is still a
 person's.
 
+**Pro Audio run — the P2 gate passes (2026-11-23, `table`, UM2, PipeWire).** With the UM2's card
+profile moved from Analog Stereo to **Pro Audio** (`pro-audio`, giving `pro-output-0` /
+`pro-input-0`), the plan's guitar source pointed at the Pro Audio input, and the engine played out
+the Pro Audio output, every check passed: **loopback 671–672 samples (14.0 ms)**, **recorded click
+grid max delta 1**, **playback grid max delta 0**, and the **four-track shared start spread 0**. The
+Pro Audio ports also fixed the level: the recorded click peaked at 0.13211 and the playback at
+0.09903, against 0.00705 and 0.000336 on the analog profile. The 14.0 ms is the PipeWire Pro Audio
+path, not the raw ALSA 64/256 floor of 2.71–2.79 ms; Studio's near-zero tracking target still points
+at the ALSA backend, while Pro Audio is the strongest PipeWire fallback and the profile the card
+keeps for the gate. The house patch was stopped for the run and restored on the Pro Audio plan
+afterwards.
+
 ### P3 — Peers on one clock (2 weeks)
 
 Engine-to-engine over UDP: `table` as master, one peer, one shared transport. Offset and drift
