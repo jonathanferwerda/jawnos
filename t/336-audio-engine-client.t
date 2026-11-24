@@ -79,6 +79,14 @@ sub start_mock {
 			print {$fh} encode_json($request) . "\n";
 			close $fh;
 
+			# The engine refuses a second client before reading its line. This
+			# fixture says that sentence once so the retry can be observed.
+			if ($opt{'busy_once'} && !$opt{'busy_sent'}++) {
+				print {$client} '{"ok":false,"error":"a client is already connected"}' . "\n";
+				close $client;
+				next;
+			}
+
 			# The timeout fixture accepts and then says nothing at all.
 			if ($opt{'silent'}) { sleep 30; _exit(0) }
 
@@ -744,6 +752,16 @@ sub run_sound_param {
 	my $route = run_sound_param(route => '2', name => 'gain', value => '0.5');
 	is($route->{'status'}, 200, 'the route fader keeps its behaviour');
 	is_deeply($calls[-1], [2, 'gain', 0.5], 'and still addresses a route');
+}
+
+# --- one busy refusal is retried -------------------------------------------
+{
+	my ($path, $log) = start_mock(busy_once => 1, replies => \%reply);
+	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
+	my $answer = JawnOS::Audio::Engine::audio_engine_status();
+	is($answer->{ok}, 1, 'a busy first connection is retried');
+	is($answer->{state}, 'recording', 'and the retried command is the one that answers');
+	is(scalar logged_requests($log), 2, 'exactly two attempts reach the wire');
 }
 
 done_testing();

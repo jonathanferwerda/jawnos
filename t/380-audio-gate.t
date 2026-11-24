@@ -92,6 +92,7 @@ ok($pass->{passed}, 'clicks on the 120 bpm grid pass');
 is_deeply($pass->{onsets}, [ 1000, 25_000, 49_000 ], 'the onsets are the known samples');
 is($pass->{first}, 1000, 'the first onset anchors the grid');
 is($pass->{max_delta}, 0, 'an exact grid has no delta');
+is($pass->{peak}, 0.5, 'the report names the channel peak');
 
 my $shift = write_wav("$dir/shift.wav",
 	frames => 60_000, clicks => [ 1000, 25_002, 49_000 ]);
@@ -127,6 +128,7 @@ my $right = write_wav("$dir/right.wav",
 	clicks => [ 1000, 25_000, 49_000 ]);
 my $right_pass = gate_analyse($right, channel => 1, bpm => 120, expected => 3);
 ok($right_pass->{passed}, 'the right-channel-only take passes on that channel');
+is($right_pass->{peak}, 0.5, 'and its peak is the channel\'s own');
 my $left_silent = gate_analyse($right, channel => 0, bpm => 120, expected => 3);
 ok(!$left_silent->{passed}, 'the silent left channel has no onsets');
 like($left_silent->{reason}, qr/no click onset/, 'and says why');

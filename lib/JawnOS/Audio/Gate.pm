@@ -390,7 +390,9 @@ sub gate_analyse {
 		$report->{reason} = "channel $report->{channel} is not in this take";
 		return $report;
 	}
-	$report->{peak} = gate_peak($samples);
+	$report->{peak} = $opts{mono}
+		? gate_peak($wav)
+		: gate_peak($wav, $report->{channel});
 
 	my %detector;
 	for my $key (qw(threshold floor peak_fraction fine_fraction

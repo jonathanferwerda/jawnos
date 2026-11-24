@@ -140,6 +140,21 @@ sub audio_engine_available {
 # are all reported as the same shape so the route has one thing to relay.
 sub audio_engine_command {
 	my ($request, $timeout) = @_;
+	my $reply = _audio_engine_command_once($request, $timeout);
+	return $reply unless ref $reply eq 'HASH'
+		&& !$reply->{ok}
+		&& ($reply->{error} // '') eq 'a client is already connected';
+	# The engine serves one client at a time and refuses a second connection
+	# before it reads the line. The command therefore never ran, so one short
+	# retry is safe and keeps a poller from losing a turn to the previous
+	# client's close.
+	select undef, undef, undef, 0.02;
+	return _audio_engine_command_once($request, $timeout);
+}
+
+sub _audio_engine_command_once {
+	my ($request, $timeout) = @_;
+
 	return { ok => 0, error => 'a command needs one request object' }
 		unless ref $request eq 'HASH';
 
