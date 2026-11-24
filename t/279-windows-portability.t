@@ -46,6 +46,50 @@ is(subs::house_key(), $first, 'a second call reuses the file instead of drawing 
 like(read_source('lib/JawnOS/Domain/Tunnel.pm'), qr/Crypt::PRNG/,
 	'the draw asks CryptX, so a platform without /dev/urandom still gets a key');
 
+# An existing key that cannot be read is never replaced. The old call drew a
+# new key and wrote it over the real one, so a home that was briefly
+# unavailable (Android's external storage, a mount coming up) rotated the key
+# and made every sealed row - the vault included - look corrupt.
+SKIP: {
+	skip 'root can read a 0000 file', 3 if $< == 0;
+	my $guarded = tempdir('jawnos-housekey-guard-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+	my $old_home = $subs::home_dir;
+	$subs::home_dir = $guarded;
+	my $gpath = "$guarded/.house.key";
+	open(my $g, '>', $gpath) or die "$gpath: $!";
+	print $g "an-existing-key\n";
+	close $g;
+	chmod 0000, $gpath;
+	my $none = eval { subs::house_key() };
+	my $err = $@;
+	chmod 0600, $gpath;
+	$subs::home_dir = $old_home;
+	ok(!$err, 'an unreadable key file does not die') or diag($err);
+	is($none, '', 'and yields no key instead of drawing a replacement');
+	open(my $r, '<', $gpath) or die "$gpath: $!";
+	local $/;
+	my $after = <$r>;
+	close $r;
+	is($after, "an-existing-key\n", 'the existing key is left byte for byte');
+}
+
+# A create race must not replace the winner: an existing file is the key.
+{
+	my $race = tempdir('jawnos-housekey-race-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+	my $old_home = $subs::home_dir;
+	$subs::home_dir = $race;
+	my $rpath = "$race/.house.key";
+	open(my $w, '>', $rpath) or die "$rpath: $!";
+	print $w "winner-key\n";
+	close $w;
+	is(subs::house_key(), 'winner-key', 'an existing key wins the create race');
+	$subs::home_dir = $old_home;
+}
+
+my $tunnel = read_source('lib/JawnOS/Domain/Tunnel.pm');
+like($tunnel, qr/Fcntl::O_EXCL/, 'the house key is created exclusively');
+unlike($tunnel, qr/write_file\(\$path/, 'a house key is never written over an existing file');
+
 # --- the socket drain -------------------------------------------------------
 
 # Whole-line comments are removed first: the module explains in prose why the
