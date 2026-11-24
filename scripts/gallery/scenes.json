@@ -293,13 +293,15 @@
       "kind": "app",
       "app": "marker",
       "settle": 3000,
+      "after": "(function(){ if(typeof markerToolboxToggle==='function'){ markerToolboxToggle(true,'left'); markerToolboxToggle(true,'right'); } if(typeof markerDocNew==='function'){ markerDocNew('Landscape',1600,900); } var im=new Image(); im.onload=function(){ var l=(typeof markerActiveLayer==='function')?markerActiveLayer():null; if(!l) return; l.ctx.clearRect(0,0,l.canvas.width,l.canvas.height); l.ctx.drawImage(im,0,0,l.canvas.width,l.canvas.height); if(typeof markerCompose==='function') markerCompose(); if(typeof markerLayerList==='function') markerLayerList(); if(typeof markerViewFit==='function') markerViewFit(); if(typeof markerStageRefresh==='function') markerStageRefresh(); }; im.src='/file_open?file=/home/jawn/Pictures/marker-landscape.jpg&app=marker&timestamp='+Date.now(); if(typeof markerStageRefresh==='function') markerStageRefresh(); return 'ok'; })()",
+      "after_settle": 4000,
       "site": {
         "include": true,
         "slug": "marker",
         "crop": "window",
         "title": "Marker",
-        "description": "A drawing surface with layers, brushes, shapes and a page waiting for a drawing.",
-        "alt": "The JawnOS Marker with its drawing tools, layers and a blank page."
+        "description": "A painted landscape on the canvas, with the house's mark as the sun and the toolbars tucked away.",
+        "alt": "The JawnOS Marker showing a painted landscape with the JawnOS logo as the sun, the toolbars hidden and the canvas filling the window."
       }
     },
     {
@@ -330,6 +332,42 @@
         "title": "Soft keyboard",
         "description": "One on-screen keyboard for the desktop and the phone, docked over the house's own desktop.",
         "alt": "The JawnOS soft keyboard docked over the desktop, with a full QWERTY layout."
+      }
+    },
+    {
+      "id": "36-jawndows",
+      "kind": "composite",
+      "prep": { "layout": "desk", "scope": "day", "sorts": "timestamp", "bg": "on", "opacity": "0.50", "theme": "jawndows" },
+      "windows": [
+        { "app": "folders", "rect": [70, 120, 640, 520], "z": 1 },
+        { "app": "store", "rect": [400, 260, 760, 640], "z": 2 },
+        { "app": "clock", "rect": [1120, 160, 520, 440], "z": 3 }
+      ],
+      "site": {
+        "include": true,
+        "slug": "jawndows",
+        "crop": "full",
+        "title": "Jawndows",
+        "description": "Blue chrome, square corners and the old familiar window dress, with the day's routines still hanging above.",
+        "alt": "The JawnOS desktop wearing the Jawndows theme, with blue window chrome, square corners and a clothesline of running apps above."
+      }
+    },
+    {
+      "id": "37-cyberpunk",
+      "kind": "composite",
+      "prep": { "layout": "desk", "scope": "day", "sorts": "timestamp", "bg": "on", "opacity": "0.50", "theme": "cyberpunk" },
+      "windows": [
+        { "app": "studio", "rect": [80, 120, 760, 600], "z": 1 },
+        { "app": "synth", "rect": [520, 360, 760, 560], "z": 2 },
+        { "app": "folders", "rect": [1120, 140, 560, 520], "z": 3 }
+      ],
+      "site": {
+        "include": true,
+        "slug": "cyberpunk",
+        "crop": "full",
+        "title": "Cyberpunk",
+        "description": "Cyan glass, a magenta accent and a neon cursor - the same windows, dressed for the night.",
+        "alt": "The JawnOS desktop in the Cyberpunk theme, with cyan glass windows, a magenta accent and a clothesline of running apps above."
       }
     }
   ]
