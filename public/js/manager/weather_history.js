@@ -136,14 +136,18 @@ var weatherHistoryPrecipSeq = 0;
 function weatherHistoryPrecipLoad() {
 	var $w = $('.wind[app="weather"]').last();
 	var $chart = $w.find('#weather_history_precip_chart');
+	var $snow = $w.find('#weather_history_snow_chart');
 	if (!$chart.length) { return; }
 	var lat = weatherLastLocation && weatherLastLocation.lat !== undefined ? weatherLastLocation.lat : '';
 	var lon = weatherLastLocation && weatherLastLocation.lon !== undefined ? weatherLastLocation.lon : '';
 	if (lat === '' || lon === '') {
 		weatherHistoryPrecipChart({ days: [], note: jawnosT('Load the current weather first so the rainfall place is known.') });
+		weatherHistorySnowChart({ days: [], snow_note: jawnosT('Load the current weather first so the snowfall place is known.') });
 		return;
 	}
 	var seq = ++weatherHistoryPrecipSeq;
+	$snow.html('<div class="weather_chart_title">' + weatherEsc(jawnosT('Snowfall')) + ' (cm)</div>'
+		+ '<div class="weather_muted" style="padding:8px;">' + weatherEsc(jawnosT('Loading snowfall\u2026')) + '</div>');
 	$chart.html('<div class="weather_chart_title">' + weatherEsc(jawnosT('Rainfall')) + ' (mm)</div>'
 		+ '<div class="weather_muted" style="padding:8px;">' + weatherEsc(jawnosT('Loading rainfall…')) + '</div>');
 	$.ajax({
@@ -154,10 +158,12 @@ function weatherHistoryPrecipLoad() {
 		success: function(response) {
 			if (seq !== weatherHistoryPrecipSeq) { return; }
 			weatherHistoryPrecipChart(response || {});
+			weatherHistorySnowChart(response || {});
 		},
 		error: function() {
 			if (seq !== weatherHistoryPrecipSeq) { return; }
 			weatherHistoryPrecipChart({ days: [], note: jawnosT('Rainfall is unavailable right now.') });
+			weatherHistorySnowChart({ days: [], snow_note: jawnosT('Snowfall is unavailable right now.') });
 		}
 	});
 }
@@ -213,6 +219,51 @@ function weatherHistoryPrecipChart(precip) {
 	svg += '</svg>';
 	var legend = '<div class="weather_chart_legend"><span><i style="background:#4a90d9"></i>' + jawnosT('Rainfall') + '</span>'
 		+ (probs.length ? '<span><i style="background:#e0704a"></i>' + jawnosT('Chance of rain') + '</span>' : '') + '</div>';
+	$chart.html(title + svg + legend + note);
+}
+
+// Snowfall is the same Open-Meteo answer as rainfall: a daily snowfall total in
+// centimetres. It has its own chart because rain and snow are different events,
+// and a day can carry both (sleet) or neither.
+function weatherHistorySnowChart(precip) {
+	var $w = $('.wind[app="weather"]').last();
+	var $chart = $w.find('#weather_history_snow_chart');
+	if (!$chart.length) { return; }
+	var days = (precip && precip.days) || [];
+	var title = '<div class="weather_chart_title">' + weatherEsc(jawnosT('Snowfall')) + ' (cm)</div>';
+	var note = (precip && precip.snow_note) ? '<div class="weather_muted" style="padding-top:2px;">' + weatherEsc(precip.snow_note) + '</div>' : '';
+	var any = false, max = 0;
+	for (var i = 0; i < days.length; i++) {
+		if (days[i] && days[i].snow_cm !== undefined && days[i].snow_cm !== null) {
+			any = true;
+			max = Math.max(max, Number(days[i].snow_cm) || 0);
+		}
+	}
+	if (!days.length || !any) {
+		$chart.html(title + '<div class="weather_muted" style="padding:8px;">' + weatherEsc(jawnosT('No snowfall data in this range.')) + '</div>' + note);
+		return;
+	}
+	if (!(max > 0)) { max = 1; }
+	var W = 600, H = 160, L = 34, R = 10, T = 14, B = 24;
+	var plotW = W - L - R, plotH = H - T - B;
+	function x(i) { return L + plotW * (i + 0.5) / days.length; }
+	function y(v) { return T + plotH - (Number(v) || 0) / max * plotH; }
+	var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + weatherEsc(jawnosT('Daily snowfall')) + '">';
+	svg += '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".22"/>';
+	svg += '<line x1="' + L + '" y1="' + (T + plotH) + '" x2="' + (W - R) + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".16"/>';
+	svg += '<text x="' + (L - 4) + '" y="' + (T + 4) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + weatherNum(max) + '</text>';
+	svg += '<text x="' + (L - 4) + '" y="' + (T + plotH) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">0</text>';
+	var barW = Math.max(1, plotW / days.length * 0.7);
+	for (var b = 0; b < days.length; b++) {
+		if (!days[b] || days[b].snow_cm === undefined || days[b].snow_cm === null) { continue; }
+		var top = y(days[b].snow_cm);
+		var tip = weatherEsc(days[b].date) + ' \u00b7 ' + weatherNum(days[b].snow_cm) + ' cm';
+		svg += '<rect x="' + (x(b) - barW / 2) + '" y="' + top + '" width="' + barW + '" height="' + (T + plotH - top) + '" fill="#6fa8d6" opacity=".8"><title>' + tip + '</title></rect>';
+	}
+	svg += '<text x="' + L + '" y="' + (H - 5) + '" font-size="10" fill="currentColor" opacity=".6">' + weatherEsc(days[0].date) + '</text>';
+	svg += '<text x="' + (W - R) + '" y="' + (H - 5) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + weatherEsc(days[days.length - 1].date) + '</text>';
+	svg += '</svg>';
+	var legend = '<div class="weather_chart_legend"><span><i style="background:#6fa8d6"></i>' + jawnosT('Snowfall') + '</span></div>';
 	$chart.html(title + svg + legend + note);
 }
 

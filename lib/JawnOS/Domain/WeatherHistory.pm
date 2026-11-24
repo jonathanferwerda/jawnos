@@ -646,7 +646,9 @@ sub weather_history_space_days($from, $to) {
 # endpoint covers the last 92 days (including today). The answer is cached for a
 # few hours, keyed on the box, so changing tabs is not another download.
 sub weather_history_precipitation_days($lat, $lon, $from_date, $to_date) {
-	my $empty = { days => [], source => 'Open-Meteo', note => &subs::ui('No gridded rainfall is available for this place.') };
+	my $empty = { days => [], source => 'Open-Meteo',
+		note => &subs::ui('No gridded rainfall is available for this place.'),
+		snow_note => &subs::ui('No gridded snowfall is available for this place.') };
 	my ($la, $lo) = (&weather_number($lat), &weather_number($lon));
 	return $empty unless defined $la && defined $lo
 		&& ($from_date // '') =~ /^\d{4}-\d{2}-\d{2}$/ && ($to_date // '') =~ /^\d{4}-\d{2}-\d{2}$/;
@@ -655,7 +657,7 @@ sub weather_history_precipitation_days($lat, $lon, $from_date, $to_date) {
 	return $empty unless $from_ts && $to_ts && $to_ts >= $from_ts;
 	my $span = int(($to_ts - $from_ts) / 86400000);
 	$span = 365 if $span > 365;
-	my $key = substr(md5_sum("precipitation|$la|$lo|$from_date|$to_date"), 0, 24);
+	my $key = substr(md5_sum("precipitation|v2|$la|$lo|$from_date|$to_date"), 0, 24);
 	my $cached = eval { &cache_get({ app => 'weather', context => 'precipitation', subcontext => $key }) };
 	if (ref $cached eq 'HASH' && ($cached->{'server_time'} || 0) > &rightNow() - 6 * 60 * 60 * 1000) {
 		return $cached;
@@ -668,6 +670,7 @@ sub weather_history_precipitation_days($lat, $lon, $from_date, $to_date) {
 		my $times = ref $daily->{'time'} eq 'ARRAY' ? $daily->{'time'} : [];
 		my $sums = ref $daily->{'precipitation_sum'} eq 'ARRAY' ? $daily->{'precipitation_sum'} : [];
 		my $probs = ref $daily->{'precipitation_probability_max'} eq 'ARRAY' ? $daily->{'precipitation_probability_max'} : [];
+		my $snows = ref $daily->{'snowfall_sum'} eq 'ARRAY' ? $daily->{'snowfall_sum'} : [];
 		for my $i (0 .. $#{$times}) {
 			my $date = $times->[$i] // '';
 			next unless $date =~ /^\d{4}-\d{2}-\d{2}$/ && $date ge $from_date && $date le $to_date;
@@ -676,12 +679,14 @@ sub weather_history_precipitation_days($lat, $lon, $from_date, $to_date) {
 			$row->{'mm'} = $mm if defined $mm;
 			my $prob = &weather_number($probs->[$i]);
 			$row->{'prob'} = $prob if defined $prob;
+			my $snow = &weather_number($snows->[$i]);
+			$row->{'snow_cm'} = $snow if defined $snow;
 		}
 	};
 	if ($span <= 92) {
 		my ($json) = &weather_http_get(sprintf(
 			'https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f'
-			. '&daily=precipitation_sum,precipitation_probability_max&timezone=auto&past_days=%d&forecast_days=1',
+			. '&daily=precipitation_sum,precipitation_probability_max,snowfall_sum&timezone=auto&past_days=%d&forecast_days=1',
 			$la, $lo, $span + 1
 		), $ua);
 		$take->($json);
@@ -689,14 +694,14 @@ sub weather_history_precipitation_days($lat, $lon, $from_date, $to_date) {
 	else {
 		my ($archive) = &weather_http_get(sprintf(
 			'https://archive-api.open-meteo.com/v1/archive?latitude=%.4f&longitude=%.4f'
-			. '&start_date=%s&end_date=%s&daily=precipitation_sum&timezone=auto',
+			. '&start_date=%s&end_date=%s&daily=precipitation_sum,snowfall_sum&timezone=auto',
 			$la, $lo, $from_date, $to_date
 		), $ua);
 		$take->($archive);
 		# The archive lags the last few days; the forecast endpoint fills them.
 		my ($recent) = &weather_http_get(sprintf(
 			'https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f'
-			. '&daily=precipitation_sum,precipitation_probability_max&timezone=auto&past_days=7&forecast_days=1',
+			. '&daily=precipitation_sum,precipitation_probability_max,snowfall_sum&timezone=auto&past_days=7&forecast_days=1',
 			$la, $lo
 		), $ua);
 		$take->($recent);
@@ -709,6 +714,7 @@ sub weather_history_precipitation_days($lat, $lon, $from_date, $to_date) {
 		to => $to_date,
 		server_time => &rightNow(),
 		note => &subs::ui('Rainfall is Open-Meteo\'s gridded rainfall for this coordinate, in millimetres per day; the chance of rain is its daily maximum probability.'),
+		snow_note => &subs::ui('Snowfall is Open-Meteo\'s gridded snowfall for this coordinate, in centimetres per day.'),
 	};
 	eval { &cache_set({ app => 'weather', context => 'precipitation', subcontext => $key, warranty => '-1d' }, $out) };
 	return $out;

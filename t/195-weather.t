@@ -683,7 +683,11 @@ my $no_gauge = subs::weather_measure_values({ current => { condition => 'Light R
 is($no_gauge->{'precipitation'}, 'rain', 'without a gauge the condition word says rain');
 ok(!defined $no_gauge->{'precip_rate'}, 'and no rate is invented');
 my $dry_gauge = subs::weather_measure_values({ current => { condition => 'Light Rain', precip_rate => 0, temperature => 2 } });
-is($dry_gauge->{'precipitation'}, 'none', 'a zero gauge rate is authoritative over the condition word');
+is($dry_gauge->{'precipitation'}, 'rain', 'a zero gauge rate falls back to the condition word');
+my $dry_snow = subs::weather_measure_values({ current => { condition => 'Snow', precip_rate => 0, temperature => -1 } });
+is($dry_snow->{'precipitation'}, 'snow', 'and a zero rate does not hide snow');
+my $dry_cloud = subs::weather_measure_values({ current => { condition => 'Cloudy', precip_rate => 0, temperature => -1 } });
+is($dry_cloud->{'precipitation'}, 'none', 'a cloudy condition with a zero rate is still dry');
 my $snow_fallback = subs::weather_measure_values({ current => { condition => 'Snow', temperature => -1 } });
 is($snow_fallback->{'precipitation'}, 'snow', 'without a gauge the condition word says snow');
 my $freezing = subs::weather_measure_values({ current => { condition => 'Freezing Rain', temperature => -1 } });
@@ -1216,11 +1220,11 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is($rain->{'when'}[0]{'op'}, 'is', 'with an is comparison');
 	is($rain->{'when'}[0]{'value'}, 'rain', 'for rain');
 	is($snow->{'when'}[0]{'value'}, 'snow', 'and snow for the snow rule');
-	is($rain->{'hold_check'}, 1, 'the rain rule holds its stop');
+	is($rain->{'hold_check'}, 0, 'the rain rule stops on the reading, not the next check');
 	is($rain->{'location'}, 'loc:home1', 'at the place the old rule named');
 	my $raining = Mojo::JSON::decode_json($store{'setting|raining|app_measures'});
 	is($raining->{'precip_rate'}{'unit'}, 'mm/h', 'the raining app knows the precipitation measure');
-	is($store{'setting|weather_station|precip_rules'}, 'v2', 'the migration is marked done');
+	is($store{'setting|weather_station|precip_rules'}, 'v3', 'the migration is marked done');
 	is(subs::weather_automation_precip_rules(), 0, 'and it does not run again');
 }
 
@@ -1255,7 +1259,34 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is($rain->{'uuid'}, 'v1-rain', 'the replacement keeps the uuid, so its edge state survives');
 	ok(!(grep { grep { ($_->{'measure'} // '') eq 'precip_rate' } @{ $_->{'when'} || [] } } @{$rules}), 'and no precip_rate rule is left');
 	ok((grep { $_->{'uuid'} eq 'other' } @{$rules}), 'the other measurement rule stays');
-	is($store{'setting|weather_station|precip_rules'}, 'v2', 'the marker moves to v2');
+	is($store{'setting|weather_station|precip_rules'}, 'v3', 'the marker moves to v3');
+}
+
+# --- a v2 rain rule's held stop is cleared once ------------------------------
+{
+	my %store;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::weather_home_place = sub { return { uuid => 'home1' } };
+	local *subs::random_string_creator = sub { 'rule-new' };
+	$store{'setting|weather_station|precip_rules'} = 'v2';
+	$store{'setting|weather_station|weather_rules'} = Mojo::JSON::encode_json([
+		{ uuid => 'rain-held', name => 'Rain', when => [ { measure => 'precipitation', op => 'is', value => 'rain' } ],
+			for_ms => 0, hold_check => 1, action => 'start', app => 'raining', location => 'loc:home1' },
+	]);
+	is(subs::weather_automation_precip_rules(), 1, 'a v2 rule is revisited');
+	my $rules = Mojo::JSON::decode_json($store{'setting|weather_station|weather_rules'});
+	my ($rain) = grep { $_->{'app'} eq 'raining' } @{$rules};
+	is($rain->{'hold_check'}, 0, 'its held stop is cleared');
+	is($store{'setting|weather_station|precip_rules'}, 'v3', 'and the marker moves to v3');
 }
 
 # --- a rule names its own place ----------------------------------------------

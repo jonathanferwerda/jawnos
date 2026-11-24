@@ -185,25 +185,27 @@ sub weather_measure_values($weather) {
 		return \%v;
 	}
 
-	# The rain/snow state a set of readings means: the local gauge is authoritative
-	# when it reports a rate, and the condition word decides when it does not. Kept
-	# apart from weather_measure_values because a stored reading made before the
-	# derived measure existed still has to be read the same way.
+	# The rain/snow state a set of readings means. A gauge is authoritative only
+	# when it reports a rate above zero: many stations round light snow or
+	# drizzle to 0.0, so a zero rate is not evidence of dry weather and the
+	# condition word decides then. Kept apart from weather_measure_values because
+	# a stored reading made before the derived measure existed still has to be
+	# read the same way.
 	sub weather_precipitation_state($v) {
 		return undef unless ref $v eq 'HASH';
 		my $rate = $v->{'precip_rate'};
-		if (defined $rate) {
-			return $rate > 0
-				? ((defined $v->{'temperature'} && $v->{'temperature'} <= 0) ? 'snow' : 'rain')
-				: 'none';
-		}
-		my $condition = $v->{'condition'} // '';
-		return undef unless length $condition;
-		return 'snow' if $condition =~ /snow|flurr|sleet|ice/;
-		if ($condition =~ /rain|shower|drizzle|precip/) {
+		if (defined $rate && $rate > 0) {
 			return (defined $v->{'temperature'} && $v->{'temperature'} <= 0) ? 'snow' : 'rain';
 		}
-		return 'none';
+		my $condition = $v->{'condition'} // '';
+		if (length $condition) {
+			return 'snow' if $condition =~ /snow|flurr|sleet|ice/;
+			if ($condition =~ /rain|shower|drizzle|precip/) {
+				return (defined $v->{'temperature'} && $v->{'temperature'} <= 0) ? 'snow' : 'rain';
+			}
+			return 'none';
+		}
+		return defined $rate ? 'none' : undef;
 	}
 
 # ---- the measurement rules --------------------------------------------------
@@ -853,13 +855,13 @@ sub weather_observe_prepare() {
 # The rain and snow condition rules keyed on a word that the station merge
 # rewrites whenever the gauge reads zero between tips, so the apps flapped.
 # Move them to the derived precipitation state once, at each place they named:
-# the gauge when a local station reports a rate, and the condition word when no
-# gauge is available. The stop is held until the next check so one dry reading
-# does not stop the app; a manual check still stops it at once.
+# the gauge when a local station reports a rate above zero, and the condition
+# word when it does not. The rules start and stop on the same reading, with no
+# held stop, so a dry reading clears the app at once.
 sub weather_automation_precip_rules($own = undef) {
 	my $app = &weather_automation_app();
 	my $version = &subs::setting_grabber({ app => $app, setting => 'precip_rules' }) // '';
-	return 0 if $version eq 'v2';
+	return 0 if $version eq 'v3';
 	my $am = ref $own eq 'HASH'
 		? $own
 		: (eval { decode_json(&subs::setting_grabber({ app => $app, setting => 'app_measures' }) // '') } || {});
@@ -885,6 +887,12 @@ sub weather_automation_precip_rules($own = undef) {
 				$places{$target}{ &weather_rule_location_normalize($rule->{'location'}) } = $keep;
 				$changed = 1;
 				next;
+			}
+			# v2 held the stop until the next check. A rain or snow rule now
+			# stops on the reading that says it is dry, so clear that hold.
+			if ($rule->{'hold_check'}) {
+				$rule = { %{$rule}, hold_check => 0 };
+				$changed = 1;
 			}
 		}
 		push @kept, $rule;
@@ -921,7 +929,7 @@ sub weather_automation_precip_rules($own = undef) {
 				name => ($target eq 'snowing' ? 'Snow' : 'Rain'),
 				when => [ { measure => 'precipitation', op => 'is', value => ($target eq 'snowing' ? 'snow' : 'rain') } ],
 				for_ms => 0,
-				hold_check => 1,
+				hold_check => 0,
 				action => 'start',
 				app => $target,
 				location => $loc,
@@ -930,7 +938,7 @@ sub weather_automation_precip_rules($own = undef) {
 		}
 	}
 	if (!$changed && !@added) {
-		&subs::setting_setter({ app => $app, setting => 'precip_rules', value => 'v2' }) if length $home_key;
+		&subs::setting_setter({ app => $app, setting => 'precip_rules', value => 'v3' }) if length $home_key;
 		return 0;
 	}
 	$condition->{'cm'} = \@keep;
@@ -950,7 +958,7 @@ sub weather_automation_precip_rules($own = undef) {
 		}
 		&subs::setting_setter({ app => $target, setting => 'app_measures', value => encode_json $own_app }) if $app_changed;
 	}
-	&subs::setting_setter({ app => $app, setting => 'precip_rules', value => 'v2' });
+	&subs::setting_setter({ app => $app, setting => 'precip_rules', value => 'v3' });
 	return 1;
 }
 

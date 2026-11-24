@@ -336,8 +336,10 @@
 .wind[app="weather"] .weather_radar_hidden { display: none !important; }
 .wind[app="weather"] .weather_radar_credit { font-size: 10px; opacity: .5; }
 .wind[app="weather"] #weather_history_precip_chart,
+.wind[app="weather"] #weather_history_snow_chart,
 .wind[app="weather"] #weather_history_space_chart { padding: 6px; }
 .wind[app="weather"] #weather_history_precip_chart svg,
+.wind[app="weather"] #weather_history_snow_chart svg,
 .wind[app="weather"] #weather_history_space_chart svg { width: 100%; height: 160px; display: block; }
 .wind[app="weather"] .weather_chart_title {
 	font-size: 11px;

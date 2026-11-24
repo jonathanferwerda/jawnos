@@ -357,12 +357,16 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 			time => [ '2026-11-20', '2026-11-21', '2026-11-22' ],
 			precipitation_sum => [ 0, 1.5, 3 ],
 			precipitation_probability_max => [ 0, 55, 80 ],
+			snowfall_sum => [ 0, 0.4, 2.0 ],
 		} };
 	};
 	my $rain = subs::weather_history_precipitation_days(43, -81.9, '2026-11-20', '2026-11-22');
 	is(scalar @{ $rain->{'days'} }, 3, 'three daily rainfall rows');
 	is($rain->{'days'}[1]{'mm'}, 1.5, 'the millimetres are read');
 	is($rain->{'days'}[2]{'prob'}, 80, 'the chance of rain is read');
+	is($rain->{'days'}[1]{'snow_cm'}, 0.4, 'the snowfall is read');
+	is($rain->{'days'}[2]{'snow_cm'}, 2, 'in centimetres');
+	like($rain->{'snow_note'}, qr/centimetres/, 'the snow note names the unit');
 	like($rain->{'note'}, qr/Open-Meteo/, 'the note names the source');
 	ok($saved && $saved->{'context'} eq 'precipitation', 'the answer is cached');
 	my $long = subs::weather_history_precipitation_days(43, -81.9, '2026-08-01', '2026-11-22');
@@ -377,7 +381,10 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	like($page, qr/id="weather_radar_panel"/, 'the radar panel is its own tab panel');
 	my $history_template = read_file("$root/templates/apps/weather/history.html.ep");
 	like($history_template, qr/weather_history_precip_chart/, 'the history panel has a rainfall chart');
+	like($history_template, qr/weather_history_snow_chart/, 'and a snowfall chart');
 	like($history_template, qr/weather_history_space_chart/, 'and a space weather chart');
+	my $history_js = read_file("$root/public/js/manager/weather_history.js");
+	like($history_js, qr/function weatherHistorySnowChart/, 'the snowfall chart has its own draw function');
 	unlike($history_template, qr{apps/weather/radar}, 'the radar left the history panel');
 	my $radar_template = read_file("$root/templates/apps/weather/radar.html.ep");
 	like($radar_template, qr/id="weather_radar_card"/, 'the radar card fills its tab');

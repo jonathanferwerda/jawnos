@@ -17,6 +17,7 @@
 	<div id="weather_history_note" class="weather_muted"></div>
 	<div id="weather_history_chart" class="weather_card"></div>
 	<div id="weather_history_precip_chart" class="weather_card"></div>
+	<div id="weather_history_snow_chart" class="weather_card"></div>
 	<div id="weather_history_space_chart" class="weather_card"></div>
 	<div id="weather_history_table" class="weather_table_wrap"></div>
 </div>
