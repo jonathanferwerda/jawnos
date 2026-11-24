@@ -526,8 +526,9 @@ require JawnOS::Domain::Audio;
 	);
 
 	my $devices = subs::audio_engine_devices();
-	my ($um2) = grep { $_->{device} eq 'hw:1,0' } @$devices;
-	ok($um2, 'the ALSA card list names hw:1,0');
+	my ($um2) = grep { $_->{device} eq 'hw:UM2,0' } @$devices;
+	ok($um2, 'the ALSA card list names the card by its id, not its number');
+	is($um2->{id}, 'alsa|hw:UM2,0', 'which is the same spelling the picker posts');
 	like($um2->{name}, qr/UMC 202HD/, 'and carries the card description');
 	ok((grep { $_->{backend} eq 'pipewire' } @$devices), 'PipeWire is offered');
 	ok((grep { $_->{backend} eq 'null' } @$devices), 'and null');
@@ -725,7 +726,7 @@ CARDS
 	ok($um2_pro, 'the UM2 offers Pro Audio as a PipeWire choice');
 	like($um2_pro->{name}, qr/^PipeWire \x{2014} Pro Audio \(/, 'named by the profile and the card');
 	is($um2_pro->{active}, 1, 'and says it is the profile the card is on');
-	my ($um2_alsa) = grep { ($_->{device} || '') eq 'hw:1,0' } @$devices;
+	my ($um2_alsa) = grep { ($_->{device} || '') eq 'hw:UM2,0' } @$devices;
 	is($um2_alsa->{name}, "ALSA \x{2014} BEHRINGER UMC 202HD 192k",
 		'the ALSA entry leads with ALSA, never the PCM name');
 	is($um2_alsa->{card}, 'alsa_card.usb-BEHRINGER_UMC_202HD_192k-00',

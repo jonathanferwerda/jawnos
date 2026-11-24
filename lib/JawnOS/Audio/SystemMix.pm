@@ -178,14 +178,37 @@ sub managed_card_path {
 	return managed_card_dir() . '/' . $managed_card_name;
 }
 
-# `hw:N,0` (or the picker's `alsa|hw:N,0`) names a card. A PipeWire or null
-# device names no card, so there is no playback node to free.
+# `hw:N,0` (or the picker's `alsa|hw:N,0`) names a card, and so does the
+# picker's stable spelling `hw:CODEC,0` — the card's ALSA id, which survives a
+# reboot that renumbers the cards. The id is resolved to today's number here,
+# every time, because the rule matches the numeric `alsa.card` property. A
+# PipeWire or null device names no card, so there is no playback node to free.
 sub _card_index {
 	my ($device) = @_;
 	return undef unless defined $device && length $device;
 	my $name = $device;
 	$name = $1 if $name =~ /\Aalsa\|(.+)\z/;
 	return $1 if $name =~ /\A(?:hw|plughw):(\d+)(?:,\d+)?\z/;
+	return &_card_index_for_id($1)
+		if $name =~ /\A(?:hw|plughw):([A-Za-z][A-Za-z0-9_-]*)(?:,\d+)?\z/;
+	return undef;
+}
+
+# The number a card's ALSA id has right now. An absent card file, or an id it
+# does not list, answers undef: the caller reports "not an ALSA card" rather
+# than guessing a card and writing a rule for the wrong one.
+sub _card_index_for_id {
+	my ($id) = @_;
+	return undef unless defined $id && length $id;
+	my $path = $ENV{JAWNOS_ASOUND_CARDS} || '/proc/asound/cards';
+	open my $fh, '<', $path or return undef;
+	while (my $line = <$fh>) {
+		next unless $line =~ /^\s*(\d+)\s+\[([^\]]*)\]:/;
+		my ($index, $short) = ($1, $2);
+		$short =~ s/\s+\z//;
+		return $index + 0 if lc $short eq lc $id;
+	}
+	close $fh;
 	return undef;
 }
 

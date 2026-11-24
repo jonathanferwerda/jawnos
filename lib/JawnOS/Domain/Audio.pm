@@ -395,13 +395,16 @@ sub _audio_engine_profile_clear {
 }
 
 # The picker's choices: each ALSA card, then the PipeWire profiles that card
-# offers, then the plain PipeWire choice and null. A card's first PCM is
-# `hw:N,0`; the name is the /proc/asound/cards description and the profiles
-# come from one `pactl list cards`, whose `alsa.card` property ties a PipeWire
-# card to the ALSA index. A test can point JAWNOS_ASOUND_CARDS at a fixture; a
-# machine with no card file still gets the PipeWire and null choices, and a
-# machine with no pactl gets no profile rows — never an invented one. Choosing
-# a profile is how Pro Audio is set from this picker rather than pavucontrol.
+# offers, then the plain PipeWire choice and null. A card is named by its ALSA
+# id (`hw:CODEC,0`), not by the kernel's number: the number follows USB
+# enumeration, so the same interface came back as card 1 after one reboot when
+# it had been card 2, and a saved `hw:2,0` then opened the built-in card. The
+# description is the /proc/asound/cards name and the profiles come from one
+# `pactl list cards`, whose `alsa.card` property ties a PipeWire card to the
+# index. A test can point JAWNOS_ASOUND_CARDS at a fixture; a machine with no
+# card file still gets the PipeWire and null choices, and a machine with no
+# pactl gets no profile rows — never an invented one. Choosing a profile is how
+# Pro Audio is set from this picker rather than pavucontrol.
 sub audio_engine_devices {
 	require JawnOS::Platform::Audio;
 	my @cards = @{ JawnOS::Platform::Audio::parse_pactl_cards(
@@ -414,7 +417,7 @@ sub audio_engine_devices {
 
 	my @devices;
 	foreach my $alsa (&_audio_alsa_devices()) {
-		my ($index) = $alsa->{'device'} =~ /\Ahw:(\d+),/;
+		my $index = $alsa->{'card_index'};
 		my $card = defined $index ? $card_at{$index} : undef;
 		$alsa->{'card'} = $card->{'name'} if $card;
 		push @devices, $alsa;
@@ -454,12 +457,16 @@ sub _audio_alsa_devices {
 		$short =~ s/\s+\z//;
 		$long =~ s/\s+\z//;
 		my $name = length $long ? $long : (length $short ? $short : "Card $index");
+		# The id is stable across boots; the number is not. A card with no id
+		# (an ancient driver) keeps its number so the entry is still usable.
+		my $pcm = length $short ? "hw:$short,0" : "hw:$index,0";
 		push @devices, {
-			id => "alsa|hw:$index,0",
+			id => "alsa|$pcm",
 			backend => 'alsa',
-			device => "hw:$index,0",
+			device => $pcm,
 			name => "ALSA — $name",
 			card_name => $name,
+			card_index => $index + 0,
 		};
 	}
 	close $fh;

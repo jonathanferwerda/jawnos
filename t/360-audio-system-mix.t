@@ -1138,4 +1138,33 @@ PERSON
 	ok(!-e $rule, 'and the rule is gone');
 }
 
+# --- a card named by id resolves to today's number --------------------------
+# The kernel numbers cards by USB enumeration, so the same interface can come
+# back as a different card after a reboot. The picker saves the ALSA id; the
+# rule needs the number, and this is the one place it is worked out.
+{
+	reset_mix();
+	my $cards = "$dir/asound-card-ids";
+	write_file($cards,
+		" 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n"
+			. " 1 [CODEC          ]: USB-Audio - USB Audio CODEC\n");
+	local $ENV{JAWNOS_ASOUND_CARDS} = $cards;
+
+	is(JawnOS::Audio::SystemMix::_card_index('hw:PCH,0'), 0,
+		'a card id resolves to the number it has today');
+	is(JawnOS::Audio::SystemMix::_card_index('hw:CODEC,0'), 1,
+		'and the interface that moved resolves to its new one');
+	is(JawnOS::Audio::SystemMix::_card_index('alsa|hw:CODEC,0'), 1,
+		'the picker spelling resolves the same way');
+	is(JawnOS::Audio::SystemMix::_card_index('hw:1,0'), 1,
+		'a number still passes through unchanged');
+	is(JawnOS::Audio::SystemMix::_card_index('hw:NOPE,0'), undef,
+		'an id the machine does not have resolves to nothing');
+
+	my $map = JawnOS::Audio::SystemMix::card_nodes('hw:CODEC,0', 'playback');
+	is($map->{ok}, 1, 'a card named by id maps its playback node');
+	is($map->{card}, 1, 'through the number it has now');
+	is($map->{playback}, 'alsa_output.usb-card', 'and names the right node');
+}
+
 done_testing();

@@ -1212,6 +1212,17 @@ it is about to retry on the first rung (one second), so the common restart moves
 second crash, a longer backoff, a refused spawn and a missing binary all hand the machine back at
 the person's level. `t/337` pins the keep-and-then-hand-back, `t/360` the late output.
 
+**A reboot renumbered the card (2026-11-24, found and fixed).** `table` rebooted into a working
+engine without a terminal step - `alsa`, 64/256, duplex, `system: capturing`, `xruns 0`, the plan and
+the switch intact - but the interface itself moved: the UM2 came back as card 1 when it had been
+card 2, so the saved `alsa|hw:2,0` opened the built-in PCH. The card rule followed the wrong card, and
+the mix stopped being the default, so ordinary audio bypassed the engine while the engine held the
+wrong card. The restore half of the gate passed; the device's identity did not. The picker now saves
+the card's ALSA id (`alsa|hw:CODE,0`) instead of its number, and `SystemMix::_card_index` resolves
+that id to the number it has at that moment for the WirePlumber rule's `alsa.card` match, so a
+change in enumeration order cannot move the engine to another card. A saved number still works, and
+a card with no id keeps its number. `t/344` pins the id spelling, `t/360` the resolution.
+
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
 turning `manage` off returns the machine to today's behaviour with nothing stranded.
