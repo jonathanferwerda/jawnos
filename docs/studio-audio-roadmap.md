@@ -1277,6 +1277,21 @@ long kick, Metal is gated and cracky, and the crate's tests pin those difference
 quietly collapse back into "all the same". `t/413` covers the wire shape, the manager, the page and
 the engine seams.
 
+**The voices A/B (2026-11-24, in the tree).** The drum panel carries a Sound list beside Kit and
+the Synth toolbar carries its own: Engine or Browser. The drum choice is saved with the song; the
+synth choice is remembered on the machine. Chosen for the engine, the chart rides the transport plan
+as before, a pad posts one `drums hit` so it auditions the kit the transport will play, and the Synth
+app hands its patch and then each note to the running transport (`synth patch`/`note`/`all_off`),
+muting its own output first so one synth is heard, not two. The engine renders the patch natively and
+sums it with the drums into one pre-master app bus, so the armed master rack covers both. Chosen for
+the browser, the page sends a silent one-step chart (which also restarts the engine's cursor, so
+switching back begins on a downbeat) and the browser scheduler plays; the synth app stops sending and
+unmutes. The engine refuses every one of these commands while no transport plays, because its output
+belongs to the song; a pad or a key still sounds in the browser while the transport is stopped, and
+any refusal falls back to the browser rather than to silence. The app buses reach the master rack but
+not the patched channel's fader, pan or Out pedals yet; that is the next layer. `t/414` pins the
+commands, the routes, both choices, the muting and the guide.
+
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
 turning `manage` off returns the machine to today's behaviour with nothing stranded.

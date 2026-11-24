@@ -1553,6 +1553,102 @@ sub action_44034 {
 	return;
 }
 
+# POST /manager/studio/synth
+#
+# The Synth app's voices when the engine owns the transport. The page hands its
+# patch over once (`patch`), then one key event per note, and `all_off` when it
+# lets go. The engine refuses all three while no transport plays: its output
+# belongs to the song, not to a stopped page.
+sub action_44035 {
+	my $c = shift;
+	require JawnOS::Audio::Engine;
+
+	my $action = $c->param('action');
+	$action = '' unless defined $action && !ref $action;
+
+	if ($action eq 'all_off') {
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_synth('all_off'));
+		return;
+	}
+
+	if ($action eq 'note') {
+		my $note = &studio_transport_decimal($c->param('note'));
+		unless (defined $note && $note == int($note) && $note >= 0 && $note <= 127) {
+			$c->render(json => { ok => 0, error => 'a synth note needs "note": a whole number from 0 to 127' }, status => 400);
+			return;
+		}
+		my $velocity = &studio_transport_decimal($c->param('velocity'));
+		$velocity = 1 unless defined $velocity;
+		unless ($velocity >= 0 && $velocity <= 1) {
+			$c->render(json => { ok => 0, error => 'a synth note "velocity" must be a number from 0 to 1' }, status => 400);
+			return;
+		}
+		my $on = $c->param('on');
+		my $pressed = (defined $on && $on =~ /\A\s*(?:1|true)\s*\z/i) ? 1 : 0;
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_synth('note', {
+			note => int($note), velocity => $velocity, on => $pressed,
+		}));
+		return;
+	}
+
+	if ($action eq 'patch') {
+		my $raw = $c->param('patch_json');
+		$raw = $c->param('patch') unless defined $raw && length $raw;
+		unless (defined $raw && length $raw) {
+			$c->render(json => { ok => 0, error => 'a synth patch needs "patch_json": the browser patch object' }, status => 400);
+			return;
+		}
+		# A patch is a handful of numbers; anything larger is not one.
+		unless (length $raw <= 16_384) {
+			$c->render(json => { ok => 0, error => 'a synth patch is too large' }, status => 400);
+			return;
+		}
+		my $patch = eval { decode_json $raw };
+		unless (ref $patch eq 'HASH') {
+			$c->render(json => { ok => 0, error => 'a synth patch must be a JSON object' }, status => 400);
+			return;
+		}
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_synth('patch', { patch => $patch }));
+		return;
+	}
+
+	$c->render(json => { ok => 0, error => 'choose a synth action: patch, note or all_off' }, status => 400);
+	return;
+}
+
+# POST /manager/studio/drums
+#
+# One hit on the engine's running kit, so a pad auditions the sound the transport
+# will play. The chart itself rides the transport plan; this is only the live
+# hit, and the engine refuses it while no transport plays.
+sub action_44036 {
+	my $c = shift;
+	require JawnOS::Audio::Engine;
+
+	my $action = $c->param('action');
+	$action = '' unless defined $action && !ref $action;
+	unless ($action eq 'hit') {
+		$c->render(json => { ok => 0, error => 'choose a drums action: hit' }, status => 400);
+		return;
+	}
+
+	my $voice = $c->param('voice');
+	unless (defined $voice && !ref $voice && $voice =~ /\A[a-z0-9_]{1,16}\z/) {
+		$c->render(json => { ok => 0, error => 'a drum hit needs "voice": the row name' }, status => 400);
+		return;
+	}
+	my $velocity = &studio_transport_decimal($c->param('velocity'));
+	$velocity = 70 unless defined $velocity;
+	unless ($velocity == int($velocity) && $velocity >= 1 && $velocity <= 100) {
+		$c->render(json => { ok => 0, error => 'a drum hit "velocity" must be a whole number from 1 to 100' }, status => 400);
+		return;
+	}
+	$c->render(json => &JawnOS::Audio::Engine::audio_engine_drum_hit({
+		voice => $voice, velocity => int($velocity),
+	}));
+	return;
+}
+
 # The clip plan a transport `start` may carry: a JSON array of recorded takes.
 # Each is an absolute WAV `file`, a timeline `start` (which may be negative when
 # a take was pulled earlier to cancel latency), a source `offset`, an optional

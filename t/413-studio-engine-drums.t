@@ -90,8 +90,8 @@ like( $drums, qr/function studioDrumsSaver\(\) \{\s*\n\s*studioSaver\(\);/,
 unlike( $drums, qr/function studioDrumsSaver\(\) \{\s*\n\s*studioDrumsSaver\(\);/,
 	'a save path that calls itself would recurse forever' );
 like( $drums, qr/studioEngineClipsChanged\(\)/, 'and that path updates the engine while it plays' );
-like( $drums, qr/if \(mixer\['time'\]\['engine_transport'\]\) \{\s*\n\s*studioDrumsHighlightEngineStep/,
-	'the browser scheduler does not play a second copy' );
+like( $drums, qr/if \(mixer\['time'\]\['engine_transport'\] && studioDrumsEngineChosen\(\)\) \{\s*\n\s*studioDrumsHighlightEngineStep/,
+	'the browser scheduler does not play a second copy when the engine is chosen' );
 like( $drums, qr/function studioDrumsHighlightEngineStep/, 'the highlight follows the engine chart' );
 like( $drums, qr/studioDrumsHighlightStep\(\(step \+ steps\) % steps\)/,
 	'and lands on the same step the engine is playing' );

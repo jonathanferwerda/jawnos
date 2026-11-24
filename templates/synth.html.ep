@@ -1,7 +1,11 @@
 <div id="synth">
 	<div class="synth_toolbar">
-		<label>Sound</label>
+		<label for="synth_preset">Preset</label>
 		<select id="synth_preset" class="synth_select synth_preset" hint="Choose a preset"></select>
+		<label for="synth_sound">Sound</label>
+		<select id="synth_sound" class="synth_select" hint="Where the notes are made: the JawnOS engine while the transport plays, or this browser">
+			<option value="engine" selected>Engine</option><option value="browser">Browser</option>
+		</select>
 		<label>MIDI</label>
 		<select id="synth_midi" class="synth_select" hint="A connected USB MIDI keyboard"></select>
 		<button id="synth_midi_connect" class="hover" hint="Connect a USB MIDI keyboard">Connect</button>

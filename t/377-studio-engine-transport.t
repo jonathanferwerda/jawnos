@@ -293,8 +293,8 @@ like(
 );
 like(
 	$socket,
-	qr/run_transport\([\s\S]{0,300}plan_rx,[\s\S]{0,120}live_rx,?\s*\)/,
-	'the master rack, the plan channel and the live-input channel reach the transport worker'
+	qr/run_transport\([\s\S]{0,500}plan_rx,[\s\S]{0,160}live_rx,[\s\S]{0,160}note_rx,[\s\S]{0,160}hit_rx,?\s*\)/,
+	'the master rack, the plan, live-input, note and hit channels reach the transport worker'
 );
 like(
 	$socket,

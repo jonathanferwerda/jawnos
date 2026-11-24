@@ -30,13 +30,19 @@
 // window.jawnos_studio_drum_loops. A saved loop can be put back on the panel,
 // or rendered offline onto a loop track from the track's context menu.
 //
+// Audition: a pad or key records by chart position and returns at once. While
+// the engine owns the transport it also sounds the kit, so a hit is a command
+// to /manager/studio/drums rather than a local buffer; with the engine stopped
+// (or the panel set to Browser) the browser voice plays instead. A refused
+// command falls back to the browser for that one hit, so a pad is never silent.
+//
 // Routing: the drum bus feeds studioAudio.master, which is the input of the
 // mastering rack, so the drums are heard through the master chain like every
 // channel. A second tap feeds the selected channel's recDest, so the browser's
 // MediaRecorder take captures the drums (see studioStartTake). The native engine
-// take cannot record them yet: engine/src/ has no drum voice and the engine
-// cannot read this bus, so only the browser path records drums. Say so in the
-// panel and the help; never imply the engine take has them.
+// take cannot record them yet, and while the engine sounds the kit the browser
+// take does not record it either; only the browser path reaches that take. Say
+// so in the panel and the help.
 
 var studioDrums = {
 	ctx: null,
@@ -53,6 +59,7 @@ var studioDrums = {
 	loop: true,
 	lengthSteps: 16,
 	kit: 'acoustic',
+	sound: 'engine',
 	loaded: false,
 	timer: 0,
 	running: false,
@@ -121,6 +128,7 @@ function studioDrumsDefaults() {
 	});
 	studioDrums.loop = true;
 	studioDrums.kit = 'acoustic';
+	studioDrums.sound = 'engine';
 	studioDrums.loaded = true;
 }
 
@@ -167,7 +175,7 @@ function studioDrumsSave() {
 		voices[v.name] = { mute: studioDrums.muted[v.name] ? 1 : 0 };
 		if (studioDrums.keys[v.name]) { keys[v.name] = studioDrums.keys[v.name]; }
 	});
-	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '', kit: studioDrums.kit, length: studioDrums.lengthSteps };
+	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '', kit: studioDrums.kit, sound: studioDrums.sound === 'browser' ? 'browser' : 'engine', length: studioDrums.lengthSteps };
 }
 
 // Every chart edit is saved and, while the engine owns the transport, sent as
@@ -216,6 +224,9 @@ function studioDrumsRestore(data) {
 		});
 		studioDrums.loop = !(data.loop == 0 || data.loop === false || data.loop === '0');
 		studioDrums.kit = studioDrumsKitName(data.kit);
+		// A song saved before the choice existed has no sound; it opens on the
+		// engine, and so does any value this build does not know.
+		studioDrums.sound = (data.sound === 'browser') ? 'browser' : 'engine';
 		if (data.midi) { studioDrums.midiInput = String(data.midi); }
 	}
 	studioDrums.loaded = true;
@@ -232,6 +243,7 @@ function studioDrumsRestore(data) {
 function studioDrumsRender() {
 	$('#studio_drums_loop').prop('checked', !!studioDrums.loop);
 	$('#studio_drums_kit').val(studioDrums.kit);
+	$('#studio_drums_sound').val(studioDrums.sound === 'browser' ? 'browser' : 'engine');
 	$('#studio_drums .studio_drums_row').each(function () {
 		var row = $(this);
 		var voice = row.attr('data-voice');
@@ -767,6 +779,30 @@ function studioDrumsCurrentStep() {
 	return (step + steps) % steps;
 }
 
+// The engine is the kit while it owns the transport and the panel chose it: a
+// pad hit is a command, not a local buffer. The engine answers {ok:true} or
+// {ok:false,error}; a refused or unanswered hit falls back to the browser voice
+// for this one hit, so a pad is never silent.
+function studioDrumsEngineHit(voice, percent) {
+	$.ajax({
+		url: '/manager/studio/drums',
+		type: 'POST',
+		data: { action: 'hit', voice: voice, velocity: percent },
+		dataType: 'json',
+		success: function (answer) {
+			if (!answer || answer.ok !== true) { studioDrumsPlay(voice, null, percent / 100); }
+		},
+		error: function () { studioDrumsPlay(voice, null, percent / 100); }
+	});
+}
+
+// The transport module asks this before it sends the chart: a kit the person
+// chose to hear in the browser must not also be played by the engine. Any value
+// but 'browser' (including an older song's missing one) means the engine.
+function studioDrumsEngineChosen() {
+	return !!studioDrums && studioDrums.sound !== 'browser';
+}
+
 // A mapped key, a MIDI note, the voice's own name button, a step or the velocity
 // menu: one entry point, so recording and auditioning cannot disagree. The
 // velocity is a percent (1..100); the play path takes the 0..1 fraction.
@@ -775,7 +811,14 @@ function studioDrumsTrigger(voice, velocity, record) {
 	if (!ctx || !studioDrums.steps[voice]) { return; }
 	var percent = Math.max(1, Math.min(100, Math.round(velocity || 0)));
 	var step = studioDrumsCurrentStep();
-	studioDrumsPlay(voice, ctx.currentTime + 0.008, percent / 100);
+	// While the engine plays the transport it also plays the kit; the browser
+	// buffer stands in only when the panel chose the browser or the engine is
+	// stopped, so a pad still sounds while the transport is idle.
+	if (studioDrums.sound === 'engine' && mixer && mixer['time'] && mixer['time']['engine_transport']) {
+		studioDrumsEngineHit(voice, percent);
+	} else {
+		studioDrumsPlay(voice, ctx.currentTime + 0.008, percent / 100);
+	}
 	if (record !== false && studioDrumsRecording()) {
 		studioDrums.steps[voice][step] = percent;
 		studioDrumsRenderSteps(voice);
@@ -819,9 +862,10 @@ function studioDrumsSchedule() {
 	var steps = studioDrums.lengthSteps || 16;
 	studioDrums.stepDur = stepDur;
 	// The engine schedules the chart on its own clock while it owns the
-	// transport; the browser must not play a second copy. The step highlight
-	// still follows, from the engine's position.
-	if (mixer['time']['engine_transport']) {
+	// transport and the panel chose the engine; the browser must not play a
+	// second copy. With the browser chosen, this scheduler keeps the beat and
+	// the highlight follows it, exactly as it did before the engine existed.
+	if (mixer['time']['engine_transport'] && studioDrumsEngineChosen()) {
 		studioDrumsHighlightEngineStep(stepDur, steps);
 		return;
 	}
@@ -1033,6 +1077,22 @@ $(document).on('change', '#studio_drums_kit', function () {
 	studioDrums.buildState = 'idle';
 	if (studioDrums.ctx) { studioDrumsBuild(studioDrums.ctx); }
 	studioDrumsRender();
+	studioDrumsSaver();
+});
+
+// The choice is saved and also sent as a plan update, so a running engine
+// learns at once whether it should sound the kit or leave it to the browser.
+$(document).on('change', '#studio_drums_sound', function () {
+	studioDrums.sound = ($(this).val() === 'browser') ? 'browser' : 'engine';
+	studioDrumsRender();
+	// A live switch moves the sounding chart. The browser scheduler has been
+	// paused behind the engine's (or never started for this choice), so
+	// re-anchor it from now when it takes over.
+	if (mixer && mixer['time'] && mixer['time']['engine_transport']
+		&& (mixer['time']['status'] == 'play' || mixer['time']['status'] == 'record')) {
+		studioDrumsTransport(false);
+		if (studioDrums.sound === 'browser') { studioDrumsTransport(true); }
+	}
 	studioDrumsSaver();
 });
 

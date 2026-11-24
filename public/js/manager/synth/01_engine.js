@@ -87,6 +87,7 @@
 		out: null,
 		drive: null,
 		comp: null,
+		post: null,      // the mute point: comp -> post -> destination (and any channel tap)
 		patch: null,
 		preset: DEFAULT_PRESET,
 		voices: {},      // id -> voice
@@ -104,7 +105,14 @@
 		arp: { on: false, rate: 8, mode: 'up', octaves: 1, held: [], step: 0, timer: null },
 		learn: { armed: null, map: {} },
 		seq: { on: false, rate: 8, steps: 16, root: 60, rows: 13, cells: {}, step: 0, timer: null, listeners: [] },
-		midi: { access: null, inputs: [], selected: null, listeners: [] }
+		midi: { access: null, inputs: [], selected: null, listeners: [] },
+		sound: synthSoundStored(),   // 'engine' | 'browser' — where the notes are made
+		enginePlaying: false,
+		enginePatchJson: null,
+		engineBusy: false,
+		engineWarned: false,
+		enginePoll: null,
+		muted: false
 	};
 
 	function copyPatch(p) { return JSON.parse(JSON.stringify(p)); }
@@ -155,7 +163,10 @@
 		S.comp = ctx.createDynamicsCompressor();
 		S.comp.threshold.value = -12;
 		S.comp.ratio.value = 4;
-		S.out.connect(S.drive).connect(S.comp).connect(destination || ctx.destination);
+		// the mute point: every consumer (the speakers, the studio tap) sits behind it
+		S.post = ctx.createGain();
+		S.post.gain.value = S.muted ? 0 : 1;
+		S.out.connect(S.drive).connect(S.comp).connect(S.post).connect(destination || ctx.destination);
 		// the shared LFO: one oscillator, three depth taps (pitch, cutoff, tremolo)
 		S.lfo = ctx.createOscillator();
 		S.lfo.type = 'sine';
@@ -175,17 +186,21 @@
 		learnLoad();
 		applyLfo();
 		applyDrive();
+		enginePollEnsure();
 		return S;
 	}
 
 	function detach() {
+		if (S.enginePoll) { clearInterval(S.enginePoll); S.enginePoll = null; }
+		S.enginePlaying = false; S.enginePatchJson = null; S.engineBusy = false;
 		if (S.ctx) {
 			try { S.lfo.stop(); } catch (e) {}
 			Object.keys(S.voices).forEach(function (id) { killVoice(S.voices[id], true); });
 			S.voices = {}; S.order = [];
 			if (S.out && S.out.disconnect) { try { S.out.disconnect(); } catch (e) {} }
+			if (S.post && S.post.disconnect) { try { S.post.disconnect(); } catch (e) {} }
 		}
-		S.ctx = null; S.out = null; S.drive = null; S.comp = null; S.lfo = null;
+		S.ctx = null; S.out = null; S.drive = null; S.comp = null; S.post = null; S.lfo = null;
 	}
 
 	function applyLfo() {
@@ -453,6 +468,7 @@
 		if (!S.ctx) { return; }
 		note = Math.round(clampNumber(note, 0, 127, 60));
 		velocity = clampNumber(velocity, 0, 1, 0.8);
+		engineNote(note, velocity, true);
 		S.playing[note] = true;
 		if (S.arp.on) {
 			if (S.arp.held.indexOf(note) === -1) { S.arp.held.push(note); }
@@ -466,6 +482,7 @@
 	function noteOff(note) {
 		if (!S.ctx) { return; }
 		note = Math.round(clampNumber(note, 0, 127, 60));
+		engineNote(note, 0, false);
 		if (S.arp.on) {
 			var at = S.arp.held.indexOf(note);
 			if (at >= 0) { S.arp.held.splice(at, 1); }
@@ -486,6 +503,7 @@
 	}
 
 	function allNotesOff() {
+		engineAllOff();
 		S.sustainNotes = [];
 		arpStop();
 		S.arp.held = [];
@@ -540,6 +558,110 @@
 	}
 
 	function getPatch() { return copyPatch(S.patch || PRESETS[S.preset]); }
+
+	// ---- the JawnOS engine voice ----------------------------------------------
+	//
+	// While the engine transport plays, the same patch can be rendered natively by
+	// the JawnOS engine. The browser voices keep running (so the API, voices() and
+	// the UI do not change) but the browser output is muted, so the listener hears
+	// one synth, not two. The browser is the fallback: any refusal, and any status
+	// that is not 'playing', makes it audible again on the next tick.
+
+	function synthSoundStored() {
+		try { return (localStorage.getItem('jawnos_synth_sound') === 'browser') ? 'browser' : 'engine'; } catch (e) { return 'engine'; }
+	}
+
+	function applyMute(on) {
+		S.muted = !!on;
+		if (S.post) { S.post.gain.value = S.muted ? 0 : 1; }
+	}
+
+	function engineSyncOutput() {
+		applyMute(S.sound === 'engine' && S.enginePlaying);
+	}
+
+	function engineFallback() {
+		S.enginePlaying = false;
+		S.enginePatchJson = null;
+		engineSyncOutput();
+		if (!S.engineWarned) {
+			S.engineWarned = true;
+			console.warn('synth: the JawnOS engine did not take the synth; using the browser');
+		}
+	}
+
+	function engineApi(action, extra, done) {
+		var data = { action: action };
+		if (extra) { $.extend(data, extra); }
+		$.ajax({ url: '/manager/studio/synth', type: 'POST', data: data, dataType: 'json' })
+			.done(function (answer) {
+				if (answer && answer.ok) { S.engineWarned = false; } else { engineFallback(); }
+				if (done) { done(answer || null); }
+			})
+			.fail(function () {
+				engineFallback();
+				if (done) { done(null); }
+			});
+	}
+
+	function engineSendPatch() {
+		var json = JSON.stringify(getPatch());
+		if (json === S.enginePatchJson) { return; }
+		S.enginePatchJson = json;
+		engineApi('patch', { patch_json: json }, function (answer) {
+			if (!answer || !answer.ok) { S.enginePatchJson = null; }   // send it again when it plays
+		});
+	}
+
+	function engineLive() { return S.sound === 'engine' && S.enginePlaying && !!S.ctx; }
+
+	function engineNote(note, velocity, on) {
+		if (!engineLive()) { return; }
+		engineApi('note', { note: note, velocity: velocity, on: on ? 1 : 0 });
+	}
+
+	function engineAllOff() {
+		if (!engineLive()) { return; }
+		engineApi('all_off');
+	}
+
+	function engineTick() {
+		if (!S.ctx || S.engineBusy || S.sound !== 'engine') { return; }
+		S.engineBusy = true;
+		$.ajax({ url: '/manager/studio/transport', type: 'POST', data: { action: 'status' }, dataType: 'json' })
+			.done(function (answer) {
+				S.engineBusy = false;
+				var playing = !!(answer && answer.ok && answer.transport && answer.transport.state === 'playing');
+				var was = S.enginePlaying;
+				S.enginePlaying = playing;
+				engineSyncOutput();             // mute first, before the patch goes over
+				if (playing) { engineSendPatch(); }
+				else if (was) { S.enginePatchJson = null; }
+			})
+			.fail(function () {
+				S.engineBusy = false;
+				engineFallback();               // no answer: the browser sounds
+			});
+	}
+
+	function enginePollEnsure() {
+		if (S.enginePoll) { clearInterval(S.enginePoll); S.enginePoll = null; }
+		if (!S.ctx || S.sound !== 'engine') { return; }
+		S.enginePoll = setInterval(engineTick, 500);
+		engineTick();
+	}
+
+	function synthSetSound(mode) {
+		var next = (mode === 'browser') ? 'browser' : 'engine';
+		if (next === 'browser') { engineAllOff(); }   // do not leave engine voices under the browser
+		S.sound = next;
+		try { localStorage.setItem('jawnos_synth_sound', S.sound); } catch (e) {}
+		if (S.sound !== 'engine') { S.enginePlaying = false; S.enginePatchJson = null; }
+		engineSyncOutput();
+		enginePollEnsure();
+		var sel = document.getElementById('synth_sound');
+		if (sel) { sel.value = S.sound; }
+	}
 
 	function loadPreset(name) {
 		if (!PRESETS[name]) { return S.patch; }
@@ -604,9 +726,12 @@
 		detach: detach,
 		context: function () { return S.ctx; },
 		get out() { return S.out; },
-		// the post-drive/compressor node, so the studio can tap the synth into a
-		// channel without disturbing its own path to the speakers
-		outputNode: function () { return S.comp || S.out; },
+		// the post-drive/compressor master (the mute point), so the studio can tap
+		// the synth into a channel without disturbing its own path to the speakers
+		outputNode: function () { return S.post || S.comp || S.out; },
+		// silence the browser output while the engine renders the patch; the voices
+		// keep running, so voices() and the UI do not change
+		mute: function (on) { applyMute(!!on); },
 		noteOn: noteOn,
 		noteOff: noteOff,
 		allNotesOff: allNotesOff,
@@ -840,6 +965,10 @@
 		synthSyncSliders();
 	});
 
+	$(document).on('change', '#synth_sound', function () {
+		synthSetSound($(this).val());
+	});
+
 	$(document).on('input change', '.synth_param', function () {
 		synthEnsureAudio();
 		window.jawnosSynth.setKnob($(this).attr('param'), $(this).val());
@@ -985,6 +1114,7 @@
 	$(function () {
 		if ($('#synth').length) {
 			pianoInit();
+			$('#synth_sound').val(S.sound);
 			setInterval(function () {
 				if (document.hidden) { return; }
 				var v = window.jawnosSynth.voices();

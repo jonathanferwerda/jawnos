@@ -21,6 +21,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use jawn_drums::{Kit, Machine, Voice};
+use jawn_synth::{Patch, Synth};
 
 use crate::effect::{Channel, InsertKind};
 use crate::mixer::{Mixer, ParamQueue};
@@ -889,6 +890,54 @@ pub struct TransportPlan {
     /// A chart or kit change rebuilds the machine here, at a block edge; the
     /// device stays open.
     pub drums: Option<DrumChart>,
+    /// A synth patch to load, or `None` to leave the playing synth alone. A
+    /// transport that already has a synth retunes it in place, so held notes
+    /// keep sounding; otherwise the render thread builds one here.
+    pub synth: Option<SynthPlan>,
+}
+
+/// A patch for the transport's native synth, applied at a block edge.
+///
+/// The socket sends one when the page changes a patch. The render thread keeps
+/// the synth across blocks, so a later plan calls
+/// [`jawn_synth::Synth::set_patch`] rather than rebuilding it: running voices
+/// finish with the patch they started with, exactly as the browser does.
+pub struct SynthPlan {
+    /// The browser patch. The crate clamps every field on load.
+    pub patch: Patch,
+}
+
+/// A note edge for the transport's native synth, read at a block edge.
+///
+/// The socket sends these while the transport plays, so a page can audition a
+/// patch on the same output as the takes, drums and click. Edges are applied in
+/// the order they arrive, before the block renders.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TransportNote {
+    /// Start (`on`) or release a note; `velocity` is in `0..=1`.
+    Note {
+        /// `true` starts the note, `false` releases it.
+        on: bool,
+        /// A MIDI note number, `0..=127`.
+        note: u8,
+        /// Note-on velocity, `0..=1`.
+        velocity: f32,
+    },
+    /// Release every voice, exactly as the page's panic button does.
+    AllOff,
+}
+
+/// A one-shot drum hit for audition, read at a block edge.
+///
+/// A hit needs the chart's loaded machine: a transport with no chart has no
+/// kit to render, so the edge is dropped rather than building one on the audio
+/// thread (loading a kit allocates).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransportHit {
+    /// The slot in [`jawn_drums::Voice::index`] order.
+    pub voice: usize,
+    /// Velocity on the machine's own `1..=100` scale.
+    pub velocity: u8,
 }
 
 /// An attach or detach of a take's live input on a running transport.
@@ -965,6 +1014,25 @@ pub struct TransportSource {
     /// mono to both channels; this is the only per-block copy, and it allocates
     /// nothing.
     drum_stereo: Vec<f32>,
+    /// The patch the page last sent, kept so `prepared` can build the synth when
+    /// the device opens.
+    synth_patch: Option<Patch>,
+    /// The native synth, built in `prepared` and retuned at a plan edge.
+    synth: Option<Synth>,
+    /// The synth's planar block (left half, then right half), sized in
+    /// `prepared`.
+    synth_block: Vec<f32>,
+    /// The same block interleaved for the app bus. The synth writes planar
+    /// halves; this is the only per-block copy, and it allocates nothing.
+    synth_stereo: Vec<f32>,
+    /// The app bus: the drums and the synth summed before the master chain. It
+    /// is zeroed every block and handed to the mixer as its extra stereo input,
+    /// so one mastering pass covers both native sources.
+    app_stereo: Vec<f32>,
+    /// Note edges from the control thread, drained at a block edge.
+    note_rx: Option<Receiver<TransportNote>>,
+    /// One-shot drum hits from the control thread, drained at a block edge.
+    hit_rx: Option<Receiver<TransportHit>>,
     /// The device rate and prepared period, kept so a plan that changes the
     /// clip count or insert set can rebuild the strips on the render thread.
     rate: u32,
@@ -997,6 +1065,13 @@ impl TransportSource {
             drum_render: None,
             drum_block: Vec::new(),
             drum_stereo: Vec::new(),
+            synth_patch: None,
+            synth: None,
+            synth_block: Vec::new(),
+            synth_stereo: Vec::new(),
+            app_stereo: Vec::new(),
+            note_rx: None,
+            hit_rx: None,
             rate: 0,
             period: 0,
             clip_position: 0,
@@ -1066,6 +1141,23 @@ impl TransportSource {
         self
     }
 
+    /// Note edges for the native synth. The receiver lives on the render thread
+    /// and is drained at a block edge, so a page can play the synth without
+    /// reopening the device. An edge that arrives before a patch is loaded is a
+    /// no-op.
+    pub fn with_note_rx(mut self, notes: Receiver<TransportNote>) -> Self {
+        self.note_rx = Some(notes);
+        self
+    }
+
+    /// One-shot drum hits for audition. The receiver lives on the render thread
+    /// and is drained at a block edge; a hit with no chart loaded is dropped,
+    /// because there is no machine to render it.
+    pub fn with_hit_rx(mut self, hits: Receiver<TransportHit>) -> Self {
+        self.hit_rx = Some(hits);
+        self
+    }
+
     /// Apply one attach or detach edge. Setup or a block-edge call, never a
     /// steady-state one: the block is already sized in `prepared`, so neither
     /// direction allocates here.
@@ -1104,7 +1196,13 @@ impl TransportSource {
             master,
             master_values,
             drums,
+            synth,
         } = plan;
+        // A patch change retunes a loaded synth (its voices keep sounding) or
+        // builds one here, at the block edge; the device stays open.
+        if let Some(synth) = synth {
+            self.apply_synth_plan(synth);
+        }
         // A chart or kit change builds (or reloads) the machine here, at the
         // block edge; the device stays open and the clip strips are untouched.
         if let Some(chart) = drums {
@@ -1148,6 +1246,74 @@ impl TransportSource {
         }
     }
 
+    /// Load or retune the synth at a plan edge. A synth that is already loaded
+    /// takes the patch with [`Synth::set_patch`], so a page that keeps editing
+    /// the patch never cuts a held note; the first patch builds the synth here,
+    /// which is the only allocation this path performs.
+    fn apply_synth_plan(&mut self, plan: SynthPlan) {
+        match self.synth.as_mut() {
+            Some(synth) => synth.set_patch(plan.patch),
+            None if self.period > 0 && self.rate > 0 => {
+                let mut synth = Synth::new(plan.patch, self.rate as f32);
+                synth.prepare(self.period);
+                self.synth = Some(synth);
+            }
+            // A plan that arrives before `prepared` only records the patch; the
+            // synth is built when the device rate and period are known.
+            None => {}
+        }
+        self.synth_patch = Some(plan.patch);
+    }
+
+    /// Apply one note edge. The synth lives on this thread, so an edge that
+    /// arrives before a patch was loaded is a no-op, never a panic.
+    fn apply_note(&mut self, edge: TransportNote) {
+        let Some(synth) = self.synth.as_mut() else {
+            return;
+        };
+        match edge {
+            TransportNote::Note {
+                on: true,
+                note,
+                velocity,
+            } => synth.note_on(note, velocity),
+            TransportNote::Note {
+                on: false, note, ..
+            } => synth.note_off(note),
+            TransportNote::AllOff => synth.all_notes_off(),
+        }
+    }
+
+    /// Apply one audition hit. A transport with no chart has no machine, so the
+    /// edge is dropped rather than building one on the audio thread.
+    fn apply_hit(&mut self, hit: TransportHit) {
+        if let Some(render) = self.drum_render.as_mut() {
+            render.machine.trigger_at(hit.voice, hit.velocity, 0);
+        }
+    }
+
+    /// Render one block of the synth and copy it into the stereo app bus. The
+    /// synth writes planar halves, so this is the one per-block copy; the
+    /// buffers are sized in `prepared` and nothing allocates here.
+    fn render_synth(&mut self, frames: usize) {
+        let TransportSource {
+            synth,
+            synth_block,
+            synth_stereo,
+            ..
+        } = self;
+        let Some(synth) = synth.as_mut() else {
+            return;
+        };
+        let block = &mut synth_block[..frames * 2];
+        let (left, right) = block.split_at_mut(frames);
+        synth.render(left, right);
+        for frame in 0..frames {
+            synth_stereo[frame * 2] = left[frame];
+            synth_stereo[frame * 2 + 1] = right[frame];
+        }
+    }
+
     /// Replace the drum chart at a plan edge. A different kit rebuilds the
     /// machine (and renders its voices) once here; a same-kit chart swaps the
     /// rows in place, so an edit never allocates on the audio thread. The
@@ -1163,8 +1329,18 @@ impl TransportSource {
                 .drum_render
                 .as_mut()
                 .expect("same_kit means a render machine exists");
+            // A different length means the chart changed identity (the page
+            // silences the engine kit with a one-step chart when the browser
+            // plays it). Start the new chart at step 0 here, so a mid-song
+            // switch begins on a downbeat rather than at a stale phase.
+            let relength = render.chart.length != chart.length;
             render.chart = chart.clone();
-            if render.step >= render.chart.length {
+            if relength {
+                render.step = 0;
+                render.phase = 0.0;
+                render.next_phase = 0.0;
+                render.finished = false;
+            } else if render.step >= render.chart.length {
                 render.step %= render.chart.length;
                 render.finished = false;
             }
@@ -1364,6 +1540,17 @@ impl RenderSource for TransportSource {
             .drums
             .as_ref()
             .map(|chart| DrumRender::new(chart.clone(), rate, period));
+        // The synth is built here when the page sent a patch before the device
+        // opened; its buffers join the same prepared size as the drums and the
+        // app bus, so every block below is allocation-free.
+        self.synth_block = vec![0.0; period.saturating_mul(2)];
+        self.synth_stereo = vec![0.0; period.saturating_mul(2)];
+        self.app_stereo = vec![0.0; period.saturating_mul(2)];
+        self.synth = self.synth_patch.map(|patch| {
+            let mut synth = Synth::new(patch, rate as f32);
+            synth.prepare(period);
+            synth
+        });
         self.rate = rate;
         self.period = period;
         self.clip_position = self.control.seek_frames();
@@ -1429,6 +1616,28 @@ impl RenderSource for TransportSource {
             self.apply_plan(plan);
         }
 
+        // Note edges from the page are drained in order and applied before the
+        // synth renders this block, so a note-on is heard on the block's first
+        // frame. `try_recv` never blocks and applying an edge allocates nothing.
+        loop {
+            let edge = match self.note_rx.as_ref() {
+                Some(notes) => notes.try_recv().ok(),
+                None => None,
+            };
+            let Some(edge) = edge else { break };
+            self.apply_note(edge);
+        }
+        // One-shot hits land on the loaded machine's first frame. A transport
+        // with no chart drops them; it has no kit to render.
+        loop {
+            let hit = match self.hit_rx.as_ref() {
+                Some(hits) => hits.try_recv().ok(),
+                None => None,
+            };
+            let Some(hit) = hit else { break };
+            self.apply_hit(hit);
+        }
+
         // The click's cursor is the transport's absolute song frame at this
         // block's first frame; the drums schedule against the same grid and
         // wrap at the same loop bounds. The borrow is scoped so the drum and
@@ -1486,12 +1695,17 @@ impl RenderSource for TransportSource {
         let has_clips = !self.clips.is_empty();
         let has_live = self.live.is_some();
         let has_drums = self.drum_render.is_some();
-        if has_clips || has_live || has_drums {
+        let has_synth = self.synth.is_some();
+        if has_clips || has_live || has_drums || has_synth {
             // The drum machine schedules this block's steps and renders once,
             // before the mix reads every bus; `trigger_at` places a step at its
-            // own frame inside the block.
+            // own frame inside the block. The synth renders after the note
+            // edges above, once for the whole block.
             if has_drums {
                 self.render_drums(song_start, frames);
+            }
+            if has_synth {
+                self.render_synth(frames);
             }
             let TransportSource {
                 clips,
@@ -1502,6 +1716,8 @@ impl RenderSource for TransportSource {
                 clip_position,
                 clip_loop,
                 drum_stereo,
+                synth_stereo,
+                app_stereo,
                 ..
             } = self;
             if has_clips {
@@ -1543,8 +1759,29 @@ impl RenderSource for TransportSource {
                 None => None,
             };
             let samples = frames * 2;
-            let drum_samples = if has_drums {
-                Some(&drum_stereo[..samples])
+            // One app bus carries both native sources into the mixer's extra
+            // input: zeroed here so a source that stops cannot leave a stale
+            // block behind, then each present source summed in. A mastering
+            // insert therefore scales the drums and the synth alike.
+            app_stereo[..samples].fill(0.0);
+            if has_drums {
+                for (out, sample) in app_stereo[..samples]
+                    .iter_mut()
+                    .zip(drum_stereo[..samples].iter())
+                {
+                    *out += sample;
+                }
+            }
+            if has_synth {
+                for (out, sample) in app_stereo[..samples]
+                    .iter_mut()
+                    .zip(synth_stereo[..samples].iter())
+                {
+                    *out += sample;
+                }
+            }
+            let app_samples = if has_drums || has_synth {
+                Some(&app_stereo[..samples])
             } else {
                 None
             };
@@ -1553,7 +1790,7 @@ impl RenderSource for TransportSource {
                     out,
                     |index| &voices[index][..frames],
                     live_samples,
-                    drum_samples,
+                    app_samples,
                 )
                 .map_err(|error| format!("transport: {error}"))?;
         }
@@ -2767,6 +3004,7 @@ mod tests {
                 master: None,
                 master_values: None,
                 drums: None,
+                synth: None,
             })
             .expect("send the moved plan");
         let mut second = vec![0.0f32; 8];
@@ -2785,6 +3023,7 @@ mod tests {
                 master: None,
                 master_values: None,
                 drums: None,
+                synth: None,
             })
             .expect("send the trimmed plan");
         let mut third = vec![0.0f32; 8];
@@ -2817,6 +3056,7 @@ mod tests {
                 master: None,
                 master_values: None,
                 drums: None,
+                synth: None,
             })
             .expect("send the empty plan");
         let mut second = vec![0.0f32; 8];
@@ -2942,6 +3182,7 @@ mod tests {
                 master: None,
                 master_values: Some(vec![("master_limiter.ceiling".to_string(), -12.0)]),
                 drums: None,
+                synth: None,
             })
             .expect("send the knob plan");
         let mut second = vec![0.0f32; 800];
@@ -3337,6 +3578,7 @@ mod tests {
                 master: None,
                 master_values: None,
                 drums: Some(metal),
+                synth: None,
             })
             .expect("send the chart update");
         let second = left_channel(&drum_block(&mut source, 1_000));
@@ -3354,6 +3596,288 @@ mod tests {
             Kit::Metal,
             "the plan did not install the new kit"
         );
+    }
+
+    // --- transport synth and audition hits -----------------------------------
+
+    /// A transport with the plan, note and hit channels attached before
+    /// `prepared`, which is the shape `transport start` builds.
+    fn app_transport(
+        chart: Option<DrumChart>,
+        master: Vec<InsertKind>,
+        master_values: Vec<(String, f32)>,
+        period: usize,
+    ) -> (
+        std::sync::mpsc::Sender<TransportPlan>,
+        std::sync::mpsc::Sender<TransportNote>,
+        std::sync::mpsc::Sender<TransportHit>,
+        TransportSource,
+    ) {
+        let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
+        let (plans, plan_rx) = std::sync::mpsc::channel();
+        let (notes, note_rx) = std::sync::mpsc::channel();
+        let (hits, hit_rx) = std::sync::mpsc::channel();
+        let mut source = TransportSource::new(Arc::clone(&control))
+            .with_master(master)
+            .with_master_values(master_values)
+            .with_plan_rx(plan_rx)
+            .with_note_rx(note_rx)
+            .with_hit_rx(hit_rx);
+        if let Some(chart) = chart {
+            source = source.with_drums(chart);
+        }
+        source.prepared(8_000, period).expect("prepare");
+        (plans, notes, hits, source)
+    }
+
+    /// A patch whose only difference from the default is its filter cutoff.
+    fn synth_patch_plan(cutoff: f32) -> SynthPlan {
+        let mut patch = Patch::default();
+        patch.filter.cutoff = cutoff;
+        SynthPlan { patch }
+    }
+
+    fn note_on(notes: &std::sync::mpsc::Sender<TransportNote>, note: u8) {
+        notes
+            .send(TransportNote::Note {
+                on: true,
+                note,
+                velocity: 1.0,
+            })
+            .expect("send the note-on");
+    }
+
+    fn note_off(notes: &std::sync::mpsc::Sender<TransportNote>, note: u8) {
+        notes
+            .send(TransportNote::Note {
+                on: false,
+                note,
+                velocity: 0.0,
+            })
+            .expect("send the note-off");
+    }
+
+    #[test]
+    fn a_synth_patch_plan_creates_a_synth_that_answers_a_note() {
+        let (plans, notes, _, mut source) = app_transport(None, Vec::new(), Vec::new(), 1_000);
+        assert!(source.synth.is_none(), "a synth existed before any patch");
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(synth_patch_plan(4_000.0)),
+            })
+            .expect("send the patch");
+        note_on(&notes, 60);
+        let out = drum_block(&mut source, 1_000);
+        assert!(
+            source.synth.is_some(),
+            "the patch plan did not build the synth"
+        );
+        assert!(
+            peak(&out) > 1e-4,
+            "the note-on rendered silence: {:?}",
+            left_channel(&out)
+        );
+    }
+
+    #[test]
+    fn a_note_off_releases_the_synth_to_exact_silence() {
+        let (plans, notes, _, mut source) = app_transport(None, Vec::new(), Vec::new(), 1_000);
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(synth_patch_plan(4_000.0)),
+            })
+            .expect("send the patch");
+        note_on(&notes, 60);
+        let held = drum_block(&mut source, 1_000);
+        assert!(peak(&held) > 1e-4, "the held note never sounded");
+
+        note_off(&notes, 60);
+        // The default patch releases over 0.5 s, so five 1000-frame blocks at
+        // 8 kHz cover it; the tail is monotonic and then exactly zero.
+        let mut previous = peak(&held);
+        for pass in 0..4 {
+            let out = drum_block(&mut source, 1_000);
+            let current = peak(&out);
+            assert!(current <= previous + 1e-6, "release pass {pass} rose: {current} > {previous}");
+            previous = current;
+        }
+        let silent = drum_block(&mut source, 1_000);
+        assert!(
+            silent.iter().all(|sample| *sample == 0.0),
+            "the released synth was not silent: {:?}",
+            left_channel(&silent)
+        );
+        assert_eq!(
+            source.synth.as_ref().expect("a synth").active_voices(),
+            0,
+            "the released voice stayed active"
+        );
+    }
+
+    #[test]
+    fn all_off_silences_the_synth() {
+        let (plans, notes, _, mut source) = app_transport(None, Vec::new(), Vec::new(), 1_000);
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(synth_patch_plan(4_000.0)),
+            })
+            .expect("send the patch");
+        note_on(&notes, 60);
+        assert!(peak(&drum_block(&mut source, 1_000)) > 1e-4);
+
+        notes
+            .send(TransportNote::AllOff)
+            .expect("send the all-off");
+        for _ in 0..4 {
+            let _ = drum_block(&mut source, 1_000);
+        }
+        let silent = drum_block(&mut source, 1_000);
+        assert!(
+            silent.iter().all(|sample| *sample == 0.0),
+            "all_off left the synth sounding: {:?}",
+            left_channel(&silent)
+        );
+        assert_eq!(
+            source.synth.as_ref().expect("a synth").active_voices(),
+            0,
+            "all_off left an active voice"
+        );
+    }
+
+    #[test]
+    fn a_new_patch_while_a_note_is_held_keeps_the_voice_sounding() {
+        let (plans, notes, _, mut source) = app_transport(None, Vec::new(), Vec::new(), 1_000);
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(synth_patch_plan(2_000.0)),
+            })
+            .expect("send the patch");
+        note_on(&notes, 60);
+        assert!(peak(&drum_block(&mut source, 1_000)) > 1e-4, "the note never sounded");
+
+        // A second patch rides the same plan edge. `set_patch` retunes the
+        // loaded synth, so the held voice is still there; a rebuild would have
+        // dropped it and rendered silence.
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(synth_patch_plan(12_000.0)),
+            })
+            .expect("send the second patch");
+        let out = drum_block(&mut source, 1_000);
+        assert!(
+            peak(&out) > 1e-4,
+            "the patch change silenced the held note: {:?}",
+            left_channel(&out)
+        );
+        assert_eq!(
+            source.synth.as_ref().expect("a synth").active_voices(),
+            1,
+            "the patch change rebuilt the synth instead of retuning it"
+        );
+    }
+
+    #[test]
+    fn the_synth_and_drums_share_one_pre_master_bus() {
+        // Both sources alone are hotter than a -40 dBFS master ceiling, so a
+        // render through the limiter that stays at the ceiling proves neither
+        // one bypassed the master rack: a post-master add would poke above it.
+        let ceiling = 10f32.powf(-40.0 / 20.0);
+        let chart = drum_chart(Kit::Acoustic, 1, true, &[(Voice::Kick, &[100])]);
+
+        let (plans, notes, _, mut synth_only) = app_transport(None, Vec::new(), Vec::new(), 1_000);
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: Some(synth_patch_plan(4_000.0)),
+            })
+            .expect("send the patch");
+        note_on(&notes, 60);
+        assert!(
+            peak(&drum_block(&mut synth_only, 1_000)) > ceiling * 2.0,
+            "the synth was not loud enough to prove the ceiling"
+        );
+
+        let (_, _, _, mut drums_only) = app_transport(Some(chart.clone()), Vec::new(), Vec::new(), 1_000);
+        assert!(
+            peak(&drum_block(&mut drums_only, 1_000)) > ceiling * 2.0,
+            "the kick was not loud enough to prove the ceiling"
+        );
+
+        let (_, notes, _, mut both) = app_transport(
+            Some(chart),
+            vec![InsertKind::Limiter],
+            // The default -3 dBFS ceiling would not clamp either source; -40
+            // dBFS is below both, so every sounding sample lands exactly on it.
+            // The value goes in before `prepare`, so the block is not heard
+            // through a ceiling still smoothing down from its default.
+            vec![("master_limiter.ceiling".to_string(), -40.0)],
+            1_000,
+        );
+        note_on(&notes, 60);
+        let out = drum_block(&mut both, 1_000);
+        assert!(
+            peak(&out) <= ceiling * 1.001,
+            "a master ceiling of {ceiling} was exceeded: peak {}",
+            peak(&out)
+        );
+        assert!(
+            peak(&out) >= ceiling * 0.999,
+            "neither source reached the master bus: peak {}",
+            peak(&out)
+        );
+    }
+
+    #[test]
+    fn a_drum_hit_with_no_chart_is_harmless() {
+        let (_, _, hits, mut source) = app_transport(None, Vec::new(), Vec::new(), 1_000);
+        hits.send(TransportHit {
+            voice: Voice::Kick.index(),
+            velocity: 100,
+        })
+        .expect("send the hit");
+        let out = drum_block(&mut source, 1_000);
+        assert!(
+            out.iter().all(|sample| *sample == 0.0),
+            "a hit with no chart made sound: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_drum_hit_renders_through_the_loaded_chart_machine() {
+        // The chart itself is empty, so the only sound is the auditioned kick.
+        let chart = drum_chart(Kit::Acoustic, 4, true, &[(Voice::Kick, &[0, 0, 0, 0])]);
+        let (_, _, hits, mut source) = app_transport(Some(chart), Vec::new(), Vec::new(), 1_000);
+        hits.send(TransportHit {
+            voice: Voice::Kick.index(),
+            velocity: 100,
+        })
+        .expect("send the hit");
+        let left = left_channel(&drum_block(&mut source, 1_000));
+        let onset = first_audible(&left, 1e-6).expect("the auditioned kick never sounded");
+        assert!(onset <= 8, "the hit landed at frame {onset}");
     }
 
     #[test]

@@ -94,8 +94,9 @@ use jawn_audio::{
     PlayTrack, Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
     TransportSource, MASTER_ORDER,
 };
-use jawn_audio::playback::DrumChart;
+use jawn_audio::playback::{DrumChart, SynthPlan, TransportHit, TransportNote};
 use jawn_drums::{Kit, Voice};
+use jawn_synth::{Engine as SynthEngine, Envelope, FilterKind, Patch, Wave};
 use jawn_audio::uplink::{Uplink, UplinkConfig, UplinkSourceSpec, UplinkStatus};
 
 use crate::patchbay::{PatchSummary, Patchbay};
@@ -1669,6 +1670,8 @@ impl Server {
             "listen" => Action::Reply(self.listen(&object)),
             "patch" => Action::Reply(self.patch(&object)),
             "transport" => Action::Reply(self.transport_command(&object)),
+            "synth" => Action::Reply(self.synth_command(&object)),
+            "drums" => Action::Reply(self.drums_command(&object)),
             "gateway" => Action::Reply(self.gateway_command(&object)),
             "unpatch" => Action::Reply(self.unpatch_line()),
             "param" => Action::Reply(self.param(&object)),
@@ -3834,6 +3837,7 @@ impl Server {
                         master: None,
                         master_values: None,
                         drums: Some(chart.clone()),
+                        synth: None,
                     };
                     if session.plan_tx.send(plan).is_err() {
                         return error_line(
@@ -3919,6 +3923,10 @@ impl Server {
         // same block edge, so attaching one never stops or reopens the device.
         let (plan_tx, plan_rx) = std::sync::mpsc::channel();
         let (live_tx, live_rx) = std::sync::mpsc::channel();
+        // Synth notes and audition hits ride their own channels, so neither
+        // waits behind a plan or a live attach at the block edge.
+        let (note_tx, note_rx) = std::sync::mpsc::channel();
+        let (hit_tx, hit_rx) = std::sync::mpsc::channel();
         let spawned = {
             let control = Arc::clone(&control);
             let error = Arc::clone(&error);
@@ -3936,6 +3944,8 @@ impl Server {
                         drums,
                         plan_rx,
                         live_rx,
+                        note_rx,
+                        hit_rx,
                     )
                 })
         };
@@ -3954,8 +3964,13 @@ impl Server {
             master: master_count,
             drums: drum_count,
             drum_kit,
+            // A start carries no synth patch; the page sends one with a
+            // `synth` command once the transport is playing.
+            synth: 0,
             plan_tx,
             live_tx,
+            note_tx,
+            hit_tx,
             monitor_input: false,
             monitor_gain: None,
         });
@@ -4019,6 +4034,7 @@ impl Server {
             master,
             master_values,
             drums,
+            synth: None,
         };
         let session = match self.transport.as_mut() {
             Some(session) => session,
@@ -4042,6 +4058,211 @@ impl Server {
         }
         if let Some(kit) = drum_kit {
             session.drum_kit = kit;
+        }
+        self.transport_status()
+    }
+
+    /// Whether a transport owns the output right now. The synth and audition
+    /// commands need one: their buses live on that render thread, and a command
+    /// against a stopped session would have no reader.
+    fn transport_playing(&self) -> bool {
+        self.transport
+            .as_ref()
+            .map(TransportSession::is_playing)
+            .unwrap_or(false)
+    }
+
+    /// `{"cmd":"synth","action":"patch","patch":{...}}`,
+    /// `{"cmd":"synth","action":"note","on":1,"note":60,"velocity":0.8}` and
+    /// `{"cmd":"synth","action":"all_off"}`: the native synth on the running
+    /// transport's app bus.
+    ///
+    /// A patch rides the plan channel and is applied at the next block edge; a
+    /// note rides its own channel and is applied before that block renders.
+    /// Every action needs a playing transport, because the synth lives on that
+    /// render thread and its output is the transport's output. A malformed
+    /// patch field is refused by name rather than defaulted.
+    fn synth_command(&mut self, object: &Object) -> String {
+        let action = match get(object, "action") {
+            Some(Value::Str(action)) => action.as_str(),
+            _ => return error_line("synth needs \"action\": \"patch\", \"note\" or \"all_off\""),
+        };
+        match action {
+            "patch" => self.synth_patch(object),
+            "note" => self.synth_note(object),
+            "all_off" => self.synth_all_off(),
+            other => error_line(&format!("no such synth action: {other}")),
+        }
+    }
+
+    /// Load or retune the synth's patch. A transport that already has a synth
+    /// applies it with `set_patch` at the block edge, so a held note keeps
+    /// sounding while the page edits the patch.
+    fn synth_patch(&mut self, object: &Object) -> String {
+        if !self.transport_playing() {
+            return error_line("the transport is not playing; start it before changing the synth patch");
+        }
+        let patch = match parse_synth_patch(get(object, "patch")) {
+            Ok(patch) => patch,
+            Err(error) => return error_line(&error),
+        };
+        let voices = patch.voices as usize;
+        let session = match self.transport.as_mut() {
+            Some(session) if session.is_playing() => session,
+            _ => {
+                return error_line(
+                    "the transport is not playing; start it before changing the synth patch",
+                )
+            }
+        };
+        let plan = TransportPlan {
+            clips: None,
+            master: None,
+            master_values: None,
+            drums: None,
+            synth: Some(SynthPlan { patch }),
+        };
+        if session.plan_tx.send(plan).is_err() {
+            return error_line("the transport's render thread is no longer accepting plans");
+        }
+        // The patch's own voice cap is the status line's `synth` value, exactly
+        // as the page shows the knob rather than the live voice count.
+        session.synth = voices;
+        self.transport_status()
+    }
+
+    /// One note edge for the synth: `on` starts or releases `note`. A note-off
+    /// keeps its velocity at zero on the wire, where it is unused.
+    fn synth_note(&mut self, object: &Object) -> String {
+        if !self.transport_playing() {
+            return error_line("the transport is not playing; start it before playing the synth");
+        }
+        let on = match get(object, "on") {
+            Some(Value::Bool(on)) => *on,
+            Some(Value::Num(value)) if *value == 0.0 => false,
+            Some(Value::Num(value)) if *value == 1.0 => true,
+            _ => return error_line("synth note needs \"on\": 1 or 0 (or true/false)"),
+        };
+        let note = match get(object, "note") {
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= 0.0
+                    && *value <= 127.0 =>
+            {
+                *value as u8
+            }
+            _ => {
+                return error_line(
+                    "synth note needs \"note\": a whole number from 0 to 127",
+                )
+            }
+        };
+        let velocity = match get(object, "velocity") {
+            None | Some(Value::Null) => {
+                if on {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Some(Value::Num(value)) if value.is_finite() && *value >= 0.0 && *value <= 1.0 => {
+                *value as f32
+            }
+            _ => return error_line("synth \"velocity\" must be a number from 0 to 1"),
+        };
+        let session = match self.transport.as_mut() {
+            Some(session) if session.is_playing() => session,
+            _ => {
+                return error_line(
+                    "the transport is not playing; start it before playing the synth",
+                )
+            }
+        };
+        let edge = TransportNote::Note {
+            on,
+            note,
+            velocity,
+        };
+        if session.note_tx.send(edge).is_err() {
+            return error_line("the transport's render thread is no longer accepting notes");
+        }
+        self.transport_status()
+    }
+
+    /// Release every synth voice at the next block edge.
+    fn synth_all_off(&mut self) -> String {
+        if !self.transport_playing() {
+            return error_line("the transport is not playing; start it before playing the synth");
+        }
+        let session = match self.transport.as_mut() {
+            Some(session) if session.is_playing() => session,
+            _ => {
+                return error_line(
+                    "the transport is not playing; start it before playing the synth",
+                )
+            }
+        };
+        if session.note_tx.send(TransportNote::AllOff).is_err() {
+            return error_line("the transport's render thread is no longer accepting notes");
+        }
+        self.transport_status()
+    }
+
+    /// `{"cmd":"drums","action":"hit","voice":"kick","velocity":70}`: audition
+    /// one drum voice on the running transport's machine.
+    ///
+    /// The hit uses the chart's loaded kit, so it needs a chart: a transport
+    /// with no chart has no machine and the command is refused by name. The
+    /// velocity is the machine's own whole `1..=100` scale.
+    fn drums_command(&mut self, object: &Object) -> String {
+        let action = match get(object, "action") {
+            Some(Value::Str(action)) => action.as_str(),
+            _ => return error_line("drums needs \"action\": \"hit\""),
+        };
+        if action != "hit" {
+            return error_line(&format!("no such drums action: {action}"));
+        }
+        if !self.transport_playing() {
+            return error_line("the transport is not playing; start it before hitting a drum");
+        }
+        let name = match get(object, "voice") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => return error_line("a drum hit needs \"voice\": a kit voice name"),
+        };
+        let voice = match Voice::from_name(name) {
+            Some(voice) => voice,
+            None => return error_line(&format!("no such drum voice: {name}")),
+        };
+        let velocity = match get(object, "velocity") {
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= 1.0
+                    && *value <= 100.0 =>
+            {
+                *value as u8
+            }
+            _ => {
+                return error_line(
+                    "a drum hit needs \"velocity\": a whole number from 1 to 100",
+                )
+            }
+        };
+        let session = match self.transport.as_mut() {
+            Some(session) if session.is_playing() => session,
+            _ => {
+                return error_line(
+                    "the transport is not playing; start it before hitting a drum",
+                )
+            }
+        };
+        let hit = TransportHit {
+            voice: voice.index(),
+            velocity,
+        };
+        if session.hit_tx.send(hit).is_err() {
+            return error_line("the transport's render thread is no longer accepting hits");
         }
         self.transport_status()
     }
@@ -5130,6 +5351,212 @@ fn parse_drums(value: Option<&Value>) -> Result<Option<DrumChart>, String> {
     Ok(Some(DrumChart::new(kit, length, looped, steps)))
 }
 
+/// The `synth` command's `patch` field: the browser's patch JSON, field for
+/// field.
+///
+/// Every field inside `patch` is optional, and an absent one keeps
+/// [`Patch::default`]'s value, so the page may send a partial patch. A present
+/// field of the wrong type, or an unknown enum name, is refused by field
+/// (`patch.filter.type`), never defaulted. Ranges are the crate's to clamp, in
+/// [`Patch::clamped`], exactly as the browser clamps them.
+fn parse_synth_patch(value: Option<&Value>) -> Result<Patch, String> {
+    let fields = match value {
+        Some(Value::Obj(fields)) => fields,
+        None | Some(Value::Null) => {
+            return Err(
+                "synth \"patch\" is required: an object with the browser patch fields".to_string(),
+            )
+        }
+        _ => return Err("synth \"patch\" must be an object".to_string()),
+    };
+    let defaults = Patch::default();
+    let mut patch = defaults;
+
+    if let Some(name) = patch_string(fields, "patch", "engine")? {
+        patch.engine = SynthEngine::from_name(name)
+            .ok_or_else(|| format!("no such patch.engine: {name}"))?;
+    }
+    if let Some(name) = patch_string(fields, "patch", "wave")? {
+        patch.wave =
+            Wave::from_name(name).ok_or_else(|| format!("no such patch.wave: {name}"))?;
+    }
+    if let Some(value) = patch_number(fields, "patch", "noise")? {
+        patch.noise = value;
+    }
+    if let Some(value) = patch_whole(fields, "patch", "voices")? {
+        patch.voices = u8::try_from(value)
+            .map_err(|_| "patch.voices must be a whole number from 0 to 255".to_string())?;
+    }
+    if let Some(value) = patch_number(fields, "patch", "transpose")? {
+        patch.transpose = value;
+    }
+    if let Some(value) = patch_number(fields, "patch", "glide")? {
+        patch.glide = value;
+    }
+    if let Some(value) = patch_number(fields, "patch", "drive")? {
+        patch.drive = value;
+    }
+    if let Some(value) = patch_number(fields, "patch", "damping")? {
+        patch.damping = value;
+    }
+    if let Some(value) = patch_number(fields, "patch", "brightness")? {
+        patch.brightness = value;
+    }
+
+    match get(fields, "osc") {
+        None | Some(Value::Null) => {}
+        Some(Value::Arr(entries)) => {
+            if entries.is_empty() || entries.len() > 2 {
+                return Err(format!(
+                    "patch.osc must hold one or two oscillators, found {}",
+                    entries.len()
+                ));
+            }
+            for (index, entry) in entries.iter().enumerate() {
+                let label = format!("patch.osc[{index}]");
+                let osc_fields = match entry {
+                    Value::Obj(fields) => fields,
+                    _ => return Err(format!("{label} must be an object")),
+                };
+                let mut osc = defaults.osc[index];
+                if let Some(value) = patch_whole(osc_fields, &label, "octave")? {
+                    osc.octave = i8::try_from(value).map_err(|_| {
+                        format!("{label}.octave must be a whole number from -128 to 127")
+                    })?;
+                }
+                if let Some(value) = patch_number(osc_fields, &label, "detune")? {
+                    osc.detune = value;
+                }
+                if let Some(value) = patch_number(osc_fields, &label, "level")? {
+                    osc.level = value;
+                }
+                patch.osc[index] = osc;
+            }
+            patch.osc_count = entries.len() as u8;
+        }
+        Some(_) => {
+            return Err("patch.osc must be an array of one or two oscillator objects".to_string())
+        }
+    }
+
+    if let Some(filter) = patch_object(fields, "patch", "filter")? {
+        // The JSON key is `type`; the Rust field is `kind`, because `type` is
+        // a Rust keyword. That is the one name the bridge translates.
+        if let Some(name) = patch_string(filter, "patch.filter", "type")? {
+            patch.filter.kind = FilterKind::from_name(name)
+                .ok_or_else(|| format!("no such patch.filter.type: {name}"))?;
+        }
+        if let Some(value) = patch_number(filter, "patch.filter", "cutoff")? {
+            patch.filter.cutoff = value;
+        }
+        if let Some(value) = patch_number(filter, "patch.filter", "q")? {
+            patch.filter.q = value;
+        }
+        if let Some(value) = patch_number(filter, "patch.filter", "env")? {
+            patch.filter.env = value;
+        }
+        if let Some(value) = patch_number(filter, "patch.filter", "keytrack")? {
+            patch.filter.keytrack = value;
+        }
+    }
+
+    if let Some(amp) = patch_object(fields, "patch", "amp")? {
+        patch.amp = parse_synth_envelope(amp, "patch.amp", defaults.amp)?;
+    }
+    if let Some(fenv) = patch_object(fields, "patch", "fenv")? {
+        patch.fenv = parse_synth_envelope(fenv, "patch.fenv", defaults.fenv)?;
+    }
+
+    if let Some(lfo) = patch_object(fields, "patch", "lfo")? {
+        let mut settings = defaults.lfo;
+        if let Some(value) = patch_number(lfo, "patch.lfo", "rate")? {
+            settings.rate = value;
+        }
+        if let Some(value) = patch_number(lfo, "patch.lfo", "pitch")? {
+            settings.pitch = value;
+        }
+        if let Some(value) = patch_number(lfo, "patch.lfo", "cutoff")? {
+            settings.cutoff = value;
+        }
+        if let Some(value) = patch_number(lfo, "patch.lfo", "amp")? {
+            settings.amp = value;
+        }
+        patch.lfo = settings;
+    }
+
+    Ok(patch.clamped())
+}
+
+/// One ADSR object from the patch, starting from `base` so a field the page
+/// omits keeps the crate's default.
+fn parse_synth_envelope(
+    fields: &Object,
+    label: &str,
+    mut env: Envelope,
+) -> Result<Envelope, String> {
+    if let Some(value) = patch_number(fields, label, "a")? {
+        env.a = value;
+    }
+    if let Some(value) = patch_number(fields, label, "d")? {
+        env.d = value;
+    }
+    if let Some(value) = patch_number(fields, label, "s")? {
+        env.s = value;
+    }
+    if let Some(value) = patch_number(fields, label, "r")? {
+        env.r = value;
+    }
+    Ok(env)
+}
+
+/// A string field of a patch object. `label` is the field's parent path, so an
+/// error names exactly where the page sent the wrong type.
+fn patch_string<'a>(
+    fields: &'a Object,
+    label: &str,
+    key: &str,
+) -> Result<Option<&'a str>, String> {
+    match get(fields, key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Str(value)) => Ok(Some(value.as_str())),
+        _ => Err(format!("{label}.{key} must be a string")),
+    }
+}
+
+/// A finite number field of a patch object.
+fn patch_number(fields: &Object, label: &str, key: &str) -> Result<Option<f32>, String> {
+    match get(fields, key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Num(value)) if value.is_finite() => Ok(Some(*value as f32)),
+        _ => Err(format!("{label}.{key} must be a number")),
+    }
+}
+
+/// A whole-number field of a patch object, kept in `i64` so the caller can
+/// refuse an out-of-range value by name rather than wrapping it.
+fn patch_whole(fields: &Object, label: &str, key: &str) -> Result<Option<i64>, String> {
+    match get(fields, key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Num(value)) if value.is_finite() && value.fract() == 0.0 => {
+            Ok(Some(*value as i64))
+        }
+        _ => Err(format!("{label}.{key} must be a whole number")),
+    }
+}
+
+/// An object field of a patch object.
+fn patch_object<'a>(
+    fields: &'a Object,
+    label: &str,
+    key: &str,
+) -> Result<Option<&'a Object>, String> {
+    match get(fields, key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Obj(value)) => Ok(Some(value)),
+        _ => Err(format!("{label}.{key} must be an object")),
+    }
+}
+
 /// The array form: one object per track. Every insert is parsed here, before
 /// any file is created, and a name the engine does not have is refused by
 /// name.
@@ -5749,11 +6176,19 @@ struct TransportSession {
     drums: usize,
     /// The kit the drum machine actually loaded, or `"off"` for no chart.
     drum_kit: String,
+    /// The loaded synth's voice cap (`patch.voices`); zero is no patch. It is
+    /// the patch's own limit, not the live voice count, exactly as the page
+    /// shows the patch's `voices` knob.
+    synth: usize,
     /// Replacement plans to the render thread. A send never waits for the audio
     /// thread; the receiver's `try_recv` at a block edge is the only consumer.
     plan_tx: Sender<TransportPlan>,
     /// Attach and detach edges for a take's live input, read at a block edge.
     live_tx: Sender<TransportLive>,
+    /// Note edges for the native synth, read at a block edge.
+    note_tx: Sender<TransportNote>,
+    /// One-shot drum hits for audition, read at a block edge.
+    hit_tx: Sender<TransportHit>,
     /// Whether a take's live ring is attached right now. `false` is the state
     /// before any take and again after `record` stop detaches it.
     monitor_input: bool,
@@ -5850,7 +6285,7 @@ impl TransportSession {
             .map(|gain| f32::from_bits(gain.load(Ordering::Acquire)))
             .unwrap_or(1.0);
         format!(
-            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"monitor_input\":{},\"monitor_gain\":{}{}}}",
+            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"synth\":{},\"monitor_input\":{},\"monitor_gain\":{}{}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
@@ -5861,6 +6296,7 @@ impl TransportSession {
             self.master,
             self.drums,
             jawn_audio::loopback::json_escape(&self.drum_kit),
+            self.synth,
             self.monitor_input,
             monitor_gain,
             error
@@ -5872,7 +6308,7 @@ impl TransportSession {
 /// default tempo and signature, with no loop. The route always has a shape to
 /// answer with, exactly as an idle `status` does.
 fn default_transport_line() -> String {
-    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"drums\":0,\"drum_kit\":\"off\",\"monitor_input\":false,\"monitor_gain\":1}}"
+    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"drums\":0,\"drum_kit\":\"off\",\"synth\":0,\"monitor_input\":false,\"monitor_gain\":1}}"
         .to_string()
 }
 
@@ -5893,13 +6329,17 @@ fn run_transport(
     drums: Option<DrumChart>,
     plans: std::sync::mpsc::Receiver<TransportPlan>,
     live: std::sync::mpsc::Receiver<TransportLive>,
+    notes: std::sync::mpsc::Receiver<TransportNote>,
+    hits: std::sync::mpsc::Receiver<TransportHit>,
 ) {
     let mut source = TransportSource::new(Arc::clone(&control))
         .with_clips(clips)
         .with_master(master)
         .with_master_values(master_values)
         .with_plan_rx(plans)
-        .with_live_rx(live);
+        .with_live_rx(live)
+        .with_note_rx(notes)
+        .with_hit_rx(hits);
     if let Some(chart) = drums {
         source = source.with_drums(chart);
     }
@@ -9147,6 +9587,8 @@ break"}"#).is_err());
         control.set_playing(true);
         let (plan_tx, _plan_rx) = std::sync::mpsc::channel();
         let (live_tx, _live_rx) = std::sync::mpsc::channel();
+        let (note_tx, _note_rx) = std::sync::mpsc::channel();
+        let (hit_tx, _hit_rx) = std::sync::mpsc::channel();
         TransportSession {
             control,
             handle: None,
@@ -9155,8 +9597,11 @@ break"}"#).is_err());
             master: 0,
             drums: 0,
             drum_kit: "off".to_string(),
+            synth: 0,
             plan_tx,
             live_tx,
+            note_tx,
+            hit_tx,
             monitor_input: false,
             monitor_gain: None,
         }
@@ -9171,6 +9616,7 @@ break"}"#).is_err());
         assert!(line.contains("\"beats_per_bar\":4"), "{line}");
         assert!(line.contains("\"loop_start\":0.000000"), "{line}");
         assert!(line.contains("\"loop_end\":0.000000"), "{line}");
+        assert!(line.contains("\"synth\":0"), "{line}");
     }
 
     #[test]
@@ -9463,6 +9909,272 @@ break"}"#).is_err());
         assert!(empty.contains("drums"), "{empty}");
 
         let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_synth_patch_plan_sets_the_status_voices() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"synth\":0"), "{started}");
+
+        // A partial patch is enough: an absent field keeps the crate default.
+        let line = reply(server.handle(
+            r#"{"cmd":"synth","action":"patch","patch":{"engine":"subtractive","wave":"sine","voices":8}}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+        assert!(line.contains("\"synth\":8"), "the status did not carry the voice cap: {line}");
+        // Every existing key stays on the line beside the new one.
+        assert!(line.contains("\"drums\":0"), "{line}");
+        assert!(line.contains("\"drum_kit\":\"off\""), "{line}");
+        assert!(line.contains("\"clips\":0"), "{line}");
+        assert!(line.contains("\"master\":0"), "{line}");
+
+        // A second patch retunes the loaded synth and updates the cap.
+        let line = reply(server.handle(
+            r#"{"cmd":"synth","action":"patch","patch":{"filter":{"type":"bandpass","cutoff":900}}}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+        // The absent `voices` takes the default, not the previous patch's 8.
+        assert!(line.contains("\"synth\":32"), "{line}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_synth_note_and_all_off_reach_a_running_transport() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        for line in [
+            r#"{"cmd":"synth","action":"note","on":1,"note":60,"velocity":0.8}"#,
+            r#"{"cmd":"synth","action":"note","on":0,"note":60}"#,
+            r#"{"cmd":"synth","action":"note","on":true,"note":67,"velocity":1}"#,
+            r#"{"cmd":"synth","action":"all_off"}"#,
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":true"), "{line}: {answer}");
+            assert!(answer.contains("\"state\":\"playing\""), "{line}: {answer}");
+        }
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_synth_patch_refuses_a_malformed_field_by_name() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        for (line, needle) in [
+            (
+                r#"{"cmd":"synth","action":"patch","patch":"loud"}"#,
+                "patch",
+            ),
+            (r#"{"cmd":"synth","action":"patch"}"#, "patch"),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"engine":"reed"}}"#,
+                "patch.engine",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"wave":"noise"}}"#,
+                "patch.wave",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"wave":5}}"#,
+                "patch.wave",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"noise":"loud"}}"#,
+                "patch.noise",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"voices":2.5}}"#,
+                "patch.voices",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"voices":300}}"#,
+                "patch.voices",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"osc":[]}}"#,
+                "patch.osc",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"osc":"sine"}}"#,
+                "patch.osc",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"osc":[1]}}"#,
+                "patch.osc[0]",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"osc":[{"octave":1.5}]}}"#,
+                "patch.osc[0].octave",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"filter":"soft"}}"#,
+                "patch.filter",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"filter":{"type":"highpass"}}}"#,
+                "patch.filter.type",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"filter":{"cutoff":"high"}}}"#,
+                "patch.filter.cutoff",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"amp":{"a":"slow"}}}"#,
+                "patch.amp.a",
+            ),
+            (
+                r#"{"cmd":"synth","action":"patch","patch":{"lfo":{"rate":"fast"}}}"#,
+                "patch.lfo.rate",
+            ),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+        }
+        // A refused patch never stopped the transport.
+        let status = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(status.contains("\"state\":\"playing\""), "{status}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_synth_note_refuses_bad_shapes_by_name() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        for (line, needle) in [
+            (
+                r#"{"cmd":"synth","action":"note","on":2,"note":60}"#,
+                "on",
+            ),
+            (
+                r#"{"cmd":"synth","action":"note","on":"yes","note":60}"#,
+                "on",
+            ),
+            (
+                r#"{"cmd":"synth","action":"note","on":1,"note":128}"#,
+                "note",
+            ),
+            (
+                r#"{"cmd":"synth","action":"note","on":1,"note":-1}"#,
+                "note",
+            ),
+            (
+                r#"{"cmd":"synth","action":"note","on":1,"note":60.5}"#,
+                "note",
+            ),
+            (
+                r#"{"cmd":"synth","action":"note","on":1}"#,
+                "note",
+            ),
+            (
+                r#"{"cmd":"synth","action":"note","on":1,"note":60,"velocity":"loud"}"#,
+                "velocity",
+            ),
+            (
+                r#"{"cmd":"synth","action":"note","on":1,"note":60,"velocity":1.5}"#,
+                "velocity",
+            ),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+        }
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_drum_hit_refuses_bad_shapes_by_name() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        // A hit parses even without a chart: the render thread drops it, which
+        // is documented, but the wire shape is valid.
+        let hit = reply(server.handle(
+            r#"{"cmd":"drums","action":"hit","voice":"kick","velocity":70}"#,
+        ));
+        assert!(hit.contains("\"ok\":true"), "{hit}");
+
+        for (line, needle) in [
+            (
+                r#"{"cmd":"drums","action":"hit","voice":"crash","velocity":70}"#,
+                "no such drum voice: crash",
+            ),
+            (
+                r#"{"cmd":"drums","action":"hit","voice":3,"velocity":70}"#,
+                "voice",
+            ),
+            (
+                r#"{"cmd":"drums","action":"hit","velocity":70}"#,
+                "voice",
+            ),
+            (
+                r#"{"cmd":"drums","action":"hit","voice":"kick","velocity":0}"#,
+                "velocity",
+            ),
+            (
+                r#"{"cmd":"drums","action":"hit","voice":"kick","velocity":101}"#,
+                "velocity",
+            ),
+            (
+                r#"{"cmd":"drums","action":"hit","voice":"kick","velocity":70.5}"#,
+                "velocity",
+            ),
+            (
+                r#"{"cmd":"drums","action":"hit","voice":"kick"}"#,
+                "velocity",
+            ),
+            (
+                r#"{"cmd":"drums","action":"roll","voice":"kick","velocity":70}"#,
+                "no such drums action: roll",
+            ),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+        }
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn the_synth_and_drum_commands_refuse_a_stopped_transport() {
+        let mut server = socket_server();
+        let commands = [
+            r#"{"cmd":"synth","action":"patch","patch":{"voices":8}}"#,
+            r#"{"cmd":"synth","action":"note","on":1,"note":60}"#,
+            r#"{"cmd":"synth","action":"all_off"}"#,
+            r#"{"cmd":"drums","action":"hit","voice":"kick","velocity":70}"#,
+        ];
+        // Never started: no transport exists, so each command is one sentence.
+        for line in commands {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains("not playing"), "{line}: {answer}");
+            assert!(server.transport.is_none(), "{line} created a transport");
+        }
+
+        // Stopped: the session still exists, but no render thread reads it.
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+        for line in commands {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains("not playing"), "{line}: {answer}");
+        }
     }
 
     #[test]

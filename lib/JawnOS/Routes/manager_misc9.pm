@@ -49,6 +49,8 @@ sub routes {
 	[44023, 'post', '/manager/studio/take', 'action_44023'],
 	[44033, 'post', '/manager/studio/transport', 'action_44033'],
 	[44034, 'post', '/manager/studio/clip', 'action_44034'],
+	[44035, 'post', '/manager/studio/synth', 'action_44035'],
+	[44036, 'post', '/manager/studio/drums', 'action_44036'],
 	[44024, 'get', '/manager/games/play', 'action_44024'],
 	[44025, 'get', '/manager/games/dos_bundle', 'action_44025'],
 	[44026, 'get', '/manager/games/peer_library', 'action_44026'],

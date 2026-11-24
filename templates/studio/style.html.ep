@@ -1588,8 +1588,8 @@
 	.studio_drums_step[aria-pressed="true"] {
 		opacity: calc(.4 + var(--drums-velocity, 1) * .6);
 	}
-	/* the drum machine's Kit list sits beside Loop, in the same small type */
-	.studio_drums_kit_label {
+	/* the drum machine's Kit and Sound lists sit beside Loop, in the same small type */
+	.studio_drums_kit_label, .studio_drums_sound_label {
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
@@ -1597,6 +1597,11 @@
 	}
 	#studio_drums_kit {
 		max-width: 112px;
+		font-size: 11px;
+		padding: 1px 3px;
+	}
+	#studio_drums_sound {
+		max-width: 92px;
 		font-size: 11px;
 		padding: 1px 3px;
 	}

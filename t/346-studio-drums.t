@@ -242,8 +242,8 @@ like($code, qr/library\.splice\(index, 1\)/, 'delete removes just the chosen loo
 
 # --- length and loop persistence -------------------------------------------
 like($code, qr/function studioDrumsSave\(\)/, 'the chart has one save function');
-like($code, qr/return \{ steps: steps, keys: keys, loop: studioDrums\.loop \? 1 : 0, voices: voices, midi: studioDrums\.midiInput \|\| '', kit: studioDrums\.kit, length: studioDrums\.lengthSteps \};/,
-	'the saved shape is steps, keys, loop, voices, midi, kit and length');
+like($code, qr/return \{ steps: steps, keys: keys, loop: studioDrums\.loop \? 1 : 0, voices: voices, midi: studioDrums\.midiInput \|\| '', kit: studioDrums\.kit, sound: studioDrums\.sound === 'browser' \? 'browser' : 'engine', length: studioDrums\.lengthSteps \};/,
+	'the saved shape is steps, keys, loop, voices, midi, kit, sound and length');
 like($knobs, qr/drums: studioDrumsSave\(\)/, 'the song stores the drum state in admin');
 like($knobs, qr/studioDrumsRestore\(mixer\['admin'\] && mixer\['admin'\]\['drums'\]\)/,
 	'loading a song restores it');

@@ -582,6 +582,13 @@ function studioEngineClipStageAll(plan) {
 // The chart is tiny, so it rides every plan beside the clips.
 function studioEngineDrumPlan() {
 	if (typeof studioDrums === 'undefined' || !studioDrums || !studioDrums.loaded) { return null; }
+	// The panel can hand the kit to the browser. A silent one-step chart turns
+	// the engine's chart off, so switching mid-song never leaves two kits
+	// playing; the length change also restarts the engine's cursor, so switching
+	// back begins on a downbeat.
+	if (typeof studioDrumsEngineChosen === 'function' && !studioDrumsEngineChosen()) {
+		return { kit: studioDrums.kit, length: 1, loop: 0, steps: {} };
+	}
 	var length = studioDrums.lengthSteps || 16;
 	var steps = {};
 	studioDrumsVoices().forEach(function (v) {

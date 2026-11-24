@@ -14,6 +14,7 @@
 //   noteOn(note, velocity)     a MIDI note number (60 = middle C) and 0..1
 //   noteOff(note)  allNotesOff()
 //   set(param, value)  setPatch(obj)  getPatch()  loadPreset(name)  presets()
+//   mute(on)                   silence the browser output (the engine is rendering)
 //   voices()                   how many are sounding right now
 //   midi.start()  midi.devices()  midi.select(id)  midi.onnotes(fn)
 //

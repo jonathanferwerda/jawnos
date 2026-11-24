@@ -19,6 +19,12 @@
 				<% } %>
 			</select>
 		</label>
+		<label class="studio_drums_sound_label"><%= &subs::ui('Sound') %>
+			<select id="studio_drums_sound" aria-label="<%= &subs::ui('Choose where the drums play') %>" hint="<%= &subs::ui('Play the kit on the engine or in the browser') %>">
+				<option value="engine"><%= &subs::ui('Engine') %></option>
+				<option value="browser"><%= &subs::ui('Browser') %></option>
+			</select>
+		</label>
 		<span class="studio_panel_buttons">
 			<button class="studio_panel_pin hover" data-panel="drums" aria-pressed="false" hint="<%= &subs::ui('Keep this panel above the others') %>">📌</button>
 			<button class="studio_panel_min hover" data-panel="drums" hint="<%= &subs::ui('Minimize this panel') %>">–</button>

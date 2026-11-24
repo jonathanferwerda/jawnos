@@ -386,6 +386,38 @@ sub audio_engine_transport {
 	return audio_engine_command($request);
 }
 
+# The engine's live voices, carried by the running transport: the Synth app
+# hands over its patch once (`patch`), then one key event per note, and the
+# drum panel sends a one-shot `hit` so a pad auditions the kit the transport
+# will play. Only the promised fields are forwarded; the engine refuses every
+# one of them while no transport is playing, because the output is the song's.
+our @audio_engine_synth_fields = qw(patch note velocity on);
+our @audio_engine_drum_fields  = qw(voice velocity);
+
+sub audio_engine_synth {
+	my ($action, $fields) = @_;
+	my $request = { cmd => 'synth', action => $action };
+	if (ref $fields eq 'HASH') {
+		for my $key (@audio_engine_synth_fields) {
+			next unless exists $fields->{$key};
+			$request->{$key} = $fields->{$key};
+		}
+	}
+	return audio_engine_command($request);
+}
+
+sub audio_engine_drum_hit {
+	my ($fields) = @_;
+	my $request = { cmd => 'drums', action => 'hit' };
+	if (ref $fields eq 'HASH') {
+		for my $key (@audio_engine_drum_fields) {
+			next unless exists $fields->{$key};
+			$request->{$key} = $fields->{$key};
+		}
+	}
+	return audio_engine_command($request);
+}
+
 sub audio_engine_stop {
 	return audio_engine_command({ cmd => 'stop' });
 }
