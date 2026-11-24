@@ -76,5 +76,9 @@ unlike($arrange, qr/pinned\s*=/,
 # --- the stylesheet gives the pin its own look ------------------------------
 like($style, qr/\.studio_panel_pin\s*\{/, 'the stylesheet styles the pin button');
 like($style, qr/\.studio_panel_pin\[aria-pressed="true"\]\s*\{/, 'a pinned button reads as pressed');
+like($style, qr/\.studio_panel_pin\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--accent\)/s,
+	'a pinned button fills with the accent so the pin is obvious');
+like($style, qr/\.studio_panel_pin\[aria-pressed="true"\]\s*\{[^}]*box-shadow:[^}]*var\(--accent\)/s,
+	'a pinned button carries a lit ring, not only a filter');
 
 done_testing();

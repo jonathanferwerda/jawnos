@@ -6,6 +6,7 @@ function studioDetachInput(ch) {
 	if (c.source) { try { c.source.disconnect(); } catch (e) {} c.source = null; }
 	if (c.inputSource) { try { c.inputSource.disconnect(); } catch (e) {} c.inputSource = null; }
 	if (c.inputSplitter) { try { c.inputSplitter.disconnect(); } catch (e) {} c.inputSplitter = null; }
+	if (c.live) { c.live.gain.value = 0; }
 	if (c.synthTap) {
 		try { c.synthTap.node.disconnect(c.synthTap.gain); } catch (e) {}
 		try { c.synthTap.gain.disconnect(); } catch (e) {}
@@ -16,9 +17,20 @@ function studioDetachInput(ch) {
 		try { c.drumTap.gain.disconnect(); } catch (e) {}
 		c.drumTap = null;
 	}
+	// Music is the player's own element; restore its mute if this channel
+	// silenced it while capturing the stream.
+	var media = mixer[ch] && mixer[ch].media;
+	if (media && media.music_muted) {
+		var player = document.getElementById('video');
+		if (player) { player.muted = (media.music_muted === 'yes'); }
+		media.music_muted = null;
+	}
 	// The drums' own recorder tap follows the selected channel; tell it that this
-	// channel no longer takes them.
+	// channel no longer takes them. The kit's and synth's direct feeds return
+	// when no channel uses them.
 	if (typeof studioDrumsRouteSelection === 'function') { studioDrumsRouteSelection(); }
+	if (typeof studioDrumsPatchDirect === 'function') { studioDrumsPatchDirect(); }
+	if (typeof studioSynthPatchDirect === 'function') { studioSynthPatchDirect(); }
 }
 
 // Route a take's media element through the channel's playback bus. A media

@@ -695,6 +695,11 @@ function studioRetriever() {
 	// strip paints its own buttons from mixer on this event
 	$(document).trigger('studio:mute-solo');
 	studioApplyMuteSolo();
+
+	// A saved app input has no arm click on load; build its live path now, then
+	// re-apply the Monitor split because attaching forces the app live.
+	if (typeof studioAttachSavedAppInputs === 'function') { studioAttachSavedAppInputs(); }
+	if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(false); }
 	return song;
 }
 

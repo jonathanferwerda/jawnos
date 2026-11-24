@@ -192,6 +192,7 @@ function studioChannelEngine(ch) {
 		recDest: ctx.createMediaStreamDestination(),
 		playBus: ctx.createGain(),
 		printBus: ctx.createGain(),
+		live: ctx.createGain(),
 		outIn: ctx.createGain(),
 		playPan: ctx.createStereoPanner(),
 		monGain: ctx.createGain(),
@@ -220,6 +221,11 @@ function studioChannelEngine(ch) {
 	// after the take), then the pan into the master bus. A new channel's chain
 	// is empty, so the rebuild below is the wire outIn -> playPan and a take
 	// plays exactly as it was recorded.
+	// A live input (an app bus, a captured stream, or a monitored device)
+	// joins the channel at `live`, then the fader (`playBus`), the Out chain
+	// and the output cord. The In chain is the recording path.
+	c.live.gain.value = 0;
+	c.live.connect(c.playBus);
 	c.playBus.connect(c.outIn);
 	// A printed take already carries its Out pedals in its audio, so it joins the
 	// channel after the chain: straight to the pan. It still moves with the
@@ -451,6 +457,10 @@ function studioAttachInput(ch, stream) {
 		c.source = source;
 	}
 	c.source.connect(c.trim);
+	c.source.connect(c.live);
+	// A captured app (Music/Marker) is live through the channel output; a
+	// device is heard only when Monitor opens the channel output.
+	c.live.gain.value = (typeof studioInputIsApp === 'function' && studioInputIsApp(plug)) ? 1 : 0;
 	studioApplyChannel(ch);
 	studioRebuildInserts(ch);
 	// a device input supersedes the drums on this channel, so their own
@@ -459,11 +469,40 @@ function studioAttachInput(ch, stream) {
 	return c.recDest.stream;
 }
 
-// Feed the JawnOS synth engine into a channel the way a live input is fed, so it
-// records through the channel's tone stack and pedals and can be monitored. The
-// engine rides the studio's own context and stays audible on its own, so it can
-// be played before anything is armed; the tap is a per-channel gain, so stopping
-// it never silences the synth's own output.
+// Feed the JawnOS synth engine into a channel the way a live input is fed: the
+// In chain records it, and the live path (fader, Out pedals, output cord) is
+// what plays. While a channel carries the synth its own direct output is
+// detached (studioSynthPatchDirect), so the channel is the single path; detach
+// restores it.
+var studioSynthDirectOff = false;
+var studioSynthDirectCtx = null;
+
+// The synth's own output is detached while any channel carries it, because
+// the channel's live path is the synth's sound. With no synth input the direct
+// path returns. A new audio context starts a fresh node, so the flag resets.
+function studioSynthPatchDirect() {
+	if (typeof jawnosSynth === 'undefined' || !jawnosSynth || typeof jawnosSynth.outputNode !== 'function') { return; }
+	var node = jawnosSynth.outputNode();
+	var ctx = (typeof studioContext === 'function') ? studioContext() : null;
+	if (!node || !ctx || !ctx.destination) { return; }
+	if (studioSynthDirectCtx !== ctx) { studioSynthDirectCtx = ctx; studioSynthDirectOff = false; }
+	var patched = false;
+	$.each(studioAudio.channels || {}, function (ch) {
+		var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+		if (plug && String(plug['app'] || '') === 'synth') { patched = true; }
+	});
+	if (patched) {
+		if (!studioSynthDirectOff) {
+			try { node.disconnect(ctx.destination); } catch (e) {}
+			studioSynthDirectOff = true;
+		}
+	}
+	else if (studioSynthDirectOff) {
+		try { node.connect(ctx.destination); } catch (e) {}
+		studioSynthDirectOff = false;
+	}
+}
+
 function studioAttachSynth(ch) {
 	var ctx = studioContext();
 	var c = studioChannelEngine(ch);
@@ -480,7 +519,12 @@ function studioAttachSynth(ch) {
 	tap.gain.value = 1;
 	node.connect(tap);
 	tap.connect(c.trim);
+	tap.connect(c.live);
+	c.live.gain.value = 1;
 	c.synthTap = { node: node, gain: tap };
+	// The channel is the live path now; the synth's own direct output would
+	// double it. Detach restores it (studioSynthPatchDirect).
+	studioSynthPatchDirect();
 	studioApplyChannel(ch);
 	studioRebuildInserts(ch);
 	// a drums channel is no longer the one being taken
@@ -488,12 +532,12 @@ function studioAttachSynth(ch) {
 	return c.recDest.stream;
 }
 
-// Feed the drum machine into a channel the way a live input is fed. The kit's
-// bus keeps its direct feed to the master, so it is audible on its own before
-// it is patched anywhere; this adds the wet path through the channel's tone
-// stack, input pedals and fader, so a browser take prints the processed drums
-// and Monitor hears that same path. The tap is a per-channel gain, so detaching
-// never silences the kit's own output.
+// Feed the drum machine into a channel the way a live input is fed. While a
+// channel carries the kit its own dry feed is muted; the tap feeds the In chain
+// (what a take records) and the live path (fader, Out pedals, output cord), so
+// Play and the channel's output cord are the kit's sound. Monitor swaps an app
+// to the In chain. The tap is a per-channel gain, so detaching restores the dry
+// feed.
 function studioAttachDrums(ch) {
 	var ctx = studioContext();
 	var c = studioChannelEngine(ch);
@@ -515,7 +559,11 @@ function studioAttachDrums(ch) {
 	tap.gain.value = 1;
 	studioDrums.out.connect(tap);
 	tap.connect(c.trim);
+	tap.connect(c.live);
+	c.live.gain.value = 1;
 	c.drumTap = { node: studioDrums.out, gain: tap };
+	// The kit is live through the channel output now; mute its own dry feed.
+	if (typeof studioDrumsPatchDirect === 'function') { studioDrumsPatchDirect(); }
 	studioApplyChannel(ch);
 	studioRebuildInserts(ch);
 	// The drums' own recorder tap follows the selected channel; its owner skips
@@ -539,11 +587,11 @@ function studioApplyCapture() {
 // person pressing Monitor (or changing its setting), not the page loading a
 // song: only then may the engine's Listen be started or stopped.
 //
-// Monitor hears only the end of the chain the track's input feeds. No input is
-// silence; an app already on this page is the browser's post-FX tap; a real
-// audio device is the engine's own Listen when a native engine owns the
-// interface, because the engine can open it, and the browser tap otherwise.
-// One track is monitored at a time.
+// A live input joins the channel at `live`: the fader, Out pedals and output
+// cord are what is heard; the In chain is what a take records. An app is live
+// while it is patched, and Monitor swaps it to the In chain; a device is heard
+// only while Monitor is on (or by the engine's own Listen when a native engine
+// owns the interface). One track is monitored at a time.
 //
 // The app channel Monitor attached while its track was unarmed, so turning
 // Monitor off or moving it can detach that graph again.
@@ -606,17 +654,18 @@ function studioApplyMonitor(from_user, force_tap_device) {
 	$.each(studioAudio.channels, function (ch, c) {
 		if (!c.monGain) { return; }
 		var on = active !== null && String(ch) === String(active);
-		// The tap is the monitor for an app input and for every browser-only
-		// path; a device the engine is actually listening to keeps it muted. A
-		// restored Monitor (not from the person) stays on the tap until the
-		// engine's Listen is running, so reloading a song is never silent. A
-		// confirmed Listen keeps the tap off even if a later status poll fails:
-		// the same input must never be played twice at two latencies.
+		var ch_input = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+		var ch_app = !!(ch_input && typeof studioInputIsApp === 'function' && studioInputIsApp(ch_input));
 		var engine_path = !!(device && nativeish && listen_channel <= 1);
 		var listening = (engine && (studioListenActive || from_user))
 			|| (engine_path && studioEngineListening);
-		var tap = on && !!input && (app || !listening);
-		c.monGain.gain.value = tap ? 1 : 0;
+		// An app is live through the channel output while it is patched; Monitor
+		// swaps it to the In chain, the signal the take records. A device joins
+		// the same output only while Monitor is on and the engine is not listening.
+		var app_monitor = ch_app && on && !!input;
+		var live = (ch_app && !app_monitor) || (on && !ch_app && !!input && !listening);
+		if (c.live) { c.live.gain.value = live ? 1 : 0; }
+		c.monGain.gain.value = app_monitor ? 1 : 0;
 	});
 	if (from_user && !studioEngineRecording && typeof studioListenStart === 'function') {
 		if (engine) {

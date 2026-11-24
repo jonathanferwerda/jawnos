@@ -891,7 +891,12 @@
 	}
 	/* A pinned panel stays above the others however the stack is raised. */
 	.studio_panel_pin[aria-pressed="true"] {
-		filter: saturate(1.6) brightness(1.15);
+		/* A pinned panel reads as a pressed, lit control, not a faint tint. */
+		background: var(--accent);
+		color: var(--panel);
+		border-radius: 4px;
+		box-shadow: 0 0 0 2px var(--accent), 0 0 7px color-mix(in srgb, var(--accent) 70%, transparent);
+		filter: none;
 	}
 	.studio_panel_pin {
 		font-size: 11px;
@@ -1383,8 +1388,8 @@
 		position: fixed;
 		display: none;
 		box-sizing: border-box;
-		max-width: calc(100vw - 16px);
-		max-height: calc(100vh - 16px);
+		max-width: min(520px, calc(100vw - 16px));
+		max-height: min(60vh, 480px);
 		overflow-x: hidden;
 		overflow-y: auto;
 		z-index: 50009;
@@ -1394,6 +1399,16 @@
 	}
 	/* The chosen plug keeps a stable theme tint and border; the global flashing
 	   .active_background is for alarms, not a selection. */
+	#studio_plug_select table {
+		width: 100%;
+		table-layout: fixed;
+	}
+	#studio_plug_select td {
+		overflow-wrap: anywhere;
+	}
+	#studio_plug_select td:first-child {
+		width: 44px;
+	}
 	#studio_plug_select .studio_plug_selection {
 		border: 2px solid transparent;
 		border-radius: 6px;

@@ -524,8 +524,14 @@ like($studio_js, qr/var listening = \(engine && \(studioListenActive \|\| from_u
 	'a restored Monitor stays on the tap until the engine Listen runs');
 like($studio_js, qr/engine_path && studioEngineListening/,
 	'a confirmed engine Listen keeps the browser tap off');
-like($studio_js, qr/var tap = on && !!input && \(app \|\| !listening\)/,
-	'no input is silent, an app is the browser tap, and only a running engine Listen mutes it');
+like($studio_js, qr/var app_monitor = ch_app && on && !!input;/,
+	'Monitor on an app swaps it to the In chain');
+like($studio_js, qr/var live = \(ch_app && !app_monitor\) \|\| \(on && !ch_app && !!input && !listening\);/,
+	'an app is live while patched; a device only while Monitor is on');
+like($studio_js, qr/c\.live\.gain\.value = live \? 1 : 0;/,
+	'the live path is the channel output');
+like($studio_js, qr/c\.monGain\.gain\.value = app_monitor \? 1 : 0;/,
+	'the In tap is only the app Monitor comparison');
 like($studio_js, qr/studioListenStart\(false, listen_channel, active, true\)/,
 	'Monitor names the device input and the monitored track, and asks for the fallback');
 like($studio_js, qr/else if \(studioListenActive\) \{ studioListenStop\(\); \}/,
@@ -563,7 +569,7 @@ like($controls_js, qr/bridge\.stats\(\)/, 'the native facts come from stats()');
 like($controls_js, qr/native\.systemVolumeApplied/, 'and say whether the engine or the mixer applied the level');
 like($controls_js, qr/bridge\.setGain\(value\)/, 'the gain slider moves the engine gain');
 like($controls_js, qr/bridge\.stop\(\)/, 'stopping Listen stops the native stream');
-like($studio_js, qr/c\.monGain\.gain\.value = tap \? 1 : 0/,
-	'the browser tap is muted only when the engine listens');
+like($studio_js, qr/c\.live\.gain\.value = live \? 1 : 0;/,
+	'the live path is silent while the engine Listen owns the device');
 
 done_testing();

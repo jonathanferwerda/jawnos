@@ -312,8 +312,8 @@ function studioPlugSendClearInto(dest) {
 	});
 }
 
-// Marker, Music, Synth and Drums already play in this page, so their post-FX
-// signal is the browser's tap, never a microphone.
+// Marker, Music, Synth and Drums already play in this page, so their signal is
+// the channel's live path while patched, never a microphone.
 function studioInputIsApp(plug) {
 	if (!plug) { return false; }
 	return ['marker', 'music', 'synth', 'drums'].indexOf(String(plug['app'] || '')) !== -1;
@@ -520,7 +520,17 @@ $(document).on('click', '.studio_plug_selection', function() {
 	var chosen = $('.studio_plug_selection[direction="' + direction + '"][channel="' + channel + '"][type="' + type + '"][sid="' + id + '"][av="' + av + '"][app="' + app + '"]');
 	chosen.addClass('studio_plug_active');
 	if (direction == 'output' && typeof studioRebuildOutputs === 'function') { studioRebuildOutputs(channel); }
-	studioInputStreamGrabber(channel,'off')
+	// Every app input owns its channel graph while it is patched: Drums and
+	// Synth mute their own direct output and feed the channel's live path (the
+	// fader, Out pedals and output cord); Music and Marker feed their captured
+	// stream. Monitor then swaps an app to the In chain, the signal a take
+	// records. A microphone still waits for Monitor, so it never opens on a click.
+	if (direction == 'input' && type == 'app') {
+		studioInputStreamGrabber(channel, 'off');
+		var app_plug = studioChannelInput(channel);
+		if (app_plug && typeof studioAttachAppInput === 'function') { studioAttachAppInput(channel, app_plug); }
+	}
+	else { studioInputStreamGrabber(channel, 'off'); }
 	studioSaver();
 	studioRetriever();
 });
@@ -559,6 +569,21 @@ function studioInputResumeAfterMonitor() {
 // Attach one app input (Marker, Music, Synth or Drums) to a channel and mark
 // the media active. This is the only place an app graph is built, so Monitor
 // and the arm button share one definition and neither opens a device.
+// A saved app input in Play has no arm click to build its graph; restore it on
+// load so the channel's live path exists. The active guard keeps a re-retrieve
+// from attaching twice.
+function studioAttachSavedAppInputs() {
+	$('.studio_track').each(function () {
+		var ch = String($(this).attr('data-channel'));
+		if (!/^[0-9]+$/.test(ch)) { return; }
+		var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+		if (!plug || !studioInputIsApp(plug)) { return; }
+		var m = mixer[ch] && mixer[ch].media;
+		if (m && m.active) { return; }
+		if (typeof studioAttachAppInput === 'function') { studioAttachAppInput(ch, plug); }
+	});
+}
+
 function studioAttachAppInput(ch, plug) {
 	ch = String(ch);
 	if (!plug || !studioInputIsApp(plug)) { return null; }
@@ -592,6 +617,12 @@ function studioAttachAppInput(ch, plug) {
 			mixer[ch].media.active = false;
 			return null;
 		}
+		// The channel is the live path now; mute the player's own output so the
+		// same audio is not heard twice. Detach restores the previous state.
+		if (mixer[ch].media.music_muted === undefined || mixer[ch].media.music_muted === null) {
+			mixer[ch].media.music_muted = player.muted ? 'yes' : 'no';
+		}
+		player.muted = true;
 		var musicStream;
 		try { musicStream = player.captureStream(); }
 		catch (e) { musicStream = null; }
@@ -794,11 +825,10 @@ function studioMonitorDetachDevice(ch) {
 	studioInputStreamGrabber(ch, 'off');
 }
 
-// Monitor on an app input builds that app's channel graph even when the track
-// is not armed, so its post-pedal tap is audible without starting a take. A
-// device input is the engine's Listen, so this never opens the browser's
-// capture and never calls getUserMedia. An armed track's graph belongs to the
-// arm button, so Monitor leaves it alone.
+// A patched app builds its channel graph when the plug is chosen; this is the
+// safety net for a song restored before that graph existed. A device input is
+// the engine's Listen, so this never opens the browser's capture. An armed
+// track's graph belongs to the arm button, so Monitor leaves it alone.
 function studioMonitorAttachApp(ch) {
 	ch = String(ch);
 	var plug = studioChannelInput(ch);
@@ -810,8 +840,8 @@ function studioMonitorAttachApp(ch) {
 	return !!studioAttachAppInput(ch, plug);
 }
 
-// Monitor off (or moved) removes only the app graph Monitor built, and only
-// while the track is still unarmed. An armed track keeps its input for the take.
+// Monitor off (or moved) leaves a patched app's graph in place: the plug owns
+// it now, and Monitor only swaps the live path to the In chain.
 function studioMonitorDetachApp(ch) {
 	ch = String(ch);
 	var m = mixer[ch] && mixer[ch].media;
@@ -820,14 +850,10 @@ function studioMonitorDetachApp(ch) {
 	if (state === 'rec' || state === 'loop') { return; }
 	var plug = studioChannelInput(ch);
 	if (!plug || !studioInputIsApp(plug)) { return; }
-	if (m.inRaw) { m.inRaw.getTracks().forEach(function (track) { track.stop(); }); }
-	m.inRaw = undefined;
-	m.in = null;
-	m.active = false;
-	studioDetachInput(ch);
-	clearInterval(m.in_analyzer_timeout);
-	var monitor = document.getElementById('studio_video_monitor_' + ch);
-	if (monitor) { monitor.srcObject = null; $(monitor).hide(); }
+	// A patched app owns its channel graph now: the app is live through the
+	// channel output, and Monitor only swaps it to the In chain. Detaching is
+	// the plug change's job (studioDetachInput), not Monitor's.
+	return;
 }
 
 function studioStartTake(ch, looping, at) {

@@ -327,20 +327,27 @@ function studioDrumsBus() {
 	if (studioDrums.ctx !== ctx) {
 		studioDrums.ctx = ctx;
 		studioDrums.out = null;
+		studioDrums.direct = null;
 		studioDrums.rec = null;
 		studioDrums.routedDest = null;
 		studioDrums.buffers = {};
 	}
 	if (!studioDrums.out) {
-		// heard through the master chain, and captured by the browser take
+		// The kit bus is heard through the master chain when no channel is
+		// monitoring it. direct is the clean comparison: a monitored app
+		// channel mutes it so the channel input pedals are heard alone.
 		studioDrums.out = ctx.createGain();
 		studioDrums.out.gain.value = 0.9;
-		studioDrums.out.connect(studioAudio.master);
+		studioDrums.direct = ctx.createGain();
+		studioDrums.direct.gain.value = 1;
+		studioDrums.out.connect(studioDrums.direct);
+		studioDrums.direct.connect(studioAudio.master);
 		studioDrums.rec = ctx.createGain();
 		studioDrums.rec.gain.value = 0.9;
 		studioDrumsBuild(ctx);
 	}
 	studioDrumsRouteSelection();
+	studioDrumsPatchDirect();
 	return ctx;
 }
 
@@ -365,6 +372,19 @@ function studioDrumsRouteSelection() {
 	try { studioDrums.rec.disconnect(); } catch (e) {}
 	if (plug['app'] !== 'drums') { studioDrums.rec.connect(c.recDest); }
 	studioDrums.routedDest = c.recDest;
+}
+
+// The kit's own dry feed is off while any channel has the kit as its input:
+// that channel's live path (fader, Out chain, output cord) is the kit's sound.
+// With no drum input the direct feed returns.
+function studioDrumsPatchDirect() {
+	if (!studioDrums || !studioDrums.direct) { return; }
+	var patched = false;
+	$.each(studioAudio.channels || {}, function (ch) {
+		var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+		if (plug && String(plug['app'] || '') === 'drums') { patched = true; }
+	});
+	studioDrums.direct.gain.value = patched ? 0 : 1;
 }
 
 function studioDrumsBuild(ctx) {

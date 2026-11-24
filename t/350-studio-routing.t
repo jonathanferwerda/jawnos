@@ -71,13 +71,15 @@ like($drums, qr/if \(c\.drumTap\) \{[\s\S]*?c\.drumTap\.node\.disconnect\(c\.dru
 	'and a previous drum tap is disconnected, never stacked');
 like($drums, qr/studioDrums\.out\.connect\(tap\);/, 'the bus feeds a gain tap');
 like($drums, qr/tap\.connect\(c\.trim\);/, 'the tap enters the channel’s tone stack');
+like($drums, qr/tap\.connect\(c\.live\);/, 'and the channel live path (fader, Out pedals, output cord)');
+like($drums, qr/c\.live\.gain\.value = 1;/, 'the kit is live through the channel output');
 like($drums, qr/c\.drumTap = \{ node: studioDrums\.out, gain: tap \};/, 'the tap is kept for detaching');
 like($drums, qr/studioApplyChannel\(ch\);[\s\S]*studioRebuildInserts\(ch\);/, 'the channel and its In chain are applied');
 like($drums, qr/if \(typeof studioDrumsRouteSelection === 'function'\) \{ studioDrumsRouteSelection\(\); \}/,
 	'the drums’ own recorder tap is told the channel changed');
 like($drums, qr/return c\.recDest\.stream;/, 'and the processed take stream is returned');
-like($js, qr/\/\/ Feed the drum machine into a channel[\s\S]*?direct feed to the master/i,
-	'the comment records that the kit stays audible on its own');
+like($js, qr/\/\/ Feed the drum machine into a channel[\s\S]*?its own dry feed is muted/i,
+	'the comment records that the kit dry feed is muted while patched');
 
 my $detach = body($transport, 'studioDetachInput');
 ok(length $detach, 'studioDetachInput is in the transport part');
@@ -153,6 +155,12 @@ like($style, qr/\.studio_plug_selection\.studio_plug_active\s*\{[^}]*background:
 	'a chosen row keeps a stable theme background');
 like($style, qr/\.studio_plug_selection\.studio_plug_active\s*\{[^}]*outline:\s*2px solid var\(--accent\)/s,
 	'and a border highlight around the whole row');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*max-height:\s*min\(60vh,\s*480px\)/s,
+	'the plug list is capped at a readable height');
+like($style, qr/#studio_plug_select_container\s*\{[^}]*max-width:\s*min\(520px,/s,
+	'and a readable width, so it cannot take half the screen');
+like($style, qr/#studio_plug_select table\s*\{[^}]*table-layout:\s*fixed/s,
+	'the list table fits the capped box instead of widening it');
 like($misc9, qr/decode_json \$c->param\('channels'\)/, 'the controller accepts the channel list');
 like($misc9, qr/channels => \$channels,/, 'and hands it to the picker');
 

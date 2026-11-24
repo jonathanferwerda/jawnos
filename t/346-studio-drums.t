@@ -325,8 +325,10 @@ like($code, qr/Math\.max\(4, Math\.min\(x, viewW - width - 4\)\)/, 'its left edg
 like($code, qr/Math\.max\(4, Math\.min\(y, viewH - height - 4\)\)/, 'its top edge stays inside the window');
 
 # --- routing ----------------------------------------------------------------
-like($code, qr/studioDrums\.out\.connect\(studioAudio\.master\)/,
-	'the drum bus enters the master bus');
+like($code, qr/studioDrums\.out\.connect\(studioDrums\.direct\)/,
+	'the kit output first reaches its own direct gain');
+like($code, qr/studioDrums\.direct\.connect\(studioAudio\.master\)/,
+	'the direct drum bus enters the master bus');
 like($code, qr/studioDrums\.rec\.connect\(c\.recDest\)/,
 	'the recording tap feeds a channel recDest');
 like($code, qr/function studioDrumsRouteSelection/, 'the tap follows the selected track');
