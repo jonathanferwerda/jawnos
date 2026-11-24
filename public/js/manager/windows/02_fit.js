@@ -649,6 +649,9 @@ function windowAnchorRelease(win) {
 	win.find('.place_button').attr('status', 'off');
 	var app = win.attr('app');
 	if (!app) { return; }
+	// The press preview must cascade the next time too, so the map drops the
+	// place with the pin.
+	if (typeof jawnos_app_places != 'undefined' && jawnos_app_places) { delete jawnos_app_places[app]; }
 	if (typeof settingDeleter === 'function') { settingDeleter({ 'app': app, 'setting': 'dimensions' }); }
 	if (typeof settingSetter === 'function') { settingSetter({ 'app': app, 'setting': 'place', 'value': 'tile' }); }
 }

@@ -301,6 +301,11 @@ like($stack, qr/var top = parseFloat\(w\.css\('top'\)\);/, 'the top is the style
 like($stack, qr/var left = parseFloat\(w\.css\('left'\)\);/, 'and the left is too');
 like($stack, qr/if \(isNaN\(top\)\) \{ top = off\.top; \}/, 'a style position that is not a length falls back to offset');
 like($stack, qr/if \(isNaN\(left\)\) \{ left = off\.left; \}/, 'both edges fall back');
+like($stack, qr/jawnos_app_places\[app\] = \{ width: width, height: height/,
+	'a pinned window teaches the press preview its place');
+like($stack, qr/else \{ delete jawnos_app_places\[app\]; \}/,
+	'an unpinned window drops its place from the preview');
+like($fit, qr/delete jawnos_app_places\[app\]/, 'releasing the pin drops it too');
 
 # --- the classification, played against a stretched box --------------------
 SKIP: {
@@ -321,6 +326,7 @@ function El(attrs, style, offset) {
 	this.attrs = attrs || {};
 	this.style = style || {};
 	this.off = offset;
+	this.pinned = !!(attrs && attrs.pinned);
 }
 El.prototype.attr = function (k, v) {
 	if (v === undefined) { return this.attrs[k]; }
@@ -353,6 +359,9 @@ const sandbox = {
 	Date: Date,
 	console: console,
 	windowPhoneChecker: function () { return false; },
+	windowPlaceIsLocked: function (w) { return !!w.pinned; },
+	settingSetter: function () {},
+	jawnos_app_places: {},
 	reservedSpots: { header: 0 },
 	clothesLinePos: { exists: 0 },
 	clothesLineHeight: 0
@@ -391,6 +400,28 @@ w = new El({ view: 'left', free_dimensions: '{"width":480,"height":640}' },
 sandbox.windowDimensionSetter(w);
 eq('a hidden window keeps its view', w.attrs.view, 'left');
 eq('and its saved box', w.attrs.free_dimensions, '{"width":480,"height":640}');
+
+// --- the press preview learns a pinned window's place -----------------------
+sandbox.jawnos_app_places = { music: { left: 1, top: 1, width: 1, height: 1, vw: 1, vh: 1 } };
+w = new El({ view: 'right', app: 'music', pinned: true },
+	{ left: '800px', top: '44px', width: '800px', height: '798px' }, { left: 800, top: 44 });
+sandbox.windowDimensionSetter(w);
+eq('a pinned half teaches the press preview its place', sandbox.jawnos_app_places.music.left, 800);
+eq('with the box it wears', sandbox.jawnos_app_places.music.width, 800);
+eq('and the screen it was saved on', sandbox.jawnos_app_places.music.vw, 1600);
+
+// a restore is still the place, even while the save is held off
+sandbox.jawnos_app_places.studio = { left: 1, top: 1, width: 1, height: 1, vw: 1, vh: 1 };
+w = new El({ view: 'right', app: 'studio', pinned: true, place_restoring: '1' },
+	{ left: '800px', top: '44px', width: '800px', height: '798px' }, { left: 800, top: 44 });
+sandbox.windowDimensionSetter(w);
+eq('a restoring pin still teaches the preview', sandbox.jawnos_app_places.studio.left, 800);
+
+// unpinning drops it: the next press must cascade
+w = new El({ view: 'right', app: 'music' },
+	{ left: '800px', top: '44px', width: '800px', height: '798px' }, { left: 800, top: 44 });
+sandbox.windowDimensionSetter(w);
+eq('an unpinned window drops its place from the preview', sandbox.jawnos_app_places.music, undefined);
 
 process.exit(failures ? 1 : 0);
 JS

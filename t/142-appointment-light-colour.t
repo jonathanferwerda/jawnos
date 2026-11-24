@@ -146,6 +146,26 @@ is( $places->{'pinned_appt'}->{'vh'}, 703, 'on both axes' );
 ok( !exists $places->{'tiled_appt'}, 'a tiled window is not in the roster' );
 ok( !exists $places->{'broken_appt'}, 'a pinned window with no readable box is left out' );
 
+# --- a machine app's place and its box may live on different devices --------
+# Music is a machine app: settings_grabber reads the machine's own row, then
+# fills the keys it has not written from the device class. The press preview
+# has to pair those two rows the same way, or the window opens at its anchor
+# while the prediction cascades.
+{
+	local $gb::signatorial = 'machine-place-test';
+	local @gb::machine_setting_apps = ('music_split');
+	my $machine = &subs::setting_machine_device();
+	$db->query('insert into settings (uuid, app, setting, device, value, server_time) values (?,?,?,?,?,?)',
+		'row-music_split-place', 'music_split', 'place', 'computer', 'lock', $now);
+	$db->query('insert into settings (uuid, app, setting, device, value, server_time) values (?,?,?,?,?,?)',
+		'row-music_split-dimensions', 'music_split', 'dimensions', $machine,
+		'{"left":700,"top":44,"width":700,"height":809,"vw":1400,"vh":900}', $now + 1);
+	my $split = &subs::app_window_places();
+	is( $split->{'music_split'}->{'left'}, 700,
+		'a machine app pairs its class place with the box on its machine row' );
+	is( $split->{'music_split'}->{'height'}, 809, 'and keeps the saved box' );
+}
+
 # --- the appointment viewer reads the same pair -----------------------------
 my $root = root();
 my $log  = read_file("$root/lib/JawnOS/Domain/Log.pm");

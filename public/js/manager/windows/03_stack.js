@@ -581,12 +581,26 @@ function windowDimensionSetter(w) {
 		// be rescaled onto a smaller or larger one.
 		var dimensions = JSON.stringify({ 'width': width, 'height': height, 'top': top, 'left': left,
 			'vw': $(window).width(), 'vh': $(window).height() });
+		// The press preview reads the pinned place from jawnos_app_places. The
+		// layout seeds it from the settings rows, but a place whose row is split
+		// across the machine and its device class (Music), or whose row was never
+		// written (a restored shell), is not in that seed. The settled window is
+		// the same place the real open lands on, so keep the map current here -
+		// including a restore, which windowPlaceRestore keeps out of the save.
+		var pinned = (typeof windowPlaceIsLocked === 'function' && windowPlaceIsLocked(w));
+		if (app && typeof jawnos_app_places != 'undefined' && jawnos_app_places) {
+			if (pinned) {
+				jawnos_app_places[app] = { width: width, height: height, top: top, left: left,
+					vw: $(window).width(), vh: $(window).height() };
+			}
+			else { delete jawnos_app_places[app]; }
+		}
 		// Only a pinned window remembers where it is. An unpinned one is a window
 		// with no place of its own: moving it must not quietly pin it. A pinned
 		// window that is being rescaled onto this screen (windowPlaceRestore) is
 		// not being moved by the person either.
 		if (w.attr('place_restoring') == '1') { return; }
-		if (typeof windowPlaceIsLocked === 'function' && windowPlaceIsLocked(w)) {
+		if (pinned) {
 			settingSetter({ 'app': app, 'setting': 'dimensions', 'value': dimensions });
 		}
 		if ((width / $(window).width()) > .95) {

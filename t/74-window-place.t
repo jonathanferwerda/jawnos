@@ -51,8 +51,9 @@ like($fit, qr/settingSetter\(\{ 'app': app, 'setting': 'place', 'value': 'tile' 
 	'and unpinning lets it tile again');
 
 # --- moving an unpinned window must not pin it -----------------------------
-like($stack, qr/if \(typeof windowPlaceIsLocked === 'function' && windowPlaceIsLocked\(w\)\)/,
+like($stack, qr/var pinned = \(typeof windowPlaceIsLocked === 'function' && windowPlaceIsLocked\(w\)\)/,
 	'only a pinned window has its geometry written');
+like($stack, qr/if \(pinned\) \{\s*settingSetter\(/, 'and that is the guard on the save');
 like($stack, qr/'vw': \$\(window\)\.width\(\), 'vh': \$\(window\)\.height\(\)/,
 	'the screen is saved with the place');
 like($stack, qr/if \(w\.attr\('place_restoring'\) == '1'\) \{ return; \}/,

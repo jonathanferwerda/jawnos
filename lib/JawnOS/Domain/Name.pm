@@ -935,15 +935,35 @@ sub settings_grabber {
 # Pinned window places in one read, for the press-time preview. A window with
 # place=lock keeps the box saved in dimensions; windowPlaceRestore rescales it
 # from the screen it was saved on (vw/vh). This reads the same row preference
-# the window does: this device, then the person's own (Me/signatorial), then a
-# house-wide ('all') row, then the newest row any device holds. The map is
+# the window does: this machine's own row for a machine app, then its device
+# class, then the person's own (Me/signatorial), then a house-wide ('all') row,
+# then the newest row any device holds. The map is
 # app -> { left, top, width, height, vw, vh }.
 sub app_window_places {
 	my $dev = &device_setter();
 	my $sig = &signatorial_designer();
-	my %rank = ( 'all' => 2 );
-	$rank{$dev} = 4 if defined $dev && length $dev;
-	$rank{$sig} = 3 if defined $sig && length $sig && $sig ne $dev;
+	my $machine = &setting_machine_device();
+	# settings_grabber asks a machine app's own row first, then fills the keys
+	# it has not written from the device class. The preview has to rank the
+	# same way, or a Music place on one and its box on the other reads as two
+	# unrelated rows and the press predicts a cascade while the window opens
+	# at its anchor.
+	my %rank_cache;
+	my $rank_for = sub {
+		my ($app) = @_;
+		return $rank_cache{$app} if $rank_cache{$app};
+		my %rank = ( 'all' => 2 );
+		if (&setting_app_is_machine($app)) {
+			$rank{$machine} = 4 if defined $machine && length $machine;
+			$rank{$dev} = 3 if defined $dev && length $dev && $dev ne $machine;
+		}
+		else {
+			$rank{$dev} = 4 if defined $dev && length $dev;
+			$rank{$sig} = 3 if defined $sig && length $sig && $sig ne $dev;
+		}
+		$rank_cache{$app} = \%rank;
+		return \%rank;
+	};
 	my %pick;
 	my $rows = eval {
 		&db_query("select app, device, setting, value, server_time from settings where setting in (?, ?) and value is not null and value != ''", 'place', 'dimensions')->hashes
@@ -955,7 +975,7 @@ sub app_window_places {
 		next unless defined $app && length $app && defined $value && length $value;
 		next unless $setting eq 'place' || $setting eq 'dimensions';
 		my $key = $app . "\0" . $setting;
-		my $r = $rank{ $row->{'device'} // '' } || 1;
+		my $r = $rank_for->($app)->{ $row->{'device'} // '' } || 1;
 		my $time = 0 + ($row->{'server_time'} // 0);
 		my $seen = $pick{$key};
 		if (!$seen || $r > $seen->{'rank'} || ($r == $seen->{'rank'} && $time >= $seen->{'time'})) {
@@ -970,9 +990,19 @@ sub app_window_places {
 		next unless $place && ($place->{'value'} // '') eq 'lock';
 		my $dims = $pick{ $app . "\0" . 'dimensions' };
 		next unless $dims && defined $dims->{'value'} && length $dims->{'value'};
-		# a place and a box from different device classes are not one
-		# window's saved place; leave it to the cascade
-		next unless ($place->{'device'} // '') eq ($dims->{'device'} // '');
+		# A place and a box are one window's saved place when they name the
+		# same device, or - for a machine app - when they are the machine's
+		# row and the device-class row settings_grabber fills it with.
+		my $place_dev = $place->{'device'} // '';
+		my $dims_dev = $dims->{'device'} // '';
+		my $paired = ($place_dev eq $dims_dev);
+		if (!$paired && &setting_app_is_machine($app)) {
+			my %pair;
+			$pair{$machine} = 1 if defined $machine && length $machine;
+			$pair{$dev} = 1 if defined $dev && length $dev;
+			$paired = 1 if $pair{$place_dev} && $pair{$dims_dev};
+		}
+		next unless $paired;
 		my $d = eval { &decode_json($dims->{'value'}) } || {};
 		next unless ref $d eq 'HASH';
 		my %box = ( left => 0, top => 0 );
