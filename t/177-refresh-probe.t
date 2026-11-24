@@ -46,6 +46,7 @@ like($src, qr/cookieValue\(COOKIE\) === '1'/, 'an armed browser renews the cooki
 like($src, qr/PROBE_AGE\s*=\s*30\s*\*\s*86400/, 'the opt-in outlives a multi-day investigation');
 like($src, qr/window\.jawnos_probe_endpoint/, 'a collector can still be injected explicitly');
 like($src, qr/window\.jawnos_probe_host/, 'and so can the device host name');
+like($src, qr/window\.jawnos_probe_device/, 'a machine opt-in can name the device explicitly');
 # A fixed 40-character tail of the URL was the user agent for every socket, so
 # a report could not say which app kept failing. The app and the origin name
 # it without recording the query (which carries the session token).
@@ -64,6 +65,8 @@ SKIP: {
 my $layout_src = decode('UTF-8', do { local $/; open(my $fh, '<', $layout) or die "$layout: $!"; <$fh> });
 like($layout_src, qr{/js/probe/refresh-probe\.js}, 'the layout can include the probe');
 like($layout_src, qr{jawnos_probe_host}, 'it injects the device host name');
+like($layout_src, qr{\.president/refresh_probe}, 'a machine can opt in from a local, unsynced file');
+like($layout_src, qr{window\.jawnos_probe_device}, 'and that file names the device');
 # The probe is a developer tool. It was default-on for a reload investigation,
 # and every house page then posted to a hardcoded dev collector whose
 # certificate the browser does not trust: the handshake failed with
@@ -72,8 +75,8 @@ like($layout_src, qr{jawnos_probe_host}, 'it injects the device host name');
 like($layout_src, qr{\$probe_default = 0\b}, 'the probe is off unless a browser asks for it');
 like($layout_src, qr{\$probe_param eq '0'}, 'the query parameter is what gates it');
 like($layout_src, qr{jawnos_probe=0}, '?probe=0 records a lasting opt-out');
-unlike($layout_src, qr{window\.jawnos_probe_endpoint\s*=},
-	'a normal load is not pointed at a collector endpoint');
+unlike($layout_src, qr{window\.jawnos_probe_endpoint = 'https?://},
+	'no collector endpoint is baked into the layout');
 unlike($layout_src, qr{dev\.jonathanferwerda\.com},
 	'no developer host is baked into the layout');
 

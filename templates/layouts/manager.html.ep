@@ -285,12 +285,21 @@
 	     reload across a long run, so only a browser that asks for it with
 	     ?probe=1 (and so carries its cookie afterwards) loads it. A normal
 	     page load, desktop or phone, must issue no probe request at all.
-	     The collector endpoint is installed per device with ?probe_endpoint=
-	     and is deliberately not baked in here: a dev host is not this
-	     machine and its certificate is not trusted, so a default would fail
-	     the TLS handshake on every house device. The host name still makes
-	     each device's records distinguishable (the Android trees report
-	     "localhost", so the script falls back to its user-agent guess there). %>
+	     A machine can also opt in once for every browser on it with
+	     ~/.president/refresh_probe (line one: the collector URL, line two:
+	     the device label). That file is local and is not synced, and it is
+	     how a browser that cannot be tapped gets armed. The endpoint is still
+	     never baked in here: a dev host is not this machine and its
+	     certificate is not trusted, so a default would fail the TLS handshake
+	     on every house device. The host name still makes each device's records
+	     distinguishable (the Android trees report "localhost", so the script
+	     falls back to its user-agent guess there). %>
+	<% my $probe_file = &subs::home('~/.president/refresh_probe'); %>
+	<% my $probe_file_text = ''; %>
+	<% if (-e $probe_file) { if (open(my $pf, '<', $probe_file)) { local $/; $probe_file_text = <$pf> // ''; close $pf; } } %>
+	<% my ($probe_file_endpoint, $probe_file_device) = split /\r?\n/, $probe_file_text; %>
+	<% $probe_file_endpoint = '' unless defined $probe_file_endpoint && $probe_file_endpoint =~ m{^https?://[^\s'"]+$}; %>
+	<% $probe_file_device = '' unless defined $probe_file_device && $probe_file_device =~ /^[A-Za-z0-9_-]{1,40}$/; %>
 	<% my $probe_param   = $c->param('probe'); %>
 	<% my $probe_cookie  = $c->cookie('jawnos_probe'); %>
 	<% my $probe_default = 0; %>
@@ -300,10 +309,14 @@
 	     page on 2026-11-14 with a syntax error near elsif. %>
 	<% if (defined $probe_param) { $probe_on = ($probe_param eq '0') ? 0 : 1; }
 	   elsif (defined $probe_cookie && $probe_cookie eq '0') { $probe_on = 0; }
-	   else { $probe_on = ($probe_default || (defined $probe_cookie && $probe_cookie eq '1')) ? 1 : 0; } %>
+	   else { $probe_on = ($probe_default || (defined $probe_cookie && $probe_cookie eq '1') || length $probe_file_endpoint) ? 1 : 0; } %>
 	<% if ($probe_on) { %>
 		<script>
 			window.jawnos_probe_host = '<%= &subs::machine_hostname() %>';
+			<% if (length $probe_file_endpoint) { %>
+			window.jawnos_probe_endpoint = '<%= $probe_file_endpoint %>';
+			window.jawnos_probe_device = '<%= $probe_file_device %>';
+			<% } %>
 		</script>
 		<script src="/js/probe/refresh-probe.js?string=<%= $string %>"></script>
 	<% } elsif (defined $probe_param && $probe_param eq '0') { %>

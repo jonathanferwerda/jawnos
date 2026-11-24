@@ -123,12 +123,15 @@
 
   var injectedHost = (typeof window.jawnos_probe_host === 'string')
     ? window.jawnos_probe_host : '';
+  var injectedDevice = (typeof window.jawnos_probe_device === 'string')
+    ? window.jawnos_probe_device : '';
   var device = q.probe_device;
   if (device) { write(DEVICE_KEY, device); }
   device = read(DEVICE_KEY, '') || '';
   if (!device) {
-    device = (injectedHost && injectedHost !== 'localhost'
-      && injectedHost !== 'localhost.localdomain') ? injectedHost : guessDevice();
+    device = injectedDevice
+      || ((injectedHost && injectedHost !== 'localhost'
+        && injectedHost !== 'localhost.localdomain') ? injectedHost : guessDevice());
   }
 
   var started = now();
