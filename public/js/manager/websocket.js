@@ -77,6 +77,17 @@ function wsStatusChecker() {
 			}
 		}
 	});
+	// The origin fallback answers beats but cannot carry a push. Once it has had
+	// its chance, try the listener the page was given again; a listener that is
+	// still away earns a longer wait next time.
+	if (windowVisible == 1 && ws_origin_only && !jawn_resting()
+		&& (timestamp - (ws_origin_only_at || 0)) > ws_origin_retry_delay) {
+		ws_origin_only = 0;
+		ws_origin_only_at = 0;
+		ws_origin_retry_delay = Math.min(ws_origin_retry_max, ws_origin_retry_delay * 2);
+		websocketRebuild();
+		return;
+	}
 	// A socket that never opened - the tree restarted, or the plain listener it
 	// remembered is gone - is retried by nothing else: onclose only marks it, and
 	// a page left open then looked alive and heard nothing until a reload. Ask
@@ -291,6 +302,15 @@ document.addEventListener('pointerdown', websocketWakeIfNeeded, { capture: true,
 // fails falls back to the page's own origin (which upgrades on the same port the
 // page was served from) and the status beat retries.
 var ws_origin_only = 0;
+// A page that fell back to its own origin while the websocket listener was
+// between boots stayed there for the rest of its life: the origin answers the
+// page's beats, so nothing looked wrong, but the server's pushes go to the
+// websocket worker and a console instruction (a remote Music play, a window
+// opener) was delivered nowhere. Retry the configured listener on this beat,
+// backing off while it stays away, and forget the fallback once one opens.
+var ws_origin_only_at = 0;
+var ws_origin_retry_delay = 30000;
+var ws_origin_retry_max = 300000;
 function wsSocketUrl(base, tail) {
 	if (ws_origin_only && window.location && window.location.host) {
 		var origin = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
@@ -357,7 +377,10 @@ function websocketStart(appt,address) {
 		ws[app].onclose = function(event){
 			// closed before it ever opened: a listener that moved, not an app the
 			// person shut. The next attempt uses the page's own origin.
-			if (!address && ws[app] && ws[app]['status'] == 'connect') { ws_origin_only = 1; }
+			if (!address && ws[app] && ws[app]['status'] == 'connect') {
+				ws_origin_only = 1;
+				if (!ws_origin_only_at) { ws_origin_only_at = Date.now(); }
+			}
 			// A socket still on duty that closed on its own is retried on the
 			// paced backoff. A deliberate close (rebuild/stop) has already
 			// replaced the handle, so this test keeps it quiet. Tell the retry
@@ -471,6 +494,12 @@ function wsOpener(event,app,origin) {
 	// A socket that answered ends any backoff earned by one that did not. The
 	// retry timer is left alone: it may belong to another app's dead socket.
 	wsRetryFailures = 0;
+	// A socket opened on the configured listener, so the origin fallback was not
+	// needed after all; forget its backoff and use the listener from here on.
+	if (!ws_origin_only) {
+		ws_origin_only_at = 0;
+		ws_origin_retry_delay = 30000;
+	}
 	// The first open of this page needs nothing rebuilt; every later open is a
 	// reconnect, and a reconnect may have missed frames while it was away.
 	var ws_reopened = wsOpenedBefore[app] ? 1 : 0;

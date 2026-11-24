@@ -89,8 +89,8 @@ like($storage_js, qr/var jopen = skip_act \? undefined : windowjOpenSaver\(\$\(v
 like($websocket_js, qr/function wsSocketUrl\(base, tail\)/, 'a failed socket can move to the page origin');
 like($websocket_js, qr/'wss:\/\/' : 'ws:\/\//,
 	'the fallback is the page origin, TLS or not');
-like($websocket_js, qr/\{ ws_origin_only = 1; \}/,
-	'a socket closed before it opened switches the fallback on');
+like($websocket_js, qr/if \(!address && ws\[app\] && ws\[app\]\['status'\] == 'connect'\) \{\s*\n\s*ws_origin_only = 1;\s*\n\s*if \(!ws_origin_only_at\) \{ ws_origin_only_at = Date\.now\(\); \}\s*\n\s*\}/,
+	'a socket closed before it opened switches the fallback on and starts its clock');
 like($websocket_js, qr/new WebSocket\(address \|\| wsSocketUrl\(ws_url, tail\)\)/,
 	'the local socket is built through it');
 like($websocket_js, qr/if \(dead\) \{ websocketRebuild\(\); \}/,
