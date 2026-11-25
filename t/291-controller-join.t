@@ -101,6 +101,104 @@ like($first_boot, qr/!\$opt\{'dry_run'\}/, 'and a dry run writes nothing');
 like($first_boot, qr/JAWNOS_UNLOCK_CODE=\(\[0-9\]\{4,12\}\)/, 'the unlock code the seed prints is parsed');
 like($first_boot, qr/\$home\/UNLOCK-CODE\.txt/, 'and written beside the house, where local_code_suds reads it');
 like($provision, qr/\$home\/UNLOCK-CODE\.txt/, 'the flash scrubs the source card\'s code with its identity');
+like($first_boot, qr/sub _adopt_house_key/, 'the first boot adopts the house key after the join');
+like($first_boot, qr/vault_pull_one\(\$known, \$seal\)/, 'the key is pulled from the house row it joined');
+like($first_boot, qr/rotate_house_key\(\$key\)/, 'and adopted with the rotation the house already uses');
+like($first_boot, qr/controller-key-pending/, 'a key that did not arrive is retried on the next boot');
+like($first_boot, qr/_key_done_write/, 'a completed adoption is marked');
+like($first_boot, qr/!&_key_done_present\(\)/, 'so a healthy board is not asked again');
+like($first_boot, qr/controller-key\.done/, 'the marker is named for the key');
+like($first_boot, qr/sub _house_peers/, 'a board that joined before this pass finds its house on file');
+like($first_boot, qr/my \$house = ref \$joined->\{'house'\} eq 'HASH' \? \$joined->\{'house'\} : \{\};/, 'the join keeps its house hash');
+like($first_boot, qr/_adopt_house_key\(\$house\)/, 'and hands it to the adoption');
+
+# The board files the house as an origin, not as the manager route: the sync
+# rail appends /manager, and vault_pull_one appends /manager/vault_share.
+my ($house_row_sub) = $first_boot =~ /^(sub _house_row \{.*?^\})/ms;
+ok(length($house_row_sub // ''), 'the house-row sub is readable');
+if (length $house_row_sub) {
+	my $pkg = 'HouseRowProbe';
+	eval "package $pkg;\n$house_row_sub\n1;\n" or die $@;
+	my $house_sig = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+	subs::db_query('delete from remote_machines where signatorial = ?', $house_sig);
+	my $filed = $pkg->can('_house_row')->({
+		manager => 'https://192.0.2.10:45545/manager',
+		signatorial => $house_sig, pubkey => 'k', name => 'house',
+	});
+	ok($filed->{'ok'}, 'the house row is filed');
+	my $filed_row = subs::db_select('remote_machines', undef, { signatorial => $house_sig })->hash || {};
+	is($filed_row->{'manager'}, 'https://192.0.2.10:45545', 'the row stores the origin, not the /manager route');
+	subs::db_query('delete from remote_machines where signatorial = ?', $house_sig);
+}
+
+# A board that joined before this pass has its house row already; the house
+# finder is what lets the next boot adopt the key without a token.
+my ($house_peer_sub) = $first_boot =~ /^(sub _house_peers \{.*?^\})/ms;
+ok(length($house_peer_sub // ''), 'the house-peers sub is readable');
+if (length $house_peer_sub) {
+	my $pkg = 'HousePeerProbe';
+	eval "package $pkg;\n$house_peer_sub\n1;\n" or die $@;
+	my $peer_sig = 'b1c2d3e4f5061728394a5b6c7d8e9f01';
+	subs::db_query('delete from remote_machines where signatorial = ?', $peer_sig);
+	subs::db_insert('remote_machines', {
+		uuid => subs::random_string_creator(15), signatorial => $peer_sig,
+		manager => 'https://192.0.2.11:45545', ip => '192.0.2.11', port => '45545',
+		device => 'server', connection => 'active', server_time => subs::rightNow(),
+	});
+	my $peers = $pkg->can('_house_peers')->();
+	ok(ref $peers eq 'ARRAY' && grep { $_ eq $peer_sig } @$peers, 'the roster server row is among the house peers');
+	subs::db_query('delete from remote_machines where signatorial = ?', $peer_sig);
+}
+
+# The adoption decision: pull, then rotate; leave a key this machine already
+# holds alone; carry the rail's refusal when nothing arrives.
+my ($adopt_sub) = $first_boot =~ /^(sub _adopt_house_key \{.*?^\})/ms;
+ok(length($adopt_sub // ''), 'the adoption sub is readable');
+if (length $adopt_sub) {
+	my $pkg = 'KeyAdoptProbe';
+	eval "package $pkg;\n$adopt_sub\n1;\n" or die $@;
+	my $adopt_sig = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+	subs::db_query('delete from remote_machines where signatorial = ?', $adopt_sig);
+	subs::db_insert('remote_machines', {
+		uuid => subs::random_string_creator(15), signatorial => $adopt_sig,
+		manager => 'https://192.0.2.10:45545/manager', ip => '192.0.2.10', port => '45545',
+		device => 'server', connection => 'active', server_time => subs::rightNow(),
+	});
+	{
+		my ($pulled, $rotated, $current) = ('housekey', undef, 'boardkey');
+		no warnings 'redefine';
+		local *subs::vault_pull_one = sub { return $pulled };
+		local *subs::suds_grabber = sub { return $current };
+		local *subs::rotate_house_key = sub { $rotated = $_[0]; return { ok => 1, key_id => 'kid' } };
+		my $r = $pkg->can('_adopt_house_key')->({ signatorial => $adopt_sig });
+		ok($r->{'ok'}, 'a pulled key is adopted');
+		is($rotated, 'housekey', 'the rotation receives the house key');
+		is($r->{'key_id'}, 'kid', 'and reports its key id');
+		my $normalized = subs::db_select('remote_machines', undef, { signatorial => $adopt_sig })->hash || {};
+		is($normalized->{'manager'}, 'https://192.0.2.10:45545', 'an older house row is trimmed to its origin before the pull');
+	}
+	{
+		my ($pulled, $rotated, $current) = ('boardkey', undef, 'boardkey');
+		no warnings 'redefine';
+		local *subs::vault_pull_one = sub { return $pulled };
+		local *subs::suds_grabber = sub { return $current };
+		local *subs::rotate_house_key = sub { $rotated = $_[0]; return { ok => 1 } };
+		my $r = $pkg->can('_adopt_house_key')->({ signatorial => $adopt_sig });
+		ok($r->{'ok'} && $r->{'already'}, 'a key this machine already holds is left alone');
+		ok(!defined $rotated, 'and no rotation runs');
+	}
+	{
+		my $pulled = undef;
+		$gb::vault_pull_error = 'sharing off';
+		no warnings 'redefine';
+		local *subs::vault_pull_one = sub { return $pulled };
+		my $r = $pkg->can('_adopt_house_key')->({ signatorial => $adopt_sig });
+		ok(!$r->{'ok'}, 'a key that does not arrive is an error');
+		is($r->{'error'}, 'sharing off', 'and carries the rail error');
+		$gb::vault_pull_error = '';
+	}
+	subs::db_query('delete from remote_machines where signatorial = ?', $adopt_sig);
+}
 
 # With no window state the shell falls back to 1100x820, and the launcher's four
 # columns then lay out 1.25x wider than this 854x480 glass: three tiles and the

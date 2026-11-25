@@ -941,6 +941,12 @@ sub _house_row {
 	return { ok => 0, error => 'the house sent no address' } unless $manager =~ m{^https?://};
 	my ($host, $port) = $manager =~ m{^https?://([^:/]+)(?::(\d+))?};
 	return { ok => 0, error => 'the house sent no host' } unless defined $host && length $host;
+	# The roster stores an origin, not a manager route: the sync rail appends
+	# its own /manager path, and vault_pull_one appends /manager/vault_share.
+	# Storing the join address whole doubled that path, so the board's first
+	# pull was a 404.
+	my ($origin) = $manager =~ m{^(https?://[^/]+)};
+	$origin = $manager unless defined $origin && length $origin;
 	my $signatorial = $house->{'signatorial'} || '';
 	my $now = &subs::rightNow();
 	my $known = $signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hash : undef;
@@ -949,7 +955,7 @@ sub _house_row {
 		ip => $host,
 		fqdn => $host,
 		port => $port || '',
-		manager => $manager,
+		manager => $origin,
 		signatorial => $signatorial,
 		pubkey => $house->{'pubkey'} || '',
 		hostname => $house->{'name'} || '',
@@ -965,6 +971,149 @@ sub _house_row {
 		1;
 	};
 	return { ok => $ok ? 1 : 0, error => $ok ? '' : 'the house row could not be filed' };
+}
+
+# The join seats the board on the house, but the board seeded its own key before
+# it had a house to join. Pull the house key over the signed peer rail and adopt
+# it, or every sync batch it asks for is sealed under a key this machine cannot
+# open. The join already granted the board a trusted row, and vault_share seals
+# the key to a one-time secret, so nothing crosses in the clear.
+sub _adopt_house_key {
+	no warnings 'once';
+	my ($house) = @_;
+	my $signatorial = ref $house eq 'HASH' ? ($house->{'signatorial'} || '') : '';
+	return { ok => 0, error => 'the house sent no signatorial' }
+		unless $signatorial =~ /^[0-9a-fA-F]{16,64}$/;
+	# A row filed by an older first boot stored the manager route whole; the
+	# pull appends /manager/vault_share, so trim it to the origin once.
+	my $known = &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hash;
+	return { ok => 0, error => 'the house is not on this board\'s roster' } unless $known;
+	if (($known->{'manager'} // '') =~ m{^(https?://[^/]+)/manager/?$}) {
+		$known->{'manager'} = $1;
+		&subs::db_update('remote_machines', { manager => $1 }, { signatorial => $signatorial });
+	}
+	my $seal = &subs::code_chars_make(40);
+	my $key = eval { &subs::vault_pull_one($known, $seal) };
+	unless (defined $key && length $key) {
+		return { ok => 0, error => ($gb::vault_pull_error || 'the house key did not arrive') };
+	}
+	$key =~ s/\s+$//;
+	my $current = eval { &subs::suds_grabber() } || '';
+	$current =~ s/\s+$//;
+	return { ok => 1, already => 1 } if length $current && $current eq $key;
+	my $rotated = eval { &subs::rotate_house_key($key) } || { ok => 0, error => 'the house key would not adopt' };
+	return { ok => 0, error => ($rotated->{'error'} || 'the house key would not adopt') }
+		unless $rotated->{'ok'};
+	# The key_push route follows a rotation with the same folder sweep: a board
+	# that ran on its own key for a while may have sealed files to move.
+	if ($rotated->{'at'}) {
+		eval { &subs::minion_grabber()->enqueue('folders_reseal' => [ { before => $rotated->{'at'}, budget => 600 } ] => { attempts => 2 }) };
+	}
+	return { ok => 1, key_id => ($rotated->{'key_id'} || '') };
+}
+
+# The board's seed wrote its own code beside the house so the local session
+# could open the vault. It is not the house key once the key above is adopted,
+# and the vault now holds the house key; drop the stale file rather than leave
+# a code on disk that opens nothing.
+sub _unlock_code_forget {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return 0 unless length $home;
+	my $n = 0;
+	foreach my $name ('UNLOCK-CODE.txt', 'unlock-code.txt') {
+		my $path = "$home/$name";
+		$n++ if -f $path && unlink $path;
+	}
+	return $n;
+}
+
+# A key that did not arrive leaves the board filed but unable to read a batch.
+# Remember which house to ask and try again on the next boot; the token is
+# spent, but the roster row and the peer key are not.
+sub _key_pending_path {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return '' unless length $home;
+	return "$home/.presence/controller-key-pending";
+}
+
+sub _key_pending_read {
+	my $path = &_key_pending_path();
+	return '' unless length $path && -e $path;
+	my $text = '';
+	if (open(my $fh, '<', $path)) {
+		local $/;
+		$text = <$fh> // '';
+		close $fh;
+	}
+	my ($sig) = $text =~ /([0-9a-fA-F]{16,64})/;
+	return $sig // '';
+}
+
+sub _key_pending_write {
+	my ($sig) = @_;
+	return 0 unless defined $sig && $sig =~ /^[0-9a-fA-F]{16,64}$/;
+	my $path = &_key_pending_path();
+	return 0 unless length $path;
+	my $dir = File::Basename::dirname($path);
+	File::Path::make_path($dir) unless -d $dir;
+	return 0 unless open(my $fh, '>', $path);
+	print {$fh} "$sig\n";
+	close $fh;
+	chmod 0600, $path;
+	&_own_by_tree($path, $dir);
+	return 1;
+}
+
+sub _key_pending_clear {
+	my $path = &_key_pending_path();
+	return 0 unless length $path && -f $path;
+	return unlink($path) ? 1 : 0;
+}
+
+# The servers this board joined, from its own roster. A board that never
+# joined has none. A row filed by an older first boot still carries the manager
+# route whole, which marks the machine that minted the token; prefer it, then
+# an active peer, then the newest. Every server in one house shares the key, so
+# a hub can stand in when the joined machine is away.
+sub _house_peers {
+	my $rows = &subs::db_select('remote_machines')->hashes || [];
+	my @servers = grep {
+		($_->{'device'} || '') eq 'server'
+			&& ($_->{'signatorial'} || '') =~ /^[0-9a-fA-F]{16,64}$/
+	} @{$rows};
+	my @ordered = sort {
+		(($b->{'manager'} || '') =~ m{/manager/?$} ? 1 : 0) <=> (($a->{'manager'} || '') =~ m{/manager/?$} ? 1 : 0)
+			|| (($b->{'connection'} || '') eq 'active' ? 1 : 0) <=> (($a->{'connection'} || '') eq 'active' ? 1 : 0)
+			|| ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0)
+	} @servers;
+	return [ map { $_->{'signatorial'} } @ordered ];
+}
+
+# A completed adoption is not repeated on every boot. The marker names the key
+# only by its fingerprint.
+sub _key_done_path {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return '' unless length $home;
+	return "$home/.presence/controller-key.done";
+}
+
+sub _key_done_present {
+	my $path = &_key_done_path();
+	return (length $path && -e $path) ? 1 : 0;
+}
+
+sub _key_done_write {
+	my ($key_id) = @_;
+	my $path = &_key_done_path();
+	return 0 unless length $path;
+	my $dir = File::Basename::dirname($path);
+	File::Path::make_path($dir) unless -d $dir;
+	return 0 unless open(my $fh, '>', $path);
+	print {$fh} (defined $key_id && length $key_id ? $key_id : 'adopted'), "\n";
+	close $fh;
+	chmod 0600, $path;
+	&_own_by_tree($path, $dir);
+	return 1;
 }
 
 # ---------------------------------------------------------------------------
@@ -1001,6 +1150,35 @@ my $password_ok = !$answered || !$answers->{'code'} || (($report->{'password'} /
 # under it. An unflashed machine keeps the identity it has.
 unless ($opt{'dry_run'}) {
 	$report->{'identity'} = &_identity_ensure() unless $token->{'absent'};
+}
+
+# A board that joined before this pass took the house key, or one whose pull
+# failed, has no house key yet. Adopt it once before the manager starts: the
+# join's row is on file and no token is needed to ask for the key. A completed
+# adoption leaves a marker, so a healthy board is not asked again.
+if (!$opt{'dry_run'} && !$opt{'no_join'} && !&_key_done_present()) {
+	my $pending = &_key_pending_read();
+	my @candidates = @{ &_house_peers() };
+	unshift @candidates, $pending if length $pending;
+	my %seen;
+	@candidates = grep { !$seen{$_}++ } @candidates;
+	my $adopted;
+	foreach my $sig (@candidates) {
+		$adopted = &_adopt_house_key({ signatorial => $sig });
+		last if $adopted->{'ok'};
+	}
+	if ($adopted) {
+		$report->{'join_key'} = $adopted;
+		if ($adopted->{'ok'}) {
+			&_key_pending_clear();
+			&_key_done_write($adopted->{'key_id'});
+			&_unlock_code_forget();
+		}
+		else {
+			&_key_pending_write($candidates[0] || '');
+			_note('the house key is still pending: ' . ($adopted->{'error'} || 'unknown'));
+		}
+	}
 }
 
 # The image drops the source card's ticket, and the desktop view's fallback
@@ -1087,6 +1265,21 @@ if (!$opt{'no_join'} && !$token->{'absent'} && !$token->{'error'}) {
 			# The first signed request made the peer key; the service runs as the
 			# account that owns the tree and must be able to read it.
 			&_own_by_tree(&subs::peer_key_paths());
+			# The board seeded its own key before it had a house. Take the house
+			# key the join just granted, or the first sync cannot open a batch.
+			# A failure is retried on the next boot, not a failed join.
+			my $house = ref $joined->{'house'} eq 'HASH' ? $joined->{'house'} : {};
+			my $adopted = &_adopt_house_key($house);
+			$report->{'join_key'} = $adopted;
+			if ($adopted->{'ok'}) {
+				&_key_pending_clear();
+				&_key_done_write($adopted->{'key_id'});
+				&_unlock_code_forget();
+			}
+			else {
+				&_key_pending_write($house->{'signatorial'} || '');
+				_note('the house key did not arrive: ' . ($adopted->{'error'} || 'unknown'));
+			}
 			unlink($token->{'path'}) if -f $token->{'path'};
 			$report->{'token'} = 'redeemed';
 		}
