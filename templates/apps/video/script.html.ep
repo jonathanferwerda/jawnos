@@ -208,7 +208,11 @@
 			<% if ($source eq 'music') { %>
 				window.jawnosMusicChromeArm = <%= $miss %>ChromeArm;
 			<% } %>
-			vidOn('mousemove mouseenter', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_container, #<%= $miss %>_controls', function() {
+			// A real pointer move, not a mouseenter. When the bars slide away they
+			// change what is under a resting pointer, and the engine answers that
+			// with a fresh mouseenter at the picture - which would show them again,
+			// so the chrome never stayed gone. Real movement always has a mousemove.
+			vidOn('mousemove', '#<%= $id %>, #music, #music_album_cover, #<%= $miss %>_container, #<%= $miss %>_controls', function() {
 
 				var controls = $('#<%= $miss %>_controls');
 				<% if ($source eq 'music') { %>

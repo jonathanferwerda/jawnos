@@ -3153,7 +3153,10 @@ async function musicInit(method) {
 	musicWindowInit(saved_view);
 	musicFormatDurations(document);
 	musicApplyPlaying(tree.current_track);
-	$('#video').trigger('mouseenter');
+	// The include's own reveal is a move now (a mouseenter can be raised by the
+	// bars sliding away; see its binding), so ask for that rather than for an
+	// event it no longer answers.
+	$('#video').trigger('mousemove');
 	setTimeout(function() {
 		if ($('#video').attr('type') != 'video') {	
 			$('#video').hide();
@@ -4841,9 +4844,12 @@ function musicChromeArm() {
 // or a second video include with the same element id, can leave the player bar
 // hidden over the album artwork with no way back. A tap has no mousemove at
 // all, so the same handler answers touchstart. Showing is idempotent; the
-// include's timer still owns the hide.
+// include's timer still owns the hide. A genuine move or tap only: a
+// mouseenter can be the engine's own reaction to the bars sliding away (the
+// hover target changes), and answering it put the bars back for ever instead
+// of letting them leave the picture.
 var musicChromeGestureAt = 0;
-$(document).on('mousemove mouseenter touchstart pointerdown', '#music', function() {
+$(document).on('mousemove touchstart pointerdown', '#music', function() {
 	if (!musicPictureBig()) { return; }
 	var now = Date.now();
 	if (now - musicChromeGestureAt < 250) { return; }

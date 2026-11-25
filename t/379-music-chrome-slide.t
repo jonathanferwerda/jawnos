@@ -4,7 +4,10 @@
 #            One class (music_chrome_hidden) is the state, because a bar moved
 #            off its edge is still :visible to jQuery; the bars keep their
 #            display so the CSS transform can animate both ways, and the
-#            cached shell stores them without the runtime state.
+#            cached shell stores them without the runtime state. The reveal
+#            answers a real move or tap only: the bars sliding away change the
+#            hover target and the engine raises its own mouseenter at the
+#            picture, which used to show them again for ever.
 
 use strict;
 use warnings;
@@ -55,8 +58,10 @@ like($js, qr/shell\.find\('#interface, \.media_controls\.music_player_bar'\)\.re
 # The window itself brings the bars back on a move or a tap: the video
 # include's own binding can be missing on a restored shell (or removed by a
 # second include with the same element id), and a touch has no mousemove.
-like($js, qr/\$\(document\)\.on\('mousemove mouseenter touchstart pointerdown', '#music'/,
-	'the window brings its bars back by itself');
+like($js, qr/\$\(document\)\.on\('mousemove touchstart pointerdown', '#music'/,
+	'the window brings its bars back on a real move or tap');
+unlike($js, qr/\$\(document\)\.on\('mousemove mouseenter touchstart pointerdown', '#music'/,
+	'but not on a mouseenter the sliding bars can raise by themselves');
 like($js, qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\);/,
 	'including the player bar over the album artwork');
 like($css, qr/#music \.media_controls\.music_player_bar \{ z-index: 16; \}/,
@@ -76,6 +81,12 @@ like($style, qr/\.media_visualization\.media_visualization_list \{ width: 150px;
 # --- the include asks the state, not the display ----------------------------
 like($video, qr/musicChromeShow\(controls\)/, 'a mouse move slides the player bar in');
 like($video, qr/musicChromeShow\(music_iface\)/, 'and the interface with it');
+like($video, qr/vidOn\('mousemove', '#<%=\s*\$id\s*%>/,
+	'the include reveals on a real pointer move');
+unlike($video, qr/vidOn\('mousemove mouseenter'/,
+	'not on the mouseenter the sliding bars raise at the picture');
+like($js, qr/\$\('#video'\)\.trigger\('mousemove'\)/,
+	'the window init asks for that move too');
 like($video, qr/controls\.hasClass\('music_chrome_hidden'\) \|\| !controls\.is\(':visible'\)/,
 	'the include asks the class (or a real display hide)');
 like($video, qr/musicChromeHide\(\$\('#<%=\s*\$miss\s*%>_controls'\)\)/, 'an idle pointer slides the player bar out');
