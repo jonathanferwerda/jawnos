@@ -545,6 +545,14 @@ pub fn start_hardware(
         BackendKind::Jack => {
             return Err("no JACK capture backend yet; use --backend alsa".to_string())
         }
+        // Oboe is capture-only in this slice, and its capture is driven by
+        // `--run`/the service, not this record seam (docs/studio-oboe-slice.md §2.5).
+        BackendKind::Oboe => {
+            return Err(
+                "Oboe is capture-only in this slice; use --run --backend oboe or --backend alsa"
+                    .to_string(),
+            )
+        }
         BackendKind::Alsa | BackendKind::PipeWire => {}
     }
     #[cfg(not(feature = "alsa"))]

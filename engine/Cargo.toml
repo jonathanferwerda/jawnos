@@ -9,6 +9,10 @@ publish = false
 [lib]
 name = "jawn_audio"
 path = "src/lib.rs"
+# The same crate stays a static library/binary for the house machines and
+# becomes a loadable `libjawn_audio.so` for the Android app
+# (docs/studio-oboe-slice.md §2.1).
+crate-type = ["lib", "cdylib"]
 
 [[bin]]
 name = "jawn-audio"
@@ -17,15 +21,19 @@ path = "src/main.rs"
 # Device backends are optional so the suite, and every machine that cannot
 # build against ALSA or JACK, still gets the null device and the protocol.
 # `--features alsa`, `--features jack`, or both, add the real hardware seam
-# (docs/studio-audio-roadmap.md P1).
+# (docs/studio-audio-roadmap.md P1). `oboe` is the Android capture backend; it
+# is opt-in so the desktop and offline suites never compile its C++
+# (docs/studio-oboe-slice.md §2.1).
 [features]
 default = []
 alsa = ["dep:alsa"]
 jack = ["dep:jack"]
+oboe = ["dep:oboe"]
 
 [dependencies]
 alsa = { version = "0.9", optional = true }
 jack = { version = "0.13", optional = true }
+oboe = { version = "0.6.1", optional = true }
 # The clock session's per-datagram tag. Pure Rust: no C dependency, and the
 # engine still builds on a machine with no sound card (docs/studio-audio-roadmap.md P3).
 hmac = "0.12"

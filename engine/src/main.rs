@@ -67,7 +67,7 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --help                       this text
 
 --run options:
-  --backend N     null (default), alsa, pipewire or jack
+  --backend N     null (default), alsa, pipewire, jack or oboe
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64; --frames is an alias)
   --buffer N      buffer size in frames (default 256)
@@ -79,7 +79,7 @@ jawn-audio — the JawnOS audio engine
 
 --record options:
   --out FILE.wav  where to write the take (required)
-  --backend N     null (default), alsa, pipewire or jack
+  --backend N     null (default), alsa, pipewire, jack or oboe
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --system-device NAME
                   mix the machine's own audio from this PulseAudio/PipeWire
@@ -154,7 +154,7 @@ jawn-audio — the JawnOS audio engine
 
 --play options:
   --file FILE.wav   a take to play; repeat the flag, one strip per file
-  --backend N       null (default), alsa, pipewire or jack
+  --backend N       null (default), alsa, pipewire, jack or oboe
   --device NAME     ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N        block/period size in frames (default 64; --frames is an alias)
   --buffer N        buffer size in frames (default 256)
@@ -177,7 +177,7 @@ jawn-audio — the JawnOS audio engine
   backend plays as fast as it can; ALSA is paced by the card.
 
 --listen options:
-  --backend N     null (default), alsa, pipewire or jack
+  --backend N     null (default), alsa, pipewire, jack or oboe
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --system-device NAME
                   mix the machine's own audio from this PulseAudio/PipeWire
@@ -215,7 +215,7 @@ jawn-audio — the JawnOS audio engine
   --handset-device NAME
                   capture a plan's `handset` source from this PulseAudio/
                   PipeWire source (default jawn_call_in.monitor)
-  --backend N     null (default), alsa, pipewire or jack
+  --backend N     null (default), alsa, pipewire, jack or oboe
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64; --frames is an alias)
   --buffer N      buffer size in frames (default 256)
@@ -235,7 +235,7 @@ jawn-audio — the JawnOS audio engine
   graph is compiled before the device opens: the block loop allocates nothing.
 
 --loopback options:
-  --backend N     null (default), alsa, pipewire or jack
+  --backend N     null (default), alsa, pipewire, jack or oboe
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      period/block size in frames (default 64)
   --buffer N      buffer size in frames (default 256)
@@ -260,7 +260,7 @@ jawn-audio — the JawnOS audio engine
                   $JAWNOS_AUDIO_SESSION_KEY). A plan's `peer` source is
                   `pending` until a peer gets a clock session, then mixed
                   like a local input
-  --backend N     null (default), alsa, pipewire or jack
+  --backend N     null (default), alsa, pipewire, jack or oboe
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64)
   --buffer N      buffer size in frames (default 256)
@@ -312,6 +312,9 @@ The manager's controller picker uses it to forward a peer's Studio monitor to
 the controller's Music receiver.
 The null backend needs no sound card. ALSA and JACK exist only in a build with
 --features alsa and/or --features jack; pipewire uses the ALSA `default` PCM.
+Oboe is the Android capture seam: it exists only in a build with --features
+oboe, and it is capture-only in this slice, so it serves --run (a measured take)
+and --backends, not --record, --play, --listen, --patch or --serve.
 A loopback needs the interface's output patched into its input.
 
 --clock-master options:
@@ -725,7 +728,7 @@ fn parse_arguments(
             "--backend" => {
                 let raw = value(&mut args, "--backend")?;
                 options.backend = BackendKind::parse(&raw).ok_or_else(|| {
-                    format!("unknown backend `{raw}` (want null, alsa, pipewire or jack)")
+                    format!("unknown backend `{raw}` (want null, alsa, pipewire, jack or oboe)")
                 })?;
             }
             "--device" => options.device = Some(value(&mut args, "--device")?),
@@ -1106,10 +1109,11 @@ fn run() -> Result<ExitCode, String> {
             let available = backends::availability();
             println!("device: null (default backend)");
             println!(
-                "backends: alsa {}, pipewire {}, jack {}, null yes",
+                "backends: alsa {}, pipewire {}, jack {}, oboe {}, null yes",
                 yes_no(available.alsa),
                 yes_no(available.pipewire),
-                yes_no(available.jack)
+                yes_no(available.jack),
+                yes_no(available.oboe)
             );
             println!("shape: {} Hz, {} frames, {} channels", 48_000, 64, 2);
             Ok(ExitCode::SUCCESS)
@@ -1254,6 +1258,7 @@ fn run_device(options: &Options) -> Result<RunReport, String> {
         BackendKind::Null => null_run(options),
         BackendKind::Alsa | BackendKind::PipeWire => alsa_run(&device, options),
         BackendKind::Jack => jack_run(&device, options),
+        BackendKind::Oboe => oboe_run(&device, options),
     }
 }
 
@@ -1333,6 +1338,36 @@ fn jack_run(device: &str, options: &Options) -> Result<RunReport, String> {
 fn jack_run(device: &str, options: &Options) -> Result<RunReport, String> {
     let _ = (device, options);
     Err("this build has no JACK backend; rebuild with --features jack".to_string())
+}
+
+/// `--run --backend oboe` measures one capture take: Oboe is capture-only in
+/// this slice, so the report is the stream's granted shape and what the
+/// callback actually saw, not a playback run.
+#[cfg(feature = "oboe")]
+fn oboe_run(device: &str, options: &Options) -> Result<RunReport, String> {
+    // A numeric --device is the Android HAL's AudioDeviceInfo id; any other
+    // string is only a label, and the HAL picks.
+    let device_id = device.parse::<i32>().ok();
+    let report = jawn_audio::oboe_device::run_duplex(device_id, options.seconds, None)?;
+    let frames = report.frames.max(1);
+    Ok(RunReport {
+        backend: "oboe",
+        device: device.to_string(),
+        rate: report.rate,
+        frames: report.frames,
+        buffer: report.buffer_frames,
+        channels: report.channels,
+        blocks: (report.frames_captured / frames as u64) as usize,
+        samples: report.frames_captured as usize,
+        peak: report.peak,
+        xruns: report.xruns as usize,
+    })
+}
+
+#[cfg(not(feature = "oboe"))]
+fn oboe_run(device: &str, options: &Options) -> Result<RunReport, String> {
+    let _ = (device, options);
+    Err("this build has no Oboe backend; rebuild with --features oboe".to_string())
 }
 
 fn print_run(report: &RunReport, json: bool) {
@@ -2597,6 +2632,7 @@ fn listen_run(
             listen_alsa(device, options, &mut strip, total, stop)
         }
         BackendKind::Jack => Err(listen_support_message()),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     }
 }
 
@@ -2749,6 +2785,7 @@ fn run_patch(options: &Options) -> Result<ExitCode, String> {
             patch_alsa(&device, options, patchbay, total, &stop)
         }
         BackendKind::Jack => Err(listen_support_message()),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     };
 
     // Stop the handset capture with the patch; the consumer moved into the
@@ -3031,6 +3068,7 @@ fn play_files(options: &Options) -> Result<PlayReport, String> {
         BackendKind::Null => play_null(&mut playback, options)?,
         BackendKind::Alsa | BackendKind::PipeWire => play_alsa(&device, &mut playback, options)?,
         BackendKind::Jack => return Err(play_support_message()),
+        BackendKind::Oboe => return Err(oboe_capture_only_message()),
     };
     Ok(PlayReport::success(
         options.backend.name(),
@@ -3163,6 +3201,7 @@ fn run_monitor(
             monitor_hardware(device, rate, period, buffer, &mut playback, &stop, guard.as_ref())
         }
         BackendKind::Jack => Err(play_support_message()),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     }
 }
 
@@ -3243,11 +3282,20 @@ pub(crate) fn play_support(backend: BackendKind) -> Result<(), String> {
             }
         }
         BackendKind::Jack => Err(play_support_message()),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     }
 }
 
 fn play_support_message() -> String {
     "no JACK file playback yet; use --backend alsa or null".to_string()
+}
+
+/// Oboe exists to measure one capture in this slice. Any other role refuses
+/// with the same sentence rather than half-wiring the backend
+/// (docs/studio-oboe-slice.md §2.5).
+pub(crate) fn oboe_capture_only_message() -> String {
+    "Oboe is capture-only in this slice; use --run --backend oboe or --backend alsa"
+        .to_string()
 }
 
 /// The backends that carry the machine's own audio through the engine. ALSA
@@ -3273,6 +3321,7 @@ pub(crate) fn listen_support(backend: BackendKind) -> Result<(), String> {
             }
         }
         BackendKind::Jack => Err(listen_support_message()),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     }
 }
 
@@ -3294,6 +3343,7 @@ pub(crate) fn probe_playback(
         BackendKind::Alsa | BackendKind::PipeWire => playback_probe(device, rate, period, buffer),
         // The null device runs at whatever rate the files carry.
         BackendKind::Null | BackendKind::Jack => Ok(rate),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     }
 }
 
@@ -3392,7 +3442,9 @@ pub(crate) fn queue_blocks(
 ) -> usize {
     match backend {
         BackendKind::Null => null_queue_blocks(take_blocks(frames, period), period, channels),
-        BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => HARDWARE_QUEUE_BLOCKS,
+        BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack | BackendKind::Oboe => {
+            HARDWARE_QUEUE_BLOCKS
+        }
     }
 }
 
@@ -3654,6 +3706,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
         BackendKind::Jack => Err(
             "no JACK capture backend yet; use --backend alsa or null".to_string(),
         ),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     };
 
     // The take decides when the monitoring bus ends: silence the player, then
@@ -3762,6 +3815,7 @@ pub(crate) fn record_support(backend: BackendKind) -> Result<(), String> {
         BackendKind::Jack => Err(
             "no JACK capture backend yet; use --backend alsa or null".to_string(),
         ),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     }
 }
 
@@ -3782,6 +3836,7 @@ pub(crate) fn probe_capture(
         }
         // The null device is whatever count it was asked for.
         BackendKind::Null | BackendKind::Jack => Ok(channels),
+        BackendKind::Oboe => Err(oboe_capture_only_message()),
     }
 }
 

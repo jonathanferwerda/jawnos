@@ -9,34 +9,69 @@ stream was actually granted.
 This document is the plan of record. It is written as a patch list with
 `file:line` anchors so the change can be applied without re-deriving it.
 
-## 0. Verdict for this checkout — the crate is not cached
+## 0. Verdict for this checkout - applied and cross-compiled (2026-11-25)
 
-**The engine and app changes below are planned, not applied.** The repository's
-suite builds with `--offline`, and this machine's cargo cache does not contain
-the `oboe` crate, so adding it to `engine/Cargo.toml` today would break every
-offline build before a single line of Oboe code compiled.
+**The engine changes in section 2 are applied; the app changes in section 5 are not.**
+The previous verdict (the crate was not cached, so the feature could not be added
+without breaking `--offline`) is no longer true on this machine: the NDK is
+installed, the crates.io sparse index and `static.rust-lang.org` answer, and the
+crate fetched. What is still true is the split the plan relies on - the
+dependency is **optional**, the feature is **off** by default, and the
+default/offline build compiles no C or C++ at all.
 
 Evidence gathered on this machine:
 
 | Check | Result |
 | --- | --- |
-| `ls ~/.cargo/registry/cache/*/` | 25 crate files (both `bitflags` majors, three `winapi` variants): `alsa`, `alsa-sys`, `bitflags`, `block-buffer`, `cfg-if`, `cpufeatures`, `crypto-common`, `digest`, `generic-array`, `hmac`, `jack`, `jack-sys`, `lazy_static`, `libc`, `libloading`, `log`, `pkg-config`, `sha2`, `subtle`, `typenum`, `version_check`, `winapi*` |
-| `find ~/.cargo -iname '*oboe*'` | no match (cache, src, or index) |
-| `find ~/.cargo/registry/index -path '*ob/oe/oboe*'` | no match |
-| `cargo tree --offline` in `engine/` | resolves only the `hmac`/`sha2` tree and the two in-tree voice crates |
-| `grep -i oboe engine/Cargo.lock` | no match |
-| `rustup target list --installed` | `x86_64-unknown-linux-gnu` only — no `aarch64-linux-android` |
-| `ANDROID_NDK_HOME` / `NDK_HOME` | unset |
-| `which cargo-ndk` | not installed |
+| NDK | `/home/jawn/android-sdk/ndk/30.0.16248370` (the app's `ndkVersion`) |
+| `rustup target add aarch64-linux-android` | installed |
+| `cargo fetch` (once, online) in `engine/` | fetched `oboe 0.6.1`, `oboe-sys 0.6.1`, `cc`, `num-*`; `engine/Cargo.lock` is committed with them |
+| `cargo build --offline` in `engine/`, default features | green; no C/C++ |
+| `cargo test --offline -j 2 -- --test-threads=1` | green |
+| `perl scripts/build_engine.pl --android --out-dir ...` with the NDK | green; staged `libjawn_audio.so` |
+| Cross-compiled artifact | `arm64-v8a/libjawn_audio.so`, 963,096 bytes, ELF aarch64, **for Android 26**, built by NDK r30; `NEEDED` only `liblog.so`, `libOpenSLES.so`, `libdl.so`, `libm.so`, `libc.so` (the C++ runtime is static) |
+| Exported C ABI | `jawn_audio_start`, `jawn_audio_stop`, `jawn_audio_status`, `jawn_audio_free` |
 
-The related transfer crates (`ndk`, `jni`, `cpal`) are also absent, so none of
-the obvious alternatives is a cached one either. The no-feature baseline is
-green: `cargo test --offline -j 2 -- --test-threads=1` in `engine/` and
-`perl scripts/run_tests.pl --serial t/332-engine-build.t` both pass.
+The Linux/suite contract is `t/428-oboe-backend.t`: `oboe:false`, the prose
+sentence, and the rebuild refusal. The feature-on build is a compile check on
+Linux and a real stream only on the phone (section 9).
 
-**When the cache has it** (or on the Android build machine), land the patch
-list in §2 and §5 as one change. Until then, keep `engine/Cargo.toml` as it is
-and keep the Oboe module behind `#[cfg(feature = "oboe")]`, never in `default`.
+## 0.1 The Oboe crate API this slice uses
+
+Pinned in `engine/Cargo.toml` as `oboe = { version = "0.6.1", optional = true }`;
+`oboe-sys 0.6.1` compiles Oboe's C++ with the `cc` crate (not CMake) and links
+it statically. The API actually used in `engine/src/oboe_device.rs`:
+
+- `AudioStreamBuilder::default()`, then `set_direction::<Input>()`,
+  `set_performance_mode(PerformanceMode::LowLatency)`,
+  `set_sharing_mode(SharingMode::Exclusive | Shared)`,
+  `set_sample_rate(48_000)`, `set_channel_count::<Mono>()`, `set_format::<i16>()`,
+  and optional `set_device_id(id)`.
+- `set_callback(cb).open_stream() -> Result<AudioStreamAsync<Input, F>>`. The
+  callback is `AudioInputCallback` with `FrameType = (i16, Mono)`, so
+  `on_audio_ready(&mut dyn AudioInputStreamSafe, &[i16])` gets one i16 per frame.
+- `AudioStream::start()` / `stop()` (blocking). Read back through
+  `AudioStreamBase::get_sample_rate`, `get_channel_count` (a `ChannelCount`),
+  `get_buffer_size_in_frames`, `get_sharing_mode`, `get_performance_mode`, and
+  `AudioStreamSafe::get_frames_per_burst`, `get_xrun_count` (returns
+  `Result<i32>`; an unsupported count is reported as 0).
+- There is no `FullDuplex`: the duplex half reads the input from an output
+  callback, which is why this slice is input-only.
+
+## 0.2 Is there an option other than Oboe?
+
+Yes, and it is the one to reach for if the crate ever becomes unavailable:
+**AAudio**. Oboe is a thin C++ wrapper; on API 26+ it drives AAudio directly
+(OpenSL ES is its fallback on older releases). AAudio is a stable NDK **C** API
+(`<aaudio/AAudio.h>`, `libaaudio.so`), so it can be bound without any crate:
+declare the handful of functions and enums in an `extern "C"` block, link
+`-laaudio`, and drive `AAudioStreamBuilder` / `AAudioStream_read` from a
+callback exactly as this module drives `AudioStreamBuilder` / `on_audio_ready`.
+That costs hand-maintained declarations and loses Oboe's automatic OpenSL ES
+fallback, but it removes the dependency and the C++ build entirely - which is
+precisely the failure mode that stopped the earlier attempt. The app's
+`minSdk` is 26, so AAudio is present on every device the app supports. Any such
+change stays behind the same `oboe` feature and the same `OboeReport` contract.
 
 ## 1. Scope
 
@@ -70,7 +105,8 @@ Pin the exact version and checksum the build machine's index offers; `0.6` is
 the crate's current line, not a version verified on this machine. The lockfile
 must be committed in the same change so `--offline` resolves it.
 
-The Oboe crate builds C++ through CMake. On the Linux suite that never happens:
+The Oboe crate's `oboe-sys` builds C++ with the `cc` crate (not CMake). On
+the Linux suite that never happens:
 the dependency is optional and the feature is off, so `cargo test --offline`
 still compiles no C/C++ at all. This is the reason the module is cfg-gated in
 §2.3 rather than conditionally linked.
@@ -161,20 +197,23 @@ Implementation notes, all of them load-bearing:
 - A 48 kHz request that is not granted is reported, not silently resampled.
   The take's WAV is written at the granted rate, and the report says so.
 
-JNI entry points live in this module, because this is the cdylib Android loads:
+Entry points live in this module, because this is the cdylib Android loads.
+The `jni` crate is not a dependency: the module exports the plain-C ABI below,
+and a small Java `native` wrapper marshals `String`/`int` (Java's JNI can call a
+C signature directly). All four functions are implemented in
+`engine/src/oboe_device.rs`:
 
-```rust
-#[no_mangle]
-pub extern "system" fn Java_com_jawnos_app_JawnAudioEngine_nativeStart(
-    env: JNIEnv, _class: JClass, device_id: jint, seconds: jdouble, out: JString,
-) -> jstring { /* run_duplex; JSON status */ }
+```c
+char *jawn_audio_start(int device_id, double seconds, const char *out);
+char *jawn_audio_stop(void);
+char *jawn_audio_status(void);
+void  jawn_audio_free(char *text);
 ```
 
-`JNIEnv`/`JClass`/`JString` need the `jni` crate, which is also not cached. The
-alternative, and the one to prefer if only `oboe` is cached, is to export plain
-C symbols (`jawn_audio_start`, `jawn_audio_stop`, `jawn_audio_status`) and let a
-small Java `native` wrapper marshal `String`/`int`; Java's JNI can call a C
-signature directly. Keep the exported C ABI in this file either way.
+`start` returns immediately (the take runs on a worker thread) with a JSON
+status; `stop` joins the worker and returns the final report; `status` answers
+the last report. `device_id < 0` asks the HAL to pick; a NULL `out` runs without
+a WAV. Each returned string is freed with `jawn_audio_free`.
 
 ### 2.5 `engine/src/main.rs`
 
@@ -233,9 +272,15 @@ Add an opt-in Android path; the default stays the Linux binary build:
 perl scripts/build_engine.pl --android [--ndk PATH] [--out-dir DIR]
 ```
 
-- `--android` selects `cargo ndk -t arm64-v8a -p 26 build --lib --release
-  --features oboe --manifest-path engine/Cargo.toml` (the app's `minSdk` is 26,
-  `gradle.properties:28`).
+- `--android` drives the NDK's clang directly (no `cargo-ndk` needed): it sets
+  `ANDROID_NDK_HOME`, `CC_aarch64-linux-android`, `CXX_aarch64-linux-android`,
+  `AR_aarch64-linux-android` and
+  `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` to the API-26 wrappers and runs
+  `cargo build --lib --release --features oboe --target aarch64-linux-android -j 4`
+  (the app's `minSdk` is 26). `cargo ndk` is not required; if it is already
+  installed it is an acceptable substitute.
+- The NDK is `--ndk PATH`, else `ANDROID_NDK_HOME`/`NDK_HOME`/`ANDROID_NDK_ROOT`,
+  else the newest NDK under `ANDROID_SDK_ROOT/ndk` or `~/android-sdk/ndk`.
 - `--out-dir` defaults to `app/src/main/jniLibs` when it exists, otherwise it
   errors with the path it wanted.
 - Stage `libjawn_audio.so`, not `jawn-audio`: the app already loads a different
@@ -244,21 +289,25 @@ perl scripts/build_engine.pl --android [--ndk PATH] [--out-dir DIR]
 - `-j 4` on the shared box; the existing `--if-stale` logic needs no change
   (its `newest_source_mtime` already covers `Cargo.toml`, `Cargo.lock` and
   `engine/src`).
-- A machine without `cargo-ndk` or the NDK keeps the current sentence-style
-  refusal: the engine is optional, and the desktop path is unaffected.
+- A machine without the NDK keeps the sentence-style refusal: the engine is
+  optional, and the desktop path is unaffected.
 
 ### 2.8 `t/428-oboe-backend.t` (new) and `t/332-engine-build.t`
 
 `t/428` is a **no-feature** contract test, so it is green on every machine:
 
-- `# tests-for: engine/src/backends.rs engine/src/main.rs scripts/build_engine.pl`
+- `# tests-for: engine/src/backends.rs engine/src/main.rs engine/src/lib.rs engine/src/oboe_device.rs engine/Cargo.toml scripts/build_engine.pl`
 - `jawn-audio --backends --json` parses as JSON with exactly the five keys
   `alsa`, `pipewire`, `jack`, `oboe`, `null`; all booleans; `null` is `true`.
 - In a build with no features, `oboe` is `false`.
 - `jawn-audio --backends` (prose) has an `oboe:` line saying
   `no (built without --features oboe)`.
 - `jawn-audio --backend oboe --run` exits 2 with the rebuild sentence.
-- `jawn-audio --help` names `oboe` in the `--backend` line.
+- `jawn-audio --help` names `oboe` in the `--backend` line; `--check` agrees.
+- `build_engine.pl --android` refuses a missing NDK in a sentence, not a shell
+  error, and stages nothing.
+- The source keeps `oboe` optional, `default = []`, the C ABI present, and no
+  `jni` dependency.
 
 `t/332` needs no assertion change because it pins the build script, not the
 backend set. Add one line to its `# covers:` header only if the Android build
@@ -291,25 +340,32 @@ that only one platform uses would repeat the mistake the ALSA path already made.
 
 ## 4. Cross-compiling
 
-On the Android build machine:
+On this machine the NDK is already installed, so the cross-build is:
 
 ```sh
 rustup target add aarch64-linux-android
-cargo ndk -t arm64-v8a -p 26 -o app/src/main/jniLibs \
-  build --lib --release --features oboe --manifest-path engine/Cargo.toml
+ANDROID_NDK_HOME=/home/jawn/android-sdk/ndk/30.0.16248370 \
+  perl scripts/build_engine.pl --android --out-dir /tmp/jawn-jni
 ```
 
-- `cargo-ndk` sets the NDK's clang as linker and the sysroot. The app pins
-  `ndkVersion=30.0.16248370` (`gradle.properties:30`); use the same one.
+The script's command, equivalent to the manual one:
+
+```sh
+cargo build --lib --release --features oboe --target aarch64-linux-android -j 4 \
+  --manifest-path engine/Cargo.toml
+```
+
+- The script exports the NDK's API-26 clang as CC/CXX and as the Rust linker;
+  it needs no `cargo-ndk`. The app pins `ndkVersion=30.0.16248370`
+  (`gradle.properties:30`); use the same one.
 - The app is `arm64-v8a` only (`app/build.gradle:79-81`), so build one ABI.
 - The default Linux build is unchanged: `cargo build --offline` compiles no C++
   and produces the same `jawn-audio` binary plus an unused `libjawn_audio.so`
   (from `crate-type`). `build_engine.pl` still stages the binary.
-- If the linker asks for `libc++_shared.so`, copy it from
-  `$NDK/toolchains/llvm/prebuilt/*/sysroot/usr/lib/aarch64-linux-android/` into
-  the same `jniLibs/arm64-v8a/`. The app's own CMake already uses
-  `-DANDROID_STL=c++_shared` (`app/build.gradle:85-89`), so the library may
-  already be packaged; verify rather than assume.
+- `oboe-sys` links the C++ runtime statically (`c++_static`), so the artifact's
+  `NEEDED` entries are only `liblog`, `libOpenSLES`, `libdl`, `libm`, `libc`.
+  No `libc++_shared.so` needs staging; verify with `llvm-readelf -d` rather
+  than assume.
 
 ## 5. App patch list
 

@@ -39,6 +39,8 @@ pub mod wav_read;
 pub mod alsa_device;
 #[cfg(feature = "jack")]
 pub mod jack_device;
+#[cfg(feature = "oboe")]
+pub mod oboe_device;
 
 pub use auth::{mac_tag, tags_match, MAC_LEN};
 pub use backends::{availability, Availability, BackendKind, RunReport};
@@ -49,6 +51,8 @@ pub use bearing::{
     MAX_DATAGRAM_LEN, MAX_FRAMES_PER_DATAGRAM,
 };
 pub use device::{Device, DeviceError, NullDevice};
+#[cfg(feature = "oboe")]
+pub use oboe_device::{run_duplex, OboeReport};
 pub use disk::DiskWriter;
 pub use effect::{
     Amp, Autotune, Channel, Compressor, Delay, Distortion, Effect, EffectChain, Equalizer,

@@ -11,13 +11,16 @@ use std::env;
 use std::fmt;
 use std::path::Path;
 
-/// The four ways `--backend` can ask for samples.
+/// The five ways `--backend` can ask for samples. `Oboe` is Android's
+/// low-latency seam; it is capture-only in the first slice and exists only in a
+/// `--features oboe` build (docs/studio-oboe-slice.md §2.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
     Null,
     Alsa,
     PipeWire,
     Jack,
+    Oboe,
 }
 
 impl BackendKind {
@@ -28,6 +31,7 @@ impl BackendKind {
             "alsa" => Some(BackendKind::Alsa),
             "pipewire" => Some(BackendKind::PipeWire),
             "jack" => Some(BackendKind::Jack),
+            "oboe" => Some(BackendKind::Oboe),
             _ => None,
         }
     }
@@ -38,6 +42,7 @@ impl BackendKind {
             BackendKind::Alsa => "alsa",
             BackendKind::PipeWire => "pipewire",
             BackendKind::Jack => "jack",
+            BackendKind::Oboe => "oboe",
         }
     }
 
@@ -49,6 +54,9 @@ impl BackendKind {
             BackendKind::Alsa => requested.unwrap_or("hw:1,0").to_string(),
             BackendKind::PipeWire => "default".to_string(),
             BackendKind::Jack => "jack".to_string(),
+            // The Android HAL names its devices; the string is a label for the
+            // report, not a PCM path to open.
+            BackendKind::Oboe => requested.unwrap_or("default").to_string(),
         }
     }
 }
@@ -59,13 +67,14 @@ impl fmt::Display for BackendKind {
     }
 }
 
-/// What `--backends` reports. `alsa` and `jack` are compile-time facts;
-/// `pipewire` is a probe of this machine; `null` is always available.
+/// What `--backends` reports. `alsa`, `jack` and `oboe` are compile-time
+/// facts; `pipewire` is a probe of this machine; `null` is always available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Availability {
     pub alsa: bool,
     pub pipewire: bool,
     pub jack: bool,
+    pub oboe: bool,
     pub null: bool,
 }
 
@@ -74,6 +83,7 @@ pub fn availability() -> Availability {
         alsa: cfg!(feature = "alsa"),
         pipewire: pipewire_available(),
         jack: cfg!(feature = "jack"),
+        oboe: cfg!(feature = "oboe"),
         null: true,
     }
 }
@@ -154,8 +164,8 @@ fn is_executable(path: &Path) -> bool {
 /// names the keys.
 pub fn json(available: &Availability) -> String {
     format!(
-        "{{\"alsa\":{},\"pipewire\":{},\"jack\":{},\"null\":{}}}",
-        available.alsa, available.pipewire, available.jack, available.null
+        "{{\"alsa\":{},\"pipewire\":{},\"jack\":{},\"oboe\":{},\"null\":{}}}",
+        available.alsa, available.pipewire, available.jack, available.oboe, available.null
     )
 }
 
@@ -184,6 +194,14 @@ pub fn prose(available: &Availability) -> String {
             "yes (built with --features jack)"
         } else {
             "no (built without --features jack)"
+        }
+    ));
+    out.push_str(&format!(
+        "oboe: {}\n",
+        if available.oboe {
+            "yes (built with --features oboe)"
+        } else {
+            "no (built without --features oboe)"
         }
     ));
     out.push_str("null: yes (always available)\n");
@@ -220,6 +238,7 @@ mod tests {
         let available = availability();
         assert_eq!(available.alsa, cfg!(feature = "alsa"));
         assert_eq!(available.jack, cfg!(feature = "jack"));
+        assert_eq!(available.oboe, cfg!(feature = "oboe"));
     }
 
     #[test]
@@ -229,6 +248,7 @@ mod tests {
             BackendKind::Alsa,
             BackendKind::PipeWire,
             BackendKind::Jack,
+            BackendKind::Oboe,
         ] {
             assert_eq!(BackendKind::parse(kind.name()), Some(kind));
         }
@@ -241,16 +261,40 @@ mod tests {
         assert_eq!(BackendKind::Alsa.device_name(Some("hw:2,0")), "hw:2,0");
         assert_eq!(BackendKind::PipeWire.device_name(Some("hw:2,0")), "default");
         assert_eq!(BackendKind::Jack.device_name(Some("hw:2,0")), "jack");
+        assert_eq!(BackendKind::Oboe.device_name(None), "default");
+        assert_eq!(BackendKind::Oboe.device_name(Some("Built-in Mic")), "Built-in Mic");
     }
 
     #[test]
-    fn the_json_names_all_four_backends() {
+    fn the_json_names_all_five_backends() {
         let text = json(&availability());
-        for key in ["alsa", "pipewire", "jack", "null"] {
+        for key in ["alsa", "pipewire", "jack", "oboe", "null"] {
             assert!(text.contains(&format!("\"{key}\":")), "{text}");
         }
         assert!(text.contains("\"null\":true"), "{text}");
         assert_eq!(text.lines().count(), 1, "{text}");
+    }
+
+    #[test]
+    fn oboe_is_false_without_the_feature() {
+        // The no-feature build is the one the Linux suite runs; the feature
+        // build on the phone is what asserts `true` (docs/studio-oboe-slice.md §9).
+        assert_eq!(availability().oboe, cfg!(feature = "oboe"));
+        assert!(json(&availability()).contains(&format!("\"oboe\":{}", cfg!(feature = "oboe"))));
+    }
+
+    #[test]
+    fn the_prose_explains_the_oboe_feature() {
+        let text = prose(&availability());
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("oboe:"))
+            .unwrap_or_else(|| panic!("no oboe line in {text}"));
+        if cfg!(feature = "oboe") {
+            assert_eq!(line, "oboe: yes (built with --features oboe)");
+        } else {
+            assert_eq!(line, "oboe: no (built without --features oboe)");
+        }
     }
 
     #[test]

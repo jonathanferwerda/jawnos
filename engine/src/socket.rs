@@ -6765,6 +6765,7 @@ fn run_transport(
             transport_hardware(&config, source, &control)
         }
         BackendKind::Jack => Err(crate::play_support_message()),
+        BackendKind::Oboe => Err(crate::oboe_capture_only_message()),
     };
     // The monitor stream outlives this transport. It follows the engine's
     // output bus: it keeps its listener and client, and serves the house patch's
@@ -6937,6 +6938,7 @@ fn run_listen_worker(
             listen_hardware(&config, &mut unit, &status, &stop)
         }
         BackendKind::Jack => Err(crate::listen_support_message()),
+        BackendKind::Oboe => Err(crate::oboe_capture_only_message()),
     };
     let was_stopped = stop.load(Ordering::SeqCst);
     let mut current = status
@@ -7115,6 +7117,7 @@ fn run_patch_worker(
             patch_hardware(&config, patchbay, &status, &stop, system_device)
         }
         BackendKind::Jack => Err(crate::listen_support_message()),
+        BackendKind::Oboe => Err(crate::oboe_capture_only_message()),
     };
     // The block loop is over, so the tap's producer will push nothing more.
     // A bus take reads this and closes its WAV with the frames that exist.
@@ -7656,6 +7659,7 @@ fn run_playback(
         // `play` already refused a backend that cannot play; name it if a
         // future caller reaches the worker another way.
         BackendKind::Jack => Err(crate::play_support_message()),
+        BackendKind::Oboe => Err(crate::oboe_capture_only_message()),
     };
     let was_stopped = stop.load(Ordering::SeqCst);
     let mut current = status
@@ -7845,6 +7849,9 @@ fn run_take(
                 live.as_ref(),
                 &armed,
             ),
+            // Oboe is capture-only in this slice, and `--serve` is not wired
+            // to it; an honest refusal beats a half-wired backend.
+            BackendKind::Oboe => Err(crate::oboe_capture_only_message()),
         },
     };
     // A stop is the caller's choice, not a failure: the take ends where it was

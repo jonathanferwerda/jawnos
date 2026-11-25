@@ -219,6 +219,16 @@ pub fn measure(
         BackendKind::Alsa => measure_alsa("alsa", device, rate, period, buffer),
         BackendKind::PipeWire => measure_alsa("pipewire", device, rate, period, buffer),
         BackendKind::Jack => measure_jack(device, rate, period, buffer),
+        BackendKind::Oboe => LoopbackReport::failure(
+            "oboe",
+            device,
+            rate,
+            period,
+            buffer,
+            0,
+            "oboe",
+            "Oboe is capture-only in this slice; a loopback needs --backend alsa",
+        ),
     }
 }
 

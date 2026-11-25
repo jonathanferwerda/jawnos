@@ -11,6 +11,9 @@
 #   perl scripts/build_engine.pl --check          # report whether it is staged
 #   perl scripts/build_engine.pl --if-stale      # build only when engine/ is newer
 #   perl scripts/build_engine.pl --debug         # build without --release
+#   perl scripts/build_engine.pl --android [--ndk PATH] [--out-dir DIR]
+#                                                # cross-compile libjawn_audio.so
+#                                                # for arm64-v8a (API 26)
 #
 # --if-stale is what a pull and a supervisor start call: the staged binary is a
 # build artifact, and a tree that moved must not boot the previous engine. It
@@ -43,6 +46,20 @@ my $out      = "$root/perl/audio/jawn-audio";
 my $check    = grep { $_ eq '--check' } @ARGV;
 my $if_stale = grep { $_ eq '--if-stale' } @ARGV;
 my $debug    = grep { $_ eq '--debug' } @ARGV;
+my $android  = grep { $_ eq '--android' } @ARGV;
+
+my ( $ndk_arg, $out_dir_arg );
+for ( my $i = 0; $i < @ARGV; $i++ ) {
+	if ( $ARGV[$i] eq '--ndk' ) {
+		die "--ndk wants a path to an Android NDK\n" unless defined $ARGV[ $i + 1 ];
+		$ndk_arg = $ARGV[ ++$i ];
+	}
+	elsif ( $ARGV[$i] eq '--out-dir' ) {
+		die "--out-dir wants a path, e.g. app/src/main/jniLibs\n"
+			unless defined $ARGV[ $i + 1 ];
+		$out_dir_arg = $ARGV[ ++$i ];
+	}
+}
 
 # `--features LIST` overrides the default; an empty list asks for no features.
 my $features;
@@ -134,6 +151,72 @@ my $banner = '';
 chomp $banner;
 print "$banner\n";
 
+# --- the Android library -----------------------------------------------------
+# The app loads `libjawn_audio.so`; the house machines keep `jawn-audio`. The
+# NDK's clang is the linker and the C++ compiler oboe-sys needs, so the script
+# drives it directly through the environment instead of requiring cargo-ndk
+# (docs/studio-oboe-slice.md §2.7, §4).
+if ($android) {
+	my $ndk = resolve_ndk($ndk_arg);
+	if ( !defined $ndk || !-d $ndk ) {
+		die "no Android NDK"
+			. ( defined $ndk ? " at $ndk" : '' )
+			. ": pass --ndk PATH or set ANDROID_NDK_HOME; the engine is optional\n";
+	}
+	my $host_bin = ndk_host_bin($ndk);
+	my $api      = 26;    # the app's minSdk (docs/studio-oboe-slice.md §2.7)
+	my $clang    = File::Spec->catfile( $host_bin, "aarch64-linux-android$api-clang" );
+	my $clangxx  = File::Spec->catfile( $host_bin, "aarch64-linux-android$api-clang++" );
+	my $ar       = File::Spec->catfile( $host_bin, 'llvm-ar' );
+	for my $tool ( $clang, $clangxx, $ar ) {
+		die "the NDK at $ndk has no $tool; the engine is optional\n" unless -x $tool;
+	}
+
+	my $out_dir = $out_dir_arg;
+	if ( !defined $out_dir ) {
+		$out_dir = File::Spec->catdir( $root, 'app', 'src', 'main', 'jniLibs' );
+		die "no --out-dir, and $out_dir does not exist: pass --out-dir DIR\n"
+			unless -d $out_dir;
+	}
+
+	local $ENV{'ANDROID_NDK_HOME'} = $ndk;
+	local $ENV{'CC_aarch64-linux-android'}   = $clang;
+	local $ENV{'CXX_aarch64-linux-android'}  = $clangxx;
+	local $ENV{'AR_aarch64-linux-android'}   = $ar;
+	local $ENV{'CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER'} = $clang;
+
+	my $target = ( defined $ENV{'CARGO_TARGET_DIR'} && length $ENV{'CARGO_TARGET_DIR'} )
+		? $ENV{'CARGO_TARGET_DIR'}
+		: File::Spec->catdir( $root, 'engine', 'target' );
+	my $profile = $debug ? 'debug' : 'release';
+
+	my @cmd = (
+		$cargo, 'build', '--manifest-path', $manifest, '--lib', '--target',
+		'aarch64-linux-android', '--features', 'oboe', '-j', '4'
+	);
+	push @cmd, '--release' unless $debug;
+	print "+ @cmd\n";
+	die "cargo build (Android) failed\n" unless system(@cmd) == 0;
+
+	my $library = File::Spec->catfile(
+		$target, 'aarch64-linux-android', $profile, 'libjawn_audio.so'
+	);
+	die "cargo reported success but $library is missing\n" unless -f $library;
+
+	my $abi_dir = File::Spec->catdir( $out_dir, 'arm64-v8a' );
+	make_path($abi_dir);
+	my $staged = File::Spec->catfile( $abi_dir, 'libjawn_audio.so' );
+	my ( $tmp_fh, $tmp ) = tempfile( 'libjawn_audio.XXXXXX', DIR => $abi_dir, UNLINK => 0 );
+	close $tmp_fh;
+	if ( !copy( $library, $tmp ) || !chmod( 0644, $tmp ) || !rename( $tmp, $staged ) ) {
+		my $err = $!;
+		unlink $tmp if -e $tmp;
+		die "cannot stage $staged: $err\n";
+	}
+	print "built: $staged\n";
+	exit 0;
+}
+
 my $target = ( defined $ENV{'CARGO_TARGET_DIR'} && length $ENV{'CARGO_TARGET_DIR'} )
 	? $ENV{'CARGO_TARGET_DIR'}
 	: File::Spec->catdir( $root, 'engine', 'target' );
@@ -186,3 +269,44 @@ if ( !copy( $binary, $tmp ) || !chmod( 0755, $tmp ) || !rename( $tmp, $out ) ) {
 	die "cannot stage $out: $err\n";
 }
 print "built: $out\n";
+
+# The NDK a cross-build uses: an explicit --ndk, then the conventional
+# environment variables, then the newest NDK under a known SDK root. Nothing
+# here starts a download; an absent NDK is an ordinary "engine is optional".
+sub resolve_ndk {
+	my ($given) = @_;
+	return $given if defined $given && length $given;
+	for my $var (qw(ANDROID_NDK_HOME NDK_HOME ANDROID_NDK_ROOT)) {
+		my $value = $ENV{$var};
+		return $value if defined $value && length $value;
+	}
+	my @roots;
+	for my $base (qw(ANDROID_SDK_ROOT ANDROID_HOME)) {
+		push @roots, File::Spec->catdir( $ENV{$base}, 'ndk' )
+			if defined $ENV{$base} && length $ENV{$base};
+	}
+	push @roots, File::Spec->catdir( $ENV{'HOME'}, 'android-sdk', 'ndk' )
+		if defined $ENV{'HOME'} && length $ENV{'HOME'};
+	for my $root (@roots) {
+		next unless -d $root;
+		opendir( my $dh, $root ) or next;
+		my @versions = sort grep { !/^\.\.?$/ && -d File::Spec->catdir( $root, $_ ) } readdir $dh;
+		closedir $dh;
+		return File::Spec->catdir( $root, $versions[-1] ) if @versions;
+	}
+	return undef;
+}
+
+# The NDK ships one prebuilt toolchain per build host (linux-x86_64 here).
+sub ndk_host_bin {
+	my ($ndk) = @_;
+	my $prebuilt = File::Spec->catdir( $ndk, 'toolchains', 'llvm', 'prebuilt' );
+	die "the NDK at $ndk has no toolchains/llvm/prebuilt; the engine is optional\n"
+		unless -d $prebuilt;
+	opendir( my $dh, $prebuilt ) or die "cannot read $prebuilt: $!\n";
+	my @hosts = sort grep { !/^\.\.?$/ && -d File::Spec->catdir( $prebuilt, $_ ) } readdir $dh;
+	closedir $dh;
+	die "the NDK at $ndk has no prebuilt toolchain; the engine is optional\n"
+		unless @hosts;
+	return File::Spec->catdir( $prebuilt, $hosts[0], 'bin' );
+}
