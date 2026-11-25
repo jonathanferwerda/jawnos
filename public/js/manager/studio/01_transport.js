@@ -459,6 +459,13 @@ function studioTrackSource(src, gain, kind) {
 
 var studioEngineTransportTimer = 0;
 var studioEngineTransportDrift = 0.05;
+// The engine's transport sampled by the status poll and projected on the
+// browser's audio clock between polls. `pos` is the engine's song position at
+// `ctx` (the render time, corrected for the socket round trip), `rate` is the
+// measured ratio of the two clocks and stays 1.0 when both streams share one
+// device, and `latency` is the browser's output latency minus the engine's, so
+// a browser voice is placed where it is heard beside the engine's own click.
+var studioEngineClock = { pos: 0, ctx: 0, rate: 1, latency: 0, valid: false, loop_start: 0, loop_end: 0 };
 // True while the takes are being staged for a first start. A second Play while
 // that upload runs must not start a second staging or a second transport.
 var studioEngineTransportStarting = false;
@@ -838,19 +845,66 @@ function studioEngineSynthRoutingPost() {
 
 function studioEngineTransportPost(action, fields, done) {
 	var data = $.extend({ action: action }, fields || {});
+	var sent = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+	var elapsed = function () {
+		return ((window.performance && window.performance.now) ? window.performance.now() : Date.now()) - sent;
+	};
 	$.ajax({
 		url: '/manager/studio/transport',
 		type: 'POST',
 		data: data,
 		dataType: 'json',
 		success: function (answer) {
-			if (done) { done(studioEngineAnswer(answer)); }
+			if (done) { done(studioEngineAnswer(answer), elapsed()); }
 		},
 		error: function (xhr) {
 			var answer = xhr && xhr.responseJSON;
-			if (done) { done({ ok: false, error: (answer && answer.error) ? answer.error : studioAudioLabel('the audio engine did not answer') }); }
+			if (done) { done({ ok: false, error: (answer && answer.error) ? answer.error : studioAudioLabel('the audio engine did not answer') }, elapsed()); }
 		}
 	});
+}
+
+// Record one engine sample and estimate the clock ratio from the last one. A
+// loop wrap is measured on the loop cycle, so it is never read as a rate jump.
+function studioEngineClockSet(pos, ctxSample, loopStart, loopEnd, latency) {
+	var clock = studioEngineClock;
+	var dt = ctxSample - clock.ctx;
+	if (clock.valid && dt > 0.05 && dt < 2.0) {
+		var dp = pos - clock.pos;
+		var period = (loopEnd > loopStart) ? (loopEnd - loopStart) : 0;
+		if (period > 0) {
+			dp = ((dp % period) + period) % period;
+			if (dp > period / 2) { dp -= period; }
+		}
+		var rate = dp / dt;
+		// A seek or a stalled poll can produce a nonsense ratio; ignore it and
+		// let the next sample settle the clock.
+		if (isFinite(rate) && rate > 0.95 && rate < 1.05) {
+			clock.rate += (rate - clock.rate) * 0.25;
+		}
+	}
+	clock.pos = pos;
+	clock.ctx = ctxSample;
+	clock.latency = latency || 0;
+	clock.loop_start = loopStart || 0;
+	clock.loop_end = loopEnd || 0;
+	clock.valid = true;
+}
+
+// The engine's song position on the browser's audio clock, advanced between
+// polls and corrected by the two outputs' latency difference. Null when no
+// engine sample is valid; the caller then falls back to the polled playhead.
+function studioEngineClockNow() {
+	var ctx = studioAudio.ctx;
+	var clock = studioEngineClock;
+	if (!ctx || !clock.valid) { return null; }
+	var pos = clock.pos + (ctx.currentTime - clock.ctx) * clock.rate + clock.latency;
+	if (clock.loop_end > clock.loop_start) {
+		var length = clock.loop_end - clock.loop_start;
+		pos = clock.loop_start + ((pos - clock.loop_start) % length);
+		if (pos < clock.loop_start) { pos += length; }
+	}
+	return Math.max(0, pos);
 }
 
 // Start the engine clock at a position, or seek the one already running.
@@ -927,7 +981,7 @@ function studioEngineTransportStart(pos, ready, exact) {
 	});
 }
 
-function studioEngineTransportAnswer(data) {
+function studioEngineTransportAnswer(data, rttMs) {
 	if (!data || data.ok !== true) {
 		console.log('studio: engine transport refused, using the browser clock', (data && data.error) || '');
 		studioEngineTransportDrop();
@@ -937,7 +991,7 @@ function studioEngineTransportAnswer(data) {
 	// for this pass so the two never sound together.
 	studioFlushSources();
 	studioEngineTransportPollStart();
-	if (data.transport) { studioEngineTransportApply(data.transport); }
+	if (data.transport) { studioEngineTransportApply(data.transport, rttMs); }
 	// The Synth app's voices are the engine's own, so hand their channel strip
 	// over once the transport is playing.
 	studioEngineSynthRoutingPost();
@@ -957,6 +1011,7 @@ function studioEngineTransportDrop() {
 	studioEngineTransportStarting = false;
 	studioEngineClipsCancel();
 	mixer['time']['engine_transport'] = false;
+	studioEngineClock.valid = false;
 	studioEngineTransportPollStop();
 	// The engine no longer plays the chart: hand it back to the browser
 	// scheduler from the playhead, so a mid-song fallback keeps the beat.
@@ -993,6 +1048,7 @@ function studioEngineTransportSync() {
 function studioEngineTransportStop() {
 	studioEngineTransportPollStop();
 	studioEngineClipsCancel();
+	studioEngineClock.valid = false;
 	// studioTeardown runs before the first mixer exists: studioInit replaces it
 	// after tearing the previous window down. A first open has no transport to
 	// stop, and must not throw out of the rest of studioInit.
@@ -1013,21 +1069,21 @@ function studioEngineTransportPollStop() {
 
 function studioEngineTransportPoll() {
 	if (!mixer['time']['engine_transport']) { studioEngineTransportPollStop(); return; }
-	studioEngineTransportPost('status', {}, function (data) {
+	studioEngineTransportPost('status', {}, function (data, rttMs) {
 		if (!data || data.ok !== true || !data.transport) {
 			studioEngineTransportDrop();
 			return;
 		}
-		studioEngineTransportApply(data.transport);
+		studioEngineTransportApply(data.transport, rttMs);
 	});
 }
 
 // The engine is the clock: update the playhead from it and re-anchor the
 // browser segment when the two have drifted past a small threshold. A loop
 // wrap is compared on the loop cycle, so a wrap is never read as a drift.
-function studioEngineTransportApply(transport) {
+function studioEngineTransportApply(transport, rttMs) {
 	if (!transport || typeof transport.position !== 'number' || !isFinite(transport.position)) { return; }
-	if (transport.state && transport.state != 'playing') {
+	if (transport.state && transport.state !== 'playing') {
 		studioEngineTransportDrop();
 		return;
 	}
@@ -1046,6 +1102,18 @@ function studioEngineTransportApply(transport) {
 		if (drift > period / 2) { drift -= period; }
 	}
 	mixer['time']['position'] = pos;
+	if (ctx) {
+		// The engine sampled this position about half the round trip before the
+		// reply reached the page. Map it onto the browser's audio clock, then
+		// correct for the two output buffers: a sample rendered into a buffer is
+		// heard after that buffer's length, and the browser's is its own latency.
+		var rtt = (isFinite(rttMs) && rttMs > 0) ? (rttMs / 1000) : 0;
+		var browserLatency = isFinite(ctx.outputLatency) ? ctx.outputLatency : 0;
+		var rate = Number(transport.rate) || ctx.sampleRate || 0;
+		var engineLatency = (Number(transport.buffer) > 0 && rate > 0)
+			? (Number(transport.buffer) / rate) : browserLatency;
+		studioEngineClockSet(pos, ctx.currentTime - (rtt / 2), loopStart, loopEnd, browserLatency - engineLatency);
+	}
 	if (Math.abs(drift) > studioEngineTransportDrift && typeof studioClockStart === 'function') {
 		// Re-anchor the segment (and the takes that have not sounded yet) to
 		// the engine position. This never commands the engine again.

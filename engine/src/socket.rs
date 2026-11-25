@@ -4107,6 +4107,9 @@ impl Server {
             hit_tx,
             monitor_input: false,
             monitor_gain: None,
+            buffer: self.config.buffer,
+            period: self.config.period,
+            rate: self.config.rate,
         });
         self.transport_status()
     }
@@ -6913,6 +6916,12 @@ struct TransportSession {
     /// only while attached, so `transport status` reports the value the take
     /// reports without a second copy to drift.
     monitor_gain: Option<Arc<AtomicU32>>,
+    /// The device's configured buffer and period, in frames, and its rate. The
+    /// page maps the transport's position onto its own audio clock with these,
+    /// so a browser voice and the engine's click share one timeline.
+    buffer: usize,
+    period: usize,
+    rate: u32,
 }
 
 impl TransportSession {
@@ -7002,7 +7011,7 @@ impl TransportSession {
             .map(|gain| f32::from_bits(gain.load(Ordering::Acquire)))
             .unwrap_or(1.0);
         format!(
-            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"synth\":{},\"synth_clips\":{},\"apps\":{},\"monitor_input\":{},\"monitor_gain\":{}{}}}",
+            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"synth\":{},\"synth_clips\":{},\"apps\":{},\"monitor_input\":{},\"monitor_gain\":{},\"buffer\":{},\"period\":{},\"rate\":{}{}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
@@ -7018,6 +7027,9 @@ impl TransportSession {
             self.drum_routes + self.synth_routes,
             self.monitor_input,
             monitor_gain,
+            self.buffer,
+            self.period,
+            self.rate.max(1),
             error
         )
     }
@@ -10488,6 +10500,9 @@ break"}"#).is_err());
             hit_tx,
             monitor_input: false,
             monitor_gain: None,
+            buffer: 1024,
+            period: 256,
+            rate: 48_000,
         }
     }
 
@@ -11551,6 +11566,18 @@ break"}"#).is_err());
             "{line}"
         );
         assert!(line.contains("\"position\":12.500000"), "{line}");
+    }
+
+    #[test]
+    fn a_transport_status_carries_its_device_shape() {
+        // The page maps the transport position onto its own audio clock with
+        // these, so a browser voice can be scheduled on the engine's grid.
+        let mut server = socket_server();
+        server.transport = Some(playing_transport(0));
+        let line = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(line.contains("\"buffer\":1024"), "{line}");
+        assert!(line.contains("\"period\":256"), "{line}");
+        assert!(line.contains("\"rate\":48000"), "{line}");
     }
 
     #[test]

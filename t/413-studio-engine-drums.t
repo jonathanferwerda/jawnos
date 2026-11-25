@@ -114,5 +114,11 @@ like( $drums, qr/studioDrumsHighlightStep\(studioDrums\.step\)/,
 	'and lands on the same step the engine is playing' );
 like( $drums, qr/var step = Math\.floor\(pos \/ studioDrums\.stepDur\) % steps;/,
 	'a recorded hit uses the same song grid' );
+like( $drums, qr/function studioDrumsSongPosition\(\)/,
+	'the drums read the audible song position' );
+like( $drums, qr/var engine = studioEngineClockNow\(\);/,
+	'through the projected engine clock when it owns the transport' );
+like( $drums, qr/var pos = studioDrumsSongPosition\(\);/,
+	'and a recorded hit and the highlight use it' );
 
-done_testing();
+ done_testing();

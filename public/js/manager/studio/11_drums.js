@@ -852,13 +852,26 @@ function studioDrumsRecording() {
 	return armed;
 }
 
+// The song position the person is hearing now. While the engine owns the
+// transport its projected clock is the truth (see studioEngineClockNow);
+// otherwise the browser's own segment is. A recorded hit and the lit column
+// both use this, so both agree with the sound.
+function studioDrumsSongPosition() {
+	if (mixer && mixer['time'] && mixer['time']['engine_transport']
+		&& typeof studioEngineClockNow === 'function') {
+		var engine = studioEngineClockNow();
+		if (engine !== null) { return engine; }
+	}
+	return studioKnobNumber(mixer && mixer['time'] ? mixer['time']['position'] : 0, 0);
+}
+
 function studioDrumsCurrentStep() {
 	if (!studioDrums.running || !studioDrums.stepDur) { return 0; }
 	var steps = studioDrums.lengthSteps || 16;
 	// The chart is a pattern on the song's absolute sixteenth grid, the same
 	// one the metronome clicks use, so a recorded hit lands on the step that is
 	// sounding wherever playback started, seeked or looped.
-	var pos = studioKnobNumber(mixer && mixer['time'] ? mixer['time']['position'] : 0, 0);
+	var pos = studioDrumsSongPosition();
 	var step = Math.floor(pos / studioDrums.stepDur) % steps;
 	return ((step % steps) + steps) % steps;
 }
@@ -915,10 +928,11 @@ function studioDrumsTrigger(voice, velocity, record) {
 
 // Where the transport is now, in song seconds. The browser clock's own segment
 // is the most precise source (it is what the takes and clicks are placed on);
-// a native engine that owns the clock reports the position the page polls.
+// when a native engine owns the clock, the projected engine clock is, so the
+// browser's drums are scheduled on the engine's grid rather than beside it.
 function studioDrumsPosition() {
 	if (mixer && mixer['time'] && mixer['time']['engine_transport']) {
-		return studioKnobNumber(mixer['time']['position'], 0);
+		return studioDrumsSongPosition();
 	}
 	var ctx = studioAudio.ctx;
 	var seg = studioAudio.playSeg;
@@ -1068,10 +1082,10 @@ function studioDrumsHighlightStep(step) {
 }
 
 // The engine plays the chart on the song's absolute sixteenth grid, and the
-// position the page polls is the same clock, so the highlight is the step the
-// sound is on, including after a seek or a loop wrap.
+// projected engine clock is the same clock the sound is on, so the highlight is
+// the step being heard, including after a seek or a loop wrap.
 function studioDrumsHighlightEngineStep(stepDur, steps) {
-	var pos = studioKnobNumber(mixer['time']['position'], 0);
+	var pos = studioDrumsSongPosition();
 	var step = Math.floor(pos / stepDur) % steps;
 	studioDrumsHighlightStep(((step % steps) + steps) % steps);
 }

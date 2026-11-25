@@ -24,6 +24,7 @@ my $root = abs_path("$FindBin::Bin/..");
 # The page's take start is read beside the engine sources: arming the monitor
 # there is how the transport change is observed from this side.
 my $studio_js = read_file("$root/public/js/manager/studio.js");
+my $transport = read_file("$root/public/js/manager/studio/01_transport.js");
 
 # --- the engine's command, status and absolute grid ---------------------------
 my $socket = read_file("$root/engine/src/socket.rs");
@@ -857,6 +858,43 @@ like(
 	$help,
 	qr/because the engine swaps the plan without closing the output/,
 	'the help topic says the output stays open'
+);
+
+# --- one clock: the engine position projected onto the page's audio clock -----
+like(
+	$socket,
+	qr/\\"buffer\\":\{\},\\"period\\":\{\},\\"rate\\":\{\}/,
+	'the transport status carries the device shape'
+);
+like(
+	$transport,
+	qr/var studioEngineClock = \{ pos: 0, ctx: 0, rate: 1, latency: 0, valid: false, loop_start: 0, loop_end: 0 \};/,
+	'the page keeps a projected engine clock'
+);
+like(
+	$transport,
+	qr/function studioEngineClockSet\(pos, ctxSample, loopStart, loopEnd, latency\)/,
+	'one status sample sets it'
+);
+like(
+	$transport,
+	qr/function studioEngineClockNow\(\)/,
+	'and the page can read it between polls'
+);
+like(
+	$transport,
+	qr/studioEngineClockSet\(pos, ctx\.currentTime - \(rtt \/ 2\), loopStart, loopEnd, browserLatency - engineLatency\);/,
+	'the socket round trip and the two output latencies are compensated'
+);
+like(
+	$transport,
+	qr/studioEngineTransportApply\(data\.transport, rttMs\)/,
+	'the poll hands the measured round trip to the apply'
+);
+like(
+	$transport,
+	qr/clock\.rate \+= \(rate - clock\.rate\) \* 0\.25;/,
+	'the ratio of the two clocks is measured and smoothed'
 );
 
  done_testing();
