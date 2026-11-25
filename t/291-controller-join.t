@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_device.pm lib/JawnOS/Routes/manager_device.pm lib/JawnOS/Controller/manager_controllers.pm lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Loader.pm scripts/gou_first_boot.pl scripts/gou_provision.pl scripts/gou_wifi_reset.sh public/js/manager/controllers.js templates/controllers/body.html.ep
+# tests-for: lib/JawnOS/Controller/manager_device.pm lib/JawnOS/Routes/manager_device.pm lib/JawnOS/Controller/manager_controllers.pm lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Loader.pm scripts/gou_first_boot.pl scripts/gou_provision.pl scripts/gou_wifi_reset.sh scripts/headscale_preauth.pl public/js/manager/controllers.js templates/controllers/body.html.ep
 # covers:    The join token New writes into a board's image: minted by the press,
 #            redeemed once by the board's first boot, and the card rules that boot
 #            applies before it syncs.
@@ -12,11 +12,12 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use JSON::PP ();
 use Mojo::Log;
 use Mojo::URL;
+require "$FindBin::Bin/../lib/JawnOS/Controller/manager_misc3.pm";
 
 my $JSON = JSON::PP->new->canonical(1);
 
@@ -429,6 +430,100 @@ ok($still_there, 'and its token is still waiting');
 clean_join('testjoinsecret0000000000000000000003', '');
 
 clean_join($secret, $SIG);
+
+
+# ------------------------------------------------------- the hub and the tailnet
+
+# The flashing machine is not always the hub. A trusted machine must be able to
+# vouch a joined board to the hub, so the board has a direct row there and the
+# hub's mirrors list it; otherwise the board is a leaf and stops when the
+# flashing machine is away.
+my $ADMIT_CALLER = 'c1d2e3f405162738495a6b7c8d9e0f10';
+my $ADMIT_BOARD = 'e9ce731a06afcab8f8b4b502637a717d';
+my $ADMIT_UUID = 'admitboarduuid00001';
+my $ADMIT_PUB = $PUB;
+$ADMIT_PUB =~ s/testkeyonly/testadmitky/;
+sub admit_caller {
+	my ($sig) = @_;
+	subs::db_query('delete from remote_machines where signatorial = ?', $sig);
+	subs::db_insert('remote_machines', {
+		uuid => subs::random_string_creator(15),
+		signatorial => $sig, pubkey => $PUB,
+		manager => 'https://192.0.2.10:45545', ip => '192.0.2.10', port => '45545',
+		device => 'computer', connection => 'active',
+		grant_scope => 'trusted', privilege => 'citizen',
+		server_time => subs::rightNow(), timestamp => subs::rightNow(),
+	});
+}
+admit_caller($ADMIT_CALLER);
+subs::db_query('delete from remote_machines where signatorial = ?', $ADMIT_BOARD);
+subs::db_query('delete from paired_devices where uuid = ?', $ADMIT_UUID);
+{
+	no warnings 'redefine';
+	local *subs::peer_verify = sub { return 1 };
+	local *subs::peer_allows = sub { return 1 };
+	my $probe = JoinProbe->new(params => {
+		signatorial => $ADMIT_CALLER,
+		board_uuid => $ADMIT_UUID,
+		board_signatorial => $ADMIT_BOARD,
+		board_pubkey => $ADMIT_PUB,
+		board_name => 'Gou',
+		board_hostname => 'gou',
+		board_address => '192.168.1.76:45545',
+		board_port => '45545',
+		board_version => '0.1.3754',
+	});
+	Manager::action_11112($probe);
+	my $answer = $probe->{'answer'};
+	ok($answer && $answer->{'ok'}, 'a trusted machine can admit a joined board to the hub');
+	my $row = subs::db_select('remote_machines', undef, { signatorial => $ADMIT_BOARD })->hash || {};
+	is($row->{'uuid'}, $ADMIT_UUID, 'the hub files the board under the join uuid');
+	is($row->{'pubkey'}, $ADMIT_PUB, 'with the key the board offered');
+	is($row->{'manager'}, 'https://gou:45545', 'and the tailnet name as the manager origin');
+	is($row->{'grant_scope'}, 'trusted', 'the board is a trusted hub peer');
+	my $roster = subs::db_select('paired_devices', undef, { uuid => $ADMIT_UUID })->hash || {};
+	is($roster->{'kind'}, 'controller', 'and it is on the controller roster');
+	is($answer->{'house'}->{'signatorial'}, subs::signatorial_designer(), 'the hub hands back its own identity');
+}
+subs::db_query('delete from remote_machines where signatorial = ?', $ADMIT_BOARD);
+subs::db_query('delete from paired_devices where uuid = ?', $ADMIT_UUID);
+
+# The Headscale control target lives on one house machine. A trusted peer can
+# ask it to mint a short-lived preauth key; the key is sealed to a one-time
+# secret, so the board token can carry it without the key crossing in the clear.
+my $TAIL_CALLER = 'd1e2f3a405162738495a6b7c8d9e0f11';
+admit_caller($TAIL_CALLER);
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $ssh = "$dir/ssh";
+	write_file($ssh, "#!/bin/sh\ncat <<'JSON'\n{\"id\":1,\"key\":\"pkey_test_value_1234567890\"}\nJSON\n");
+	chmod 0755, $ssh;
+	my $ctl = "$dir/ctltarget";
+	write_file($ctl, "fakehost 102\n");
+	local $ENV{'PATH'} = $dir . ':' . ($ENV{'PATH'} // '');
+	local $ENV{'JAWNOS_HEADSCALE_CTL'} = $ctl;
+	local $ENV{'JAWNOS_HEADSCALE_LOGIN'} = 'https://headscale.example';
+	no warnings 'redefine';
+	local *subs::peer_verify = sub { return 1 };
+	local *subs::peer_allows = sub { return 1 };
+	my $seal = 'S' x 40;
+	my $probe = JoinProbe->new(params => { signatorial => $TAIL_CALLER, seal => $seal });
+	Manager::action_11113($probe);
+	my $answer = $probe->{'answer'};
+	ok($answer && $answer->{'ok'}, 'a trusted machine can mint a tailnet key');
+	my $key = defined $answer->{'sealed'} ? subs::note_decrypter($seal, $answer->{'sealed'}) : undef;
+	is($key, 'pkey_test_value_1234567890', 'the key arrives sealed to the one-time secret');
+	is($answer->{'login_server'}, 'https://headscale.example', 'and names the house login server');
+}
+subs::db_query('delete from remote_machines where signatorial = ?', $TAIL_CALLER);
+
+like($controllers, qr/sub _controller_tailnet_key/, 'the flash looks for a tailnet key');
+like($controllers, qr/tailnet => \$tailnet/, 'and writes it into the board token');
+like(slurp('lib/JawnOS/Controller/manager_device.pm'), qr{/manager/controller_admit}, 'the join vouches the board to the hub');
+like($first_boot, qr/sub _tailnet_join/, 'the board joins the tailnet on first boot');
+like($first_boot, qr/TS_AUTHKEY/, 'with the preauth key in the environment, not argv');
+like($first_boot, qr/_house_row\(\$hub\)/, 'and files the hub beside the flashing machine');
+like($first_boot, qr/sync_hub/, 'so the board follows the hub');
 
 # The join also files the roster row the Controllers page draws.
 my $joined_roster = subs::db_select('paired_devices', undef, { pubkey => $PUB })->hash || {};

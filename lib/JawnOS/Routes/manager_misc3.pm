@@ -25,6 +25,8 @@ sub routes {
 	[11014, 'get', '/manager/sync_rows', 'action_11014'],
 	[11091, 'get', '/manager/sync_tombstones', 'action_11091'],
 	[11111, 'get', '/manager/sync_buckets', 'action_11111'],
+	[11112, 'post', '/manager/controller_admit', 'action_11112'],
+	[11113, 'get', '/manager/tailnet_key', 'action_11113'],
 	[11638, 'post', '/manager/backup/confirm', 'action_11638'],
 	[11740, 'get', '/manager/remote_manager', 'action_11740'],
 	[11741, 'get', '/manager/windows_update', 'action_11741'],

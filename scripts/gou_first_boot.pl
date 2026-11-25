@@ -887,14 +887,28 @@ sub _join {
 		return { ok => 0, error => ($answer->{'error'} || 'the house refused the token (' . $res->code . ')') };
 	}
 	my $sent = ref $answer->{'house'} eq 'HASH' ? $answer->{'house'} : {};
+	my $hub = ref $answer->{'hub'} eq 'HASH' ? $answer->{'hub'} : {};
 	# The house named this board under its domain and, when its CA is here,
 	# issued the leaf for that name. Install it before the manager starts; the
 	# report shows the status, never the key.
 	my $tls = ref $answer->{'tls'} eq 'HASH' ? $answer->{'tls'} : {};
 	my $certificate = &_install_join_certificate($tls);
 	my $row = &_house_row($sent);
+	my $hub_row = (length($hub->{'signatorial'} || '') && length($hub->{'pubkey'} || ''))
+		? &_house_row($hub) : { ok => 0 };
+	# A controller with a reachable hub is a client of that hub, not of the
+	# machine that happened to flash it. The setting is this board's own row, so
+	# the hub choice is not inherited from a computer's settings row. A hub that
+	# is this same machine (the flash ran on it) answers through `house`.
+	my $sync_hub = length($hub->{'signatorial'} || '') ? $hub->{'signatorial'}
+		: (($sent->{'device'} // '') eq 'server' ? ($sent->{'signatorial'} || '') : '');
+	&subs::setting_setter({ app => '__president', setting => 'sync_hub', value => $sync_hub })
+		if length $sync_hub;
 	return {
 		ok => 1, uuid => $answer->{'uuid'}, house => $sent,
+		hub => $hub, sync_hub => $sync_hub,
+		hub_filed => ($hub_row->{'ok'} ? 1 : 0),
+		hub_error => ($answer->{'hub_error'} // ''),
 		filed => ($row->{'ok'} ? 1 : 0),
 		public_host => ($answer->{'public_host'} // ''),
 		tls => $certificate,
@@ -1116,6 +1130,36 @@ sub _key_done_write {
 	return 1;
 }
 
+# A flashed controller should be on the house tailnet from its first boot, so
+# the hub can reach it after the flashing laptop is gone. The token carries a
+# short-lived single-use preauth key; it goes to tailscale in the environment,
+# never argv, and is never reported. A board whose image has no tailscale (or
+# no TUN) reports the failure and stays a LAN peer rather than failing the join.
+sub _tailnet_join {
+	my ($tailnet) = @_;
+	return { ok => 0, error => 'no tailnet token' } unless ref $tailnet eq 'HASH';
+	my $login = $tailnet->{'login_server'} || '';
+	my $key = $tailnet->{'authkey'} || '';
+	my $name = $tailnet->{'hostname'} || &_board_name();
+	return { ok => 0, error => 'the tailnet token is incomplete' }
+		unless $login =~ m{^https?://} && length $key;
+	my ($bin) = &_capture('sh', '-c', 'command -v tailscale');
+	$bin = '' unless defined $bin;
+	$bin =~ s/\s+$//;
+	return { ok => 0, error => 'tailscale is not installed' } unless length $bin;
+	&_capture('systemctl', 'enable', '--now', 'tailscaled');
+	local $ENV{'TS_AUTHKEY'} = $key;
+	my ($said, $status) = &_capture($bin, 'up', '--login-server', $login,
+		'--hostname', $name, '--timeout=30s', '--accept-dns=false');
+	return { ok => 0, error => 'tailscale up failed (' . $status . ')' } unless $status == 0;
+	my ($ip, $ip_status) = &_capture($bin, 'ip', '-4');
+	$ip = '' unless defined $ip;
+	$ip =~ s/\s+$//;
+	return { ok => 0, error => 'tailscale has no IPv4 address' }
+		unless $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	return { ok => 1, ip => $ip };
+}
+
 # ---------------------------------------------------------------------------
 # main
 
@@ -1279,6 +1323,9 @@ if (!$opt{'no_join'} && !$token->{'absent'} && !$token->{'error'}) {
 			else {
 				&_key_pending_write($house->{'signatorial'} || '');
 				_note('the house key did not arrive: ' . ($adopted->{'error'} || 'unknown'));
+			}
+			if (ref $token->{'token'}{'tailnet'} eq 'HASH') {
+				$report->{'tailnet'} = &_tailnet_join($token->{'token'}{'tailnet'});
 			}
 			unlink($token->{'path'}) if -f $token->{'path'};
 			$report->{'token'} = 'redeemed';

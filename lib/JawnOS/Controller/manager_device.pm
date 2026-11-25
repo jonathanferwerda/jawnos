@@ -549,6 +549,63 @@ sub action_38590 {
 		$roster_row->{'timestamp'} = $now;
 		&subs::db_insert('paired_devices', $roster_row);
 	}
+	# The token was minted here, but this machine is not always the house's
+	# hub. Vouch the board to the hub so it has a direct row there too, and
+	# hand the board the hub's identity; otherwise the board is a leaf on this
+	# machine and stops when this machine is away.
+	my $hub_info;
+	my $hub_error = '';
+	my $saved_hub = &subs::setting_grabber({ app => '__president', setting => 'sync_hub' }) || '';
+	my $hub = $saved_hub ? &subs::db_select('remote_machines', undef, { signatorial => $saved_hub })->hash : undef;
+	unless ($hub) {
+		my @servers = grep {
+			(($_->{'device'} // '') eq 'server')
+				&& (($_->{'signatorial'} // '') ne (&subs::signatorial_designer() || ''))
+		} @{ &subs::db_select('remote_machines')->hashes || [] };
+		@servers = sort {
+			(($b->{'connection'} // '') eq 'active' ? 1 : 0) <=> (($a->{'connection'} // '') eq 'active' ? 1 : 0)
+				|| ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0)
+		} @servers;
+		$hub = $servers[0];
+	}
+	if ($hub && ($hub->{'signatorial'} // '') ne (&subs::signatorial_designer() || '')
+		&& $hub->{'pubkey'} && $hub->{'manager'}) {
+		require Mojo::UserAgent;
+		my $hub_url = $hub->{'manager'} . '/manager/controller_admit';
+		my ($secure, $verified) = &subs::peer_secure_url($hub, $hub_url);
+		my $ua;
+		if (!$verified) {
+			$hub_error = 'the hub has no verified peer listener';
+		}
+		else {
+			$hub_url = $secure;
+			$ua = Mojo::UserAgent->new->connect_timeout(3)->inactivity_timeout(10)->request_timeout(20);
+			$hub_error = 'the house CA is not available' unless &subs::peer_tls_verify($ua);
+		}
+		if ($ua && !length $hub_error) {
+			$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req) });
+			my $res = eval {
+				$ua->post($hub_url => form => {
+					signatorial => &subs::signatorial_designer() || '',
+					board_uuid => $uuid,
+					board_signatorial => $signatorial,
+					board_pubkey => $pubkey,
+					board_name => $name,
+					board_hostname => ($wanted->{'hostname'} || $name),
+					board_address => ($host . (length $port ? ':' . $port : '')),
+					board_port => $port,
+					board_ost => $c->param('ost') || '',
+					board_version => $c->param('version') || '',
+				})->result;
+			};
+			if ($res && $res->is_success) {
+				my $answer = eval { decode_json($res->body // '') } || {};
+				if ($answer->{'ok'} && ref $answer->{'house'} eq 'HASH') { $hub_info = $answer->{'house'}; }
+				else { $hub_error = $answer->{'error'} || 'the hub refused the board'; }
+			}
+			else { $hub_error = 'the hub did not answer'; }
+		}
+	}
 	# The leaf is issued after the row exists: the CA signs a name that is now the
 	# board's, and only this response carries the certificate and its key. A board
 	# says whether it proved the house's leaf; the request is signed with its body,
@@ -582,7 +639,10 @@ sub action_38590 {
 			signatorial => &subs::signatorial_designer() || '',
 			pubkey => &subs::peer_pubkey() || '',
 			name => &subs::machine_name() || '',
+			device => &subs::device_setter(),
 		},
+		hub => $hub_info,
+		hub_error => $hub_error,
 	});
 }
 

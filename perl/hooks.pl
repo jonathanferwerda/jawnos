@@ -372,6 +372,12 @@ Manager::app->hook(before_dispatch => sub {
 		# a machine with no session and no key asks a linked machine for the house
 		# key; the route authenticates by peer signature and pinned key itself
 		$path eq '/manager/vault_share' ||
+		# a trusted machine vouches for a controller it just joined, so the hub
+		# files the board directly; peer_verify and the trusted grant are the gate
+		$path eq '/manager/controller_admit' ||
+		# and the same machine asks for a short-lived tailnet preauth key, sealed
+		# to its one-time secret, so the board can join the VPN on first boot
+		$path eq '/manager/tailnet_key' ||
 		# the same bare signed rail carries a rotated key push, the old-seal
 		# sweep, and the security candidates a machine's history no longer holds
 		# between linked machines, and none of those has a session either

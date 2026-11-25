@@ -7,6 +7,7 @@ package Manager;
 use strict;
 use warnings;
 use utf8;
+use Cwd ();
 use feature 'signatures';
 no warnings 'experimental::signatures';
 no warnings 'uninitialized';
@@ -646,6 +647,150 @@ sub action_11111 {
 	}
 	$c->res->headers->content_type('application/octet-stream');
 	$c->render(data => $sealed);
+}
+
+# POST /manager/controller_admit
+# A trusted machine that just joined a controller vouches for it here, so the
+# hub files the board directly instead of leaving it a leaf on the flashing
+# machine. The hub's `mirrors` blob is built from its own remote_machines rows,
+# so this row is also what makes the board a peer of the whole house. The caller
+# is a pinned, trusted peer (the same gate as vault_share); the board's key is
+# pinned now and proves the board on its first signed request.
+sub action_11112 {
+	my $c = shift;
+	my $caller = $c->param('signatorial') || '';
+	my $rm = ($caller && &subs::db_select('remote_machines', undef, { signatorial => $caller })->hash);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
+		$c->rendered(403);
+		return;
+	}
+	my $board_sig = $c->param('board_signatorial') || '';
+	my $board_key = &device_pubkey_clean($c->param('board_pubkey'));
+	unless ($board_sig =~ /^[0-9a-fA-F]{16,64}$/ && length $board_key) {
+		$c->render(json => { ok => 0, error => 'the board has no identity' });
+		return;
+	}
+	my $board_name = substr(($c->param('board_name') || 'Controller'), 0, 60);
+	my $tailnet = $c->param('board_hostname') || $board_name;
+	$tailnet = $board_name unless $tailnet =~ /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/;
+	my $address = $c->param('board_address') || '';
+	$address = ($c->tx->remote_address || '') unless length $address;
+	my $addr = $address;
+	$addr =~ s{^https?://}{};
+	$addr =~ s{/.*$}{};
+	my ($host, $addr_port) = $addr =~ /^(.+?)(?::(\d+))?$/;
+	$host = '' unless defined $host;
+	my $port = $addr_port || $c->param('board_port') || '';
+	my $reachable = length $tailnet ? $tailnet : $host;
+	my $manager = length $reachable
+		? 'https://' . $reachable . (length $port ? ':' . $port : '')
+		: '';
+	my $now = &subs::rightNow();
+	my $known = &subs::db_select('remote_machines', undef, { signatorial => $board_sig })->hash;
+	my $given_uuid = $c->param('board_uuid') || '';
+	my $uuid = ($known && $known->{'uuid'}) ? $known->{'uuid'}
+		: ($given_uuid =~ /^[A-Za-z0-9]{8,40}$/ ? $given_uuid : &subs::random_string_creator(15));
+	my $row = {
+		uuid => $uuid,
+		ip => $host,
+		fqdn => (length $tailnet ? $tailnet : $host),
+		port => $port,
+		manager => $manager,
+		signatorial => $board_sig,
+		pubkey => $board_key,
+		hostname => $board_name,
+		device => 'controller',
+		ost => substr($c->param('board_ost') || '', 0, 40),
+		version => substr($c->param('board_version') || '', 0, 25),
+		status => 'connected',
+		connection => 'active',
+		server_time => $now,
+		timestamp => $now,
+	};
+	my $ok = eval {
+		if ($known) { &subs::db_update('remote_machines', $row, { uuid => $known->{'uuid'} }); }
+		else { &subs::db_insert('remote_machines', $row); }
+		&subs::peer_grant_setter({ uuid => $uuid, scope => 'trusted', privilege => 'citizen', expires => '' });
+		my $roster = &subs::db_select('paired_devices', undef, { uuid => $uuid })->hash
+			|| &subs::db_select('paired_devices', undef, { pubkey => $board_key })->hash;
+		my $roster_row = {
+			name => $board_name,
+			kind => 'controller',
+			status => 'active',
+			pubkey => $board_key,
+			privilege => 'citizen',
+			agent => 'controller admit',
+			server_time => $now,
+		};
+		if ($roster) { &subs::db_update('paired_devices', $roster_row, { uuid => $roster->{'uuid'} }); }
+		else {
+			$roster_row->{'uuid'} = $uuid;
+			$roster_row->{'timestamp'} = $now;
+			&subs::db_insert('paired_devices', $roster_row);
+		}
+		1;
+	};
+	unless ($ok) {
+		$c->render(json => { ok => 0, error => 'the board could not be filed' });
+		return;
+	}
+	$log->info('controller admit: ' . $board_name . ' uuid ' . $uuid . ' by ' . substr($caller, 0, 8));
+	$c->render(json => {
+		ok => 1,
+		board => { uuid => $uuid, signatorial => $board_sig },
+		house => {
+			manager => &subs::house_manager_address(eval { $c->req->url->to_abs->to_string } || ''),
+			signatorial => &subs::signatorial_designer() || '',
+			pubkey => &subs::peer_pubkey() || '',
+			name => &subs::machine_name() || '',
+			device => &subs::device_setter(),
+		},
+	});
+}
+
+# GET /manager/tailnet_key
+# A trusted machine asks for a short-lived tailnet preauth key for a controller
+# it is joining. The Headscale control target lives on one house machine, so the
+# asker walks its roster until one of these routes can mint. The key is sealed
+# to the asker's one-time secret and never logged; the caller gate is the same
+# pinned-key + trusted grant as vault_share.
+sub action_11113 {
+	my $c = shift;
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hash);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
+		$c->rendered(403);
+		return;
+	}
+	my $seal = $c->param('seal') || '';
+	unless ($seal =~ /^[0-9A-Za-z-]{20,80}$/) {
+		$c->render(json => { ok => 0, error => 'no seal' });
+		return;
+	}
+	my $script = eval { Cwd::abs_path('scripts/headscale_preauth.pl') } || '';
+	unless (length $script && -f $script) {
+		$c->render(json => { ok => 0, error => 'no headscale control' });
+		return;
+	}
+	my ($out, $status) = ('', -1);
+	eval {
+		open(my $fh, '-|', $^X, $script) or return;
+		local $/;
+		$out = <$fh> // '';
+		close $fh;
+		$status = $? >> 8;
+	};
+	my $json = eval { decode_json($out) };
+	unless (ref $json eq 'HASH' && $json->{'ok'} && length($json->{'key'} || '')) {
+		$c->render(json => { ok => 0, error => ($json->{'error'} || 'the tailnet key was not minted') });
+		return;
+	}
+	my $sealed = &subs::note_encrypter($seal, $json->{'key'});
+	unless (defined $sealed && length $sealed) {
+		$c->render(json => { ok => 0, error => 'the tailnet key would not seal' });
+		return;
+	}
+	$c->render(json => { ok => 1, sealed => $sealed, login_server => ($json->{'login_server'} || '') });
 }
 
 # POST /manager/backup/confirm

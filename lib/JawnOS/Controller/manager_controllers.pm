@@ -11,6 +11,7 @@ use Cwd ();
 use File::Path ();
 use File::Temp ();
 use Mojo::JSON qw(decode_json encode_json);
+use Mojo::Util qw(url_escape);
 use POSIX ();
 
 no warnings 'uninitialized';
@@ -561,16 +562,64 @@ sub action_54008 {
 # scripts/gou_provision.pl and owns the device fingerprint: these actions only
 # decide who may ask and pass the person's choices through as an argv list.
 
+# A freshly flashed controller should arrive on the house tailnet, not only on
+# the LAN. The Headscale control target lives on one house machine, not always
+# the one flashing the board, so walk the active roster until a peer that can
+# mint answers. The key is sealed to a one-time secret by the donor and only
+# written into the board's 0600 token; it is never logged or put on an argv.
+# A house with no Headscale-enabled machine simply flashes without a tailnet
+# block, exactly as before.
+sub _controller_tailnet_key {
+	my ($c, $hostname) = @_;
+	my $seal = &subs::code_chars_make(40);
+	return undef unless defined $seal && length $seal;
+	my @peers = grep {
+		($_->{'connection'} // '') eq 'active'
+			&& ($_->{'pubkey'} // '') ne ''
+			&& ($_->{'manager'} // '') ne ''
+			&& ($_->{'signatorial'} // '') ne (&subs::signatorial_designer() || '')
+	} @{ &subs::db_select('remote_machines')->hashes || [] };
+	@peers = sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) } @peers;
+	splice @peers, 8;
+	require Mojo::UserAgent;
+	foreach my $rm (@peers) {
+		my $url = $rm->{'manager'} . '/manager/tailnet_key?signatorial='
+			. (&subs::signatorial_designer() || '') . '&seal=' . url_escape($seal);
+		my ($secure, $verified) = &subs::peer_secure_url($rm, $url);
+		next unless $verified;
+		$url = $secure;
+		my $ua = Mojo::UserAgent->new->connect_timeout(2)->inactivity_timeout(5)->request_timeout(8);
+		next unless &subs::peer_tls_verify($ua);
+		$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req) });
+		my $res = eval { $ua->get($url)->result };
+		next unless $res && $res->is_success;
+		my $answer = eval { decode_json($res->body // '') } || {};
+		next unless $answer->{'ok'} && length($answer->{'sealed'} || '');
+		my $key = eval { &subs::note_decrypter($seal, $answer->{'sealed'}) };
+		next unless defined $key && length $key;
+		$key =~ s/\s+$//;
+		return {
+			login_server => ($answer->{'login_server'} || 'https://headscale.jonferwerda.com'),
+			authkey => $key,
+			hostname => ($hostname || 'gou'),
+		};
+	}
+	return undef;
+}
+
 # A token the board can spend on its first boot, and nothing the house keeps in
 # the clear. The secret is written to the machine-local cache (cache is never
 # exported, so it does not sync to peers) and the file itself goes into the
 # flashed rootfs; the boot script deletes it once it has been redeemed. A token
-# costs one citizen press to mint, is single use, and expires in a day.
+# costs one citizen press to mint, is single use, and expires in a day. The
+# tailnet preauth key is a credential too, so it lives only in the 0600 token
+# file, never in the cache or a log.
 sub _controller_join_token {
 	my ($c, $name, $hostname, $card) = @_;
 	my $secret = &subs::random_string_creator(40);
 	my $now = &subs::rightNow();
 	my $manager = &subs::house_manager_address(eval { $c->req->url->to_abs->to_string } || '');
+	my $tailnet = &_controller_tailnet_key($c, $hostname);
 	my $token = {
 		kind => 'jawnos-controller-join',
 		v => 1,
@@ -580,6 +629,7 @@ sub _controller_join_token {
 		# What the person chose for the card before the flash: the card is in the
 		# board, so the answer travels here and the first boot applies it.
 		card => ($card =~ /^(adopt|format)$/ ? $card : ''),
+		tailnet => $tailnet,
 		house => {
 			manager => $manager,
 			signatorial => &subs::signatorial_designer() || '',
