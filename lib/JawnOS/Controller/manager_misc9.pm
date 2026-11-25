@@ -3422,6 +3422,12 @@ sub action_44043 {
 # `pacat`. That is the same transport the Music window uses: the tablet needs no
 # decoder, and no browser is involved.
 #
+# The tap follows the engine's *output bus*, not one transport: it is fed by the
+# Studio transport while that plays and by the house patch while the patchbay
+# owns the outputs, and it outlives either one. A transport stopping is not a
+# reason to drop the controller; only an explicit stop, the engine shutting
+# down, or the controller leaving ends the stream.
+#
 # A physical output is the other, exclusive mode and keeps its own routes
 # (`remote_devices` / `remote_device`). `output=stream` means this path. The
 # controller's machine uuid is resolved from the verified peer row, so a peer
@@ -3488,9 +3494,11 @@ sub studio_monitor_engine_start {
 }
 
 # Read the engine's PCM and hand each block to the Music source. The stream is
-# non-blocking and the read event is the only loop work; a closed socket means
-# the engine's transport ended (or the tap stopped), so the whole stream is
-# taken down with it.
+# non-blocking and the read event is the only loop work. The engine keeps its
+# monitor port open across a transport stop — the stream follows the engine's
+# output bus — so a closed socket here is a real end: an explicit `monitor
+# stop`, engine shutdown, or the tap refusing to start. Only then is the Music
+# source taken down with it.
 sub studio_monitor_pump_start($port, $source) {
 	require IO::Socket::INET;
 	require Mojo::IOLoop::Stream;

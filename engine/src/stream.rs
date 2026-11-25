@@ -20,7 +20,9 @@
 //! pushes every block *after* the source has rendered it. The transport's
 //! source renders the clip mix through the master rack and then adds the click,
 //! so the tap is the final stereo output the room hears — the master rack is
-//! heard, not only the pre-master bus. The push is the lock-free
+//! heard, not only the pre-master bus. The house patch feeds the same ring from
+//! the end of its own render, so the stream follows whichever source owns the
+//! output. The push is the lock-free
 //! [`MonitorBus`](crate::monbus) ring: the audio thread allocates nothing and
 //! takes no lock.
 //!
@@ -154,8 +156,9 @@ impl MonitorControl {
 }
 
 /// The engine's one monitor tap. It owns the writer thread and lives for the
-/// process's lifetime; `start`/`stop` only toggle what the thread serves, so a
-/// transport may start and stop under a stable tap.
+/// process's lifetime; `start`/`stop` only toggle what the thread serves, so the
+/// transport (or the house patch that takes the output) may feed it under a
+/// stable tap and a controller never drops because one source ended.
 pub struct MonitorTap {
     control: MonitorControl,
     handle: Option<JoinHandle<()>>,
@@ -362,6 +365,58 @@ mod tests {
             .expect("read timeout");
         stream.read_exact(&mut buffer).expect("monitor bytes");
         buffer
+    }
+
+    /// One block, then a failure, like a transport whose output loop has
+    /// returned while the tap and its controller stay up.
+    struct EndingSource {
+        blocks: usize,
+    }
+
+    impl RenderSource for EndingSource {
+        fn prepared(&mut self, _rate: u32, _period: usize) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn block(&mut self, out: &mut [f32]) -> Result<(), String> {
+            if self.blocks == 0 {
+                return Err("the transport ended".to_string());
+            }
+            self.blocks -= 1;
+            out.fill(0.25);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_tap_keeps_serving_after_its_inner_source_ends() {
+        let tap = MonitorTap::new();
+        let control = tap.control();
+        let port = control.start(0).expect("bind");
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !control.is_streaming() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(control.is_streaming(), "the client was accepted");
+
+        let mut source = TapSource::new(EndingSource { blocks: 1 }, control.producer());
+        let mut out = vec![0.0f32; 4];
+        source.block(&mut out).expect("the first block renders");
+        let bytes = read_exact(&mut client, 8);
+        assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), 8_192);
+
+        // The wrapped source is over, exactly like a stopped transport. The
+        // writer and its client stay up, so the patch (or a later transport)
+        // can keep feeding the ring.
+        assert!(source.block(&mut out).is_err(), "the inner source ended");
+        assert!(control.is_enabled(), "the stream did not stop with the source");
+        assert!(control.is_streaming(), "and the client stayed connected");
+
+        control.producer().push(&[0.5f32, 0.5]);
+        let bytes = read_exact(&mut client, 4);
+        assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), 16_384);
+        control.stop();
     }
 
     #[test]

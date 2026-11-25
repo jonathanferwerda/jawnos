@@ -19,6 +19,7 @@ my $routes     = read_file("$root/lib/JawnOS/Routes/manager_misc9.pm");
 my $engine     = read_file("$root/lib/JawnOS/Audio/Engine.pm");
 my $socket     = read_file("$root/engine/src/socket.rs");
 my $stream     = read_file("$root/engine/src/stream.rs");
+my $patchbay   = read_file("$root/engine/src/patchbay.rs");
 my $library    = read_file("$root/engine/src/lib.rs");
 my $main       = read_file("$root/engine/src/main.rs");
 my $music      = read_file("$root/perl/Music/02_remote_audio_stream.pl");
@@ -59,9 +60,9 @@ like($music, qr/send\(\{binary => \$bytes\}\)/, 'which sends the PCM unchanged')
 like($controller, qr/IO::Socket::INET->new/, 'the manager dials the loopback port');
 like($controller, qr/studio_monitor_watch_start/, 'a watch catches a controller leaving');
 like($controller, qr/on\(close => sub \{[\s\S]{0,160}studio_monitor_stream_stop/,
-	'the engine closing the port ends the stream');
+	'a closed engine socket ends the stream only after a real stop');
 like($controller, qr/the controller stopped listening/, 'and a silent link is named');
-like($controller, qr/the engine stream ended/, 'as an ended transport is');
+like($controller, qr/the engine stream ended/, 'and a real engine stop or shutdown is named');
 
 # --- the two modes are exclusive and the answer has one shape ----------------
 like($controller, qr/a physical output is chosen with \/manager\/studio\/remote_device/,
@@ -80,7 +81,12 @@ like($socket, qr/fn monitor_command/, 'with one handler');
 like($socket, qr/self\.monitor\.control\(\)\.start\(port\)/, 'start binds the requested port');
 like($socket, qr/jawn_audio::stream::TapSource::new\(source, monitor\.producer\(\)\)/,
 	'the transport is wrapped in the final-output tap');
-like($socket, qr/monitor\.stop\(\)/, 'and the stream stops when the transport ends');
+unlike($socket, qr/monitor\.stop\(\)/, 'the transport ending no longer stops the stream');
+like($socket, qr/attach_monitor\(self\.monitor\.control\(\)\.producer\(\)\)/,
+	'the house patch feeds the same monitor ring');
+like($patchbay, qr/pub fn attach_monitor/, 'the patchbay takes the monitor producer');
+like($patchbay, qr/producer\.push\(&self\.mix\[\.\.stereo\]\)/,
+	'and pushes its final mix into the ring');
 like($socket, qr/fn add_monitor/, 'status gains a monitor fragment');
 like($socket, qr/\\"streaming\\":/, 'the top-level streaming flag');
 like($socket, qr/\\"stream\\":/, 'and the stream object');

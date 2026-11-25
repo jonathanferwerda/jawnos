@@ -41,7 +41,9 @@
 //! the controller's own Music receiver. `{"cmd":"monitor","action":"start",
 //! "port":0}` binds a loopback TCP listener and answers the port; the transport
 //! pushes every finished block through [`jawn_audio::stream::TapSource`] after the
-//! master rack, and the writer thread sends little-endian S16LE stereo. With no
+//! master rack, and the writer thread sends little-endian S16LE stereo. A patch
+//! that owns the output instead feeds the same ring from its final mix, so the
+//! stream follows the engine's output bus rather than one transport. With no
 //! client attached the writer drains and discards, so a late listener never
 //! starts on stale audio. `monitor stop` closes it and `status` reports the
 //! `stream` object and its `streaming` flag. The engine's control socket stays
@@ -1181,9 +1183,9 @@ struct Server {
     /// line as `plan` or `plan_error` beside `machine`.
     boot: BootPlan,
     /// The live monitor tap. It exists for the process's lifetime; `start` and
-    /// `stop` only change what its writer thread serves, so a transport may
-    /// start and stop beneath one stable tap. The audio thread pushes into its
-    /// lock-free ring and never waits on a client.
+    /// `stop` only change what its writer thread serves, so the transport and
+    /// the house patch may take turns feeding it beneath one stable tap. The
+    /// audio thread pushes into its lock-free ring and never waits on a client.
     monitor: MonitorTap,
     /// The uplink's published state. One patch at a time owns the binding, but
     /// the status object outlives a patch, so this is the server's. `off` or
@@ -1334,6 +1336,10 @@ impl Server {
         mut patchbay: Patchbay,
         system_device: Option<String>,
     ) -> Result<PatchSummary, String> {
+        // The live monitor follows the engine's output bus, not the transport.
+        // While this patch owns the outputs it feeds the same ring the transport
+        // taps, so a controller keeps hearing the house mix across either one.
+        patchbay.attach_monitor(self.monitor.control().producer());
         // A plan that declares a handset source gets the reception mixer's call
         // monitor captured here; one that does not runs no extra `parec`. A
         // missing sink silences the node and leaves the rest of the patch up.
@@ -6760,10 +6766,12 @@ fn run_transport(
         }
         BackendKind::Jack => Err(crate::play_support_message()),
     };
-    // The transport owns the output the monitor copied; when it ends, a
-    // connected controller must not keep listening to nothing. The engine's
-    // manager sees the socket close and stops its Music source too.
-    monitor.stop();
+    // The monitor stream outlives this transport. It follows the engine's
+    // output bus: it keeps its listener and client, and serves the house patch's
+    // mix if one takes the output. While nothing feeds the ring the writer sends
+    // no bytes, so the receiver plays its own silence instead of a stale block.
+    // It ends only on an explicit `monitor stop`, engine shutdown
+    // (`MonitorTap::finish`) or the controller disconnecting.
     control.set_playing(false);
     if let Err(message) = outcome {
         if !control.is_stopping() {
@@ -8935,7 +8943,7 @@ break"}"#).is_err());
     }
 
     #[test]
-    fn a_transport_feeds_the_monitor_and_its_end_stops_the_stream() {
+    fn a_transport_feeds_the_monitor_and_its_end_keeps_the_stream() {
         let mut server = socket_server();
         let started = reply(server.handle(r#"{"cmd":"monitor","action":"start","port":0}"#));
         let object = parse_object(&started).expect("the start reply parses");
@@ -8959,12 +8967,84 @@ break"}"#).is_err());
         assert!(status.contains("\"streaming\":true"), "{status}");
         assert!(status.contains("\"monitor_frames\":"), "{status}");
 
-        // The transport owns the output the tap copied: stopping it closes the
-        // controller's socket, so a listener can see the stream ended.
+        // The stream follows the engine's output bus, not the transport: the
+        // transport ending leaves the listener and its client in place, ready
+        // for the house patch to take the output or for an explicit stop.
         let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
         let status = server.status_line();
-        assert!(status.contains("\"stream\":{\"enabled\":false"), "{status}");
-        assert!(status.contains("\"streaming\":false"), "{status}");
+        assert!(status.contains("\"stream\":{\"enabled\":true"), "{status}");
+        assert!(status.contains("\"port\":"), "{status}");
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("read timeout");
+        let mut probe = [0u8; 1];
+        assert!(
+            !matches!(client.read(&mut probe), Ok(0)),
+            "the transport's end did not close the controller"
+        );
+
+        // Only an explicit stop ends it.
+        let stopped = reply(server.handle(r#"{"cmd":"monitor","action":"stop"}"#));
+        assert!(stopped.contains("\"stream\":false"), "{stopped}");
+        assert!(
+            server.status_line().contains("\"stream\":{\"enabled\":false"),
+            "the explicit stop closed it"
+        );
+    }
+
+    #[test]
+    fn a_patch_keeps_feeding_the_monitor_after_the_transport_ends() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"monitor","action":"start","port":0}"#));
+        let object = parse_object(&started).expect("the start reply parses");
+        let port = number(&object, "port").expect("a bound port") as u16;
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("read timeout");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !server.monitor.control().is_streaming() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(server.monitor.control().is_streaming(), "the client connected");
+
+        let playing = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(playing.contains("\"state\":\"playing\""), "{playing}");
+        let mut bytes = [0u8; 16];
+        client.read_exact(&mut bytes).expect("the transport fed the monitor");
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while server
+            .transport
+            .as_ref()
+            .map(TransportSession::is_playing)
+            .unwrap_or(false)
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        // Drain what the transport left in the ring and the socket, so the
+        // bytes read below can only come from the patch.
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("read timeout");
+        let mut drain = [0u8; 4096];
+        while client.read(&mut drain).map(|got| got > 0).unwrap_or(false) {}
+
+        // The house patch owns the output now; it feeds the same ring, so the
+        // controller the transport left behind keeps hearing the room.
+        let patch = r#"{"cmd":"patch","plan":{"sources":[{"id":"in0","kind":"input","channel":0}],"sinks":[{"id":"out","kind":"speakers"}],"routes":[{"from":"in0","to":"out","gain":1,"pan":0}]}}"#;
+        let answer = reply(server.handle(patch));
+        assert!(answer.contains("\"state\":\"patching\""), "{answer}");
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("read timeout");
+        let mut bytes = [0u8; 16];
+        client.read_exact(&mut bytes).expect("the patch fed the monitor");
+
+        let _ = server.handle(r#"{"cmd":"unpatch"}"#);
+        let _ = server.handle(r#"{"cmd":"monitor","action":"stop"}"#);
     }
 
     fn take_status(inserts: &str) -> Status {

@@ -390,6 +390,11 @@ pub struct Patchbay {
     /// The tap this block is feeding, once the control side attached one. The
     /// producer and click are moved here by [`Patchbay::apply_tap`].
     tap_active: Option<ActiveTap>,
+    /// The live monitor ring's push side, when the socket asked this patch to
+    /// feed it. The push runs after the block's final mix (click included),
+    /// exactly as the transport's tap follows its source, so the stream hears
+    /// what the room hears. `None` for a CLI `--patch`, which has no monitor.
+    monitor: Option<Arc<Producer>>,
 }
 
 /// One WAV writer's attachment to one compiled bus.
@@ -471,6 +476,14 @@ impl Patchbay {
     /// mid-patch.
     pub fn tap(&self) -> Arc<BusTap> {
         Arc::clone(&self.tap)
+    }
+
+    /// Feed the engine's live monitor ring from this patch's final mix. The
+    /// socket attaches the process-lifetime tap's producer when it starts a
+    /// patch, so the stream survives a transport stop: whoever owns the output
+    /// — the transport or this patch — is what the controller hears.
+    pub fn attach_monitor(&mut self, producer: Arc<Producer>) {
+        self.monitor = Some(producer);
     }
 
     /// The plan's bus ids in compile order. A bus take names one of these.
@@ -924,6 +937,7 @@ impl Patchbay {
             mix: Vec::new(),
             tap: Arc::new(BusTap::new(bus_count)),
             tap_active: None,
+            monitor: None,
         })
     }
 
@@ -1849,6 +1863,13 @@ impl Patchbay {
                 click.render_into(&mut self.mix[..stereo]);
             }
         }
+
+        // The live monitor hears the room: the same block the device plays,
+        // after the click. The push is lock-free and the ring drops rather than
+        // waits, so a slow controller never touches the patch's deadline.
+        if let Some(producer) = self.monitor.as_ref() {
+            let _ = producer.push(&self.mix[..stereo]);
+        }
         Ok(())
     }
 }
@@ -2424,6 +2445,24 @@ mod tests {
         for frame in output.chunks(2) {
             assert!((frame[0] - expected).abs() < 1e-5, "{frame:?}");
             assert!((frame[1] - expected).abs() < 1e-5, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn a_monitor_feed_receives_the_final_mix() {
+        let mut patchbay = prepared(TWO_INTO_ONE);
+        let (producer, consumer) = jawn_audio::monbus::new(4096);
+        patchbay.attach_monitor(Arc::new(producer));
+
+        let input = [0.5f32, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+
+        let mut streamed = [0.0f32; 8];
+        assert_eq!(consumer.pop(&mut streamed), 4, "the monitor received the mix");
+        for (heard, played) in streamed.chunks(2).zip(output.chunks(2)) {
+            assert!((heard[0] - played[0]).abs() < 1e-6, "{heard:?} vs {played:?}");
+            assert!((heard[1] - played[1]).abs() < 1e-6, "{heard:?} vs {played:?}");
         }
     }
 

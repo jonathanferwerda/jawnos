@@ -376,6 +376,30 @@ UDP, no Opus, no multi-track, no patchbay.
 Any APK change bumps `versionCode`/`versionName` and is built and published in the same
 change (`~/jawnos-app/termux-app/AGENTS.md`).
 
+### The monitor stream
+
+The engine's live monitor is what puts a phone in the monitor's seat (roadmap class C).
+`{"cmd":"monitor","action":"start","port":0}` binds a loopback TCP port and the engine writes
+its final stereo mix as S16LE at 48 kHz; the manager's existing Music receiver plays it with
+`pacat`, so the tablet needs no decoder and no browser is in the path.
+
+The stream follows the engine's **output bus**, not any one source:
+
+- While the Studio transport owns the output, `TapSource` pushes each finished block — after the
+  master rack and the click — into the lock-free ring (`engine/src/stream.rs`).
+- While the house patch owns the output, the patchbay pushes its final mix — after the bus sends,
+  the system fallback and a bus take's click — into the same ring (`engine/src/patchbay.rs`).
+- A transport stop does **not** stop the stream. The listener, the port and a connected
+  controller stay up; if nothing is feeding the ring the writer simply sends nothing, so a later
+  patch (or the next transport) is heard live rather than from a stale backlog.
+
+That is the ownership rule unchanged: the transport owns the output *while it runs* and a patch
+refuses while it does, but the monitor is not the output — it is the ear on whoever owns it. The
+stream ends on exactly three things: an explicit `monitor stop`, engine shutdown
+(`MonitorTap::finish`), or the controller disconnecting. The manager keeps the Music source until
+one of those, so a refused start still tears down the port and the source together and the page
+never shows a stream the engine did not open.
+
 ---
 
 ## 5. Phases
