@@ -310,13 +310,12 @@ SKIP: {
 	# the suite runs them too rather than trusting a manual `cargo test`. The
 	# app voices (synth, drums) are workspace members and their tests run here
 	# too, so a DSP crate is never a file the suite skips.
-	# Four test threads, the same cap the repository puts on every build: the
-	# CLI tests spawn the binary and measure timing, and this box has enough
-	# cores that cargo's default (one per core) lets them starve each other
-	# under the suite's own load. A real failure still fails on four.
+	# One test thread: the CLI tests spawn the binary and measure timing, and
+	# under the suite's own load even four let them starve each other. The
+	# serial crate run is slower but deterministic; a real failure still fails.
 	my ( $tcode, $ttext, $terr ) = capture(
 		'cargo', 'test', '--offline', '--workspace', '--manifest-path',
-		"$dir/engine/Cargo.toml", '--', '--test-threads=4'
+		"$dir/engine/Cargo.toml", '--', '--test-threads=1'
 	);
 	is( $tcode, 0, q{the crate's own tests pass} ) or diag( $ttext . $terr );
 }
