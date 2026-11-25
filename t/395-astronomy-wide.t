@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Astronomy.pm lib/JawnOS/Domain/Budget2.pm lib/JawnOS/Domain/Evaluation.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Domain/Web.pm templates/apps/weather/now.html.ep templates/apps/weather/style.html.ep templates/handbook/evaluation.html.ep templates/apps/evaluation_wide_controls.html.ep public/js/manager/weather.js perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl scripts/moon_backfill.pl scripts/space_weather_backfill.pl perl/Alarm.pl
+# tests-for: lib/JawnOS/Domain/Astronomy.pm lib/JawnOS/Domain/Budget2.pm lib/JawnOS/Domain/Evaluation.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Domain/Web.pm templates/apps/weather/now.html.ep templates/apps/weather/style.html.ep templates/handbook/evaluation.html.ep templates/apps/evaluation_wide_controls.html.ep public/js/manager/weather.js perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl scripts/moon_backfill.pl scripts/space_weather_backfill.pl perl/Alarm.pl scripts/astronomy_measure_repair.pl
 # covers:    the moon computed locally (no scraper), NOAA's space-weather products
 #            parsed into one reading, the measure writer/backfill, the whole-house
 #            digest and its automatic fit, the manual-only guard, and the weather
@@ -544,6 +544,45 @@ sub utc_ms {
 {
 	my $alarm = read_file("$root/perl/Alarm.pl");
 	like($alarm, qr/coalesce\(type, ''\) <> 'measure'/, 'the alarm query leaves a daily measurement out');
+}
+
+# --- the old sky rows get their warranty in one pass ------------------------
+{
+	my $now = utc_ms(2026, 11, 25, 18, 0, 0);
+	my (@updated, @asked);
+	local *subs::rightNow = sub { return $now };
+	local *subs::db_query = sub {
+		push @asked, [ @_ ];
+		return FakeResult->new([
+			{ uuid => 'has-both', app => 'moon', timestamp => utc_ms(2026, 11, 20, 17, 0, 0),
+			  server_time => utc_ms(2026, 11, 20, 17, 0, 0), warranty => '2110000000000', seen => 'yes' },
+			{ uuid => 'no-warranty', app => 'space_weather', timestamp => utc_ms(2026, 11, 24, 17, 0, 0),
+			  server_time => utc_ms(2026, 11, 24, 17, 0, 0), warranty => undef, seen => 'yes' },
+			{ uuid => 'no-seen', app => 'magnetometer', timestamp => utc_ms(2026, 11, 24, 17, 0, 0),
+			  server_time => utc_ms(2026, 11, 24, 17, 0, 0), warranty => '2110000000000', seen => undef },
+		]);
+	};
+	local *subs::db_update = sub { push @updated, [ @_ ] };
+
+	my $dry = &subs::astronomy_measure_repair(0);
+	is(scalar @{$dry->{'rows'}}, 2, 'a dry run finds the two rows that need repair');
+	is(scalar @updated, 0, 'and writes nothing');
+	like($asked[0][0], qr/app in \(\?, \?, \?\)/, 'the query is limited to the sky apps');
+
+	my $applied = &subs::astronomy_measure_repair(1);
+	is(scalar @{$applied->{'rows'}}, 2, 'the applied pass reports the same rows');
+	is(scalar @updated, 2, 'and writes both');
+	my %by_uuid = map { $_->[2]{'uuid'} => $_->[1] } @updated;
+	ok(defined $by_uuid{'no-warranty'}{'warranty'} && $by_uuid{'no-warranty'}{'warranty'} > $now,
+		'the missing warranty is stamped for the future');
+	is($by_uuid{'no-seen'}{'seen'}, 'yes', 'the missing seen mark is added');
+	ok(!exists $by_uuid{'has-both'}, 'a complete row is not touched');
+}
+
+# --- the repair has a CLI ---------------------------------------------------
+{
+	my $script = read_file("$root/scripts/astronomy_measure_repair.pl");
+	like($script, qr/subs::astronomy_measure_repair\(\$apply\)/, 'the repair script runs the shared backfill');
 }
 
 done_testing();

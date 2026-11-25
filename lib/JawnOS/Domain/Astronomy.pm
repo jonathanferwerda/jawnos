@@ -1153,4 +1153,45 @@ sub astronomy_backfill ($opts = {}) {
 	return { days => $count, written => ($dry ? 0 : $written), dry_run => $dry };
 }
 
+# The sky's readings were written for a long time without the term every other
+# permanent measure row carries (and, after the local writer arrived, without
+# `seen`). Give each one the warranty it should have had, from its own moment,
+# and mark it as already announced. Only a row missing a value is touched, and
+# the update names its uuid and app, so re-running is safe.
+sub astronomy_measure_repair ($apply = 0) {
+	my @apps = qw(moon space_weather magnetometer);
+	my $rows = eval {
+		&db_query(
+			"select uuid, app, timestamp, server_time, warranty, seen from appointments"
+			. " where type = 'measure' and app in (?, ?, ?)"
+			. " order by cast(timestamp as integer) asc",
+			@apps
+		)->hashes;
+	} || [];
+	my (%by_app, @out);
+	foreach my $row ( @{$rows} ) {
+		next unless ref $row eq 'HASH';
+		my $app = $row->{'app'} // '';
+		next unless defined $app && length $app;
+		my %fix;
+		unless (defined $row->{'warranty'} && $row->{'warranty'} =~ /\S/) {
+			my $holder = (0 + ($row->{'timestamp'} || 0)) > (0 + ($row->{'server_time'} || 0))
+				? (0 + $row->{'timestamp'}) : (0 + $row->{'server_time'});
+			$holder = &rightNow() unless $holder;
+			my $warranty = &ago_calc('-10y', $holder);
+			$fix{'warranty'} = $warranty if defined $warranty && $warranty =~ /^\d{12,}$/;
+		}
+		$fix{'seen'} = 'yes' unless defined $row->{'seen'} && $row->{'seen'} eq 'yes';
+		next unless scalar keys %fix;
+		$by_app{$app}++;
+		if ($apply && defined $row->{'uuid'} && length $row->{'uuid'}) {
+			&db_update('appointments',
+				{ %fix, server_time => &rightNow() },
+				{ uuid => $row->{'uuid'}, app => $app });
+		}
+		push @out, { app => $app, uuid => $row->{'uuid'}, %fix };
+	}
+	return { rows => \@out, apps => \%by_app, applied => ($apply ? 1 : 0) };
+}
+
 1;
