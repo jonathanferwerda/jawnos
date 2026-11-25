@@ -165,6 +165,11 @@ pub struct OboeReport {
     pub performance: String,  // getPerformanceMode(): "LowLatency" | ...
     pub xruns: u32,           // getXRunCount()
     pub frames_captured: u64,
+    pub frames_written: u64,   // DiskWriter::finish()
+    pub dropped: u64,          // captured but not written
+    pub dropped_ring: u64,     // ring full, drain fell behind
+    pub dropped_disk: u64,     // disk queue full, writer fell behind
+    pub dropped_callback: u64, // one callback larger than the scratch
     pub peak: f32,
 }
 
@@ -407,8 +412,15 @@ One JSON object per status call, matching the engine's existing style:
 {"ok":true,"backend":"oboe","device":"Built-in Mic","rate":48000,
  "frames":192,"buffer":960,"channels":1,"sharing":"Exclusive",
  "performance":"LowLatency","xruns":0,"frames_captured":288000,
- "peak":0.31,"take":"/data/user/0/com.jawnos/files/studio/take-…wav"}
+ "frames_written":288000,"dropped":0,"dropped_ring":0,"dropped_disk":0,
+ "dropped_callback":0,"peak":0.31,
+ "take":"/data/user/0/com.jawnos/files/studio/take-…wav"}
 ```
+
+`frames_captured` is what the callback received, `frames_written` what the WAV
+holds, and `dropped` (`dropped_ring + dropped_disk`) explains any difference;
+`dropped_callback` counts a single callback larger than the fixed scratch
+(normally 0). A take is complete when `frames_written == frames_captured`.
 
 `--backends --json` in an Oboe build says `"oboe":true`; in every other build it
 says `false`. That pair is the honesty test the roadmap asks for.
@@ -464,9 +476,13 @@ feature-on build loads on the device: `jawn-audio --backends --json` reports
 | 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
 | 5. The mobile-audio §6 round trip recorded | **BLOCKED** — capture-only, no duplex stream and no click, so the round trip was not measured |
 
-- **(a) The stop path loses the ring tail.** 0 frames on the 10 s smoke, 480 frames / 10.0 ms on
-the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take; `OboeReport` does not carry the
-loss.
+- **(a) The loss is in-take overflow, not the stop-path tail.** 0 frames on the 10 s smoke,
+480 frames / 10.0 ms on the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take — each an
+exact multiple of the 96-frame burst (5 and 12 callbacks). `drain_ring` already drains the ring
+after the stream stops, so the tail is not the cause: the frames were captured and then
+discarded while the take ran. `OboeReport` did not carry the loss; it now reports
+`frames_written` and a `dropped` total split into `dropped_ring` and `dropped_disk`, so the next
+take says which overflow it was.
 - **(b) The 10 min built-in-mic take clipped** at 1.000 (0.0 dBFS); the USB take did not (peak
 0.195862, −14.2 dBFS).
 - **(c) The granted buffer is 2,976 frames / 62.0 ms** (burst 96 frames / 2.0 ms) on every run —

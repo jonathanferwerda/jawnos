@@ -11,6 +11,11 @@
 //! cadence. A full ring drops the newest frames and counts them, exactly as the
 //! Linux monitor bus does.
 //!
+//! The report carries both ends of that accounting: `frames_captured` from the
+//! callback and `frames_written` from the WAV, plus the overflow split
+//! (`dropped_ring` + `dropped_disk`), so a short take explains itself instead of
+//! leaving the difference to be inferred.
+//!
 //! Capture only in this slice: Oboe has no `FullDuplex` mode, so the duplex
 //! (monitor-out) variant reads the input from an output callback and arrives
 //! with the headphone-only monitoring half.
@@ -68,6 +73,22 @@ pub struct OboeReport {
     pub xruns: u32,
     /// Every frame the callback received, including frames the ring dropped.
     pub frames_captured: u64,
+    /// Frames the WAV actually holds: the `DiskWriter::finish` count. Zero
+    /// when the take ran without an `out` path.
+    pub frames_written: u64,
+    /// Frames captured but never written: `dropped_ring + dropped_disk`. With a
+    /// WAV this is exactly `frames_captured - frames_written`.
+    pub dropped: u64,
+    /// Of `dropped`: frames the monitor ring discarded because the drain fell
+    /// behind (the newest frames are dropped when the ring is full).
+    pub dropped_ring: u64,
+    /// Of `dropped`: frames the disk queue refused because the writer thread
+    /// fell behind, so the block never reached the file.
+    pub dropped_disk: u64,
+    /// Frames the device handed in one callback larger than
+    /// `MAX_CALLBACK_FRAMES`, so they were never offered to the ring. These are
+    /// outside `frames_captured`; normally zero.
+    pub dropped_callback: u64,
     pub peak: f32,
 }
 
@@ -93,7 +114,11 @@ pub fn run_capture(
     let peak = Arc::new(AtomicU32::new(0));
     let frames = Arc::new(AtomicU64::new(0));
     let callbacks = Arc::new(AtomicU64::new(0));
-    let dropped = Arc::new(AtomicU64::new(0));
+    // Two independent losses: the callback's own truncation, and the ring's
+    // overflow when the drain fell behind. Both are measured so the report can
+    // split them instead of leaving the gap unexplained.
+    let dropped_callback = Arc::new(AtomicU64::new(0));
+    let dropped_ring = Arc::new(AtomicU64::new(0));
     let enabled = Arc::new(AtomicBool::new(true));
 
     let attempt = |sharing: SharingMode| -> Result<
@@ -106,7 +131,8 @@ pub fn run_capture(
             Arc::clone(&peak),
             Arc::clone(&frames),
             Arc::clone(&callbacks),
-            Arc::clone(&dropped),
+            Arc::clone(&dropped_callback),
+            Arc::clone(&dropped_ring),
             Arc::clone(&enabled),
         );
         open_stream(device_id, sharing, callback).map(|stream| (stream, consumer))
@@ -179,9 +205,18 @@ pub fn run_capture(
     enabled.store(false, Ordering::Release);
     let _ = stream.stop();
     sink_stop.store(true, Ordering::Release);
-    sink.join()
+    let drained = sink
+        .join()
         .map_err(|_| "the Oboe disk thread panicked".to_string())?
         .map_err(|error| format!("cannot finish the Oboe take: {error}"))?;
+
+    let frames_captured = frames.load(Ordering::Acquire);
+    let dropped_ring = dropped_ring.load(Ordering::Acquire);
+    let dropped_disk = drained.dropped;
+    // Everything the callback handed the ring that never reached the file. With
+    // a WAV this also equals `frames_captured - frames_written`; without one,
+    // both are zero and this honestly reports no overflow loss.
+    let dropped = dropped_ring + dropped_disk;
 
     Ok(OboeReport {
         device: device_label(device_id),
@@ -192,7 +227,12 @@ pub fn run_capture(
         sharing,
         performance,
         xruns,
-        frames_captured: frames.load(Ordering::Acquire),
+        frames_captured,
+        frames_written: drained.written,
+        dropped,
+        dropped_ring,
+        dropped_disk,
+        dropped_callback: dropped_callback.load(Ordering::Acquire),
         peak: f32::from_bits(peak.load(Ordering::Acquire)),
     })
 }
@@ -238,7 +278,11 @@ struct CaptureCallback {
     peak: Arc<AtomicU32>,
     frames: Arc<AtomicU64>,
     callbacks: Arc<AtomicU64>,
-    dropped: Arc<AtomicU64>,
+    /// Frames dropped because one callback exceeded the scratch capacity.
+    dropped_callback: Arc<AtomicU64>,
+    /// Frames the ring refused because it was full; `ingest` counts the
+    /// `Producer::push` return value, which it used to discard.
+    dropped_ring: Arc<AtomicU64>,
     enabled: Arc<AtomicBool>,
 }
 
@@ -248,7 +292,8 @@ impl CaptureCallback {
         peak: Arc<AtomicU32>,
         frames: Arc<AtomicU64>,
         callbacks: Arc<AtomicU64>,
-        dropped: Arc<AtomicU64>,
+        dropped_callback: Arc<AtomicU64>,
+        dropped_ring: Arc<AtomicU64>,
         enabled: Arc<AtomicBool>,
     ) -> Self {
         Self {
@@ -257,7 +302,8 @@ impl CaptureCallback {
             peak,
             frames,
             callbacks,
-            dropped,
+            dropped_callback,
+            dropped_ring,
             enabled,
         }
     }
@@ -284,10 +330,17 @@ impl CaptureCallback {
             self.scratch[index * 2 + 1] = value;
         }
         if count > 0 {
-            self.producer.push(&self.scratch[..count * 2]);
+            // The ring drops the newest frames when the drain falls behind;
+            // `push` returns how many it refused, so time it here rather than
+            // letting the loss vanish into `frames_captured - frames_written`.
+            let overflow = self.producer.push(&self.scratch[..count * 2]);
+            if overflow > 0 {
+                self.dropped_ring
+                    .fetch_add(overflow as u64, Ordering::Relaxed);
+            }
         }
         if audio_data.len() > count {
-            self.dropped
+            self.dropped_callback
                 .fetch_add((audio_data.len() - count) as u64, Ordering::Relaxed);
         }
         self.frames.fetch_add(count as u64, Ordering::Relaxed);
@@ -329,6 +382,13 @@ fn note_peak(slot: &AtomicU32, value: f32) {
     }
 }
 
+/// What one drain thread got out of the ring. `written` is what the WAV holds;
+/// `dropped` is what the disk queue refused on the way there.
+struct Drained {
+    written: u64,
+    dropped: u64,
+}
+
 /// The non-audio side of the take: pull the ring into fixed buffers and hand
 /// whole blocks to the WAV writer. Allocation and file I/O happen here, never
 /// in the callback.
@@ -337,7 +397,7 @@ fn drain_ring(
     mut disk: Option<DiskWriter>,
     period: usize,
     stop: &AtomicBool,
-) -> Result<u64, crate::wav::WavError> {
+) -> Result<Drained, crate::wav::WavError> {
     let period = period.max(1);
     let mut stereo = vec![0.0f32; period * 2];
     let mut mono = vec![0i16; period];
@@ -361,8 +421,18 @@ fn drain_ring(
         push_block(&mut disk, &mut mono, &stereo, got);
     }
     match disk {
-        Some(writer) => writer.finish(),
-        None => Ok(0),
+        Some(writer) => {
+            // Read the queue's own drop count before `finish` consumes the
+            // handle; without it the ring overflow and the disk overflow are
+            // indistinguishable in the take's shortfall.
+            let dropped = writer.dropped_frames();
+            let written = writer.finish()?;
+            Ok(Drained { written, dropped })
+        }
+        None => Ok(Drained {
+            written: 0,
+            dropped: 0,
+        }),
     }
 }
 
@@ -411,7 +481,7 @@ fn lock_control() -> std::sync::MutexGuard<'static, Control> {
 /// One JSON object, matching the engine's existing status style.
 fn report_json(report: &OboeReport, take: &str) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"oboe\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"buffer\":{},\"channels\":{},\"sharing\":\"{}\",\"performance\":\"{}\",\"xruns\":{},\"frames_captured\":{},\"peak\":{:.6},\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"oboe\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"buffer\":{},\"channels\":{},\"sharing\":\"{}\",\"performance\":\"{}\",\"xruns\":{},\"frames_captured\":{},\"frames_written\":{},\"dropped\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"dropped_callback\":{},\"peak\":{:.6},\"take\":\"{}\"}}",
         json_escape(&report.device),
         report.rate,
         report.frames,
@@ -421,6 +491,11 @@ fn report_json(report: &OboeReport, take: &str) -> String {
         json_escape(&report.performance),
         report.xruns,
         report.frames_captured,
+        report.frames_written,
+        report.dropped,
+        report.dropped_ring,
+        report.dropped_disk,
+        report.dropped_callback,
         report.peak,
         json_escape(take),
     )
@@ -596,21 +671,24 @@ mod tests {
         let peak = Arc::new(AtomicU32::new(0));
         let frames = Arc::new(AtomicU64::new(0));
         let callbacks = Arc::new(AtomicU64::new(0));
-        let dropped = Arc::new(AtomicU64::new(0));
+        let dropped_callback = Arc::new(AtomicU64::new(0));
+        let dropped_ring = Arc::new(AtomicU64::new(0));
         let enabled = Arc::new(AtomicBool::new(true));
         let mut callback = CaptureCallback::new(
             producer,
             Arc::clone(&peak),
             Arc::clone(&frames),
             Arc::clone(&callbacks),
-            Arc::clone(&dropped),
+            Arc::clone(&dropped_callback),
+            Arc::clone(&dropped_ring),
             enabled,
         );
         let block = [16_384i16, -16_384, 0];
         callback.ingest(&block);
         assert_eq!(frames.load(Ordering::Acquire), 3);
         assert_eq!(callbacks.load(Ordering::Acquire), 1);
-        assert_eq!(dropped.load(Ordering::Acquire), 0);
+        assert_eq!(dropped_callback.load(Ordering::Acquire), 0);
+        assert_eq!(dropped_ring.load(Ordering::Acquire), 0);
         assert_eq!(f32::from_bits(peak.load(Ordering::Acquire)), 0.5);
 
         let mut out = [0.0f32; 6];
@@ -620,18 +698,48 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_callback_does_no_work() {
-        let (producer, consumer) = monbus::new(64);
+    fn the_callback_counts_ring_overflow() {
+        // A ring no one drains: the callback must measure what `push` refused
+        // instead of letting it disappear between captured and written.
+        let (producer, _consumer) = monbus::new(monbus::MIN_FRAMES);
         let peak = Arc::new(AtomicU32::new(0));
         let frames = Arc::new(AtomicU64::new(0));
         let callbacks = Arc::new(AtomicU64::new(0));
-        let dropped = Arc::new(AtomicU64::new(0));
+        let dropped_callback = Arc::new(AtomicU64::new(0));
+        let dropped_ring = Arc::new(AtomicU64::new(0));
         let mut callback = CaptureCallback::new(
             producer,
             Arc::clone(&peak),
             Arc::clone(&frames),
             Arc::clone(&callbacks),
-            Arc::clone(&dropped),
+            Arc::clone(&dropped_callback),
+            Arc::clone(&dropped_ring),
+            Arc::new(AtomicBool::new(true)),
+        );
+
+        let block = vec![1i16; monbus::MIN_FRAMES + 16];
+        callback.ingest(&block);
+
+        assert_eq!(frames.load(Ordering::Acquire), (monbus::MIN_FRAMES + 16) as u64);
+        assert_eq!(dropped_ring.load(Ordering::Acquire), 16);
+        assert_eq!(dropped_callback.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn a_disabled_callback_does_no_work() {
+        let (producer, consumer) = monbus::new(64);
+        let peak = Arc::new(AtomicU32::new(0));
+        let frames = Arc::new(AtomicU64::new(0));
+        let callbacks = Arc::new(AtomicU64::new(0));
+        let dropped_callback = Arc::new(AtomicU64::new(0));
+        let dropped_ring = Arc::new(AtomicU64::new(0));
+        let mut callback = CaptureCallback::new(
+            producer,
+            Arc::clone(&peak),
+            Arc::clone(&frames),
+            Arc::clone(&callbacks),
+            Arc::clone(&dropped_callback),
+            Arc::clone(&dropped_ring),
             Arc::new(AtomicBool::new(false)),
         );
         callback.ingest(&[100, 200, 300, 400]);
@@ -653,6 +761,11 @@ mod tests {
             performance: "LowLatency".to_string(),
             xruns: 0,
             frames_captured: 288_000,
+            frames_written: 288_000,
+            dropped: 0,
+            dropped_ring: 0,
+            dropped_disk: 0,
+            dropped_callback: 0,
             peak: 0.31,
         };
         let text = report_json(&report, "/data/take.wav");
@@ -665,6 +778,11 @@ mod tests {
             "\"sharing\":\"Exclusive\"",
             "\"performance\":\"LowLatency\"",
             "\"frames_captured\":288000",
+            "\"frames_written\":288000",
+            "\"dropped\":0",
+            "\"dropped_ring\":0",
+            "\"dropped_disk\":0",
+            "\"dropped_callback\":0",
             "\"take\":\"/data/take.wav\"",
         ] {
             assert!(text.contains(needle), "{needle} missing from {text}");

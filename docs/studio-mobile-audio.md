@@ -522,10 +522,15 @@ loads and opens Oboe on the device.
 
 Three findings, none of them a reason to argue with the numbers:
 
-- **(a) The stop path loses the ring tail.** 0 frames on the 10 s take, 480 frames / 10.0 ms on
-the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take — one partial buffer fill each
-time. `OboeReport` does not carry the loss, so a take can be short of `frames_captured` with
-nothing in the status line saying so.
+- **(a) The loss is in-take overflow, not the stop-path tail.** 0 frames on the 10 s take,
+480 frames / 10.0 ms on the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take — each an
+exact multiple of the 96-frame burst (5 and 12 callbacks). `drain_ring` already has a post-stop
+drain loop, so the ring tail is not the cause: the frames were captured and then discarded while
+the take ran, when the ring or the disk queue was full. `OboeReport` did not carry the loss; it
+now reports `frames_written` and a `dropped` total split into `dropped_ring` (the ring was full
+because the drain fell behind) and `dropped_disk` (the disk queue was full because the writer
+thread fell behind). The next 60 s take's split names which one; only then is raising
+`RING_FRAMES` justified.
 - **(b) The 10 min built-in-mic take clipped.** Peak 1.000 (0.0 dBFS, mean −33.4 dB); the UM2
 take did not (peak 0.195862, −14.2 dBFS, mean −43.1 dB). The built-in mic's gain, not the
 engine's S16 path, is where to look.

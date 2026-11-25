@@ -182,6 +182,21 @@ SKIP: {
 	like( $device, qr/extern "C" fn jawn_audio_stop/, 'a stop' );
 	like( $device, qr/extern "C" fn jawn_audio_status/, 'and a status' );
 	like( $device, qr/extern "C" fn jawn_audio_backends/, 'and a backends report for the app page' );
+	# Finding (a) of the first device gate: a take could be short of
+	# frames_captured with nothing in the report saying so. The report now carries
+	# both ends of the accounting and the honest overflow split.
+	like( $device, qr/pub frames_written: u64/, 'the report carries the frames the WAV wrote' );
+	like( $device, qr/pub dropped: u64/, 'and the total frames it did not write' );
+	like( $device, qr/pub dropped_ring: u64/, 'split into ring overflow' );
+	like( $device, qr/pub dropped_disk: u64/, 'and disk-queue overflow' );
+	like(
+		$device,
+		qr/\\"frames_written\\":\{\}/,
+		'report_json emits frames_written for the status line and sidecar'
+	);
+	like( $device, qr/\\"dropped\\":\{\}/, 'report_json emits the total dropped' );
+	like( $device, qr/\\"dropped_ring\\":\{\}/, 'report_json emits the ring split' );
+	like( $device, qr/\\"dropped_disk\\":\{\}/, 'report_json emits the disk split' );
 	unlike( $device, qr/^\s*use jni/m, 'no jni dependency is needed' );
 	like( $device, qr/set_direction::<Input>\(\)/, 'the first slice opens an input stream' );
 	like(
