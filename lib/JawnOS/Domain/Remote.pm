@@ -168,18 +168,24 @@ sub remote_relay_request($c, $extra_params = {}) {
 				}
 				elsif ($method eq 'post') {
 					my $params = $c->req->body_params->to_hash;
-					if (scalar keys %{$params} == 0) {
-						$params = $c->req->body_params->{'string'};
-					}
+					$params = {} unless ref $params eq 'HASH';
 					my $all_params = $c->req->query_params;
-					my $sp = {};
+					# Mojo::Parameters parses lazily; read the accessor so a relay
+					# whose route touched no query param before still sees the pairs.
+					my $pairs = $all_params->pairs;
 
-					for (my $n = 0; $n < scalar @{$all_params->{'pairs'}} - 1; $n++) {
-						if ($all_params->{'pairs'}->[$n] eq 'file' || $all_params->{'pairs'}->[$n] eq 'track') {
-							$all_params->{'pairs'}->[$n + 1] = url_escape $all_params->{'pairs'}->[$n + 1];
+					# A route may copy a value it read out of the body onto the query
+					# (the Studio monitor stream appends `output` for its status and
+					# stop calls). Copy each pair straight into the form the peer
+					# receives. Never concatenate onto $params: that turned the body
+					# hash into a string, and the `keys %{$params}` below then died
+					# on the first such relay, answering the controller with the
+					# doctor page instead of the target's answer.
+					for (my $n = 0; $n < scalar @{$pairs} - 1; $n++) {
+						if ($pairs->[$n] eq 'file' || $pairs->[$n] eq 'track') {
+							$pairs->[$n + 1] = url_escape $pairs->[$n + 1];
 						}
-						$params .= '&' . $all_params->{'pairs'}->[$n] . '=' . $all_params->{'pairs'}->[$n + 1];
-						$extra_params->{$all_params->{'pairs'}->[$n]} = $all_params->{'pairs'}->[$n + 1];
+						$extra_params->{$pairs->[$n]} = $pairs->[$n + 1];
 						$n++;
 					}
 					foreach my $p ( keys %{$params} ) {
@@ -220,12 +226,13 @@ sub remote_relay_request($c, $extra_params = {}) {
 				}
 				else {
 					my $all_params = $c->req->query_params;
+					my $pairs = $all_params->pairs;
 					my $params;
-					for (my $n = 0; $n < scalar @{$all_params->{'pairs'}} - 1; $n++) {
-						if ($all_params->{'pairs'}->[$n] eq 'file' || $all_params->{'pairs'}->[$n] eq 'track') {
-							$all_params->{'pairs'}->[$n + 1] = url_escape $all_params->{'pairs'}->[$n + 1];
+					for (my $n = 0; $n < scalar @{$pairs} - 1; $n++) {
+						if ($pairs->[$n] eq 'file' || $pairs->[$n] eq 'track') {
+							$pairs->[$n + 1] = url_escape $pairs->[$n + 1];
 						}
-						$params .= '&' . $all_params->{'pairs'}->[$n] . '=' . $all_params->{'pairs'}->[$n + 1];
+						$params .= '&' . $pairs->[$n] . '=' . $pairs->[$n + 1];
 						$n++;
 					}
 					if ($remote_uuid) {

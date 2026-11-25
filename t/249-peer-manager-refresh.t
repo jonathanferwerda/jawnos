@@ -13,6 +13,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use Mojo::URL ();
+use Mojo::Parameters ();
 use RepoSource;
 use JawnOSTest;
 
@@ -234,12 +235,13 @@ like($remote, qr/peer_live_manager\(\$rm\).*?peer_manager_remember/s,
 	}
 
 	package RelayFakeResponse;
-	sub new { my ($class, $code) = @_; bless { code => $code }, $class }
+	sub new { my ($class, $code, $body) = @_; bless { code => $code, body => $body }, $class }
 	sub is_success { my $self = shift; return $self->{'code'} >= 200 && $self->{'code'} < 300 }
 	sub code { $_[0]->{'code'} }
+	sub body { $_[0]->{'body'} }
 
 	package RelayFakeUA;
-	sub new { my ($class, $answer) = @_; bless { answer => $answer, connect => 4, tried => [] }, $class }
+	sub new { my ($class, $answer) = @_; bless { answer => $answer, connect => 4, tried => [], forms => [] }, $class }
 	sub connect_timeout {
 		my $self = shift;
 		return $self->{'connect'} unless @_;
@@ -251,7 +253,7 @@ like($remote, qr/peer_live_manager\(\$rm\).*?peer_manager_remember/s,
 		push @{$self->{'tried'}}, $url;
 		return $self->{'answer'}->($url, scalar @{$self->{'tried'}});
 	}
-	sub post { my ($self, $url) = @_; return $self->_try($url) }
+	sub post { my ($self, $url, $type, $params) = @_; push @{$self->{'forms'}}, $params if ref $params eq 'HASH'; return $self->_try($url) }
 	sub get  { my ($self, $url) = @_; return $self->_try($url) }
 
 	package RelayFakeReq;
@@ -339,5 +341,66 @@ is(scalar @{$relay_remembered}, 1, 'and a new winning route is remembered');
 is($relay_remembered->[0]->[1], 'https://192.0.2.11:45545',
 	'the route that answered is the one remembered');
 is(scalar @{$ok_ua->{'tried'}}, 2, 'the dead route short-circuits at the answer');
+
+# --- a POST relay that appends a query param keeps its body hash ------------
+# A route may copy a value it read out of the body onto the query (the Studio
+# monitor stream appends `output` for its status and stop calls). The relay
+# used to concatenate that pair onto $params, the body hash, which turned it
+# into a string; `keys %{$params}` then died and the controller was answered
+# with the doctor page instead of the target's JSON. Drive the real non-manual
+# POST branch: only the transport, the peer row and the request are local.
+{
+	package RelayFakeReq2;
+	sub new {
+		my ($class) = @_;
+		my $body = Mojo::Parameters->new('action=status&target=laptop-uuid');
+		my $query = Mojo::Parameters->new('output=stream');
+		# Mojo::Parameters parses lazily; the relay reads the internal `pairs`
+		# array, so force the parse the way an earlier $c->param call does.
+		$body->pairs;
+		$query->pairs;
+		return bless {
+			method       => 'POST',
+			url          => Mojo::URL->new('/manager/studio/monitor_stream'),
+			body_params  => $body,
+			query_params => $query,
+		}, $class;
+	}
+	sub method { $_[0]->{'method'} }
+	sub url { $_[0]->{'url'} }
+	sub body_params { $_[0]->{'body_params'} }
+	sub query_params { $_[0]->{'query_params'} }
+
+	package RelayFakeController2;
+	sub new {
+		my ($class, %param) = @_;
+		return bless { param => { %param }, req => RelayFakeReq2->new }, $class;
+	}
+	sub param {
+		my ($self, $name, $value) = @_;
+		return $self->{'param'}->{$name} unless @_ > 2;
+		$self->{'param'}->{$name} = $value;
+		return $self;
+	}
+	sub req { $_[0]->{'req'} }
+}
+
+{
+	my $post_ua = RelayFakeUA->new(sub {
+		return RelayFakeTx->new(response => RelayFakeResponse->new(200, '{"ok":1,"streaming":0}'));
+	});
+	my $c = RelayFakeController2->new(remote_uuid => 'laptop-uuid');
+	no warnings qw(redefine once);
+	local *subs::signatorial_designer = sub { return 'this-machine' };
+	local *subs::remote_machine_lister = sub { return [ { %{$peer_row} } ] };
+	local *subs::remote_useragent_maker = sub { return { %{ $_[0]->{'rm'} }, ua => $post_ua } };
+	my $body = eval { &subs::remote_relay_request($c) };
+	is($@, '', 'a POST relay with an appended query param does not die');
+	is($body, '{"ok":1,"streaming":0}', 'and the peer body comes back unchanged');
+	is($post_ua->{'forms'}->[0]->{'action'}, 'status', 'the body param reaches the peer');
+	is($post_ua->{'forms'}->[0]->{'target'}, 'laptop-uuid', 'with the body target');
+	is($post_ua->{'forms'}->[0]->{'output'}, 'stream', 'and the appended query param');
+	is($post_ua->{'forms'}->[0]->{'remoted'}, 'yes', 'the relay marks the request remoted');
+}
 
 done_testing();
