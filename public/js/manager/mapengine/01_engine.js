@@ -167,8 +167,16 @@ window.jawnosMap = (function () {
 		function size() {
 			var pw = typeof opts.width === 'function' ? opts.width() : opts.width;
 			var ph = typeof opts.height === 'function' ? opts.height() : opts.height;
-			var w = pw || (canvas.parentNode ? canvas.parentNode.clientWidth : 0) || 640;
-			var h = ph || (canvas.parentNode ? canvas.parentNode.clientHeight : 0) || 420;
+			// A canvas backing store is whole pixels and assigning width/height
+			// always resets the bitmap - even when the new value equals the old one.
+			// A fractional CSS size (page zoom, a transform, padding) therefore used
+			// to reassign on every call, and size() is called after the map is drawn:
+			// the weather overlay's viewBounds()/project() wiped the tiles to white.
+			// Round once and return the backing-store size the rest of a draw uses.
+			var w = Math.round(pw || (canvas.parentNode ? canvas.parentNode.clientWidth : 0) || 640);
+			var h = Math.round(ph || (canvas.parentNode ? canvas.parentNode.clientHeight : 0) || 420);
+			if (!(w > 0)) { w = 640; }
+			if (!(h > 0)) { h = 420; }
 			if (canvas.width !== w) { canvas.width = w; }
 			if (canvas.height !== h) { canvas.height = h; }
 			return { w: w, h: h };
@@ -693,7 +701,16 @@ window.jawnosMap = (function () {
 			draw();
 			fire();
 		}
-		function zoomBy(dz) { view.z = clampZ(view.z + dz); draw(); fire(); }
+		// A zoom request that the provider's range has already reached changes
+		// nothing: do not repaint every tile (or fetch any) for a step that cannot
+		// be taken. zoomAt has the same guard for a gesture pinned at the ceiling.
+		function zoomBy(dz) {
+			var nz = clampZ(view.z + dz);
+			if (nz === view.z) { return; }
+			view.z = nz;
+			draw();
+			fire();
+		}
 		function fire() { for (var i = 0; i < changing.length; i++) { changing[i](view); } }
 
 		// A page may keep a band at the top of the canvas for its own furniture (the

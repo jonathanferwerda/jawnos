@@ -293,4 +293,51 @@ VECTOR_OK.loads = 0;
 	eq(engine.providers.house.group, 'house', 'the provider table survives teardown');
 }
 
+// ---- a fractional CSS size does not reset the canvas on every draw --------
+{
+	const state = boot();
+	let widthSets = 0, heightSets = 0;
+	Object.defineProperty(state.canvas, 'width', {
+		get() { return this._w || 0; },
+		set(value) { widthSets++; this._w = value; }
+	});
+	Object.defineProperty(state.canvas, 'height', {
+		get() { return this._h || 0; },
+		set(value) { heightSets++; this._h = value; }
+	});
+	const engine = create(state, {
+		provider: 'esri',
+		width() { return 372.476; },
+		height() { return 340.2; }
+	});
+	engine.draw();
+	eq(state.canvas.width, 372, 'a fractional CSS width becomes a whole-pixel canvas');
+	eq(state.canvas.height, 340, 'and a fractional height does too');
+	eq(widthSets, 1, 'the canvas width is assigned once, not on every size() call');
+	eq(heightSets, 1, 'and the height');
+	// The weather overlay calls these after the base tiles were painted; a reset
+	// here is what emptied the radar map to white on a zoomed mobile layout.
+	engine.viewBounds();
+	engine.project(43, -81);
+	engine.draw();
+	eq(widthSets, 1, 'viewBounds()/project()/draw() do not reassign the width');
+	eq(heightSets, 1, 'nor the height');
+}
+
+// ---- a zoom at the provider's ceiling changes nothing ---------------------
+{
+	const state = boot();
+	const engine = create(state, { provider: 'esri' });
+	engine.draw();
+	const clears = function () { return state.canvas.ctx.calls.filter(function (c) { return c === 'clearRect'; }).length; };
+	engine.setZoom(19);
+	eq(engine.view().z, 19, 'the provider ceiling is reachable');
+	const atCeiling = clears();
+	engine.zoom(1);
+	eq(engine.view().z, 19, 'a zoom-in at the ceiling leaves the view alone');
+	eq(clears(), atCeiling, 'and does not repaint the map');
+	engine.zoom(-1);
+	ok(clears() > atCeiling, 'a zoom that actually changes the view repaints');
+}
+
 process.exit(failures);
