@@ -1,4 +1,4 @@
-# tests-for: engine/src/backends.rs engine/src/main.rs engine/src/lib.rs engine/src/oboe_device.rs engine/Cargo.toml scripts/build_engine.pl
+# tests-for: engine/src/backends.rs engine/src/main.rs engine/src/lib.rs engine/src/oboe_device.rs engine/src/plan.rs engine/src/roundtrip.rs engine/Cargo.toml scripts/build_engine.pl
 # covers:    docs/studio-oboe-slice.md §2.8: the no-feature contract. `--backends --json`
 #            names all five backends and says `oboe:false` when the feature is off; the
 #            prose says why; `--backend oboe --run` exits 2 with the rebuild sentence;
@@ -197,6 +197,23 @@ SKIP: {
 	like( $device, qr/\\"dropped\\":\{\}/, 'report_json emits the total dropped' );
 	like( $device, qr/\\"dropped_ring\\":\{\}/, 'report_json emits the ring split' );
 	like( $device, qr/\\"dropped_disk\\":\{\}/, 'report_json emits the disk split' );
+	# §9 item 3: the take can carry one Channel plan. The ABI is additive, the
+	# fixture is the engine's own bytes, and the report names what ran; the plan
+	# parser and the fixture DSP test are always compiled (`engine/src/plan.rs`).
+	like( $device, qr/extern "C" fn jawn_audio_start_plan/, 'the C ABI has a plan-carrying start' );
+	like( $device, qr/extern "C" fn jawn_audio_fixture_plan/, 'and the one fixture plan bytes' );
+	like( $device, qr/run_capture_plan/, 'the plan take shares the capture path' );
+	like( $device, qr/\\"plan\\":\\"\{\}\\"/, 'report_json names the strip that ran' );
+	like( $device, qr/use crate::plan::\{ChannelPlan, Strip\}/, 'the drain uses the plan strip' );
+	# Part 2 starts in the always-compiled measurement module; the Oboe glue is
+	# deliberately not exported to the app until a device number exists.
+	open( my $trip, '<', "$root/engine/src/roundtrip.rs" ) or die "roundtrip.rs: $!";
+	my $probe = <$trip>;
+	close $trip;
+	like( $probe, qr/pub fn find_click/, 'the chirp detector is testable without Oboe' );
+	like( $probe, qr/pub fn measure/, 'and so is the timestamp subtraction' );
+	like( $device, qr/pub fn run_roundtrip/, 'the duplex probe exists in the engine' );
+	unlike( $device, qr/jawn_audio_roundtrip/, 'but is not exposed to the app before it is measured' );
 	unlike( $device, qr/^\s*use jni/m, 'no jni dependency is needed' );
 	like( $device, qr/set_direction::<Input>\(\)/, 'the first slice opens an input stream' );
 	like(

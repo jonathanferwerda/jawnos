@@ -205,11 +205,14 @@ Implementation notes, all of them load-bearing:
 Entry points live in this module, because this is the cdylib Android loads.
 The `jni` crate is not a dependency: the module exports the plain-C ABI below,
 and a small Java `native` wrapper marshals `String`/`int` (Java's JNI can call a
-C signature directly). All four functions are implemented in
+C signature directly). All the entry points are implemented in
 `engine/src/oboe_device.rs`:
 
 ```c
 char *jawn_audio_start(int device_id, double seconds, const char *out);
+char *jawn_audio_start_plan(int device_id, double seconds, const char *out,
+                            const char *plan_json);
+char *jawn_audio_fixture_plan(void);
 char *jawn_audio_stop(void);
 char *jawn_audio_status(void);
 void  jawn_audio_free(char *text);
@@ -219,6 +222,11 @@ void  jawn_audio_free(char *text);
 status; `stop` joins the worker and returns the final report; `status` answers
 the last report. `device_id < 0` asks the HAL to pick; a NULL `out` runs without
 a WAV. Each returned string is freed with `jawn_audio_free`.
+
+`jawn_audio_start_plan` is the additive ABI for one `Channel` (§11). A NULL or
+empty plan is exactly `start`'s raw path. `jawn_audio_fixture_plan` returns the
+one fixture plan's JSON bytes, so the app does not keep a second copy that could
+drift from the Linux test.
 
 ### 2.5 `engine/src/main.rs`
 
@@ -413,7 +421,7 @@ One JSON object per status call, matching the engine's existing style:
  "frames":192,"buffer":960,"channels":1,"sharing":"Exclusive",
  "performance":"LowLatency","xruns":0,"frames_captured":288000,
  "frames_written":288000,"dropped":0,"dropped_ring":0,"dropped_disk":0,
- "dropped_callback":0,"peak":0.31,
+ "dropped_callback":0,"peak":0.31,"plan":"tone+delay",
  "take":"/data/user/0/com.jawnos/files/studio/take-…wav"}
 ```
 
@@ -421,6 +429,8 @@ One JSON object per status call, matching the engine's existing style:
 holds, and `dropped` (`dropped_ring + dropped_disk`) explains any difference;
 `dropped_callback` counts a single callback larger than the fixed scratch
 (normally 0). A take is complete when `frames_written == frames_captured`.
+`plan` is `raw` when no plan was given, else the plan's own name or its chain
+(`tone+delay`), so the sidecar says which strip made the WAV.
 
 `--backends --json` in an Oboe build says `"oboe":true`; in every other build it
 says `false`. That pair is the honesty test the roadmap asks for.
@@ -472,9 +482,9 @@ feature-on build loads on the device: `jawn-audio --backends --json` reports
 | --- | --- |
 | 1. Ten minutes of 48 kHz mono, zero unreported xruns, a WAV that opens and matches its declared length | **PASS** with findings (a) and (b) — 599.956 s WAV, xruns 0 |
 | 2. `oboe: true` on the phone; `oboe: false` and `t/428` green on Linux | **PASS** — `{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}` |
-| 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **BLOCKED** — the Oboe take ABI carries no `Channel` or plan and the capture path writes raw S16 |
+| 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **RUNNABLE, on-device take pending** — the plan-carrying ABI and the fixture test exist (§11); the phone take needs the panel's fixture choice |
 | 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
-| 5. The mobile-audio §6 round trip recorded | **BLOCKED** — capture-only, no duplex stream and no click, so the round trip was not measured |
+| 5. The mobile-audio §6 round trip recorded | **NOT MEASURED** — the engine probe and its detector exist (§11.4), but it is deliberately not exposed to the app until a real number is recorded |
 
 - **(a) The loss is in-take overflow, not the stop-path tail.** 0 frames on the 10 s smoke,
 480 frames / 10.0 ms on the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take — each an
@@ -506,3 +516,124 @@ and the full finding text are in `docs/studio-mobile-audio.md` §6.
    and publish the APK in the same change (the app repo's rule).
 5. Run the §9 on-device measurement and write the numbers back into
    `docs/studio-mobile-audio.md` §6.
+
+---
+
+## 11. Second slice — the strip plan and the duplex probe (2026-11-25)
+
+Engine **v0.1.3800**, app **1358 / 0.118.360**, installed on `SM-X400`. Two
+additions, one of them complete and the other deliberately stopped short of the
+UI.
+
+### 11.1 One Channel in the take
+
+`jawn_audio_start_plan` takes the same arguments as `jawn_audio_start` plus a
+plan string. A NULL or empty plan is the existing raw path, byte for byte:
+
+```json
+{"gain":1.0,"pan":0.0,
+ "tone":{"bass":0.0,"mid":0.0,"treble":0.0,"gain":1.0},
+ "delay":{"time":0.20,"feedback":0.25,"vol":0.45}}
+```
+
+The knobs are exactly the names `Channel::set_insert` takes (`tone.bass`,
+`tone.mid`, `tone.treble`, `tone.gain`; `delay.time`, `delay.feedback`,
+`delay.vol`). The object's key order is the chain order; an explicit
+`"inserts":["tone","delay"]` array may fix it, and the objects then supply that
+insert's knobs. `"name"` sets the report label; without one it is the chain
+(`tone+delay`) or `raw`.
+
+`engine/src/plan.rs` is the parser and the strip, always compiled (no Oboe, no
+new dependency). The callback is unchanged: it still duplicates mono into the
+stereo ring. The drain thread builds the `Channel`, calls
+`Channel::prepare(rate, period)` once, and calls `process_mono` on each block
+before `DiskWriter::push`. The audio callback does no allocation and takes no
+lock; the drain does its allocation at thread start. The strip reads the left
+sample and writes **one channel**, so the WAV stays mono. `pan` is accepted,
+clamped and reported, but a mono take has no second channel to place it in.
+
+`plan` joins the report JSON, so `<take>.wav.json` says `raw` or `tone+delay`.
+
+### 11.2 How Linux and the phone agree (the stated tolerance)
+
+The fixture is one string, `engine/src/plan.rs::FIXTURE_PLAN`. The Linux test
+(`effect::tests::the_tone_then_delay_fixture_echoes_the_burst_at_200_ms`) parses
+that exact string, builds the same `Channel`, runs a 10 ms 1 kHz burst through
+it, and asserts:
+
+- the dry burst's RMS is > 0.05 (the tone stack did not swallow it);
+- the gap at 100–110 ms is < 5 % of the dry RMS (no early repeat);
+- the 200–210 ms window is **0.50–0.80× the dry RMS** (measured 0.659 on this
+  build; a bypassed delay is 0, a runaway is above 1);
+- every sample is finite, and a silent block stays exactly silent.
+
+The phone runs the same `Channel` with the same knobs, because the bridge asks
+the engine for `jawn_audio_fixture_plan()` rather than keeping a second copy.
+The on-device half of item 3 is therefore a **live take**, not a sample-for-
+sample file comparison: the person starts the panel's *Tone + delay fixture*
+take, and the sidecar must say `"plan":"tone+delay"` with
+`frames_written == frames_captured`. Gate 3 is runnable; it is **not claimed
+passed** until that take is recorded.
+
+### 11.3 The app path
+
+- `JawnAudioEngine` adds `startPlan(deviceId, seconds, out, plan)` and
+  `fixturePlan()`; the JNI shim resolves `jawn_audio_start_plan` and
+  `jawn_audio_fixture_plan` with the same optional-symbol rule as `backends`.
+  An older engine still starts a raw take when the plan is empty, and answers a
+  sentence when it cannot run a non-empty plan.
+- `JawnAudioService` carries `EXTRA_PLAN`; the four-argument `start` delegates
+  with an empty plan. No plan is the unchanged path.
+- The native panel gains **Take through** — *Raw (no strip)* or *Tone + delay
+  fixture* — and passes the bytes the engine returned. The status block lists
+  `plan`.
+
+### 11.4 The duplex probe — started, not shipped
+
+`engine/src/roundtrip.rs` (always compiled, Oboe-free) holds the measurement:
+a 6 ms 1 kHz→5 kHz chirp, a normalized cross-correlation with a 0.35 floor, the
+`StreamStamp` extrapolation at the granted rate, and `measure` (the difference
+of the two streams' CLOCK_MONOTONIC times). Nine unit tests cover a clean click,
+a click in noise, noise alone, a scan that starts after an electrical leak, and
+the timestamp arithmetic including a backwards pair.
+
+`oboe_device::run_roundtrip` is the Oboe glue: an input and an output stream at
+48 kHz mono f32, Exclusive **as a pair** then Shared as a pair, a click a quarter
+second in, 1.5 s of capture, and `getTimestamp(CLOCK_MONOTONIC)` on both
+streams. It refuses when the two grant different rates, when the capture ring
+dropped frames, when either stream has no timestamp, when a timestamp's frame
+position is outside the probe's own counter, or when the correlation misses.
+
+It is **not** exported through the JNI shim and **not** in the panel. The
+blocker is exactly the one §6 of the mobile-audio doc names: whether two Oboe
+streams on this phone grant comparable CLOCK_MONOTONIC positions, and whether
+the built-in speaker→microphone path gives a correlation above the floor. The
+UM2 patch-cable row is the one most likely to work; the built-in row may be
+dominated by AGC and the 62 ms granted buffer. A button before a real number
+would invite a false latency claim, so there is no button.
+
+### 11.5 Verification run
+
+- `cargo test --offline -j 4 --lib` in `engine/`: **402 passed**, including the
+  nine probe tests and the fixture DSP test.
+- `perl scripts/build_engine.pl --android`: `libjawn_audio.so` exports
+  `jawn_audio_start_plan` and `jawn_audio_fixture_plan`; the stripped copy in the
+  APK still exports both.
+- App release **1358 / 0.118.360** signed with the release key, published as
+  `jawnos-app-1358-0.118.360.apk`, installed over the previous build.
+- On-device fixture take: **pending the person's tap** (the service is not
+  exported, so it cannot be started from adb). Steps in §11.6.
+
+### 11.6 What the person taps
+
+1. Open the app to any page that shows the **Native take** panel (it hides
+   itself on the Studio page).
+2. **Take through** → *Tone + delay fixture*.
+3. **Seconds** → 10, then **Start**; speak or make a short sound, and **Stop**.
+4. The panel's status shows `plan: tone+delay`. The sidecar is
+   `/sdcard/Download/jawnos-native-take-<stamp>.wav.json`; it must carry
+   `"plan":"tone+delay"` and `frames_written == frames_captured`.
+
+That records the phone half of item 3. Item 5 still needs a measured number
+through `run_roundtrip` (or a future panel button) on the UM2 patch cable and
+the built-in path, three runs per sharing mode, before the §6 table is filled.

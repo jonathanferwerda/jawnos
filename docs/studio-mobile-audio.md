@@ -516,9 +516,9 @@ loads and opens Oboe on the device.
 | --- | --- |
 | 1. Ten minutes of 48 kHz mono, zero unreported xruns, a WAV that opens and matches its declared length | **PASS** with findings (a) and (b) — 599.956 s WAV, xruns 0 |
 | 2. `oboe: true` on the phone; `oboe: false` and `t/428` green on Linux | **PASS** — `{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}` |
-| 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **BLOCKED** — the Oboe take ABI carries no `Channel` or plan and the capture path writes raw S16 |
+| 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **RUNNABLE, on-device take pending** — the engine and the app carry one plan (§6, "Second slice") |
 | 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
-| 5. This section's round trip recorded | **BLOCKED** — capture-only, no duplex stream and no click, so the round trip was not measured |
+| 5. This section's round trip recorded | **NOT MEASURED** — the probe and its detector exist and are unit-tested; no device number yet |
 
 Three findings, none of them a reason to argue with the numbers:
 
@@ -543,3 +543,25 @@ duplex slice exists. A round trip cannot come in under one input buffer plus one
 so the number to settle next is the granted **2,976 frames / 62.0 ms**: if a duplex stream is
 granted the same buffer, the round trip starts at 62 ms before any scheduling, USB or acoustic
 time. Measure it before the §3 latency table is used to argue for a monitoring half.
+
+### Second slice — the strip plan and the probe (2026-11-25)
+
+Engine **v0.1.3800**, app **1358 / 0.118.360**. The take now carries one `Channel`
+(`docs/studio-oboe-slice.md` §11): the app's *Take through* selector starts either the raw path or
+the engine's tone+delay fixture, and the sidecar's `plan` says which. The strip runs in the drain
+thread, not the callback, and a mono take stays a mono WAV.
+
+Linux and the phone agree because they run the **same** code and the **same plan bytes**: the
+fixture string lives once in `engine/src/plan.rs` (`FIXTURE_PLAN`), the app asks the engine for it
+through `jawn_audio_fixture_plan`, and the always-compiled Linux test parses that exact string and
+asserts the 200 ms repeat is 0.50–0.80× the dry burst (measured 0.659 at 48 kHz). The on-device
+half is a live take whose sidecar says `"plan":"tone+delay"`; it is runnable now and is not claimed
+passed until that take is recorded.
+
+For this section's number, the engine half exists (`roundtrip.rs` + `oboe_device::run_roundtrip`):
+a 6 ms chirp, a normalized cross-correlation, and the difference of the two streams'
+`getTimestamp(CLOCK_MONOTONIC)` readings. Nine unit tests cover the detector and the arithmetic on
+synthetic buffers. The Oboe glue is deliberately **not** exposed to the app and has **no button**:
+the open questions are whether two Oboe streams on this phone grant comparable CLOCK_MONOTONIC
+positions and whether the speaker→microphone path clears the correlation floor. Until those are
+answered with a real number, this table stays empty and no latency claim is made.

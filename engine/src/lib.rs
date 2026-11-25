@@ -25,9 +25,11 @@ pub mod monbus;
 pub mod params;
 pub mod peer;
 pub mod pipewire_guard;
+pub mod plan;
 pub mod playback;
 pub mod proto;
 pub mod reverb;
+pub mod roundtrip;
 pub mod sender;
 pub mod session;
 pub mod stream;
@@ -52,7 +54,7 @@ pub use bearing::{
 };
 pub use device::{Device, DeviceError, NullDevice};
 #[cfg(feature = "oboe")]
-pub use oboe_device::{run_duplex, OboeReport};
+pub use oboe_device::{run_duplex, run_roundtrip, OboeReport, RoundTripReport};
 pub use disk::DiskWriter;
 pub use effect::{
     Amp, Autotune, Channel, Compressor, Delay, Distortion, Effect, EffectChain, Equalizer,
@@ -67,6 +69,7 @@ pub use playback::{
     TransportControl, TransportLive, TransportPlan, TransportSource,
 };
 pub use params::Param;
+pub use plan::{parse_plan, ChannelPlan, PlanInsert};
 pub use peer::{
     decode_hello, decode_ping, decode_pong, decode_welcome, encode_hello, encode_ping, encode_pong,
     encode_welcome, latest_estimate, new_shared_estimate, parse_session_key, publish_estimate,
@@ -79,6 +82,10 @@ pub use peer::{
 pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,
     HEADER_LEN, VERSION,
+};
+pub use roundtrip::{
+    best_click, click, find_click, measure, ClickHit, RoundTrip, StreamStamp, CLICK_AMPLITUDE,
+    CLICK_MS, CLOCK_MONOTONIC, MIN_SCORE,
 };
 pub use capture::{
     live_ring, start_hardware, start_source, CaptureHandle, LiveConsumer, LiveProducer, LiveSource,

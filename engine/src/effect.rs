@@ -2969,4 +2969,76 @@ mod tests {
             })
         );
     }
+
+    /// The Linux half of `docs/studio-oboe-slice.md` §9 item 3: the exact
+    /// fixture JSON the phone is handed (`crate::plan::FIXTURE_PLAN`) is parsed
+    /// into a Channel and a known 1 kHz burst is run through it. The assertions
+    /// are the stated tolerance, not a golden file: the burst survives, the
+    /// gap before the repeat is quiet, and the repeat lands at the plan's
+    /// 200 ms with roughly its 0.45 wet level.
+    #[test]
+    fn the_tone_then_delay_fixture_echoes_the_burst_at_200_ms() {
+        use crate::plan::{parse_plan, FIXTURE_PLAN};
+
+        const FRAMES: usize = 24_000; // 500 ms at 48 kHz
+        const BURST: usize = 480; // 10 ms
+        const DELAY: usize = 9_600; // the plan's 0.20 s
+        const WINDOW: usize = 480; // 10 ms, the burst's own length
+
+        let plan = parse_plan(Some(FIXTURE_PLAN))
+            .expect("the fixture plan is valid")
+            .expect("the fixture plan is not the raw path");
+        assert_eq!(plan.label(), "tone+delay");
+        let mut channel = plan.channel();
+        channel.prepare(RATE, 512);
+
+        let mut block: Vec<f32> = (0..FRAMES)
+            .map(|index| {
+                if index < BURST {
+                    0.5 * (std::f32::consts::TAU * 1_000.0 * index as f32 / RATE as f32).sin()
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        for chunk in block.chunks_mut(512) {
+            channel.process_mono(chunk).expect("a prepared block");
+        }
+
+        let dry = rms(&block[..BURST]);
+        let gap = rms(&block[DELAY / 2..DELAY / 2 + WINDOW]);
+        let echo = rms(&block[DELAY..DELAY + WINDOW]);
+        assert!(dry > 0.05, "the burst did not survive the tone stack: {dry}");
+        assert!(
+            gap < dry * 0.05,
+            "the delay echoed before 200 ms: gap {gap}, dry {dry}"
+        );
+        // 0.45 wet through the tone stack and the BBD's compander: the repeat
+        // is present at roughly two-thirds of the dry burst (0.659 measured at
+        // 48 kHz). A bypassed delay is 0; a runaway is above 1.
+        let ratio = echo / dry;
+        assert!(
+            (0.50..=0.80).contains(&ratio),
+            "the 200 ms repeat was {ratio} of the dry burst (want 0.50..0.80)"
+        );
+        assert!(
+            block.iter().all(|sample| sample.is_finite()),
+            "the fixture produced a non-finite sample"
+        );
+    }
+
+    #[test]
+    fn silence_stays_silent_through_the_fixture() {
+        use crate::plan::{parse_plan, FIXTURE_PLAN};
+        let plan = parse_plan(Some(FIXTURE_PLAN))
+            .expect("valid")
+            .expect("not raw");
+        let mut channel = plan.channel();
+        channel.prepare(RATE, 512);
+        let mut block = vec![0.0f32; 4_096];
+        for chunk in block.chunks_mut(512) {
+            channel.process_mono(chunk).expect("a prepared block");
+        }
+        assert!(block.iter().all(|sample| *sample == 0.0), "silence was not silent");
+    }
 }
