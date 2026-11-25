@@ -228,6 +228,7 @@ like($remote, qr/peer_live_manager\(\$rm\).*?peer_manager_remember/s,
 {
 	package RelayFakeTx;
 	sub new { my ($class, %arg) = @_; bless \%arg, $class }
+	sub error { return undef }
 	sub result {
 		my $self = shift;
 		die $self->{'error'} if defined $self->{'error'};
@@ -255,6 +256,7 @@ like($remote, qr/peer_live_manager\(\$rm\).*?peer_manager_remember/s,
 	}
 	sub post { my ($self, $url, $type, $params) = @_; push @{$self->{'forms'}}, $params if ref $params eq 'HASH'; return $self->_try($url) }
 	sub get  { my ($self, $url) = @_; return $self->_try($url) }
+	sub max_response_size { my ($self, $size) = @_; $self->{'max'} = $size if defined $size; return $self }
 
 	package RelayFakeReq;
 	sub new { my ($class, $method, $path) = @_; bless { method => $method, url => Mojo::URL->new($path) }, $class }
@@ -403,6 +405,59 @@ is(scalar @{$ok_ua->{'tried'}}, 2, 'the dead route short-circuits at the answer'
 	is($post_ua->{'forms'}->[0]->{'remoted'}, 'yes', 'the relay marks the request remoted');
 	is($post_ua->{'forms'}->[0]->{'source_signatorial'}, 'this-machine',
 		'and names the caller so the target can verify it against the roster');
+}
+
+# --- a GET relay signs a query with no empty first pair ---------------------
+# The query builder starts every pair with `&`; a raw `?&target=...` and the
+# URL Mojo re-parses can differ, and the target signs and then reconstructs the
+# path_query. A leading empty pair made the signature cover a different query
+# than the target saw, so every Studio device read was refused.
+{
+	package RelayFakeReqGet;
+	sub new {
+		my ($class) = @_;
+		my $query = Mojo::Parameters->new('target=laptop-uuid');
+		$query->pairs;
+		return bless {
+			method       => 'GET',
+			url          => Mojo::URL->new('/manager/studio/remote_devices'),
+			query_params => $query,
+		}, $class;
+	}
+	sub method { $_[0]->{'method'} }
+	sub url { $_[0]->{'url'} }
+	sub query_params { $_[0]->{'query_params'} }
+	sub body_params { Mojo::Parameters->new }
+
+	package RelayFakeControllerGet;
+	sub new {
+		my ($class, %param) = @_;
+		return bless { param => { %param }, req => RelayFakeReqGet->new }, $class;
+	}
+	sub param {
+		my ($self, $name, $value) = @_;
+		return $self->{'param'}->{$name} unless @_ > 2;
+		$self->{'param'}->{$name} = $value;
+		return $self;
+	}
+	sub req { $_[0]->{'req'} }
+	sub stash { $_[0]->{'stash'} ||= {} }
+}
+
+{
+	my $get_ua = RelayFakeUA->new(sub {
+		return RelayFakeTx->new(response => RelayFakeResponse->new(200, '{"ok":1}'));
+	});
+	my $c = RelayFakeControllerGet->new(remote_uuid => 'laptop-uuid');
+	no warnings qw(redefine once);
+	local *subs::signatorial_designer = sub { return 'this-machine' };
+	local *subs::remote_machine_lister = sub { return [ { %{$peer_row} } ] };
+	local *subs::remote_useragent_maker = sub { return { %{ $_[0]->{'rm'} }, ua => $get_ua } };
+	my $body = eval { &subs::remote_relay_request($c) };
+	is($@, '', 'a GET relay runs');
+	is($body, '{"ok":1}', 'and returns the peer body');
+	unlike($get_ua->{'tried'}->[0] // '', qr/\?\&/, 'its query has no empty first pair');
+	like($get_ua->{'tried'}->[0] // '', qr/\?target=laptop-uuid&/, 'and starts with the real pair');
 }
 
 done_testing();

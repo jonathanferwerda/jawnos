@@ -255,6 +255,12 @@ sub remote_relay_request($c, $extra_params = {}) {
 					foreach my $ep ( keys %{$extra_params} ) {
 						$params .= '&' . $ep . '=' . ($extra_params->{$ep} || '');
 					}
+					# The loop builds a leading `&` (the first pair has no separator
+					# yet). A raw `?&target=...` and the URL Mojo re-parses can differ,
+					# and the peer signs the path_query it sends: drop the empty first
+					# pair so the signature covers the query the target sees.
+					$params = '' unless defined $params;
+					$params =~ s/\A&//;
 
 					my $url = $rm->{'manager'} . $path . '?' . $params;
       			$rm->{'ua'} = $rm->{'ua'}->max_response_size(0);
