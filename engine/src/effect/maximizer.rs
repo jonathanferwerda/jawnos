@@ -1,5 +1,5 @@
-//! The `master_maximizer`: drive, then the same peak limiter the master
-//! limiter uses.
+//! The `master_maximizer`: drive, then the same 1176-style FET detector the
+//! master limiter uses.
 //!
 //! A maximizer is loudness with a promise: raise the level into a ceiling and
 //! let the peaks be caught, so quiet material comes up without the loud parts
@@ -7,8 +7,12 @@
 //! `ceiling` is dBFS. It exists as its own kind because the contract gives the
 //! master rack a maximizer and a limiter as two separate inserts — the limiter
 //! is the safety net, the maximizer is the level.
+//!
+//! The detector is [`FetDetector`](super::limiter::FetDetector), so the
+//! maximizer inherits the limiter's fast attack, program-dependent release,
+//! soft knee and hard ceiling. Its controls are unchanged.
 
-use super::limiter::PeakLimiter;
+use super::limiter::{release_times, FetDetector};
 use super::{one_pole, one_pole_block, Effect};
 
 #[derive(Debug)]
@@ -18,7 +22,7 @@ pub struct Maximizer {
     ceiling_db: f32,
     target_loudness: f32,
     drive: f32,
-    limiter: PeakLimiter,
+    detector: FetDetector,
     smooth: f32,
 }
 
@@ -38,7 +42,7 @@ impl Maximizer {
             ceiling_db,
             target_loudness: loudness,
             drive: Self::drive(loudness),
-            limiter: PeakLimiter::new(),
+            detector: FetDetector::new(),
             smooth: 0.0,
         }
     }
@@ -53,7 +57,7 @@ impl Effect for Maximizer {
         self.rate = rate.max(1);
         self.ceiling_db = self.target_ceiling_db;
         self.drive = Self::drive(self.target_loudness);
-        self.limiter.reset();
+        self.detector.reset();
         self.smooth = one_pole(0.01, self.rate) as f32;
     }
 
@@ -65,17 +69,19 @@ impl Effect for Maximizer {
         self.ceiling_db += (self.target_ceiling_db - self.ceiling_db) * alpha;
         let target_drive = Self::drive(self.target_loudness);
         let ceiling = 10f32.powf(self.ceiling_db / 20.0);
-        let release = one_pole(Self::RELEASE_SECONDS, self.rate) as f32;
+        let times = release_times(Self::RELEASE_SECONDS, self.rate);
         for sample in block.iter_mut() {
             self.drive += (target_drive - self.drive) * self.smooth;
-            *sample = self.limiter.process(*sample * self.drive, ceiling, release);
+            *sample =
+                self.detector
+                    .process(*sample * self.drive, ceiling, self.ceiling_db, times);
         }
     }
 
     fn reset(&mut self) {
         self.ceiling_db = self.target_ceiling_db;
         self.drive = Self::drive(self.target_loudness);
-        self.limiter.reset();
+        self.detector.reset();
     }
 
     fn set(&mut self, name: &str, value: f32) -> bool {
@@ -143,6 +149,17 @@ mod tests {
             rms(&block[4096..]) > rms(&input[4096..]) * 3.0,
             "loudness did not lift the signal"
         );
+    }
+
+    #[test]
+    fn a_peak_above_the_ceiling_is_caught_on_the_sample() {
+        // Drive 0 dB (loudness 0) and a 0 dB ceiling make the arithmetic exact.
+        let mut maximizer = Maximizer::new(0.0, 0.0);
+        maximizer.prepare(RATE, 2);
+        let mut block = vec![2.0, -2.0];
+        maximizer.process(&mut block);
+        assert_eq!(block[0], 1.0);
+        assert_eq!(block[1], -1.0);
     }
 
     #[test]
