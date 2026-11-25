@@ -540,7 +540,13 @@ sub action_11014 {
 	splice @{$rows}, $limit if $more;
 	my $next = '';
 	$next = $rows->[-1]->{'__sync_rowid'} if $more && scalar @{$rows};
-	my $plain = eval { encode_sereal({ ok => 1, table => $table, rows => $rows, total => $total, next => $next, done => ($more ? 0 : 1), server_time => &subs::rightNow() }, { compress => SRL_ZSTD, compress_level => 3 }) };
+	# A responder on a newer Sereal names that generation's protocol (7), and a
+	# puller whose Sereal is 5.x refuses it: "Unsupported Sereal protocol version
+	# 7". The gou, on Arch, could serve its settings to nobody on the day it became
+	# a hub peer, while the same pull from a 5.x machine worked (2026-11-25).
+	# Protocol 5 is what every encoder in the house writes anyway, so the batch
+	# names it; a newer decoder reads it, an older one can too.
+	my $plain = eval { encode_sereal({ ok => 1, table => $table, rows => $rows, total => $total, next => $next, done => ($more ? 0 : 1), server_time => &subs::rightNow() }, { compress => SRL_ZSTD, compress_level => 3, protocol_version => 5 }) };
 	unless (defined $plain) {
 		$c->render(json => { ok => 0, error => 'could not encode the batch' });
 		return;
@@ -631,7 +637,7 @@ sub action_11111 {
 		$c->render(json => { ok => 0, error => 'too many buckets' });
 		return;
 	}
-	my $plain = eval { encode_sereal({ ok => 1, table => $table, band => $map->{'band'}, buckets => $map->{'buckets'}, server_time => &subs::rightNow() }, { compress => SRL_ZSTD, compress_level => 3 }) };
+	my $plain = eval { encode_sereal({ ok => 1, table => $table, band => $map->{'band'}, buckets => $map->{'buckets'}, server_time => &subs::rightNow() }, { compress => SRL_ZSTD, compress_level => 3, protocol_version => 5 }) };
 	unless (defined $plain) {
 		$c->render(json => { ok => 0, error => 'could not encode the buckets' });
 		return;

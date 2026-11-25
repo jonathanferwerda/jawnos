@@ -44,6 +44,19 @@ is($legacy, 2, 'and both fall back to the legacy seal');
 my $aead = () = $misc3 =~ /&subs::encrypter\(\$secret, \$plain\)/g;
 is($aead, 2, 'while a JS1 puller gets AEAD');
 
+# --- a batch names a Sereal protocol every puller in the house can read -----
+# A responder whose Sereal is newer writes that generation's protocol (7), and a
+# puller whose Sereal is 5.x refuses it: "Unsupported Sereal protocol version 7".
+# The gou, on Arch, could serve its settings to nobody on the day it became a hub
+# peer, while the same pull from a 5.x machine worked (2026-11-25).
+my $pinned = () = $misc3 =~ /protocol_version => 5/g;
+is($pinned, 2, 'the row batch and the bucket map both name Sereal protocol 5');
+{
+	require Sereal::Encoder;
+	my $blob = Sereal::Encoder::encode_sereal({ ok => 1 }, { protocol_version => 5 });
+	is(ord(substr($blob, 4, 1)), 5, 'this machine\'s encoder honours the protocol it is given');
+}
+
 # --- the LAN probe keeps the seal every build reads -------------------------
 my $house = source('lib/JawnOS/Domain/House.pm');
 like($house, qr/&encrypter_legacy\(&shorthand_name/, 'the probe token uses the legacy seal');
