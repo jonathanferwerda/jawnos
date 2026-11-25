@@ -201,7 +201,7 @@ sub git_watcher_check {
 # loaded, can reach a peer without pulling the whole app in.
 sub peer_useragent {
 	my $rm = shift;
-	return (undef, $rm) unless $rm && $rm->{'cookie'} && $rm->{'manager'};
+	return (undef, $rm) unless $rm && $rm->{'manager'};
 	# A stored loopback manager is the hub's own tunnel route. On any other row it
 	# is a leftover from a tunnel that no longer exists, and the peer's name is
 	# the only address left - so call the name. Left unfixed, every peer call (the
@@ -212,8 +212,12 @@ sub peer_useragent {
 	$rm = &subs::remote_machine_tunnel_processor($rm);
 	my ($secure_manager, $peer_verified) = &subs::peer_secure_url($rm, $rm->{'manager'});
 	$rm->{'manager'} = $secure_manager if $peer_verified;
-	my $jar = eval { decode_json $rm->{'cookie'} };
-	return (undef, $rm) unless $jar && ref $jar eq 'ARRAY';
+	# A peer that never issued this machine a session still answers the signed
+	# rail, and the levels health probe is a peer_verify route, not a browser
+	# one. Requiring a cookie here skipped every cookie-less peer before a
+	# request was made (the controller was absent from the levels, 2026-11-25).
+	my $jar = eval { decode_json($rm->{'cookie'} || '') };
+	$jar = [] unless $jar && ref $jar eq 'ARRAY';
 	require Mojo::Cookie::Response;
 	my $ua = Mojo::UserAgent->new;
 	$ua = $ua->max_response_size(0);

@@ -503,4 +503,21 @@ SKIP: {
 	}
 }
 
+# The controller advertises the USB gadget (192.168.7.2) in its network map.
+# It is a cable route to one host, not the peer's house address: a row that
+# stored it must resolve to the tailnet, and the LAN matcher must not treat it
+# as a same-net address.
+my $gadget = subs::remote_machine_tunnel_processor({
+	manager => 'https://192.168.7.2:45545',
+	ip => '192.168.7.2',
+	tailnet_ip => '100.64.0.5',
+	port => 45545,
+});
+like($gadget->{'manager'}, qr{^https://100\.64\.0\.5:45545},
+	'the USB gadget manager is replaced by the tailnet');
+unlike($gadget->{'ip'}, qr{^192\.168\.7\.},
+	'the gadget address is not used as the peer address');
+is(subs::peer_lan_address({ manager => 'https://192.168.7.2:45545', network => { usb0 => { ip => '192.168.7.2' } } }), undef,
+	'the USB gadget is not a LAN route');
+
 done_testing();

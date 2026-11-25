@@ -193,4 +193,11 @@ if ($topic_block) {
 	}
 }
 
+# A controller that joined with a token has no paired_devices row; the roster
+# must still list it from remote_machines (device 'controller').
+like($controller, qr/device\s*=>\s*'controller'/,
+	'the roster also reads token-joined controllers from remote_machines');
+like($controller, qr/joined\s*=>\s*1/,
+	'and marks a token-joined controller as joined');
+
 done_testing();

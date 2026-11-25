@@ -210,6 +210,11 @@ sub tailnet_address {
 		my $ip = $tailnet->($entry->{'ip'});
 		return $ip if $ip;
 	}
+	# The row's declared tailnet column is what the sync writes when it learns
+	# the peer's own 100.64 address; it is a route even when the last `ip` was
+	# the USB gadget or a LAN address the peer has left.
+	my $declared = $tailnet->($rm->{'tailnet_ip'});
+	return $declared if $declared;
 	return $tailnet->($rm->{'ip'});
 }
 
@@ -250,12 +255,17 @@ sub peer_lan_address {
 				# when it is offline the request blackholes until the timeout. Treat
 				# it like an unresolved name and fall through to the LAN address.
 				$tailnet = 1 if $addr =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+				# The USB gadget (192.168.7.0/24) is the cable route to one host,
+				# not the peer's address on the house.
+				$tailnet = 1 if $addr =~ /^192\.168\.7\.\d{1,3}$/;
 			}
 		}
 		else {
 			$resolved = 1;
 			# A literal manager address in that range is the same dead route.
 			$tailnet = 1 if $host =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+			# The USB gadget (192.168.7.0/24) is the cable route to one host.
+			$tailnet = 1 if $host =~ /^192\.168\.7\.\d{1,3}$/;
 		}
 		# A name that resolves somewhere else is the peer's real address; keep
 		# it. A name that no longer resolves at all (the machine hopped to a

@@ -40,7 +40,10 @@ sub action_54002 {
 	&app_schema_ensure();
 	my $rows = &subs::db_select('paired_devices', undef, { kind => 'controller', status => 'active' })->hashes;
 	my $controllers = [];
+	my %claimed;
 	foreach my $device ( @{$rows || []} ) {
+		$claimed{$device->{'uuid'}} = 1 if $device->{'uuid'};
+		$claimed{$device->{'signatorial'}} = 1 if $device->{'signatorial'};
 		# A paired key and a roster row name the same machine two ways: the
 		# device may have been introduced by its signatorial, or by the uuid
 		# the house minted. Try the one it carries, then either half.
@@ -57,6 +60,28 @@ sub action_54002 {
 			ip => $machine->{'ip'} || '',
 			last_seen => $device->{'last_seen'} || $machine->{'server_time'} || '',
 			pending => ($pending ? 1 : 0),
+		};
+	}
+	# A controller that joined with a token never went through the pairing flow:
+	# it has a remote_machines row (device 'controller') and no paired_devices
+	# row, so the roster above never showed it. The same signatorial is what the
+	# storage, ROM and card routes resolve, so list it here too.
+	my $joined = &subs::db_select('remote_machines', undef, { device => 'controller' })->hashes || [];
+	foreach my $machine ( @{$joined} ) {
+		my $key = $machine->{'signatorial'} || $machine->{'uuid'} || '';
+		next unless length $key;
+		next if $claimed{$key} || ($machine->{'uuid'} && $claimed{$machine->{'uuid'}});
+		my $seen = int($machine->{'server_time'} || 0);
+		next if (($machine->{'connection'} || '') ne 'active') && $seen && (&subs::rightNow() - $seen) > 15 * 60 * 1000;
+		push @{$controllers}, {
+			uuid => $key,
+			name => $machine->{'hostname'} || 'Controller',
+			kind => 'controller',
+			hostname => $machine->{'hostname'} || '',
+			ip => $machine->{'ip'} || '',
+			last_seen => $machine->{'server_time'} || '',
+			pending => 0,
+			joined => 1,
 		};
 	}
 	$c->render(json => { ok => 1, controllers => $controllers, computer => (&_controller_is_computer() ? 1 : 0) });

@@ -835,10 +835,20 @@ sub remote_machine_tunnel_processor {
 				$resolved = 1 if $host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
 				$resolved = 1 if gethostbyname($host);
 			}
+			# The USB gadget (192.168.7.0/24, the image's usb-gadget profile) is a
+			# cable route to one host, not the peer's address on the house. A row
+			# that stored it must not keep dialling it from every other machine;
+			# the tailnet is the stable route.
+			my $gadget = (defined $host && $host =~ /^192\.168\.7\.\d{1,3}$/) ? 1 : 0;
+			$resolved = 0 if $gadget;
 			if (!$resolved && !$lan) {
 				$rm->{'manager'} = $rm->{'tailnet_manager'};
 				$rm->{'ip'} = $tailnet;
 				$rm->{'vip'} = $tailnet;
+				&subs::db_update('remote_machines', {
+					ip => $tailnet,
+					manager => $rm->{'tailnet_manager'},
+				}, { uuid => $rm->{'uuid'} }) if $gadget && $rm->{'uuid'};
 			}
 		}
 	}

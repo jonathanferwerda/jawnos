@@ -136,5 +136,9 @@ like($source, qr!sub peer_manager_base \{.*?s\{/manager\$\}\{\}!s,
 	'peer_manager_base strips the route segment');
 like($source, qr/sub peer_useragent \{.*?peer_live_manager/s,
 	'peer_useragent resolves the live manager before it is used');
+unlike($source, qr/return \(undef, \$rm\) unless \$rm && \$rm->\{'cookie'\}/,
+	'a peer with no stored cookie is not skipped before the request');
+like($source, qr/decode_json\(\$rm->\{'cookie'\} \|\| ''\)/,
+	'peer_useragent accepts an empty cookie jar');
 
 done_testing();
