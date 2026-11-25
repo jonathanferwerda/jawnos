@@ -41,7 +41,7 @@ ok(!defined &subs::database_bootstrap(dir => $empty),
 
 # ------------------------------------------------------------ the factory seed
 SKIP: {
-	skip 'openssl is not installed', 2 unless JawnOS::Platform::TLS::openssl();
+	skip 'openssl is not installed', 3 unless JawnOS::Platform::TLS::openssl();
 	my $seed_dir = tempdir(CLEANUP => 1);
 	copy("$root/database/initial.enc", "$seed_dir/initial.enc") or die "seed: $!";
 	my $seeded = &subs::database_bootstrap(dir => $seed_dir);
@@ -50,6 +50,24 @@ SKIP: {
 	my $sdb = DBI->connect("dbi:SQLite:dbname=$seeded", '', '', { RaiseError => 1, PrintError => 0 });
 	my ($rows) = $sdb->selectrow_array("select count(*) from sqlite_master where type='table'");
 	cmp_ok($rows, '>', 10, 'and the seeded database has its tables');
+	# The seed is a pre-built copy of the schema, so its columns must match the
+	# shipped schema exactly. It drifted once: `settings.seed` was added to
+	# schema.sql but the seed was not rebuilt, and every clean checkout's first
+	# `setting_initializer` write failed without a word (2026-11-25). A stale
+	# seed is rebuilt with scripts/factory_seed.pl and committed.
+	my $columns = sub {
+		my ($handle) = @_;
+		my %cols;
+		for my $t ( map { $_->[0] } $handle->selectall_array(
+			"select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name") ) {
+			$cols{$t} = [ sort map { $_->[1] } $handle->selectall_array("pragma table_info($t)") ];
+		}
+		return \%cols;
+	};
+	my $schema_dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	is_deeply($columns->($sdb), $columns->($schema_dbh),
+		'the factory seed carries the shipped schema (rebuild it with scripts/factory_seed.pl)');
+	$schema_dbh->disconnect;
 	$sdb->disconnect;
 }
 
