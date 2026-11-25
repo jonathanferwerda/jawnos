@@ -2463,7 +2463,10 @@ function musicToggle(files, same_order, start_key) {
 // routes, so a person can control a remote room without changing what the Music
 // window is showing.
 function musicRemoteTarget() {
-	return $('#music').attr('remote_target') || '';
+	var target = $('#music').attr('remote_target') || '';
+	// 'local' is the panel's chip, never a machine: an older save of the chip
+	// must not put this window into remote mode either.
+	return target === 'local' ? '' : target;
 }
 function musicRemoteSend(action, extra) {
 	var target = musicRemoteTarget();
@@ -2619,6 +2622,7 @@ function musicRemotePaint() {
 	var target = musicRemoteTarget();
 	var mode = !!target;
 	$('#music').toggleClass('music_remote_mode', mode);
+	var remote_panel = (typeof musicConfigSheet == 'function') ? musicConfigSheet('music_remote_panel') : $('#music_remote_panel');
 	if (!mode) {
 		clearInterval(music_remote_poll_timer);
 		music_remote_poll_timer = 0;
@@ -2629,13 +2633,16 @@ function musicRemotePaint() {
 		// the bar goes back to this machine's own level and mute
 		$('#music_volume').val(musicVolumeLevel());
 		updateMusicMuteIcon();
+		// This machine is the one on screen, so its chip is the lit one again
+		remote_panel.find('[data-remote-target]').each(function() {
+			$(this).attr('selected', $(this).attr('data-remote-target') === 'local' ? 'yes' : 'no');
+		});
 		return;
 	}
 	musicRemoteSnapshotSave();
 	if ($('#video').attr('theatre_mode') == 'on' && typeof theatreModeOff == 'function') { theatreModeOff(); }
 	if ($('#music').hasClass('music_fullscreen') && typeof musicFullscreenOff == 'function') { musicFullscreenOff(); }
 	$('#music_remote_now').show();
-	var remote_panel = (typeof musicConfigSheet == 'function') ? musicConfigSheet('music_remote_panel') : $('#music_remote_panel');
 	remote_panel.find('[data-remote-target]').each(function() {
 		$(this).attr('selected', $(this).attr('data-remote-target') == target ? 'yes' : 'no');
 	});
@@ -2860,6 +2867,10 @@ function musicRemoteLocalViewRestore() {
 }
 function musicRemoteChoose(target) {
 	target = target || '';
+	// The panel's own chip says 'local'; the window has no target. Treating it
+	// as a machine name put the local window into remote mode, hiding the video
+	// controls and full screen while the local library was on screen.
+	if (target === 'local') { target = ''; }
 	var current = musicRemoteTarget();
 	if (target === current) { return; }
 	$.ajax({
@@ -5713,6 +5724,12 @@ function searchMusic(data) {
 			new_settings: new_settings,
 			resizes: jresizes,
 			misses: jmiss,
+			// the controller's own window shape: a laptop showing a phone's
+			// library keeps the side-by-side shelves it asked for
+			mirror_phone: ($('#music').attr('phone_layout') == 'yes') ? 1 : 0,
+			// a search from the Remote Music window is that machine's search;
+			// the older "play a remote library here" view only borrows the list
+			remote_control: remoteTargetAtSearch ? 1 : 0,
 			remote_view: remote_view ? 1 : 0
 		},
 		success: function(response) {

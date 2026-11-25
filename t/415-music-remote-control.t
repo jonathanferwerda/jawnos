@@ -77,7 +77,7 @@ like($music, qr/music_remote_state\.volume/, 'the bar is painted from the contro
 like($music, qr/music_remote_state\.muted/, 'and its mute is too');
 like($music, qr/if \(!musicRemoteTarget\(\)\) \{ \$\('#music_volume'\)\.val\(musicSystemLevel\); \}/,
 	'a local mixer read does not repaint a peer bar');
-like($music, qr/\$\('#music_volume'\)\.val\(musicVolumeLevel\(\)\);\s*\n\t\tupdateMusicMuteIcon\(\);\s*\n\t\treturn;/,
+like($music, qr/\$\('#music_volume'\)\.val\(musicVolumeLevel\(\)\);\s*\n\t\tupdateMusicMuteIcon\(\);[\s\S]{0,400}?\n\t\treturn;/,
 	'leaving the peer puts this machine\'s own bar back');
 like($remote, qr/volume => \(defined \$volume \? \$volume \+ 0 : undef\)/, 'a peer that never saved a level answers null');
 like($help, qr/its volume and its mute/, 'the Music help says the bar is the controlled machine\'s');
@@ -240,6 +240,45 @@ like($taskbar, qr/data-music-output/, 'Sound\'s Remote pill has an output picker
 like($taskbar, qr{url: '/music/remote_outputs'}, 'it reads the controlled machine\'s outputs');
 like($taskbar, qr{url: '/music/remote_output'}, 'and sends the choice to that machine');
 like($taskbar, qr/function jawnosSoundTaskbarMusicOutputsLoad/, 'the picker refreshes with the remote');
+
+# --- the controlled machine's physical devices ------------------------------
+like($remote, qr{/music/remote_devices}, 'the controlled machine offers its physical outputs');
+like($remote, qr{/music/remote_device}, 'and takes a chosen device');
+like($remote, qr/sub music_remote_devices_read/, 'the list is that machine\'s own sound devices');
+like($remote, qr/\&subs::sound_status\(\)/, 'read from the Sound app\'s own reader');
+like($remote, qr/\&subs::sound_default\('output'/, 'and the write is its default output');
+like($taskbar, qr/data-music-device/, 'Sound\'s Remote pill has a device picker');
+like($taskbar, qr{url: '/music/remote_devices'}, 'it reads the controlled machine\'s devices');
+like($taskbar, qr{url: '/music/remote_device'}, 'and sends the choice to that machine');
+like($taskbar, qr/function jawnosSoundTaskbarMusicDevicesLoad/, 'the device list refreshes with the remote');
+like($help, qr/headphone jack or Bluetooth/, 'the Sound help names the physical device');
+
+# --- This machine leaves remote mode ----------------------------------------
+my ($choose) = $music =~ /function musicRemoteChoose\(target\) \{(.*?)\n\}/s;
+ok(defined $choose && length $choose, 'musicRemoteChoose is readable as a hunk');
+like($choose || '', qr/if \(target === 'local'\) \{ target = ''; \}/,
+	'the panel\'s local chip is not a machine name');
+like($music, qr/return target === 'local' \? '' : target;/, 'and the window never reads the chip as a machine');
+like($music, qr/This machine is the one on screen, so its chip is the lit one again/,
+	'leaving remote mode relights the local chip');
+like($remote, qr/\$target = '' if \$target eq 'local';/, 'an older local chip saves as empty too');
+
+# --- the controller keeps its shape and its search --------------------------
+like($music, qr/mirror_phone: \(\$\('#music'\)\.attr\('phone_layout'\) == 'yes'\) \? 1 : 0/,
+	'the controller tells the host which shape it is showing');
+like($search_routes, qr/my \$mirror_phone;/, 'the host reads the controller shape');
+like($search_routes, qr/device => \$render_device,/, 'and renders the shelves for it');
+like($search_routes, qr/phone => \(\(\$render_device/, 'and the bare list too');
+like($search_routes, qr/\$settings->\{'search'\} = \$search;\s*\n\s*# A Remote Music window's search is this machine's search/s,
+	'a relayed user search is the host\'s search');
+like($music, qr/remote_control: remoteTargetAtSearch \? 1 : 0/,
+	'a Remote Music search is marked as the host\'s own');
+like($search_routes, qr/my \$remote_control = \$c->param\('remote_control'\) \? 1 : 0;/,
+	'the host tells a driven window from a borrowed library');
+like($search_routes, qr/setting => 'search', value => \$search \}\);\s*\n\s*\&subs::setting_setter\(\{ app => 'music', setting => 'artist', value => \$artist/s,
+	'and a driven window writes the word on the host, so a cleared one stays cleared');
+like($search_routes, qr/if \(\$remote_control\) \{\s*\n\s*\&subs::setting_setter\(\{ app => 'music', setting => 'search'/,
+	'only a driven window writes the host search, not a borrowed library');
 like($queue_src, qr/\&subs::machine_name\(\) \|\| \&subs::ui\('Local'\)/, 'a local library is named by this machine, not a synced leftover');
 
 # --- a local library is named by this machine, not a synced leftover --------
@@ -314,6 +353,31 @@ like($queue_src, qr/\&subs::machine_name\(\) \|\| \&subs::ui\('Local'\)/, 'a loc
 	my $before = scalar @writes;
 	ok(!&Manager::music_output_pick('not-an-output'), 'an unknown output is refused');
 	is(scalar @writes, $before, 'and nothing is written');
+}
+
+# --- the controlled machine's physical devices ------------------------------
+{
+	no warnings 'redefine';
+	local *subs::sound_status = sub { return {
+		ok => 1, backend => 'pactl',
+		outputs => [
+			{ id => 'alsa_output.hdmi', name => 'HDMI / DisplayPort', default => 1, volume => 40, muted => 0 },
+			{ id => 'bluez_output.headset', name => 'Bluetooth Headset', default => 0, volume => 60, muted => 0 },
+		],
+		output => { id => 'alsa_output.hdmi', name => 'HDMI / DisplayPort', default => 1 },
+	} };
+	my $devices = &Manager::music_remote_devices_read();
+	is($devices->{'backend'}, 'pactl', 'the device list names the backend');
+	is($devices->{'current'}, 'alsa_output.hdmi', 'the default device is the one chosen');
+	is_deeply([ map { $_->{'id'} } @{$devices->{'outputs'}} ],
+		[ 'alsa_output.hdmi', 'bluez_output.headset' ],
+		'every physical output is offered');
+	is($devices->{'outputs'}[1]{'label'}, 'Bluetooth Headset', 'a device carries the name the Sound app shows');
+	my @picked;
+	local *subs::sound_default = sub { push @picked, [ @_ ]; return { ok => ($_[1] eq 'bluez_output.headset') ? 1 : 0 } };
+	ok(&Manager::music_remote_device_pick('bluez_output.headset'), 'a physical device can be chosen');
+	is_deeply($picked[0], [ 'output', 'bluez_output.headset' ], 'the write is the host default output');
+	ok(!&Manager::music_remote_device_pick('not-a-device'), 'an unknown device is refused');
 }
 
 done_testing();

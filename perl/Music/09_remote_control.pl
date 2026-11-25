@@ -53,11 +53,17 @@ sub music_remote_row($uuid) {
 # widget's target are deliberately separate: choosing a machine in the widget
 # must not turn the Music window into its controller, and the other way round.
 sub music_remote_picker {
+	my $target = &subs::setting_grabber({ app => 'music', setting => 'remote_target' }) || '';
+	my $widget_target = &subs::setting_grabber({ app => 'music', setting => 'widget_target' }) || '';
+	# The panel's local chip is written as empty now; an older save of the chip
+	# itself must not read back as a machine named 'local'.
+	$target = '' if $target eq 'local';
+	$widget_target = '' if $widget_target eq 'local';
 	return {
 		ok => 1,
 		machines => &music_remote_machines(),
-		target => (&subs::setting_grabber({ app => 'music', setting => 'remote_target' }) || ''),
-		widget_target => (&subs::setting_grabber({ app => 'music', setting => 'widget_target' }) || '')
+		target => $target,
+		widget_target => $widget_target
 	};
 }
 
@@ -335,6 +341,38 @@ sub music_output_pick($key) {
 	return 1;
 }
 
+# ---- the controlled machine's physical devices -----------------------------
+#
+# A stream output says where the player's copy goes; a device says which
+# speaker, headphone jack or Bluetooth sink that machine's own sound comes out
+# of. It is the same default the Sound app's IO section sets, read and written
+# on the controlled machine so the controller never changes its own hardware.
+sub music_remote_devices_read {
+	my $status = eval { &subs::sound_status() } || {};
+	my @outputs;
+	foreach my $device ( @{ $status->{'outputs'} || [] } ) {
+		next unless ref $device eq 'HASH' && defined $device->{'id'} && length $device->{'id'};
+		push @outputs, {
+			id => $device->{'id'},
+			label => ($device->{'name'} || $device->{'id'}),
+			default => ($device->{'default'} ? 1 : 0)
+		};
+	}
+	my $current = (ref $status->{'output'} eq 'HASH') ? ($status->{'output'}->{'id'} // '') : '';
+	return {
+		ok => 1,
+		backend => ($status->{'backend'} || ''),
+		outputs => \@outputs,
+		current => $current
+	};
+}
+
+sub music_remote_device_pick($id) {
+	return 0 unless defined $id && length $id;
+	my $result = eval { &subs::sound_default('output', $id) } || {};
+	return (ref $result eq 'HASH' && $result->{'ok'}) ? 1 : 0;
+}
+
 # The controlled machine's own outputs, for the Sound window's Remote pill. A
 # machine that has gone offline answers as the transport does.
 Manager::app->routes->get('/music/remote_outputs' => sub ($c) {
@@ -352,6 +390,46 @@ Manager::app->routes->get('/music/remote_outputs' => sub ($c) {
 		return;
 	}
 	$c->render(json => &music_output_catalogue());
+});
+
+# The controlled machine's physical outputs, for the Sound window's Remote
+# pill. A machine with no sound backend answers an empty list, not an error.
+Manager::app->routes->get('/music/remote_devices' => sub ($c) {
+	my $target = $c->param('target') || '';
+	my $remoted = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	if ($target && $target ne 'local' && !$remoted) {
+		my $rm = &music_remote_row($target);
+		unless ($rm) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' });
+			return;
+		}
+		$c->param('remote_uuid' => $rm->{'uuid'});
+		$c->param('subprocess' => 'yes');
+		$c->render(json => &music_remote_relay($c));
+		return;
+	}
+	$c->render(json => &music_remote_devices_read());
+});
+
+# Pick the speaker, headphones or Bluetooth sink the controlled machine plays
+# through. The write is its default output, exactly as the Sound app sets it.
+Manager::app->routes->post('/music/remote_device' => sub ($c) {
+	my $target = $c->param('target') || '';
+	my $remoted = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	my $id = $c->param('id') || '';
+	if ($target && $target ne 'local' && !$remoted) {
+		my $rm = &music_remote_row($target);
+		unless ($rm) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' });
+			return;
+		}
+		$c->param('remote_uuid' => $rm->{'uuid'});
+		$c->param('subprocess' => 'yes');
+		$c->render(json => &music_remote_relay($c));
+		return;
+	}
+	my $ok = &music_remote_device_pick($id);
+	$c->render(json => { ok => $ok ? 1 : 0, id => $id });
 });
 
 # Pick the output the controlled machine plays through. It is the host's own

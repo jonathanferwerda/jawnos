@@ -21,7 +21,7 @@ var jawnosSoundTaskbarWheelTimer = {};
 // The Music transport in the panel. The machine list and the remembered remote
 // target are read once and refreshed when the panel opens; the remote player's
 // state is polled only while the panel is on screen.
-var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0, queue: null, queue_target: '', queue_at: 0, outputs: null, outputs_target: '' };
+var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0, queue: null, queue_target: '', queue_at: 0, outputs: null, outputs_target: '', devices: null, devices_target: '', devices_at: 0 };
 
 function jawnosSoundTaskbarPercent(value) {
 	var pct = parseFloat(value);
@@ -262,6 +262,7 @@ function jawnosSoundTaskbarMusicLoad() {
 			jawnosSoundTaskbarPanelRefresh();
 			jawnosSoundTaskbarMusicQueueLoad(1);
 			jawnosSoundTaskbarMusicOutputsLoad(1);
+			jawnosSoundTaskbarMusicDevicesLoad(1);
 		}
 	});
 }
@@ -291,6 +292,11 @@ function jawnosSoundTaskbarMusicStateLoad() {
 			jawnosSoundTaskbarMusic.state = r;
 			jawnosSoundTaskbarMusicRepaint();
 			jawnosSoundTaskbarMusicQueueLoad();
+			// a Bluetooth pair or a plug appears and disappears; a slow re-read
+			// keeps the device list honest without polling the sound server
+			if (Date.now() - (jawnosSoundTaskbarMusic.devices_at || 0) > 30000) {
+				jawnosSoundTaskbarMusicDevicesLoad();
+			}
 		}
 	});
 }
@@ -325,6 +331,13 @@ function jawnosSoundTaskbarMusicRepaint() {
 		// the output belongs to the controlled machine; this machine's own
 		// outputs are the house and device sliders above
 		section.find('[data-music-output]').closest('.taskbar_panel_row').toggle(remote);
+		// a device list needs a backend that can choose one; a phone's bridge
+		// carries no such list, so the row stays away
+		var devices = jawnosSoundTaskbarMusic.devices;
+		var devices_ready = !!(devices && jawnosSoundTaskbarMusic.devices_target === jawnosSoundTaskbarMusicTarget()
+			&& (devices.backend == 'pactl' || devices.backend == 'wpctl')
+			&& devices.outputs && devices.outputs.length);
+		section.find('[data-music-device]').closest('.taskbar_panel_row').toggle(remote && devices_ready);
 		if (remote && state) {
 			var pct = Math.round((state.muted ? 0 : (parseFloat(state.volume) || 0)) * 100);
 			var slider = section.find('[data-music-volume]');
@@ -410,6 +423,62 @@ function jawnosSoundTaskbarMusicOutputsPaint() {
 	}
 	if (document.activeElement !== picker[0]) { picker.val(data.current || ''); }
 }
+// The physical output behind the controlled machine's own speaker: its sound
+// card, headphone jack or Bluetooth sink. This is the Sound app's default
+// output, read from and written on that machine.
+function jawnosSoundTaskbarMusicDevicesLoad(force) {
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!target) {
+		jawnosSoundTaskbarMusic.devices = null;
+		jawnosSoundTaskbarMusic.devices_target = '';
+		jawnosSoundTaskbarMusic.devices_at = 0;
+		jawnosSoundTaskbarMusicDevicesPaint();
+		return;
+	}
+	if (!force && jawnosSoundTaskbarMusic.devices_target === target && jawnosSoundTaskbarMusic.devices) {
+		jawnosSoundTaskbarMusicDevicesPaint();
+		return;
+	}
+	$.ajax({
+		url: '/music/remote_devices',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function(r) {
+			if (!r || !r.ok || jawnosSoundTaskbarMusicTarget() !== target) { return; }
+			jawnosSoundTaskbarMusic.devices = r;
+			jawnosSoundTaskbarMusic.devices_target = target;
+			jawnosSoundTaskbarMusic.devices_at = Date.now();
+			jawnosSoundTaskbarMusicDevicesPaint();
+		}
+	});
+}
+function jawnosSoundTaskbarMusicDevicesPaint() {
+	var picker = $('[data-music-device]');
+	if (!picker.length) { return; }
+	var target = jawnosSoundTaskbarMusicTarget();
+	var data = jawnosSoundTaskbarMusic.devices;
+	var row = picker.closest('.taskbar_panel_row');
+	if (!target || !data || jawnosSoundTaskbarMusic.devices_target !== target
+		|| (data.backend != 'pactl' && data.backend != 'wpctl')
+		|| !data.outputs || !data.outputs.length) {
+		picker.empty();
+		row.hide();
+		return;
+	}
+	row.show();
+	var signature = $.map(data.outputs, function(device) { return device.id; }).join('\u001f');
+	if (picker.data('roster') !== signature) {
+		picker.empty();
+		$.each(data.outputs, function(i, device) {
+			if (!device || !device.id) { return; }
+			picker.append($('<option></option>').attr('value', device.id).text(device.label || device.id));
+		});
+		picker.data('roster', signature);
+	}
+	if (document.activeElement !== picker[0]) { picker.val(data.current || ''); }
+}
 // A drag is a lot of events; one POST per settle keeps the peer's player from
 // being re-tuned on every pixel while still feeling immediate.
 function jawnosSoundTaskbarMusicVolumeSend(level) {
@@ -485,6 +554,11 @@ function jawnosSoundTaskbarMusicBuild(section) {
 	outputs.append($('<select class="taskbar_music_select" data-music-output hint="The output the controlled machine plays through"></select>')
 		.attr('aria-label', jawnosT('The output the controlled machine plays through')));
 	section.append(outputs);
+	var devices = $('<div class="taskbar_panel_row taskbar_music_devices"></div>');
+	devices.append($('<span class="taskbar_music_output_label"></span>').text(jawnosT('Device')));
+	devices.append($('<select class="taskbar_music_select" data-music-device hint="The speaker, headphones or Bluetooth device the controlled machine plays through"></select>')
+		.attr('aria-label', jawnosT('The speaker, headphones or Bluetooth device the controlled machine plays through')));
+	section.append(devices);
 	var volume = $('<div class="taskbar_panel_row taskbar_music_volume"></div>');
 	volume.append($('<input type="range" class="taskbar_sound_slider" min="0" max="100" step="1" hint="The volume of the Music app this widget controls">')
 		.attr('data-music-volume', '')
@@ -517,6 +591,7 @@ function jawnosSoundTaskbarMusicMount(target) {
 	jawnosSoundTaskbarMusicStateLoad();
 	jawnosSoundTaskbarMusicQueueLoad(1);
 	jawnosSoundTaskbarMusicOutputsLoad(1);
+	jawnosSoundTaskbarMusicDevicesLoad(1);
 }
 // A short list of the controlled machine's own queue, so the Sound window can
 // switch tracks without opening that machine's Music window.
@@ -822,6 +897,9 @@ $(document).on('change', '[data-music-section] [data-music-target]', function() 
 	jawnosSoundTaskbarMusic.state = null;
 	jawnosSoundTaskbarMusic.outputs = null;
 	jawnosSoundTaskbarMusic.outputs_target = '';
+	jawnosSoundTaskbarMusic.devices = null;
+	jawnosSoundTaskbarMusic.devices_target = '';
+	jawnosSoundTaskbarMusic.devices_at = 0;
 	$.ajax({
 		url: '/music/remote_target',
 		type: 'POST',
@@ -837,6 +915,7 @@ $(document).on('change', '[data-music-section] [data-music-target]', function() 
 			jawnosSoundTaskbarMusicRepaint();
 			jawnosSoundTaskbarMusicQueueLoad(1);
 			jawnosSoundTaskbarMusicOutputsLoad(1);
+			jawnosSoundTaskbarMusicDevicesLoad(1);
 		},
 		error: function() {
 			jawnosSoundTaskbarFail(jawnosT('Could not remember that machine.'));
@@ -867,6 +946,32 @@ $(document).on('change', '[data-music-section] [data-music-output]', function() 
 		error: function() {
 			jawnosSoundTaskbarFail(jawnosT('Could not control that machine.'));
 			jawnosSoundTaskbarMusicOutputsLoad(1);
+		}
+	});
+});
+
+$(document).on('change', '[data-music-section] [data-music-device]', function() {
+	var id = $(this).val() || '';
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!id || !target) { return; }
+	$.ajax({
+		url: '/music/remote_device',
+		type: 'POST',
+		dataType: 'json',
+		data: { target: target, id: id },
+		success: function(r) {
+			if (!r || !r.ok) {
+				jawnosSoundTaskbarFail((r && r.error) || jawnosT('Could not control that machine.'));
+				jawnosSoundTaskbarMusicDevicesLoad(1);
+				return;
+			}
+			if (jawnosSoundTaskbarMusic.devices) { jawnosSoundTaskbarMusic.devices.current = id; }
+			jawnosSoundTaskbarMusicDevicesPaint();
+			setTimeout(function() { jawnosSoundTaskbarMusicDevicesLoad(1); }, 900);
+		},
+		error: function() {
+			jawnosSoundTaskbarFail(jawnosT('Could not control that machine.'));
+			jawnosSoundTaskbarMusicDevicesLoad(1);
 		}
 	});
 });

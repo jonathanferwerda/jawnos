@@ -56,6 +56,15 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	# queue is the list. The controller's search and selections are not sent
 	# over the host's own.
 	my $remote_view = $c->param('remote_view') ? 1 : 0;
+	# A Remote Music window is the face of the host's own Music app, so its
+	# search is the host's search. The older "play a remote library here" view
+	# only borrows the list and leaves the host's own search alone.
+	my $remote_control = $c->param('remote_control') ? 1 : 0;
+	# A controller drawing a peer's window keeps its own shape: a laptop must
+	# not get the phone's stacked shelves just because the library lives there.
+	my $mirror_phone;
+	$mirror_phone = ($c->param('mirror_phone') ? 1 : 0)
+		if $remote_render && defined $c->param('mirror_phone');
 	unless ($remote_render) {
 		foreach my $ns ( keys %{$new_settings} ) {
 			&subs::setting_setter({ app => 'music', setting => $ns, value => $new_settings->{$ns} });
@@ -113,6 +122,17 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 			$settings->{'album'} = $album if defined $album;
 			$settings->{'artist'} = $artist if defined $artist;
 			$settings->{'search'} = $search;
+			# A Remote Music window's search is this machine's search: the
+			# window it is driving is this Music app, so the word and the lit
+			# shelves are written here. A cleared box then stays cleared when
+			# the window is taken again, instead of the host's previous word
+			# coming back. A borrowed library (remote_control off) leaves the
+			# host's own view untouched, as it always has.
+			if ($remote_control) {
+				&subs::setting_setter({ app => 'music', setting => 'search', value => $search });
+				&subs::setting_setter({ app => 'music', setting => 'artist', value => $artist });
+				&subs::setting_setter({ app => 'music', setting => 'album', value => $album });
+			}
 		}
 	}
 
@@ -167,6 +187,8 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	$artist = eval { return decode_json $artist } || [];
 	$album = eval { return decode_json $album } || [];
 	$resizes = eval { return decode_json $resizes } || {};
+	my $render_device = &subs::device_setter();
+	$render_device = $mirror_phone ? 'mobile' : 'computer' if defined $mirror_phone;
 	my $contents;
 	if ($c->param('window_maker')) {
 		$contents = $c->render_to_string(
@@ -175,7 +197,7 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 			template => 'apps/music/music',
 			window_maker => 'yes',
 			folders => $misc_settings,
-			device => &subs::device_setter(),
+			device => $render_device,
 			search => $search,
 			resizes => $resizes,
 			misses => $misses
@@ -193,8 +215,9 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 			crate => $crate,
 			search => $search,
 			# the phone's own list (see apps/music/music.html.ep): this bare
-			# fragment draws whatever the window would have
-			phone => (($music_device // '') eq 'mobile') ? 1 : 0,
+			# fragment draws whatever the window would have, in the shape the
+			# controller asked for
+			phone => (($render_device // '') eq 'mobile') ? 1 : 0,
 		);
 		$c->render(text => $contents);
 	}
