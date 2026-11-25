@@ -253,6 +253,21 @@ like($taskbar, qr{url: '/music/remote_device'}, 'and sends the choice to that ma
 like($taskbar, qr/function jawnosSoundTaskbarMusicDevicesLoad/, 'the device list refreshes with the remote');
 like($help, qr/headphone jack or Bluetooth/, 'the Sound help names the physical device');
 
+# --- the Music panel carries the same sound pickers -------------------------
+like($remote_tpl, qr/id="music_remote_sound"/, 'the Remote Music panel has a sound section');
+like($remote_tpl, qr/data-music-remote-output/, 'with the stream-output picker');
+like($remote_tpl, qr/data-music-remote-device/, 'and the physical-device picker');
+like($music, qr/function musicRemoteSoundLoad/, 'the panel reads them from the controlled machine');
+like($music, qr/function musicRemoteSoundPaint/, 'and paints both from its own answer');
+like($music, qr{url: '/music/remote_outputs'}, 'the panel uses the output route');
+like($music, qr{url: '/music/remote_device'}, 'and the device route');
+like($music, qr/data-music-remote-output/, 'a chosen output is sent');
+like($music, qr/data-music-remote-device/, 'and a chosen device');
+
+# --- the glow is the literal yes/no the stylesheet reads --------------------
+like($music, qr/this\.setAttribute\('selected',/, 'the chip state is written as a literal yes/no');
+unlike($music, qr/\.attr\('selected'/, 'never through jQuery\'s boolean-attribute hook');
+
 # --- This machine leaves remote mode ----------------------------------------
 my ($choose) = $music =~ /function musicRemoteChoose\(target\) \{(.*?)\n\}/s;
 ok(defined $choose && length $choose, 'musicRemoteChoose is readable as a hunk');

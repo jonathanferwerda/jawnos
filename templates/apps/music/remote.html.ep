@@ -38,4 +38,21 @@
 			<p class="music_cfg_note"><%= &subs::ui('No other machine is reachable right now.') %></p>
 		<% } %>
 	</div>
+	<%# the machine's own sound: its stream route, and the speaker, headphones or
+	    Bluetooth device it comes out of. Both are read from and written on the
+	    controlled machine (see musicRemoteSoundLoad). %>
+	<div class="music_cfg_section" id="music_remote_sound" style="display:none;">
+		<h4 class="music_cfg_heading"><%= &subs::ui('Where it plays') %></h4>
+		<div class="music_cfg_fields">
+			<div class="music_cfg_field music_cfg_field_wide">
+				<label class="music_cfg_label" for="music_remote_output"><%= &subs::ui('Output') %></label>
+				<select id="music_remote_output" data-music-remote-output hint="<%= &subs::ui('The output the controlled machine plays through') %>"></select>
+			</div>
+			<div class="music_cfg_field music_cfg_field_wide">
+				<label class="music_cfg_label" for="music_remote_device"><%= &subs::ui('Device') %></label>
+				<select id="music_remote_device" data-music-remote-device hint="<%= &subs::ui('The speaker, headphones or Bluetooth device the controlled machine plays through') %>"></select>
+			</div>
+		</div>
+		<p class="music_cfg_note"><%= &subs::ui('Written on the machine you are controlling, not on this one.') %></p>
+	</div>
 </div>

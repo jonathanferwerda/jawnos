@@ -2635,8 +2635,9 @@ function musicRemotePaint() {
 		updateMusicMuteIcon();
 		// This machine is the one on screen, so its chip is the lit one again
 		remote_panel.find('[data-remote-target]').each(function() {
-			$(this).attr('selected', $(this).attr('data-remote-target') === 'local' ? 'yes' : 'no');
+			this.setAttribute('selected', $(this).attr('data-remote-target') === 'local' ? 'yes' : 'no');
 		});
+		musicRemoteSoundPaint();
 		return;
 	}
 	musicRemoteSnapshotSave();
@@ -2644,8 +2645,9 @@ function musicRemotePaint() {
 	if ($('#music').hasClass('music_fullscreen') && typeof musicFullscreenOff == 'function') { musicFullscreenOff(); }
 	$('#music_remote_now').show();
 	remote_panel.find('[data-remote-target]').each(function() {
-		$(this).attr('selected', $(this).attr('data-remote-target') == target ? 'yes' : 'no');
+		this.setAttribute('selected', $(this).attr('data-remote-target') == target ? 'yes' : 'no');
 	});
+	musicRemoteSoundLoad();
 	musicRemoteSettingsLoad();
 	musicRemoteStateLoad();
 	// The host writes its clock to the cache every few seconds, so a four-second
@@ -2721,6 +2723,7 @@ function musicRemoteApplyState(r) {
 	music_remote_state.fullscreen = r.fullscreen ? 1 : 0;
 	musicRemoteFullscreenPaint();
 	musicRemoteLevelPaint();
+	if ((Date.now() - (music_remote_sound.devices_at || 0)) > 30000) { musicRemoteSoundLoad(); }
 }
 // The controller's full-screen button wears the controlled machine's state, so
 // one press tells the host to fill its screen and the next one brings it back.
@@ -2815,6 +2818,103 @@ function musicRemoteSettingsLoad() {
 			if (r.equalizer) { musicEqualizerFromEqualizer(r.equalizer); musicEqualizerPaint(); }
 		}
 	});
+}
+// The Remote panel's two sound pickers: the stream route (this machine, the
+// server or a room) and the physical device (sound card, headphones,
+// Bluetooth). Both belong to the machine this window is controlling; nothing
+// here touches this machine's own outputs. The panel's live copy is the marked
+// one, because a window render leaves a hidden shell with the same id behind.
+var music_remote_sound = { outputs: null, outputs_target: '', devices: null, devices_target: '', devices_at: 0 };
+function musicRemoteSoundSection() {
+	var panel = (typeof musicConfigSheet == 'function') ? musicConfigSheet('music_remote_panel') : $('#music_remote_panel');
+	return panel.find('#music_remote_sound').first();
+}
+function musicRemoteSoundPaint() {
+	var section = musicRemoteSoundSection();
+	if (!section.length) { return; }
+	var target = musicRemoteTarget();
+	if (!target) { section.hide(); return; }
+	section.show();
+	var outputs = music_remote_sound.outputs;
+	var output_picker = section.find('[data-music-remote-output]');
+	if (outputs && music_remote_sound.outputs_target === target && outputs.outputs) {
+		var osig = $.map(outputs.outputs, function(o) { return o.key; }).join('\u001f');
+		if (output_picker.data('roster') !== osig) {
+			output_picker.empty();
+			$.each(outputs.outputs, function(i, o) {
+				if (!o || !o.key) { return; }
+				output_picker.append($('<option></option>').attr('value', o.key).text(o.label || o.key));
+			});
+			output_picker.data('roster', osig);
+		}
+		if (output_picker[0] !== document.activeElement) { output_picker.val(outputs.current || ''); }
+	}
+	else if (!outputs || music_remote_sound.outputs_target !== target) { output_picker.empty(); }
+	var devices = music_remote_sound.devices;
+	var device_picker = section.find('[data-music-remote-device]');
+	var device_field = device_picker.closest('.music_cfg_field');
+	var supported = !!(devices && music_remote_sound.devices_target === target
+		&& (devices.backend == 'pactl' || devices.backend == 'wpctl')
+		&& devices.outputs && devices.outputs.length);
+	device_field.toggle(supported);
+	if (supported) {
+		var dsig = $.map(devices.outputs, function(d) { return d.id; }).join('\u001f');
+		if (device_picker.data('roster') !== dsig) {
+			device_picker.empty();
+			$.each(devices.outputs, function(i, d) {
+				if (!d || !d.id) { return; }
+				device_picker.append($('<option></option>').attr('value', d.id).text(d.label || d.id));
+			});
+			device_picker.data('roster', dsig);
+		}
+		if (device_picker[0] !== document.activeElement) { device_picker.val(devices.current || ''); }
+	}
+	else { device_picker.empty(); }
+}
+function musicRemoteSoundLoad(force) {
+	var target = musicRemoteTarget();
+	if (!target) {
+		music_remote_sound.outputs = null;
+		music_remote_sound.outputs_target = '';
+		music_remote_sound.devices = null;
+		music_remote_sound.devices_target = '';
+		music_remote_sound.devices_at = 0;
+		musicRemoteSoundPaint();
+		return;
+	}
+	musicRemoteSoundPaint();
+	if (force || music_remote_sound.outputs_target !== target || !music_remote_sound.outputs) {
+		$.ajax({
+			url: '/music/remote_outputs',
+			type: 'GET',
+			dataType: 'json',
+			cache: false,
+			data: { target: target },
+			success: function(r) {
+				if (!r || !r.ok || musicRemoteTarget() !== target) { return; }
+				music_remote_sound.outputs = r;
+				music_remote_sound.outputs_target = target;
+				musicRemoteSoundPaint();
+			}
+		});
+	}
+	if (force || music_remote_sound.devices_target !== target || !music_remote_sound.devices
+		|| (Date.now() - (music_remote_sound.devices_at || 0)) > 30000) {
+		$.ajax({
+			url: '/music/remote_devices',
+			type: 'GET',
+			dataType: 'json',
+			cache: false,
+			data: { target: target },
+			success: function(r) {
+				if (!r || !r.ok || musicRemoteTarget() !== target) { return; }
+				music_remote_sound.devices = r;
+				music_remote_sound.devices_target = target;
+				music_remote_sound.devices_at = Date.now();
+				musicRemoteSoundPaint();
+			}
+		});
+	}
 }
 // The view this machine was showing before it took on a peer's face. It rides
 // sessionStorage as well as the page, so a reload while controlling still comes
@@ -6151,6 +6251,66 @@ $(document).on('click', '#music_remote_close', function(e) {
 	$(this).closest('.music_cfg_drawer').hide();
 });
 
+$(document).on('change', '#music_remote_panel [data-music-remote-output]', function() {
+	var target = musicRemoteTarget();
+	var output = $(this).val() || '';
+	if (!target || !output) { return; }
+	$.ajax({
+		url: '/music/remote_output',
+		type: 'POST',
+		dataType: 'json',
+		data: { target: target, output: output },
+		success: function(r) {
+			if (!r || !r.ok) {
+				if (typeof jawnosNotice == 'function') {
+					jawnosNotice({ title: jawnosT('Remote Music'), message: (r && r.error) || jawnosT('Could not control that machine.') });
+				}
+				musicRemoteSoundLoad(1);
+				return;
+			}
+			if (music_remote_sound.outputs) { music_remote_sound.outputs.current = output; }
+			musicRemoteSoundPaint();
+			setTimeout(function() { musicRemoteSoundLoad(1); }, 600);
+		},
+		error: function() {
+			if (typeof jawnosNotice == 'function') {
+				jawnosNotice({ title: jawnosT('Remote Music'), message: jawnosT('Could not control that machine.') });
+			}
+			musicRemoteSoundLoad(1);
+		}
+	});
+});
+
+$(document).on('change', '#music_remote_panel [data-music-remote-device]', function() {
+	var target = musicRemoteTarget();
+	var id = $(this).val() || '';
+	if (!target || !id) { return; }
+	$.ajax({
+		url: '/music/remote_device',
+		type: 'POST',
+		dataType: 'json',
+		data: { target: target, id: id },
+		success: function(r) {
+			if (!r || !r.ok) {
+				if (typeof jawnosNotice == 'function') {
+					jawnosNotice({ title: jawnosT('Remote Music'), message: (r && r.error) || jawnosT('Could not control that machine.') });
+				}
+				musicRemoteSoundLoad(1);
+				return;
+			}
+			if (music_remote_sound.devices) { music_remote_sound.devices.current = id; }
+			musicRemoteSoundPaint();
+			setTimeout(function() { musicRemoteSoundLoad(1); }, 900);
+		},
+		error: function() {
+			if (typeof jawnosNotice == 'function') {
+				jawnosNotice({ title: jawnosT('Remote Music'), message: jawnosT('Could not control that machine.') });
+			}
+			musicRemoteSoundLoad(1);
+		}
+	});
+});
+
 $(document).on('click', '#music_remote_fullscreen', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
@@ -6167,6 +6327,7 @@ $(document).on('click', '#music_remote_toggle', function() {
 	musicRemotePaint();
 	musicConfigShow(panel);
 	musicConfigDraggable();
+	musicRemoteSoundLoad(1);
 });
 
 $(document).on('click', '#music_remote_panel [data-remote-target]', function() {
