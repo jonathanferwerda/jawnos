@@ -69,8 +69,13 @@ like(
 );
 like(
 	$studio_js,
-	qr/var monitor = \(typeof studioMonitoredChannel[\s\S]{0,200}monitor'\]\s*==\s*'yes'\)/,
-	'a monitored track or the Monitor setting arms the take while the transport plays'
+	qr/var monitor = \(typeof studioMonitoredChannel === 'function' && studioMonitoredChannel\(\) !== null\);/,
+	'a monitored track alone arms the take while the transport plays'
+);
+unlike(
+	$studio_js,
+	qr/mixer\['time'\]\['monitor'\] == 'yes'/,
+	'a stale app-wide Monitor setting does not arm the input'
 );
 unlike(
 	$studio_js,

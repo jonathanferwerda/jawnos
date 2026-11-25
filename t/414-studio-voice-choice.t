@@ -78,7 +78,7 @@ like( $drums, qr/function studioDrumsEngineChosen\(\)/, 'one question names the 
 like( $drums, qr/function studioDrumsEngineHit\(/, 'a pad can hit the engine kit' );
 like( $drums, qr#url: '/manager/studio/drums'#, 'through the drums route' );
 like( $drums, qr/studioDrums\.sound === 'engine' && mixer/, 'the engine is used only when chosen' );
-like( $drums, qr/studioDrumsEngineChosen\(\)\) \{\s*\n\s*studioDrumsHighlightEngineStep/,
+like( $drums, qr/studioDrumsEngineChosen\(\)\) \{[\s\S]{0,80}studioDrumsHighlightEngineStep/,
 	'with the engine chosen the browser scheduler stays quiet' );
 like( $drums, qr/studioDrumsTransport\(false\);\s*\n\s*if \(studioDrums\.sound === 'browser'\)/,
 	'a live switch re-anchors the browser chart' );

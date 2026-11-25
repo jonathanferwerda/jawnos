@@ -144,18 +144,18 @@ like($code, qr/function studioDrumsTransport\(on\)/, 'the transport starts and s
 like($ctrl, qr/studioDrumsTransport\(true\)/, 'Play and Record start the chart');
 like($ctrl, qr/studioDrumsTransport\(false\)/, 'Stop stops it');
 like($code, qr/setInterval\(studioDrumsSchedule, 25\)/, 'the scheduler runs on a 25ms timer');
-like($code, qr/studioDrums\.nextTime < now \+ 0\.1/, 'it schedules 100ms ahead');
+like($code, qr/var horizon = now \+ 0\.1;/, 'it schedules 100ms ahead');
 like($code, qr/var stepDur = 60 \/ bpm \/ 4;/, 'a step is a sixteenth at the transport tempo');
 like($code, qr/studioKnobNumber\(mixer\['time'\]\['bpm'\], 120\)/, 'the tempo comes from the transport');
-like($code, qr/if \(studioDrums\.step === 0 && !studioDrums\.loop\)/,
+like($code, qr/var steps = studioDrums\.lengthSteps \|\| 16;/, 'the scheduler reads the chart length');
+like($code, qr/function studioDrumsBoundary\(pos, stepDur\)/, 'the chart lands on the song grid');
+like($code, qr/var index = Math\.ceil\(\(pos - 1e-6\) \/ stepDur\);/, 'a step is a sixteenth on the absolute song grid');
+like($code, qr/studioDrumsPlayRow\(step, when\)/, 'each step is placed on the audio clock, not a note per timer tick');
+like($code, qr/studioSegmentFrom\(seg\.nextPos, next_ctx0\)/, 'a loop wrap schedules the next pass on the same grid');
+like($code, qr/if \(!studioDrums\.loop && \(\(studioDrums\.schedIndex % steps\) \+ steps\) % steps === 0\)/,
 	'a chart without Loop plays once');
-like($code, qr/studioDrums\.step = \(studioDrums\.step \+ 1\) % steps/,
-	'the chart wraps after its length, not a fixed sixteen');
-like($code, qr/var steps = studioDrums\.lengthSteps \|\| 16;/,
-	'the scheduler reads the chart length');
-like($code, qr/when !==|studioDrumsPlayRow\(studioDrums\.step, studioDrums\.nextTime\)/,
-	'each step is placed on the audio clock, not a note per timer tick');
-like($code, qr/studioDrumsHighlightStep/, 'the panel shows the sounding column');
+like($code, qr/studioDrums\.nextPos \+= stepDur/, 'the cursor advances by sixteenths');
+like($code, qr/studioDrumsHighlightStep\(studioDrums\.step\)/, 'the panel shows the sounding column');
 
 # --- voices are built once, not per step -----------------------------------
 like($code, qr/OfflineAudioContext|webkitOfflineAudioContext/, 'the one-shots use an offline context');

@@ -1433,11 +1433,13 @@ function studioEngineStartNow(punch) {
 	// is the metronome, so the take records without one.
 	var transportRunning = !!(mixer['time'] && mixer['time']['engine_transport']);
 	var click = transportRunning ? null : studioEngineClick();
-	// A monitored track (or the config panel's Monitor setting) sends the live
-	// input to the take's monitor, whether or not the transport runs: the engine
-	// records beside the transport and monitors its input on the same output.
-	var monitor = (typeof studioMonitoredChannel === 'function' && studioMonitoredChannel() !== null)
-		|| (mixer['time'] && mixer['time']['monitor'] == 'yes');
+	// A monitored track sends the live input to the take's monitor, whether or
+	// not the transport runs: the engine records beside the transport and
+	// monitors its input on the same output. The per-track Monitor button is the
+	// only truth; an app-wide Monitor setting left at "yes" must not arm the
+	// input on a take whose track is not monitored, or a recording would be
+	// heard dry through the outputs with Monitor off.
+	var monitor = (typeof studioMonitoredChannel === 'function' && studioMonitoredChannel() !== null);
 	var request = {
 		action: 'start',
 		seconds: $('#studio_engine_seconds').val(),
@@ -1485,6 +1487,10 @@ function studioEngineStartNow(punch) {
 			// and width even when the status line does not echo them.
 			studioEnginePlanArmed = plan;
 			studioEngineRecording = true;
+			// The Monitor button reads the take's live-input state; a take armed
+			// with monitoring off must say so from its first poll.
+			studioEngineMonitorArmed = !!monitor;
+			studioEngineMonitorLevel = monitor ? 1 : 0;
 			// The engine owns the click for the take; the browser scheduler
 			// must not add a second one. Drop the clicks already placed in the
 			// two-second lookahead so a take started mid-transport is clean.

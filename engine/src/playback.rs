@@ -1241,16 +1241,30 @@ struct DrumRender {
     /// wraps at the chart length, so each loop pass carries a different player
     /// wobble instead of repeating the first one.
     steps_played: u64,
-    /// Frames elapsed since the chart's step 0, kept in frames so a tempo
-    /// change moves the boundaries, not the cursor.
+    /// The song's own frame counter (wrapped at the transport loop), kept in
+    /// frames so a tempo change moves the boundaries, not the cursor. It is the
+    /// absolute grid the metronome clicks are on, not a count from the chart's
+    /// own start: a chart is a repeating pattern on the song, so a start, seek
+    /// or loop wrap joins it at the step the beat is on.
     phase: f64,
-    /// The phase of the next step boundary.
+    /// The absolute song frame of the next step boundary.
     next_phase: f64,
     /// The step length the current boundary was measured with; a change
-    /// re-anchors the next boundary without jumping the phase.
+    /// re-anchors the next boundary on the new grid.
     step_frames: f64,
     /// A one-shot chart that has played its last step.
     finished: bool,
+}
+
+/// How many frames one sixteenth lasts at `bpm`. A chart step is a sixteenth,
+/// so four steps make a beat and sixteen make a 4/4 bar. At least one frame,
+/// even for an absurd tempo.
+fn drum_step_frames(rate: u32, bpm: f64) -> f64 {
+    if bpm.is_finite() && bpm > 0.0 {
+        (rate as f64 * 60.0 / bpm / 4.0).max(1.0)
+    } else {
+        1.0
+    }
 }
 
 impl DrumRender {
@@ -1269,6 +1283,25 @@ impl DrumRender {
             step_frames: 0.0,
             finished: false,
         }
+    }
+
+    /// Put the chart on the song's absolute sixteenth grid at `position`.
+    ///
+    /// Step `s` sounds at song frame `s*q + n*length*q`, with step 0 on frame 0,
+    /// so the chart shares the metronome's beat grid instead of restarting on
+    /// an arbitrary playhead. The next boundary at or after `position` fires the
+    /// step the grid says is there; a position exactly on a boundary fires it on
+    /// the block's first frame. `steps_played` is left alone so the player's
+    /// wobble keeps counting across a loop wrap.
+    fn align_to(&mut self, position: u64, q: f64) {
+        let length = self.chart.length.max(1);
+        let index = (position as f64 / q).ceil();
+        let delta = (index * q - position as f64).max(0.0);
+        self.step = index.max(0.0) as u64 as usize % length;
+        self.phase = position as f64;
+        self.next_phase = position as f64 + delta;
+        self.step_frames = q;
+        self.finished = false;
     }
 }
 
@@ -1824,6 +1857,11 @@ impl TransportSource {
     fn apply_drum_chart(&mut self, chart: DrumChart) {
         let rate = self.rate;
         let period = self.period;
+        // A rebuilt or re-lengthed chart starts on the song's sixteenth grid at
+        // the transport's current position, not at step 0 in the middle of a
+        // bar. The click is already there.
+        let position = self.click.as_ref().map(|click| click.position()).unwrap_or(0);
+        let q = drum_step_frames(rate, f64::from_bits(self.bpm_bits));
         let same_kit = self
             .drum_render
             .as_ref()
@@ -1836,8 +1874,8 @@ impl TransportSource {
                 .expect("same_kit means a render machine exists");
             // A different length means the chart changed identity (the page
             // silences the engine kit with a one-step chart when the browser
-            // plays it). Start the new chart at step 0 here, so a mid-song
-            // switch begins on a downbeat rather than at a stale phase.
+            // plays it). Re-read the grid here, so a mid-song switch stays on
+            // the beat rather than restarting at a stale phase.
             let relength = render.chart.length != chart.length;
             // A step-only edit keeps the same routing, so the strips (and their
             // tails) stay; a routing change reconciles them, which moves a
@@ -1847,17 +1885,16 @@ impl TransportSource {
             }
             render.chart = chart.clone();
             if relength {
-                render.step = 0;
                 render.steps_played = 0;
-                render.phase = 0.0;
-                render.next_phase = 0.0;
-                render.finished = false;
+                render.align_to(position, q);
             } else if render.step >= render.chart.length {
                 render.step %= render.chart.length;
                 render.finished = false;
             }
         } else if period > 0 && rate > 0 {
-            self.drum_render = Some(DrumRender::new(chart.clone(), rate, period));
+            let mut render = DrumRender::new(chart.clone(), rate, period);
+            render.align_to(position, q);
+            self.drum_render = Some(render);
         }
         self.drums = Some(chart);
     }
@@ -1874,16 +1911,11 @@ impl TransportSource {
         let Some(render) = self.drum_render.as_mut() else {
             return;
         };
-        let bpm = f64::from_bits(self.bpm_bits);
-        let q = if bpm.is_finite() && bpm > 0.0 {
-            (self.rate as f64 * 60.0 / bpm / 4.0).max(1.0)
-        } else {
-            1.0
-        };
-        // A tempo change re-anchors the next boundary one new step ahead; the
-        // phase itself (the cursor) is untouched.
+        let q = drum_step_frames(self.rate, f64::from_bits(self.bpm_bits));
+        // A tempo change moves the sixteenths, so the chart re-reads the same
+        // absolute grid the click re-anchored at this block's position.
         if render.step_frames > 0.0 && (q - render.step_frames).abs() > 1e-9 {
-            render.next_phase = ((render.phase / q).floor() + 1.0) * q;
+            render.align_to(song_start, q);
         }
         render.step_frames = q;
         if render.next_phase < render.phase {
@@ -1894,12 +1926,16 @@ impl TransportSource {
         let mut phase = render.phase;
         let mut song = song_start;
         let performance = render.chart.performance;
+        let chart_length = render.chart.length.max(1);
         for frame in 0..frames {
             if !render.finished && phase + 1e-9 >= render.next_phase {
-                let chart_length = render.chart.length.max(1);
-                let metric_step = render.step;
+                // The step is a function of the boundary's own place on the
+                // song grid, so a start, seek or loop wrap can never leave the
+                // chart a step away from the beat the click is on.
+                let metric_step =
+                    ((render.next_phase / q).round().max(0.0) as u64 as usize) % chart_length;
                 let steps_played = render.steps_played;
-                if let Some(row) = render.chart.steps.get(render.step) {
+                if let Some(row) = render.chart.steps.get(metric_step) {
                     for voice in Voice::ALL {
                         let velocity = row[voice.index()];
                         if velocity == 0 {
@@ -1922,14 +1958,12 @@ impl TransportSource {
                         render.machine.trigger_at(voice.index(), velocity, frame + offset);
                     }
                 }
-                render.step += 1;
+                render.step = (metric_step + 1) % chart_length;
                 render.steps_played = render.steps_played.wrapping_add(1);
-                if render.step >= chart_length {
-                    if render.chart.looped {
-                        render.step = 0;
-                    } else {
-                        render.finished = true;
-                    }
+                // A one-shot chart plays its length once; a looping chart never
+                // finishes and its step comes from the grid each boundary.
+                if !render.chart.looped && render.steps_played >= chart_length as u64 {
+                    render.finished = true;
                 }
                 render.next_phase += q;
             }
@@ -1938,12 +1972,12 @@ impl TransportSource {
             if loop_bounds.1 > loop_bounds.0 && song >= loop_bounds.1 {
                 let length = loop_bounds.1 - loop_bounds.0;
                 song = loop_bounds.0 + (song - loop_bounds.1) % length;
-                // A transport loop always begins on chart step 0. `steps_played`
-                // keeps counting, so the next pass is played, not replayed.
-                render.step = 0;
-                render.finished = false;
-                phase = 0.0;
-                render.next_phase = 0.0;
+                // The transport loop jumps the song position; the chart
+                // re-reads the grid there so it stays under the click, which
+                // wraps to the same point. `steps_played` keeps counting, so
+                // the next pass is played, not replayed.
+                render.align_to(song, q);
+                phase = render.phase;
             }
         }
         render.phase = phase;
@@ -2205,6 +2239,15 @@ impl RenderSource for TransportSource {
             .drums
             .as_ref()
             .map(|chart| DrumRender::new(chart.clone(), rate, period));
+        // The chart follows the song's absolute sixteenth grid, so a transport
+        // that starts part-way through a song (or after its clips staged) joins
+        // the beat the metronome is on instead of restarting off-beat.
+        if let Some(render) = self.drum_render.as_mut() {
+            render.align_to(
+                self.control.seek_frames(),
+                drum_step_frames(rate, f64::from_bits(self.bpm_bits)),
+            );
+        }
         // The synth is built here when the page sent a patch before the device
         // opened; its buffers join the same prepared size as the drums and the
         // app bus, so every block below is allocation-free.
@@ -2323,6 +2366,7 @@ impl RenderSource for TransportSource {
             // A seek is applied before tempo or loop changes so a `start` that
             // carries all three lands on the new position with the new grid.
             let seq = self.control.seek_seq();
+            let mut reanchor_drums = false;
             if seq != self.seek_seq {
                 self.seek_seq = seq;
                 click.seek(self.control.seek_frames());
@@ -2330,23 +2374,13 @@ impl RenderSource for TransportSource {
                 // their tails so a seek does not carry the old place's reverb.
                 self.clip_position = self.control.seek_frames();
                 self.mixer.reset();
-                // A seek restarts the chart at the new position: step 0 sits
-                // where the transport now is.
-                if let Some(render) = self.drum_render.as_mut() {
-                    render.step = 0;
-                    // A seek to the same place hears the same pass: the
-                    // player's wobble is a function of the step since the
-                    // chart's origin, not of how many loops have run.
-                    render.steps_played = 0;
-                    render.finished = false;
-                    render.phase = 0.0;
-                    render.next_phase = 0.0;
-                }
+                reanchor_drums = true;
             }
             let bpm_bits = self.control.bpm_bits();
             if bpm_bits != self.bpm_bits {
                 self.bpm_bits = bpm_bits;
                 click.set_tempo(f64::from_bits(bpm_bits));
+                reanchor_drums = true;
             }
             let beats = self.control.beats_per_bar();
             if beats != self.beats_per_bar {
@@ -2363,6 +2397,21 @@ impl RenderSource for TransportSource {
                 self.loop_bounds = loop_bounds;
                 click.set_loop(loop_bounds.0, loop_bounds.1);
                 self.clip_loop = loop_bounds;
+            }
+            // A seek or a tempo change moves the click's absolute grid; the
+            // chart follows the same sixteenth grid, so it re-reads it at the
+            // position the click just anchored.
+            if reanchor_drums {
+                if let Some(render) = self.drum_render.as_mut() {
+                    // A seek to the same place hears the same pass: the
+                    // player's wobble is a function of the step since the
+                    // chart's origin, not of how many loops have run.
+                    render.steps_played = 0;
+                    render.align_to(
+                        click.position(),
+                        drum_step_frames(self.rate, f64::from_bits(self.bpm_bits)),
+                    );
+                }
             }
             click.position()
         };
@@ -3786,7 +3835,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: None,
-            
+
                 sends: None,
             })
             .expect("send the moved plan");
@@ -3807,7 +3856,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: None,
-            
+
                 sends: None,
             })
             .expect("send the trimmed plan");
@@ -3842,7 +3891,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: None,
-            
+
                 sends: None,
             })
             .expect("send the empty plan");
@@ -3970,7 +4019,7 @@ mod tests {
                 master_values: Some(vec![("master_limiter.ceiling".to_string(), -12.0)]),
                 drums: None,
                 synth: None,
-            
+
                 sends: None,
             })
             .expect("send the knob plan");
@@ -4332,22 +4381,30 @@ mod tests {
     }
 
     #[test]
-    fn a_seek_restarts_the_drum_chart_at_the_new_position() {
+    fn a_seek_joins_the_drum_chart_on_the_song_grid() {
+        // Step 0 is empty and step 1 carries the rim. At 8 kHz and 120 bpm a
+        // sixteenth is 1000 frames, so step 1 owns frames 1000..2000.
         let chart = drum_chart(
             Kit::Acoustic,
             8,
             true,
-            &[(Voice::Rim, &[100, 0, 0, 0, 0, 0, 0, 0])],
+            &[(Voice::Rim, &[0, 100, 0, 0, 0, 0, 0, 0])],
         );
         let (control, mut source) = drum_transport(8_000, 120.0, 0, 0, 0, chart, 1_000);
         let first = left_channel(&drum_block(&mut source, 1_000));
-        assert!(first_audible(&first, 1e-6).is_some(), "the chart did not start");
-        // Without the seek the next step would be step 1 (empty). The seek must
-        // put step 0 on the new position's first frame instead.
-        control.seek(500);
+        assert!(first_audible(&first, 1e-6).is_none(), "step 0 is empty");
         let second = left_channel(&drum_block(&mut source, 1_000));
-        let onset = first_audible(&second, 1e-6).expect("the seek did not restart the chart");
-        assert!(onset <= 8, "the restarted step 0 onset was at frame {onset}");
+        assert!(first_audible(&second, 1e-6).is_some(), "step 1 is the rim");
+        // A seek to 500 lands half-way through step 0. The chart must wait for
+        // the absolute step-1 boundary at frame 1000, not fire the rim at the
+        // seek and lose the beat.
+        control.seek(500);
+        let after = left_channel(&drum_block(&mut source, 1_000));
+        let onset = first_audible(&after, 1e-6).expect("the step after the seek never sounded");
+        assert!(
+            (onset as i64 - 500).abs() <= 8,
+            "the rim landed at frame {onset}, not 500 frames into the seek"
+        );
     }
 
     #[test]
@@ -4393,7 +4450,7 @@ mod tests {
                 master_values: None,
                 drums: Some(metal),
                 synth: None,
-            
+
                 sends: None,
             })
             .expect("send the chart update");
@@ -4462,7 +4519,7 @@ mod tests {
             gain: 0.0,
             pan: 0.0,
             inserts: Vec::new(),
-        
+
             channel: None,
         }]);
         assert!(
@@ -4477,14 +4534,14 @@ mod tests {
             gain: 1.0,
             pan: 0.0,
             inserts: Vec::new(),
-        
+
             channel: None,
         }]);
         let half = routed_drum_block(vec![AppRoute {
             gain: 0.5,
             pan: 0.0,
             inserts: Vec::new(),
-        
+
             channel: None,
         }]);
         let unity_peak = peak(&unity);
@@ -4504,7 +4561,7 @@ mod tests {
             gain: 1.0,
             pan: -1.0,
             inserts: Vec::new(),
-        
+
             channel: None,
         }]);
         assert!(peak(&left_channel(&left)) > 1e-3, "hard left was silent");
@@ -4518,7 +4575,7 @@ mod tests {
             gain: 1.0,
             pan: 1.0,
             inserts: Vec::new(),
-        
+
             channel: None,
         }]);
         assert!(peak(&right_channel(&right)) > 1e-3, "hard right was silent");
@@ -4536,7 +4593,7 @@ mod tests {
                 gain: 1.0,
                 pan: 0.0,
                 inserts,
-            
+
                 channel: None,
             }])
         };
@@ -4557,7 +4614,7 @@ mod tests {
             gain: 0.5,
             pan: -0.5,
             inserts: Vec::new(),
-        
+
             channel: None,
         };
         let one = peak(&routed_drum_block(vec![route.clone()]));
@@ -4579,7 +4636,7 @@ mod tests {
             gain: 1.0,
             pan: 0.0,
             inserts: vec![InsertKind::Reverb],
-        
+
             channel: None,
         }];
         let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
@@ -4602,7 +4659,7 @@ mod tests {
                 master_values: None,
                 drums: Some(silent),
                 synth: None,
-            
+
                 sends: None,
             })
             .expect("send the step-only update");
@@ -5035,7 +5092,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
-            
+
                 sends: None,
             })
             .expect("send the patch");
@@ -5057,11 +5114,11 @@ mod tests {
                         gain: 0.0,
                         pan: 0.0,
                         inserts: Vec::new(),
-                    
+
                         channel: None,
                     }]),
                 }),
-            
+
                 sends: None,
             })
             .expect("send the routing");
@@ -5084,7 +5141,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(9_000.0)),
-            
+
                 sends: None,
             })
             .expect("send the second patch");
@@ -5173,7 +5230,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
-            
+
                 sends: None,
             })
             .expect("send the patch");
@@ -5200,7 +5257,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
-            
+
                 sends: None,
             })
             .expect("send the patch");
@@ -5241,7 +5298,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
-            
+
                 sends: None,
             })
             .expect("send the patch");
@@ -5277,7 +5334,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(2_000.0)),
-            
+
                 sends: None,
             })
             .expect("send the patch");
@@ -5294,7 +5351,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(12_000.0)),
-            
+
                 sends: None,
             })
             .expect("send the second patch");
@@ -5327,7 +5384,7 @@ mod tests {
                 master_values: None,
                 drums: None,
                 synth: Some(synth_patch_plan(4_000.0)),
-            
+
                 sends: None,
             })
             .expect("send the patch");

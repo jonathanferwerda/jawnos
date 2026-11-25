@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/studio/11_drums.js public/js/manager/studio.js public/js/manager/studio/05_inputs.js public/js/manager/studio/01_transport.js public/js/manager/studio/04_knobs.js perl/help/topics_apps.pl
+# tests-for: public/js/manager/studio/11_drums.js public/js/manager/studio.js public/js/manager/studio/05_inputs.js public/js/manager/studio/01_transport.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js perl/help/topics_apps.pl
 # covers:    Every live input joins the channel's output path (fader, Out
 #            pedals, output cord) while the In chain stays the recording path.
 #            The drum and synth buses mute their own direct output while a
@@ -29,6 +29,7 @@ my $studio    = slurp("$root/public/js/manager/studio.js");
 my $inputs    = slurp("$root/public/js/manager/studio/05_inputs.js");
 my $transport = slurp("$root/public/js/manager/studio/01_transport.js");
 my $knobs     = slurp("$root/public/js/manager/studio/04_knobs.js");
+my $controls  = slurp("$root/public/js/manager/studio/06_controls.js");
 my $help      = slurp("$root/perl/help/topics_apps.pl");
 
 # --- the channel owns a live path through the output ------------------------
@@ -63,6 +64,15 @@ like($studio, qr/var live = \(ch_app && !app_monitor\) \|\| \(on && !ch_app && !
 	'apps live while patched; devices only while monitored');
 like($studio, qr/c\.live\.gain\.value = live \? 1 : 0;/, 'the live path is the channel output');
 like($studio, qr/c\.monGain\.gain\.value = app_monitor \? 1 : 0;/, 'the In tap is only the app monitor comparison');
+
+# --- an engine take never monitors an unmonitored track ---------------------
+like($studio, qr/var monitor = \(typeof studioMonitoredChannel === 'function' && studioMonitoredChannel\(\) !== null\);/,
+	'an engine take monitors only a monitored track');
+unlike($studio, qr/\|\| \(mixer\['time'\] && mixer\['time'\]\['monitor'\] == 'yes'\)/,
+	'a stale app-wide Monitor setting cannot arm the take input');
+like($studio, qr/studioEngineMonitorArmed = !!monitor;/, 'the take reports the state it armed');
+like($controls, qr/mixer\['time'\]\['monitor'\] = \(studioMonitoredChannel\(\) !== null\) \? 'yes' : 'no';/,
+	'the app-wide setting follows the per-track Monitor button');
 
 # --- every app input owns its channel graph, including on reload -----------
 like($inputs, qr/if \(direction == 'input' && type == 'app'\) \{/, 'patching any app has its own path');

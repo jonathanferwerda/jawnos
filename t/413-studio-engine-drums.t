@@ -4,13 +4,14 @@
 #            carries a sixteenth-note chart: eight voice rows of velocities, the
 #            kit, the length and whether it repeats. The engine renders the kit
 #            natively, schedules each step inside the block with `trigger_at`,
-#            anchors step 0 at the transport's start (or seek) position,
-#            restarts it at loop_start on a loop wrap, and sums the drum bus
-#            before the master rack. The page sends the chart on `start` and on
-#            every `update`, suppresses its own scheduler while the engine owns
-#            the clock, and falls back to the browser scheduler when the engine
-#            goes away. A retune at the playhead is not a seek, so a knob turn
-#            does not restart the chart.
+#            and places the chart on the song's absolute sixteenth grid - step 0
+#            on song frame 0 - so a start, seek, loop wrap or tempo change joins
+#            the same beat the metronome clicks are on instead of restarting
+#            off-grid. It sums the drum bus before the master rack. The page
+#            sends the chart on `start` and on every `update`, suppresses its
+#            own scheduler while the engine owns the clock, and falls back to
+#            the browser scheduler when the engine goes away. A retune at the
+#            playhead is not a seek, so a knob turn does not restart the chart.
 
 use strict;
 use warnings;
@@ -39,13 +40,18 @@ ok( length $drums,      'the drum machine script is found' );
 like( $playback, qr/pub struct DrumChart/, 'the transport plan has a drum chart' );
 like( $playback, qr/pub const MAX_STEPS: usize = 128/, 'the chart length is bounded' );
 like( $playback, qr/fn render_drums\(/, 'one block renders and schedules the chart' );
+like( $playback, qr/fn align_to\(&mut self, position: u64, q: f64\)/, 'the chart aligns to the song grid' );
+like( $playback, qr/fn drum_step_frames\(/, 'a chart step is a sixteenth at the tempo' );
+like( $playback, qr/The transport loop jumps the song position; the chart/,
+	'a loop wrap re-reads the grid instead of restarting at step 0' );
+like( $playback, qr/render\.align_to\(song, q\)/, 'the loop wrap aligns the chart' );
+like( $playback, qr/let metric_step =\s*\n\s*\(\(render\.next_phase \/ q\)/,
+	'a step comes from its own boundary on the grid' );
 like( $playback, qr/trigger_at\(voice\.index\(\), velocity, frame \+ offset\)/,
 	'a step lands at its own frame plus the player\'s offset inside the block' );
 like( $playback, qr/pub fn with_performance/, 'a chart can be played through a player' );
-like( $playback, qr/A transport loop always begins on chart step 0/,
-	'a loop wrap restarts the chart at loop_start' );
-like( $playback, qr/fn a_seek_restarts_the_drum_chart_at_the_new_position/,
-	'a seek is tested as a chart restart' );
+like( $playback, qr/fn a_seek_joins_the_drum_chart_on_the_song_grid/,
+	'a seek is tested as joining the grid' );
 like( $playback, qr/fn a_bpm_change_keeps_the_drum_cursor_and_moves_the_next_step/,
 	'a tempo change keeps the cursor' );
 like( $playback, qr/fn a_retune_at_the_playhead_is_not_a_seek/,
@@ -90,9 +96,8 @@ like( $transport, qr/plan\.style = studioDrumsStyleName\(studioDrums\.style\)/,
 	'and the style it is playing' );
 is( scalar( () = $transport =~ /fields\.drums_json = JSON\.stringify\(drums\)/g ), 2,
 	'the chart rides both the start and the plan update' );
-like( $transport, qr/studioDrums\.engineAnchor = now/, 'the start anchors the highlight' );
-like( $transport, qr/studioDrums\.engineAnchor = fields\.position/,
-	'a seek moves the anchor with the chart' );
+like( $drums, qr/function studioDrumsPosition\(\)/, 'the page reads the transport position' );
+like( $drums, qr/function studioDrumsBoundary\(pos, stepDur\)/, 'and its absolute sixteenth grid' );
 like( $transport, qr/studioDrumsTransport\(true\)/, 'a fallback hands the chart back to the browser' );
 
 like( $drums, qr/function studioDrumsSaver\(\)/, 'a chart edit has one save path' );
@@ -101,11 +106,12 @@ like( $drums, qr/function studioDrumsSaver\(\) \{\s*\n\s*studioSaver\(\);/,
 unlike( $drums, qr/function studioDrumsSaver\(\) \{\s*\n\s*studioDrumsSaver\(\);/,
 	'a save path that calls itself would recurse forever' );
 like( $drums, qr/studioEngineClipsChanged\(\)/, 'and that path updates the engine while it plays' );
-like( $drums, qr/if \(mixer\['time'\]\['engine_transport'\] && studioDrumsEngineChosen\(\)\) \{\s*\n\s*studioDrumsHighlightEngineStep/,
+like( $drums, qr/if \(mixer\['time'\]\['engine_transport'\] && studioDrumsEngineChosen\(\)\) \{[\s\S]{0,80}studioDrumsHighlightEngineStep/,
 	'the browser scheduler does not play a second copy when the engine is chosen' );
 like( $drums, qr/function studioDrumsHighlightEngineStep/, 'the highlight follows the engine chart' );
-like( $drums, qr/studioDrumsHighlightStep\(\(step \+ steps\) % steps\)/,
+like( $drums, qr/studioDrumsHighlightStep\(studioDrums\.step\)/,
 	'and lands on the same step the engine is playing' );
-like( $drums, qr/engineAnchor/, 'a recorded hit uses the engine grid' );
+like( $drums, qr/var step = Math\.floor\(pos \/ studioDrums\.stepDur\) % steps;/,
+	'a recorded hit uses the same song grid' );
 
 done_testing();

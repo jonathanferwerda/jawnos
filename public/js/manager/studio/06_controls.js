@@ -761,6 +761,10 @@ function studioSetMonitor(ch, on, from_user) {
 		mixer.monitor[ch] = 1;
 	}
 	else { mixer.monitor[ch] = 0; }
+	// The app-wide Monitor setting is only the load-time seed. Keep it in step
+	// with the track so a stale "yes" can never arm a recording's live input
+	// after Monitor was turned off.
+	if (mixer['time']) { mixer['time']['monitor'] = (studioMonitoredChannel() !== null) ? 'yes' : 'no'; }
 	// While an engine take records the same control arms the live input from
 	// this moment (1) or silences it (0); the recording so far is unaffected
 	// and the take keeps running either way.

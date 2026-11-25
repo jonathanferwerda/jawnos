@@ -822,12 +822,8 @@ function studioEngineTransportStart(pos, ready, exact) {
 	// retune `start` from studioEngineTransportSync. A take edit reaches it
 	// through `update`, so this path never re-sends the clips.
 	if (mixer['time']['engine_transport']) {
-		// A seek restarts the engine's drum chart at the new position; the
-		// highlight follows the same anchor.
-		if (typeof studioDrums !== 'undefined') {
-			studioDrums.engineAnchor = fields.position;
-			studioDrums.enginePos = fields.position;
-		}
+		// A seek moves the engine's chart with it; the page's highlight reads the
+		// same polled position, so it needs no anchor of its own.
 		studioEngineTransportPost('seek', { position: fields.position }, studioEngineTransportAnswer);
 		return;
 	}
@@ -853,12 +849,9 @@ function studioEngineTransportStart(pos, ready, exact) {
 		var seg = studioAudio.playSeg;
 		var now = exact ? pos : ((ctx && seg) ? (seg.pos0 + (ctx.currentTime - seg.ctx0)) : (mixer['time']['position'] || 0));
 		var fields = studioEngineTransportFields(now);
-		// The chart's step 0 sits where the engine starts, so the highlight and
-		// a recorded hit use the same origin.
-		if (typeof studioDrums !== 'undefined') {
-			studioDrums.engineAnchor = now;
-			studioDrums.enginePos = now;
-		}
+		// The chart's step 0 is the song's own frame 0, not the engine's start
+		// position, so a start part-way through the song joins the beat instead
+		// of restarting off-grid.
 		// The plan rides as one JSON string: jQuery's own array encoding is not
 		// the shape the route reads.
 		fields.clips_json = JSON.stringify(clips);

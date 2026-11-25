@@ -67,10 +67,10 @@ var studioDrums = {
 	running: false,
 	done: false,
 	nextTime: 0,
+	nextPos: 0,
+	schedIndex: 0,
+	seg: null,
 	step: 0,
-	anchor: 0,
-	engineAnchor: 0,
-	enginePos: 0,
 	stepDur: 0.125,
 	sources: [],
 	learn: null,
@@ -855,19 +855,12 @@ function studioDrumsRecording() {
 function studioDrumsCurrentStep() {
 	if (!studioDrums.running || !studioDrums.stepDur) { return 0; }
 	var steps = studioDrums.lengthSteps || 16;
-	var elapsed;
-	if (mixer && mixer['time'] && mixer['time']['engine_transport']) {
-		// The engine's chart is anchored where the transport started (or was
-		// seeked), so a recorded hit lands on the same grid it is hearing.
-		var pos = studioKnobNumber(mixer['time']['position'], 0);
-		var anchor = studioKnobNumber(studioDrums.engineAnchor, 0);
-		if (pos < anchor) { studioDrums.engineAnchor = anchor = 0; }
-		elapsed = Math.max(0, pos - anchor);
-	} else {
-		elapsed = Math.max(0, studioDrums.ctx.currentTime - studioDrums.anchor);
-	}
-	var step = Math.floor(elapsed / studioDrums.stepDur) % steps;
-	return (step + steps) % steps;
+	// The chart is a pattern on the song's absolute sixteenth grid, the same
+	// one the metronome clicks use, so a recorded hit lands on the step that is
+	// sounding wherever playback started, seeked or looped.
+	var pos = studioKnobNumber(mixer && mixer['time'] ? mixer['time']['position'] : 0, 0);
+	var step = Math.floor(pos / studioDrums.stepDur) % steps;
+	return ((step % steps) + steps) % steps;
 }
 
 // The engine is the kit while it owns the transport and the panel chose it: a
@@ -920,15 +913,52 @@ function studioDrumsTrigger(voice, velocity, record) {
 
 // ---- the scheduler --------------------------------------------------------
 
+// Where the transport is now, in song seconds. The browser clock's own segment
+// is the most precise source (it is what the takes and clicks are placed on);
+// a native engine that owns the clock reports the position the page polls.
+function studioDrumsPosition() {
+	if (mixer && mixer['time'] && mixer['time']['engine_transport']) {
+		return studioKnobNumber(mixer['time']['position'], 0);
+	}
+	var ctx = studioAudio.ctx;
+	var seg = studioAudio.playSeg;
+	if (ctx && seg) { return seg.pos0 + (ctx.currentTime - seg.ctx0); }
+	return studioKnobNumber(mixer && mixer['time'] ? mixer['time']['position'] : 0, 0);
+}
+
+// The next step boundary at or after a song position. Step k is the chart's
+// pattern on the absolute sixteenth `k*stepDur`: step 0 sits on song frame 0,
+// so every bar line is a whole number of steps and the drums stay under the
+// metronome's beat, which is four steps wide.
+function studioDrumsBoundary(pos, stepDur) {
+	if (!(stepDur > 0)) { return { index: 0, pos: 0 }; }
+	var index = Math.ceil((pos - 1e-6) / stepDur);
+	if (!isFinite(index) || index < 0) { index = 0; }
+	return { index: index, pos: index * stepDur };
+}
+
+// Point the scheduling cursor at the absolute grid, from a song position.
+function studioDrumsAnchorGrid(pos, stepDur) {
+	var edge = studioDrumsBoundary(pos, stepDur);
+	studioDrums.schedIndex = edge.index;
+	studioDrums.nextPos = edge.pos;
+	var seg = studioDrums.seg;
+	studioDrums.nextTime = seg ? studioTimeAt(edge.pos, seg.pos0, seg.ctx0) : 0;
+}
+
 function studioDrumsTransport(on) {
 	if (on) {
 		var ctx = studioDrumsBus();
 		if (!ctx) { return; }
+		var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
 		studioDrums.running = true;
 		studioDrums.done = false;
-		studioDrums.step = 0;
-		studioDrums.anchor = ctx.currentTime + 0.05;
-		studioDrums.nextTime = studioDrums.anchor;
+		studioDrums.stepDur = 60 / bpm / 4;
+		// The chart is scheduled through the same segment the click and the takes
+		// use, so a loop wrap is a new piece of the same song grid.
+		var pos = studioDrumsPosition();
+		studioDrums.seg = studioSegmentFrom(pos, ctx.currentTime);
+		studioDrumsAnchorGrid(pos, studioDrums.stepDur);
 		if (!studioDrums.timer) { studioDrums.timer = setInterval(studioDrumsSchedule, 25); }
 		studioDrumsSchedule();
 		return;
@@ -936,6 +966,9 @@ function studioDrumsTransport(on) {
 	studioDrums.running = false;
 	studioDrums.done = false;
 	studioDrums.nextTime = 0;
+	studioDrums.nextPos = 0;
+	studioDrums.schedIndex = 0;
+	studioDrums.seg = null;
 	studioDrums.step = 0;
 	if (studioDrums.timer) { clearInterval(studioDrums.timer); studioDrums.timer = 0; }
 	studioDrumsStopSources();
@@ -951,22 +984,61 @@ function studioDrumsSchedule() {
 	var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
 	var stepDur = 60 / bpm / 4;
 	var steps = studioDrums.lengthSteps || 16;
-	studioDrums.stepDur = stepDur;
+	var posNow = studioDrumsPosition();
+	var now = ctx.currentTime;
 	// The engine schedules the chart on its own clock while it owns the
 	// transport and the panel chose the engine; the browser must not play a
 	// second copy. With the browser chosen, this scheduler keeps the beat and
 	// the highlight follows it, exactly as it did before the engine existed.
 	if (mixer['time']['engine_transport'] && studioDrumsEngineChosen()) {
+		studioDrums.stepDur = stepDur;
 		studioDrumsHighlightEngineStep(stepDur, steps);
 		return;
 	}
-	var now = ctx.currentTime;
+	var tempoChanged = (studioDrums.stepDur !== stepDur);
+	studioDrums.stepDur = stepDur;
+	var seg = studioDrums.seg;
+	if (!seg) { seg = studioSegmentFrom(posNow, now); studioDrums.seg = seg; }
+	// A tempo change, a seek, or the engine handing the clock back re-reads the
+	// grid at the playhead. A loop wrap does not: the scheduling cursor has
+	// already walked into the next pass, so its steps keep their places.
+	var ahead = (now < seg.ctx0 - 1e-9);
+	var expected = seg.pos0 + (now - seg.ctx0);
+	if (tempoChanged || posNow + 1e-6 < seg.pos0 || posNow >= seg.pos1 - 1e-9
+		|| (!ahead && Math.abs(posNow - expected) > 0.2)) {
+		seg = studioSegmentFrom(posNow, now);
+		studioDrums.seg = seg;
+		studioDrumsAnchorGrid(posNow, stepDur);
+	}
+	// Place every sixteenth whose own time falls inside the lookahead window.
+	var horizon = now + 0.1;
 	var guard = 0;
-	while (studioDrums.nextTime < now + 0.1 && guard++ < 64) {
-		studioDrumsPlayRow(studioDrums.step, studioDrums.nextTime);
-		studioDrums.nextTime += stepDur;
-		studioDrums.step = (studioDrums.step + 1) % steps;
-		if (studioDrums.step === 0 && !studioDrums.loop) { studioDrums.done = true; break; }
+	while (guard++ < 256) {
+		seg = studioDrums.seg;
+		if (!seg) { break; }
+		if (studioDrums.nextPos >= seg.pos1) {
+			if (seg.nextPos === null) { break; }
+			var next_ctx0 = seg.ctx0 + (seg.pos1 - seg.pos0);
+			seg = studioSegmentFrom(seg.nextPos, next_ctx0);
+			studioDrums.seg = seg;
+			studioDrumsAnchorGrid(seg.pos0, stepDur);
+			continue;
+		}
+		var when = studioTimeAt(studioDrums.nextPos, seg.pos0, seg.ctx0);
+		if (when >= horizon) { break; }
+		var step = ((studioDrums.schedIndex % steps) + steps) % steps;
+		// a stalled timer can leave a beat in the past: skip it alone, the grid
+		// is absolute so the next one keeps its own place
+		if (when >= now - 0.02) {
+			studioDrumsPlayRow(step, when);
+		}
+		studioDrums.schedIndex += 1;
+		studioDrums.nextPos += stepDur;
+		studioDrums.nextTime = studioTimeAt(studioDrums.nextPos, seg.pos0, seg.ctx0);
+		if (!studioDrums.loop && ((studioDrums.schedIndex % steps) + steps) % steps === 0) {
+			studioDrums.done = true;
+			break;
+		}
 	}
 	if (studioDrums.done) {
 		studioDrums.running = false;
@@ -974,8 +1046,8 @@ function studioDrumsSchedule() {
 		studioDrumsHighlightStep(-1);
 		return;
 	}
-	var elapsed = (now - studioDrums.anchor) / stepDur;
-	studioDrumsHighlightStep(((Math.floor(elapsed) % steps) + steps) % steps);
+	studioDrums.step = ((Math.floor(posNow / stepDur) % steps) + steps) % steps;
+	studioDrumsHighlightStep(studioDrums.step);
 }
 
 function studioDrumsPlayRow(step, when) {
@@ -995,24 +1067,13 @@ function studioDrumsHighlightStep(step) {
 	}
 }
 
-// The engine's chart is anchored where the transport started or was seeked,
-// and restarts at step 0 when a loop wraps. Mirror that with the position the
-// page already polls, so the highlight agrees with the sound.
+// The engine plays the chart on the song's absolute sixteenth grid, and the
+// position the page polls is the same clock, so the highlight is the step the
+// sound is on, including after a seek or a loop wrap.
 function studioDrumsHighlightEngineStep(stepDur, steps) {
 	var pos = studioKnobNumber(mixer['time']['position'], 0);
-	var anchor = studioKnobNumber(studioDrums.engineAnchor, 0);
-	// The position going backwards is a loop wrap (the engine restarts the
-	// chart at step 0 there) or a seek the page already anchored.
-	var wrapped = studioDrums.enginePos > pos + 0.001;
-	if (wrapped || pos < anchor) {
-		var loop = studioEngineTransportLoop();
-		var looping = !!(loop && loop.end > loop.start);
-		studioDrums.engineAnchor = anchor = (wrapped && looping) ? loop.start : Math.max(0, pos);
-	}
-	studioDrums.enginePos = pos;
-	var elapsed = Math.max(0, pos - anchor);
-	var step = Math.floor(elapsed / stepDur) % steps;
-	studioDrumsHighlightStep((step + steps) % steps);
+	var step = Math.floor(pos / stepDur) % steps;
+	studioDrumsHighlightStep(((step % steps) + steps) % steps);
 }
 
 // ---- the key map ----------------------------------------------------------
