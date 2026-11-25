@@ -5256,6 +5256,13 @@ function musicVolumeBase() {
 	if (musicRemoteTarget() && music_remote_state.volume != null) { return musicVolumeClamp(music_remote_state.volume); }
 	return musicVolumeLevel();
 }
+// Where a finger on the player starts: the same bar, and a muted one starts at
+// zero so a drag upward comes in quietly instead of jumping to the old level.
+function musicBarLevel() {
+	var remote = musicRemoteTarget();
+	if (remote ? !!music_remote_state.muted : music_muted) { return 0; }
+	return musicVolumeBase();
+}
 function musicSystemVolumePaint(level, user) {
 	musicSystemLevel = musicVolumeClamp(level);
 	// the mixer read is still this machine's; while the window shows a peer the

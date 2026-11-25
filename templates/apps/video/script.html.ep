@@ -429,6 +429,8 @@
 			}
 			function <%= $miss %>VolumeLevel() {
 				<% if ($source eq 'music') { %>
+					// the bar may be a peer's: start a drag from the level it shows
+					if ($('#music_volume').length && typeof musicBarLevel == 'function') { return musicBarLevel(); }
 					if ($('#music_volume').length && typeof musicVolumeLevel == 'function') {
 						return music_muted ? 0 : musicVolumeLevel();
 					}

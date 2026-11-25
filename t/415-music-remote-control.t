@@ -73,6 +73,11 @@ like($music, qr/\$\('#music_volume'\)\.val\(musicVolumeLevel\(\)\);\s*\n\t\tupda
 	'leaving the peer puts this machine\'s own bar back');
 like($remote, qr/volume => \(defined \$volume \? \$volume \+ 0 : undef\)/, 'a peer that never saved a level answers null');
 like($help, qr/its volume and its mute/, 'the Music help says the bar is the controlled machine\'s');
+like($music, qr/function musicBarLevel\(\)/, 'a finger starts from the bar that is shown');
+like($music, qr/if \(remote \? !!music_remote_state\.muted : music_muted\) \{ return 0; \}/,
+	'and a muted bar starts the drag at zero');
+like($video_tpl, qr/typeof musicBarLevel == 'function'\) \{ return musicBarLevel\(\); \}/,
+	'the player gesture asks the bar, not this machine');
 
 # --- only playback settings travel -----------------------------------------
 like($remote, qr/my %music_remote_setting = map \{ \$_ => 1 \} qw\(normalize video equalizer subtitles\);/,
