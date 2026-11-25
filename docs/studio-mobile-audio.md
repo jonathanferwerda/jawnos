@@ -546,7 +546,7 @@ time. Measure it before the §3 latency table is used to argue for a monitoring 
 
 ### Second slice — the strip plan and the probe (2026-11-25)
 
-Engine **v0.1.3800**, app **1358 / 0.118.360**. The take now carries one `Channel`
+Engine **v0.1.3801**, app **1358 / 0.118.360**. The take now carries one `Channel`
 (`docs/studio-oboe-slice.md` §11): the app's *Take through* selector starts either the raw path or
 the engine's tone+delay fixture, and the sidecar's `plan` says which. The strip runs in the drain
 thread, not the callback, and a mono take stays a mono WAV.

@@ -521,7 +521,7 @@ and the full finding text are in `docs/studio-mobile-audio.md` §6.
 
 ## 11. Second slice — the strip plan and the duplex probe (2026-11-25)
 
-Engine **v0.1.3800**, app **1358 / 0.118.360**, installed on `SM-X400`. Two
+Engine **v0.1.3801**, app **1358 / 0.118.360**, installed on `SM-X400`. Two
 additions, one of them complete and the other deliberately stopped short of the
 UI.
 
@@ -614,7 +614,7 @@ would invite a false latency claim, so there is no button.
 
 ### 11.5 Verification run
 
-- `cargo test --offline -j 4 --lib` in `engine/`: **402 passed**, including the
+- `cargo test --offline -j 4 --lib` in `engine/`: **411 passed**, including the
   nine probe tests and the fixture DSP test.
 - `perl scripts/build_engine.pl --android`: `libjawn_audio.so` exports
   `jawn_audio_start_plan` and `jawn_audio_fixture_plan`; the stripped copy in the
