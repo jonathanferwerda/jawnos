@@ -280,3 +280,438 @@ $(document).on('input change', '.studio_master_control', function () {
 	var block = input.closest('.studio_master_effect');
 	studioMasterSet(block.attr('effect'), input.attr('control'), input.val());
 });
+
+// ===========================================================================
+// Mastering automation: a measurement mic on the master
+// ===========================================================================
+// A browser-only Learn (docs/studio-mastering-automation.md §7.1). The mic
+// hears the room while the browser chain plays; the reference is the rack's
+// input, before every insert. Ten one-octave bands are measured for ten
+// seconds, the difference against a target is clamped to +/- 6 dB and written
+// into the rack's own ten-band EQ (`master_eq`), then saved with the song.
+//
+// The mic is an analyser source and nothing else: it is never connected to the
+// destination, so a measurement cannot feed the room. The engine owns the
+// transport on a native take and the browser chain is silent then, so Learn
+// refuses rather than measuring a dead bus.
+//
+// The reference is pre-master, so the measured difference must come from a
+// neutral EQ. The person's manual curve is captured first, the gains are
+// flattened for the run without overwriting the stored values, and the learned
+// curve replaces the ten bands when the run ends; Reset puts the manual curve
+// back.
+var studioMasteringHz = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+var studioMasteringControls = ['b32', 'b64', 'b125', 'b250', 'b500', 'b1k', 'b2k', 'b4k', 'b8k', 'b16k'];
+// Flat is the measurement mic's target; House is the gentle downward tilt a
+// room hears as balanced. Both are choices, not a truth.
+var studioMasteringTargets = {
+	flat:  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+	house: [3, 2, 1, 0.5, 0, 0, -0.5, -1, -1.5, -2]
+};
+var studioMasteringSeconds = 10;
+var studioMasteringLimit = 6;          // dB, per band and per Learn
+var studioMasteringSampleMs = 100;     // ten samples a second, the whole window
+var studioMasteringGateDb = -50;       // a reference band with no programme
+var studioMasteringFloorDb = -55;      // the loudest band is still too quiet
+var studioMasteringMicFloorDb = -80;   // the mic heard no programme in the band
+
+var studioMasteringState = {
+	stream: null, source: null, mic: null, ref: null,
+	acc: null, timer: 0, started: 0, running: false, pending: false, manual: null
+};
+
+function studioMasteringText(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+function studioMasteringSay(text) {
+	var el = $('#studio_mastering_status');
+	if (el.length) { el.text(studioMasteringText(text)); }
+}
+
+function studioMasteringTarget() {
+	var picked = $('input[name="studio_mastering_target"]:checked').val();
+	return (picked === 'flat') ? 'flat' : 'house';
+}
+
+// The rack's 0..100 fader value for a dB setting, the inverse of
+// studioMasterBandDb() above, rounded to the slider's whole step.
+function studioMasteringDbToValue(db) {
+	return Math.max(0, Math.min(100, Math.round(50 + db * 100 / 24)));
+}
+
+function studioMasteringDbText(db) {
+	var rounded = Math.round(db * 10) / 10;
+	if (Math.abs(rounded) < 0.05) { rounded = 0; }
+	return (rounded > 0 ? '+' : '') + rounded;
+}
+
+function studioMasteringClamp(value, low, high) {
+	return Math.max(low, Math.min(high, value));
+}
+
+// ---- the window's state ----------------------------------------------------
+
+function studioMasteringButtons() {
+	var learn = $('#studio_mastering_learn');
+	if (!learn.length) { return; }
+	var running = !!studioMasteringState.running;
+	learn.text(studioMasteringText(running ? 'Stop' : 'Learn'));
+	learn.attr('aria-pressed', running ? 'true' : 'false');
+}
+
+// The mic picker can only name devices after permission, when the labels
+// arrive; keep the chosen id across the first enumeration.
+function studioMasteringDevices(keep) {
+	var select = $('#studio_mastering_mic');
+	if (!select.length || !(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) { return; }
+	var chosen = (keep !== undefined && keep !== null && String(keep).length) ? String(keep) : String(select.val() || '');
+	navigator.mediaDevices.enumerateDevices().then(function (list) {
+		var inputs = (list || []).filter(function (item) { return item && item.kind === 'audioinput'; });
+		select.empty();
+		select.append($('<option>').attr('value', '').text(studioMasteringText('Default microphone')));
+		var seen = {};
+		inputs.forEach(function (item, i) {
+			var id = String(item.deviceId || '');
+			if (!id || seen[id]) { return; }
+			seen[id] = 1;
+			var label = item.label || (studioMasteringText('Microphone') + ' ' + (i + 1));
+			select.append($('<option>').attr('value', id).text(label));
+		});
+		if (chosen) { select.val(chosen); }
+		if (select.val() !== (chosen || '')) { select.val(''); }
+	}).catch(function () { /* a browser that refuses to enumerate keeps the default */ });
+}
+
+// ---- measurement -----------------------------------------------------------
+
+// The bin range for one octave band; both analysers share the sample rate, so
+// the counts cancel in the mic/reference difference.
+function studioMasteringBinRange(bins, rate, low, high) {
+	var nyquist = rate / 2;
+	var first = Math.max(0, Math.floor(low / nyquist * bins));
+	var last = Math.min(bins - 1, Math.ceil(high / nyquist * bins));
+	if (last < first) { last = first; }
+	return [first, last];
+}
+
+function studioMasteringAccumulator(ctx, mic, ref) {
+	var bins = mic.frequencyBinCount;
+	var ranges = studioMasteringHz.map(function (hz) {
+		return studioMasteringBinRange(bins, ctx.sampleRate, hz / Math.SQRT2, hz * Math.SQRT2);
+	});
+	return {
+		bins: bins,
+		ranges: ranges,
+		micData: new Float32Array(bins),
+		refData: new Float32Array(bins),
+		micPower: studioMasteringHz.map(function () { return 0; }),
+		refPower: studioMasteringHz.map(function () { return 0; }),
+		refPeak: studioMasteringHz.map(function () { return 0; }),
+		frames: 0
+	};
+}
+
+// One sample of both streams: the sum of linear power over each band's bins,
+// and the band's loudest frame so a band that fell away can be held.
+function studioMasteringSample(acc, mic, ref) {
+	mic.getFloatFrequencyData(acc.micData);
+	ref.getFloatFrequencyData(acc.refData);
+	acc.ranges.forEach(function (range, i) {
+		var micPower = 0;
+		var refPower = 0;
+		for (var bin = range[0]; bin <= range[1]; bin++) {
+			micPower += Math.pow(10, acc.micData[bin] / 10);
+			refPower += Math.pow(10, acc.refData[bin] / 10);
+		}
+		acc.micPower[i] += micPower;
+		acc.refPower[i] += refPower;
+		if (refPower > acc.refPeak[i]) { acc.refPeak[i] = refPower; }
+	});
+	acc.frames++;
+}
+
+// `correction = clamp(target - (mic - reference), -6, +6)`. The reference tap
+// is pre-master and the bands were flattened for the run, so the difference
+// is the room alone. A band with no programme, or one the mic never heard, is
+// held at 0 dB rather than chased with a boost.
+function studioMasteringResult(acc, targetName) {
+	var target = studioMasteringTargets[targetName] || studioMasteringTargets.house;
+	var frames = Math.max(1, acc.frames);
+	var bands = [];
+	var loudest = -200;
+	studioMasteringHz.forEach(function (hz, i) {
+		var micDb = 10 * Math.log10(acc.micPower[i] / frames + 1e-12);
+		var refDb = 10 * Math.log10(acc.refPower[i] / frames + 1e-12);
+		var peakDb = 10 * Math.log10(acc.refPeak[i] + 1e-12);
+		if (refDb > loudest) { loudest = refDb; }
+		var measured = micDb - refDb;
+		var gated = (refDb < studioMasteringGateDb) || (refDb < peakDb - 20) || (micDb < studioMasteringMicFloorDb);
+		var correction = gated ? 0 : studioMasteringClamp(target[i] - measured, -studioMasteringLimit, studioMasteringLimit);
+		bands.push({ control: studioMasteringControls[i], hz: hz, target: target[i], measured: measured, correction: correction, gated: gated });
+	});
+	return { bands: bands, quiet: (loudest < studioMasteringFloorDb) };
+}
+
+// ---- the bars --------------------------------------------------------------
+
+// A bar grows from the centre line: +12 dB fills the half above it, and the
+// correction's own +/- 6 dB is half the plot, so the two are comparable.
+function studioMasteringBar(el, db) {
+	if (!el.length) { return; }
+	var half = 50;
+	var range = 12;
+	var pct = Math.max(0, Math.min(range, Math.abs(db))) / range * half;
+	el.css({ top: (db >= 0 ? (half - pct) : half) + '%', bottom: '', height: pct + '%' });
+	el.toggleClass('studio_mastering_neg', db < 0);
+}
+
+function studioMasteringMark(el, db) {
+	if (!el.length) { return; }
+	var pct = 50 - Math.max(-12, Math.min(12, db)) / 12 * 50;
+	el.css({ top: pct + '%' });
+}
+
+function studioMasteringClear() {
+	$('#studio_mastering_bars .studio_mastering_band').each(function () {
+		var el = $(this);
+		studioMasteringBar(el.find('.studio_mastering_band_before'), 0);
+		studioMasteringBar(el.find('.studio_mastering_band_after'), 0);
+		el.removeClass('studio_mastering_gated');
+		el.find('.studio_mastering_band_db').text('0');
+	});
+	studioMasteringTargetPaint();
+}
+
+// The target is a line, so it is drawn even before a Learn; the bars then
+// show what was measured against it.
+function studioMasteringTargetPaint() {
+	var target = studioMasteringTargets[studioMasteringTarget()] || studioMasteringTargets.house;
+	$('#studio_mastering_bars .studio_mastering_band').each(function () {
+		var el = $(this);
+		var index = studioMasteringControls.indexOf(el.attr('data-control'));
+		if (index < 0) { return; }
+		studioMasteringMark(el.find('.studio_mastering_band_target'), target[index]);
+	});
+}
+
+function studioMasteringPaint(result) {
+	$('#studio_mastering_bars .studio_mastering_band').each(function () {
+		var el = $(this);
+		var control = el.attr('data-control');
+		var band = null;
+		((result && result.bands) || []).forEach(function (b) { if (b.control === control) { band = b; } });
+		if (!band) { return; }
+		studioMasteringBar(el.find('.studio_mastering_band_before'), band.measured);
+		studioMasteringBar(el.find('.studio_mastering_band_after'), band.correction);
+		studioMasteringMark(el.find('.studio_mastering_band_target'), band.target);
+		el.toggleClass('studio_mastering_gated', !!band.gated);
+		el.find('.studio_mastering_band_db').text(studioMasteringDbText(band.correction));
+	});
+}
+
+// ---- the manual curve ------------------------------------------------------
+
+function studioMasteringManual() {
+	var eq = studioMasterFind('master_eq');
+	if (!eq) { return null; }
+	var values = {};
+	studioMasteringControls.forEach(function (control) { values[control] = eq.values[control]; });
+	return { values: values, on: !eq.bypassed };
+}
+
+// Set the audible gains without touching the stored values or the song: the
+// flattening is part of the measurement, not an edit the person made.
+function studioMasteringGains(eq, values) {
+	if (!eq) { return; }
+	studioMasteringControls.forEach(function (control) {
+		var value = (values && values[control] !== undefined) ? values[control] : 50;
+		if (eq.setters[control]) { eq.setters[control](studioEffectNumber(value)); }
+	});
+}
+
+function studioMasteringRestoreManual(manual) {
+	if (!manual) { return; }
+	studioMasteringControls.forEach(function (control) {
+		if (manual.values[control] !== undefined) { studioMasterSet('master_eq', control, manual.values[control]); }
+	});
+	studioMasterToggle('master_eq', manual.on === true);
+}
+
+// ---- start, stop, reset ----------------------------------------------------
+
+function studioMasteringMediaStop() {
+	var state = studioMasteringState;
+	if (state.timer) { clearInterval(state.timer); state.timer = 0; }
+	if (state.stream) {
+		state.stream.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+	}
+	if (state.source) { try { state.source.disconnect(); } catch (e) {} }
+	if (state.mic) { try { state.mic.disconnect(); } catch (e) {} }
+	if (state.ref) {
+		try { state.ref.disconnect(); } catch (e) {}
+		var chain = studioAudio.masterChain;
+		if (chain && chain.input) { try { chain.input.disconnect(state.ref); } catch (e) {} }
+	}
+	state.stream = null;
+	state.source = null;
+	state.mic = null;
+	state.ref = null;
+	state.acc = null;
+	state.timer = 0;
+	state.started = 0;
+	state.running = false;
+	state.pending = false;
+	studioMasteringButtons();
+}
+
+function studioMasteringStop() {
+	if (!studioMasteringState.running) { return; }
+	var manual = studioMasteringState.manual;
+	studioMasteringMediaStop();
+	studioMasteringGains(studioMasterFind('master_eq'), manual ? manual.values : null);
+	studioMasteringSay('Stopped. The master is as it was.');
+}
+
+function studioMasteringReset() {
+	var manual = studioMasteringState.manual;
+	studioMasteringStop();
+	studioMasteringMediaStop();
+	if (!manual) { studioMasteringSay('Nothing to reset.'); return; }
+	studioMasteringRestoreManual(manual);
+	studioMasteringState.manual = null;
+	studioMasteringClear();
+	studioMasteringSay('Reset to the manual curve.');
+}
+
+function studioMasteringFinish() {
+	var state = studioMasteringState;
+	if (!state.running) { return; }
+	var result = studioMasteringResult(state.acc, studioMasteringTarget());
+	var manual = state.manual;
+	var eq = studioMasterFind('master_eq');
+	studioMasteringMediaStop();
+	if (result.quiet) {
+		studioMasteringGains(eq, manual ? manual.values : null);
+		studioMasteringSay('The programme was too quiet to learn from. Play the song and try again.');
+		return;
+	}
+	var heard = 0;
+	result.bands.forEach(function (band) { if (!band.gated) { heard++; } });
+	if (!heard) {
+		studioMasteringGains(eq, manual ? manual.values : null);
+		studioMasteringSay('The microphone heard nothing. Check the input and try again.');
+		return;
+	}
+	result.bands.forEach(function (band) {
+		studioMasterSet('master_eq', band.control, studioMasteringDbToValue(band.correction));
+	});
+	studioMasterToggle('master_eq', true);
+	studioMasteringPaint(result);
+	studioMasteringSay('Learned ' + heard + ' of 10 bands against the ' + studioMasteringTarget() + ' target.');
+	// The learned bands are part of the song's master record; save it now so
+	// the curve outlives the window.
+	if (typeof studioSave === 'function') { studioSave(); }
+}
+
+function studioMasteringRun(ctx, chain, stream) {
+	var state = studioMasteringState;
+	// The reference is pre-master, so the measured difference has to come from
+	// a neutral EQ. Flatten the audible gains only: the stored values (and the
+	// song) still hold the person's manual curve until the learned one lands.
+	studioMasteringGains(studioMasterFind('master_eq'), null);
+	state.stream = stream;
+	state.source = ctx.createMediaStreamSource(stream);
+	state.mic = ctx.createAnalyser();
+	state.mic.fftSize = 8192;
+	state.mic.smoothingTimeConstant = 0;
+	// Analyser only: the mic's source is never connected to ctx.destination.
+	state.source.connect(state.mic);
+	state.ref = ctx.createAnalyser();
+	state.ref.fftSize = 8192;
+	state.ref.smoothingTimeConstant = 0;
+	// The reference is the rack's input, pre-master; a second edge from a gain
+	// node does not change the main path's level.
+	chain.input.connect(state.ref);
+	state.acc = studioMasteringAccumulator(ctx, state.mic, state.ref);
+	state.running = true;
+	state.started = Date.now();
+	studioMasteringClear();
+	studioMasteringButtons();
+	// The labels become readable once permission is granted; keep the pick.
+	studioMasteringDevices($('#studio_mastering_mic').val());
+	studioMasteringSay('Listening for ten seconds...');
+	state.timer = setInterval(function () {
+		studioMasteringSample(state.acc, state.mic, state.ref);
+		if (Date.now() - state.started >= studioMasteringSeconds * 1000) { studioMasteringFinish(); }
+	}, studioMasteringSampleMs);
+}
+
+function studioMasteringLearn() {
+	if (studioMasteringState.running) { studioMasteringStop(); return; }
+	if (studioMasteringState.pending) { return; }
+	var ctx = studioContext();
+	var chain = studioAudio.masterChain;
+	if (!ctx || !chain) { studioMasteringSay('There is no browser master chain to learn on.'); return; }
+	// The engine owns the transport on a native take; the browser chain is
+	// silent then, so a measurement would only hear the room's noise.
+	var native = (mixer['time'] && mixer['time']['engine_transport'])
+		|| (typeof studioEngineTransportStarting !== 'undefined' && studioEngineTransportStarting);
+	if (native) {
+		studioMasteringSay('The engine owns playback, so the browser master chain is silent. Learn is browser monitoring only; stop the engine transport and try again.');
+		return;
+	}
+	if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+		studioMasteringSay('This browser cannot open a microphone.');
+		return;
+	}
+	var eq = studioMasterFind('master_eq');
+	var manual = studioMasteringManual();
+	if (!eq || !manual) { studioMasteringSay('The master EQ is not in the rack.'); return; }
+	studioMasteringState.manual = manual;
+	studioMasteringState.pending = true;
+	studioMasteringSay('Opening the microphone...');
+	var audio = {
+		echoCancellation: false,  // Disables echo suppression
+		noiseSuppression: false,  // Disables background noise dampening
+		autoGainControl: false    // Prevents the browser from auto-adjusting volume
+	};
+	var rate = studioSampleRate();
+	if (rate > 0) { audio.sampleRate = rate; }
+	var pick = String($('#studio_mastering_mic').val() || '');
+	if (pick) { audio.deviceId = { exact: pick }; }
+	navigator.mediaDevices.getUserMedia({ audio: audio, video: false })
+		.catch(function (error) {
+			// A stale device id is a common refusal; fall back to the default mic.
+			if (pick && error && (error.name === 'OverconstrainedError' || error.name === 'NotFoundError')) {
+				return navigator.mediaDevices.getUserMedia({ audio: {
+					echoCancellation: false, noiseSuppression: false, autoGainControl: false
+				}, video: false });
+			}
+			throw error;
+		})
+		.then(function (stream) {
+			studioMasteringState.pending = false;
+			if (!studioMasteringState.manual) {
+				stream.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+				return;
+			}
+			studioMasteringRun(ctx, chain, stream);
+		})
+		.catch(function (error) {
+			studioMasteringState.pending = false;
+			console.log('studio: mastering mic refused', error);
+			studioMasteringGains(eq, manual.values);
+			studioMasteringSay('Could not open a microphone: permission denied or none is connected.');
+		});
+}
+
+$(document).on('click', '#studio_mastering_learn', function () { studioMasteringLearn(); });
+$(document).on('click', '#studio_mastering_reset', function () { studioMasteringReset(); });
+$(document).on('change', 'input[name="studio_mastering_target"]', function () { studioMasteringTargetPaint(); });
+
+$(function () {
+	studioMasteringDevices();
+	studioMasteringButtons();
+	studioMasteringTargetPaint();
+});

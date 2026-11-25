@@ -350,6 +350,41 @@
 						<span class="studio_master_led <%= $led < 7 ? 'led_green' : ($led < 10 ? 'led_yellow' : 'led_red') %>" data-led="<%= $led %>"></span>
 					<% } %>
 				</span>
+				<%# Mastering automation: a measurement mic on the master, ten bands
+				   learned against a target. It sits inside the rack, above the units,
+				   because it drives the rack's own ten-band EQ. Learn is one shot
+				   (docs/studio-mastering-automation.md section 7.1); the bars show the
+				   measured difference and the applied correction in each band. %>
+				<div id="studio_mastering" class="studio_mastering" hint="<%= &subs::ui('Measure the room with a microphone and flatten the master to a target') %>">
+					<span class="studio_mastering_head">
+						<b class="studio_mastering_title"><%= &subs::ui('Mastering automation') %></b>
+						<select id="studio_mastering_mic" class="studio_mastering_mic" aria-label="<%= &subs::ui('Measurement microphone') %>" hint="<%= &subs::ui('Choose the microphone that measures the room') %>">
+							<option value=""><%= &subs::ui('Default microphone') %></option>
+						</select>
+					</span>
+					<span class="studio_mastering_row">
+						<label class="studio_mastering_choice hover" hint="<%= &subs::ui('A gentle downward tilt that a room hears as balanced') %>"><input type="radio" name="studio_mastering_target" value="house" checked> <%= &subs::ui('House') %></label>
+						<label class="studio_mastering_choice hover" hint="<%= &subs::ui('A flat target for a calibrated measurement microphone') %>"><input type="radio" name="studio_mastering_target" value="flat"> <%= &subs::ui('Flat') %></label>
+					</span>
+					<span class="studio_mastering_row">
+						<button id="studio_mastering_learn" class="studio_mastering_learn hover" aria-pressed="false" hint="<%= &subs::ui('Listen for ten seconds and set the ten master bands') %>"><%= &subs::ui('Learn') %></button>
+						<button id="studio_mastering_reset" class="studio_mastering_reset hover" hint="<%= &subs::ui('Put the master bands back where they were before Learn') %>"><%= &subs::ui('Reset') %></button>
+					</span>
+					<span id="studio_mastering_status" class="studio_mastering_status" aria-live="polite"><%= &subs::ui('Off') %></span>
+					<span id="studio_mastering_bars" class="studio_mastering_bars" aria-hidden="true">
+						<% my @mastering_bands = ( [ 'b32', '32', 32 ], [ 'b64', '64', 64 ], [ 'b125', '125', 125 ], [ 'b250', '250', 250 ], [ 'b500', '500', 500 ], [ 'b1k', '1k', 1000 ], [ 'b2k', '2k', 2000 ], [ 'b4k', '4k', 4000 ], [ 'b8k', '8k', 8000 ], [ 'b16k', '16k', 16000 ] ); foreach my $mb ( @mastering_bands ) { %>
+							<span class="studio_mastering_band" data-control="<%= $mb->[0] %>" data-hz="<%= $mb->[2] %>">
+								<span class="studio_mastering_band_hz"><%= $mb->[1] %></span>
+								<span class="studio_mastering_band_plot">
+									<span class="studio_mastering_band_target"></span>
+									<span class="studio_mastering_band_before"></span>
+									<span class="studio_mastering_band_after"></span>
+								</span>
+								<span class="studio_mastering_band_db" title="<%= &subs::ui('Correction in dB') %>">0</span>
+							</span>
+						<% } %>
+					</span>
+				</div>
 				<% my $unit = 0; foreach my $m ( @{$gb::studio->{'master'}} ) { $unit++;
 					my $graphic = ( ($m->{'layout'} // '') eq 'graphic' ) ? 1 : 0; %>
 					<div class="studio_master_effect<%= $graphic ? ' studio_master_graphic' : '' %>" effect="<%= $m->{'name'} %>" data-unit="<%= $unit %>">
