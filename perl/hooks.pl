@@ -375,6 +375,10 @@ Manager::app->hook(before_dispatch => sub {
 		# a trusted machine vouches for a controller it just joined, so the hub
 		# files the board directly; peer_verify and the trusted grant are the gate
 		$path eq '/manager/controller_admit' ||
+		# a board that joined under an older flow asks the same machine to make
+		# it a direct hub peer and hand it a tailnet key, without a new token;
+		# its pinned row and trusted grant are the gate, as on the admit above
+		$path eq '/manager/controller_readmit' ||
 		# and the same machine asks for a short-lived tailnet preauth key, sealed
 		# to its one-time secret, so the board can join the VPN on first boot
 		$path eq '/manager/tailnet_key' ||

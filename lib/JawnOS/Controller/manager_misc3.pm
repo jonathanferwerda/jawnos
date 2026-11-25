@@ -664,30 +664,62 @@ sub action_11112 {
 		$c->rendered(403);
 		return;
 	}
-	my $board_sig = $c->param('board_signatorial') || '';
-	my $board_key = &device_pubkey_clean($c->param('board_pubkey'));
-	unless ($board_sig =~ /^[0-9a-fA-F]{16,64}$/ && length $board_key) {
-		$c->render(json => { ok => 0, error => 'the board has no identity' });
+	my $board = {
+		uuid => $c->param('board_uuid') || '',
+		signatorial => $c->param('board_signatorial') || '',
+		pubkey => $c->param('board_pubkey') || '',
+		name => $c->param('board_name') || 'Controller',
+		hostname => $c->param('board_hostname') || '',
+		address => $c->param('board_address') || '',
+		port => $c->param('board_port') || '',
+		ost => $c->param('board_ost') || '',
+		version => $c->param('board_version') || '',
+		remote_address => $c->tx->remote_address || '',
+	};
+	my $filed = &_controller_board_file($board);
+	unless ($filed->{'ok'}) {
+		$c->render(json => { ok => 0, error => $filed->{'error'} });
 		return;
 	}
-	my $board_name = substr(($c->param('board_name') || 'Controller'), 0, 60);
-	my $tailnet = $c->param('board_hostname') || $board_name;
+	$log->info('controller admit: ' . substr(($board->{'name'} || 'Controller'), 0, 60)
+		. ' uuid ' . $filed->{'uuid'} . ' by ' . substr($caller, 0, 8));
+	$c->render(json => {
+		ok => 1,
+		board => { uuid => $filed->{'uuid'}, signatorial => ($board->{'signatorial'} || '') },
+		house => &_controller_house_identity($c),
+	});
+}
+
+# File a board that a trusted peer has vouched for on this machine's roster:
+# the remote_machines row (pinned key), the trusted/citizen grant, and the
+# paired_devices row the Controllers page draws. The caller decides which
+# identity to pass; action_11114 passes its own caller row, never a body field.
+sub _controller_board_file {
+	my ($board) = @_;
+	return { ok => 0, error => 'the board has no identity' } unless ref $board eq 'HASH';
+	my $board_sig = ($board->{'signatorial'} // '');
+	my $board_key = &device_pubkey_clean($board->{'pubkey'} // '');
+	unless ($board_sig =~ /^[0-9a-fA-F]{16,64}$/ && length $board_key) {
+		return { ok => 0, error => 'the board has no identity' };
+	}
+	my $board_name = substr(($board->{'name'} || 'Controller'), 0, 60);
+	my $tailnet = $board->{'hostname'} || $board_name;
 	$tailnet = $board_name unless $tailnet =~ /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/;
-	my $address = $c->param('board_address') || '';
-	$address = ($c->tx->remote_address || '') unless length $address;
+	my $address = $board->{'address'} || '';
+	$address = ($board->{'remote_address'} || '') unless length $address;
 	my $addr = $address;
 	$addr =~ s{^https?://}{};
 	$addr =~ s{/.*$}{};
 	my ($host, $addr_port) = $addr =~ /^(.+?)(?::(\d+))?$/;
 	$host = '' unless defined $host;
-	my $port = $addr_port || $c->param('board_port') || '';
+	my $port = $addr_port || $board->{'port'} || '';
 	my $reachable = length $tailnet ? $tailnet : $host;
 	my $manager = length $reachable
 		? 'https://' . $reachable . (length $port ? ':' . $port : '')
 		: '';
 	my $now = &subs::rightNow();
 	my $known = &subs::db_select('remote_machines', undef, { signatorial => $board_sig })->hash;
-	my $given_uuid = $c->param('board_uuid') || '';
+	my $given_uuid = $board->{'uuid'} || '';
 	my $uuid = ($known && $known->{'uuid'}) ? $known->{'uuid'}
 		: ($given_uuid =~ /^[A-Za-z0-9]{8,40}$/ ? $given_uuid : &subs::random_string_creator(15));
 	my $row = {
@@ -700,8 +732,8 @@ sub action_11112 {
 		pubkey => $board_key,
 		hostname => $board_name,
 		device => 'controller',
-		ost => substr($c->param('board_ost') || '', 0, 40),
-		version => substr($c->param('board_version') || '', 0, 25),
+		ost => substr(($board->{'ost'} || ''), 0, 40),
+		version => substr(($board->{'version'} || ''), 0, 25),
 		status => 'connected',
 		connection => 'active',
 		server_time => $now,
@@ -730,22 +762,92 @@ sub action_11112 {
 		}
 		1;
 	};
-	unless ($ok) {
-		$c->render(json => { ok => 0, error => 'the board could not be filed' });
+	return { ok => 0, error => 'the board could not be filed' } unless $ok;
+	return { ok => 1, uuid => $uuid };
+}
+
+# This machine's identity in the shape the admit and readmit replies carry.
+sub _controller_house_identity {
+	my ($c) = @_;
+	return {
+		manager => &subs::house_manager_address(eval { $c->req->url->to_abs->to_string } || ''),
+		signatorial => &subs::signatorial_designer() || '',
+		pubkey => &subs::peer_pubkey() || '',
+		name => &subs::machine_name() || '',
+		device => &subs::device_setter(),
+	};
+}
+
+# POST /manager/controller_readmit
+# A board that joined under an older flow asks the house to make it a direct
+# hub peer and hand it a tailnet key, without a reflash or a new token. The
+# caller proves itself with its pinned peer key; its own direct row on this
+# machine is the board identity, so nothing in the body can name another
+# machine. The vouch is forwarded to this machine's hub with the same helper
+# the join uses.
+sub action_11114 {
+	my $c = shift;
+	my $caller = $c->param('signatorial') || '';
+	my $rm = ($caller && &subs::db_select('remote_machines', undef, { signatorial => $caller })->hash);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
+		$c->rendered(403);
 		return;
 	}
-	$log->info('controller admit: ' . $board_name . ' uuid ' . $uuid . ' by ' . substr($caller, 0, 8));
+	# The board is the caller's own row. A body-supplied identity is ignored:
+	# the row was pinned by the join (or an earlier admit), and only that row
+	# can be vouched for.
+	my $board = {
+		uuid => ($rm->{'uuid'} // ''),
+		signatorial => $caller,
+		pubkey => ($rm->{'pubkey'} // ''),
+		name => substr(($rm->{'hostname'} || 'Controller'), 0, 60),
+		hostname => (length($rm->{'fqdn'} || '') ? $rm->{'fqdn'} : ($rm->{'hostname'} || '')),
+		address => (($rm->{'ip'} // '') . (length($rm->{'port'} || '') ? ':' . $rm->{'port'} : '')),
+		port => ($rm->{'port'} // ''),
+		ost => ($rm->{'ost'} // ''),
+		version => ($rm->{'version'} // ''),
+		remote_address => ($c->tx->remote_address || ''),
+	};
+	my ($house, $hub_error) = &_controller_hub_admit($board);
+	# A house machine that is itself the hub (or a lone house) files the board
+	# here; the helper says so with no hub and no error.
+	if (!$house && !length $hub_error) {
+		my $filed = &_controller_board_file($board);
+		if ($filed->{'ok'}) { $house = &_controller_house_identity($c); }
+		else { $hub_error = $filed->{'error'}; }
+	}
+	unless ($house) {
+		$c->render(json => { ok => 0, error => ($hub_error || 'the hub refused the board') });
+		return;
+	}
+	# The tailnet preauth key is a credential. Mint it only when this request
+	# arrived on the house-CA peer listener, the rail the board was told to use;
+	# a signed request on the main port is not confidential. The key is sealed
+	# by _controller_tailnet_key on its own hop and never logged here.
+	my $tailnet = &_controller_peer_listener_request($c)
+		? &_controller_tailnet_key($c, $board->{'hostname'} || $board->{'name'})
+		: undef;
+	$log->info('controller readmit: ' . $board->{'name'} . ' uuid ' . $board->{'uuid'}
+		. ' by ' . substr($caller, 0, 8)
+		. (defined $tailnet ? ' with a tailnet key' : ''));
 	$c->render(json => {
 		ok => 1,
-		board => { uuid => $uuid, signatorial => $board_sig },
-		house => {
-			manager => &subs::house_manager_address(eval { $c->req->url->to_abs->to_string } || ''),
-			signatorial => &subs::signatorial_designer() || '',
-			pubkey => &subs::peer_pubkey() || '',
-			name => &subs::machine_name() || '',
-			device => &subs::device_setter(),
-		},
+		board => { uuid => $board->{'uuid'}, signatorial => $caller },
+		house => $house,
+		hub_error => $hub_error,
+		(defined $tailnet ? (tailnet => $tailnet) : ()),
 	});
+}
+
+# Did this request arrive on the house-CA peer listener? It is the second port
+# President binds with the peer leaf; a request on the main port is signed but
+# not confidential, so no credential is handed over that rail.
+sub _controller_peer_listener_request {
+	my ($c) = @_;
+	my $want = $ENV{'PORT_PEER'} || '';
+	return 0 unless defined $want && $want =~ /^\d+$/;
+	my $got = eval { $c->tx->local_port } || 0;
+	return ($got && $got == $want) ? 1 : 0;
 }
 
 # GET /manager/tailnet_key

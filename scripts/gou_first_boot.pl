@@ -1130,6 +1130,108 @@ sub _key_done_write {
 	return 1;
 }
 
+# A board that joined under an older flow has its house row but no hub row and
+# no sync_hub, so it is a leaf on the machine that flashed it. Ask that house to
+# vouch it to its hub and hand it a tailnet key, then file the hub the same way
+# the join does. A board with no house row does nothing; a failure is reported
+# and tried again on the next boot.
+sub _controller_hub_join {
+	require Mojo::UserAgent;
+	require Mojo::JSON;
+	# Already a hub peer: the row and the setting are on file.
+	my $saved = &subs::setting_grabber({ app => '__president', setting => 'sync_hub' }) || '';
+	my $known = $saved ? &subs::db_select('remote_machines', undef, { signatorial => $saved })->hash : undef;
+	return { ok => 1, already => 1, hub => $saved } if $known && length($known->{'signatorial'} || '');
+	# The house this board joined, from its own roster: the machine that filed
+	# it comes first, then an active peer, then the newest.
+	my $peers = &_house_peers();
+	return { ok => 0, no_house => 1, error => 'this board has no house on file' } unless @{$peers};
+	my $last_error = '';
+	foreach my $sig ( @{$peers} ) {
+		my $house = &subs::db_select('remote_machines', undef, { signatorial => $sig })->hash;
+		next unless $house;
+		# A row filed by an older first boot stored the manager route whole; a
+		# readmit appends its own path, so trim it to the origin once.
+		if (($house->{'manager'} // '') =~ m{^(https?://[^/]+)/manager/?$}) {
+			$house->{'manager'} = $1;
+			&subs::db_update('remote_machines', { manager => $1 }, { signatorial => $sig });
+		}
+		next unless ($house->{'manager'} // '') =~ m{^https?://};
+		my $url = $house->{'manager'} . '/manager/controller_readmit';
+		my ($endpoint, $verified) = &subs::peer_secure_url($house, $url);
+		# The reply may carry a tailnet key, so only the house-CA listener is
+		# used; there is no signed-but-unverified fallback here.
+		unless ($verified) {
+			$last_error = 'the house has no verified peer listener';
+			next;
+		}
+		my $ua = Mojo::UserAgent->new->connect_timeout(10)->inactivity_timeout(30)->request_timeout(120);
+		unless (&subs::peer_tls_verify($ua)) {
+			$last_error = 'the house CA is not available';
+			next;
+		}
+		$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req) });
+		my $res = eval {
+			$ua->post($endpoint => form => {
+				signatorial => &subs::signatorial_designer() || '',
+			})->result;
+		};
+		unless ($res && $res->is_success) {
+			$last_error = 'the house did not answer at ' . $endpoint;
+			next;
+		}
+		my $answer = eval { Mojo::JSON::decode_json($res->body // '') } || {};
+		unless ($answer->{'ok'}) {
+			$last_error = ($answer->{'error'} || 'the house refused the readmit');
+			next;
+		}
+		my $hub = ref $answer->{'house'} eq 'HASH' ? $answer->{'house'} : {};
+		unless (($hub->{'signatorial'} // '') =~ /^[0-9a-fA-F]{16,64}$/) {
+			$last_error = 'the readmit carried no hub identity';
+			next;
+		}
+		my $hub_row = &_house_row($hub);
+		&subs::setting_setter({ app => '__president', setting => 'sync_hub', value => $hub->{'signatorial'} });
+		my $tailnet;
+		$tailnet = &_tailnet_join($answer->{'tailnet'}) if ref $answer->{'tailnet'} eq 'HASH';
+		return {
+			ok => 1,
+			hub => $hub->{'signatorial'},
+			hub_filed => ($hub_row->{'ok'} ? 1 : 0),
+			hub_error => ($answer->{'hub_error'} // ''),
+			tailnet => $tailnet,
+		};
+	}
+	return { ok => 0, error => ($last_error || 'no house answered the readmit') };
+}
+
+# A completed readmit is not repeated on every boot. The marker names the hub.
+sub _hub_done_path {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return '' unless length $home;
+	return "$home/.presence/controller-hub.done";
+}
+
+sub _hub_done_present {
+	my $path = &_hub_done_path();
+	return (length $path && -e $path) ? 1 : 0;
+}
+
+sub _hub_done_write {
+	my ($hub) = @_;
+	my $path = &_hub_done_path();
+	return 0 unless length $path;
+	my $dir = File::Basename::dirname($path);
+	File::Path::make_path($dir) unless -d $dir;
+	return 0 unless open(my $fh, '>', $path);
+	my $text = (defined $hub && $hub =~ /^[0-9a-fA-F]{16,64}$/ ? $hub : 'joined');
+	print {$fh} $text, "\n";
+	close $fh;
+	chmod 0600, $path;
+	&_own_by_tree($path, $dir);
+	return 1;
+}
+
 # A flashed controller should be on the house tailnet from its first boot, so
 # the hub can reach it after the flashing laptop is gone. The token carries a
 # short-lived single-use preauth key; it goes to tailscale in the environment,
@@ -1336,6 +1438,21 @@ if (!$opt{'no_join'} && !$token->{'absent'} && !$token->{'error'}) {
 			&_own_database();
 			_fail(6, $joined->{'error'});
 		}
+	}
+}
+
+# A board that joined under an older flow has its house row but no hub row and
+# no sync_hub, so it is a leaf on the machine that flashed it. Ask the house to
+# vouch it to the hub and hand it a tailnet key, once; a board with no house row
+# does nothing, and a failure is left for the next boot.
+if (!$opt{'dry_run'} && !$opt{'no_join'} && !&_hub_done_present()) {
+	my $readmit = &_controller_hub_join();
+	$report->{'hub_join'} = $readmit;
+	if ($readmit->{'ok'}) {
+		&_hub_done_write($readmit->{'hub'});
+	}
+	elsif (!$readmit->{'no_house'}) {
+		_note('the hub is still pending: ' . ($readmit->{'error'} || 'unknown'));
 	}
 }
 

@@ -13,7 +13,7 @@
 # patch  makes a zstd binary delta between two uncompressed images, for a bad
 #        uplink; apply with `zstd -d --patch-from OLD PATCH > NEW`.
 #
-# Four things a GOU eMMC image must carry, each learned from a board that
+# Five things a GOU eMMC image must carry, each learned from a board that
 # would not start:
 #
 #   1. The eMMC bootloader in the first 16 MiB. The microSD's u-boot is a
@@ -30,6 +30,18 @@
 #      root is read-only and leaves the sentinel `uninitialized`, which makes
 #      systemd-journald restart forever ahead of sysinit.target and hangs the
 #      boot before the kiosk.
+#   5. Tailscale, as the static arm64 build. The first boot joins the tailnet
+#      only if `tailscale` is on PATH, and it must already be here: the board
+#      has no package manager at that point. The tarball is --tailscale-tgz or
+#      $TAILSCALE_TGZ when staged for an offline build, otherwise the pinned
+#      stable download below. Without either, the step warns and skips, and
+#      the board stays a LAN peer; it never carries a credential.
+#
+# Tailscale needs /dev/net/tun and a kernel with the tun driver. The daemon
+# creates its interface from the binaries below; this script does not build or
+# change the kernel. A board whose kernel does not expose /dev/net/tun still
+# boots, keeps the LAN and the USB cable, and `tailscale up` reports the
+# missing device.
 #
 # Wi-Fi, the hostname and the house token are NOT written here: the provision
 # script writes those per board, and an image that carried one house's Wi-Fi
@@ -49,6 +61,13 @@ BOOT_BYTES=16777216
 ROOT_UUID_DEFAULT="948b17cb-9a83-4a38-8bb6-8faea0409ac6"
 BOOT_UUID_DEFAULT="5CDB-14C3"
 DISK_ID=0x01e56600
+
+# The static arm64 build, pinned so a rebuild is reproducible. A staged
+# tarball wins over the download; an unavailable download is a skip, not a
+# failed build.
+TAILSCALE_VERSION="${TAILSCALE_VERSION:-1.104.7}"
+TAILSCALE_URL="${TAILSCALE_URL:-https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_arm64.tgz}"
+TAILSCALE_TGZ="${TAILSCALE_TGZ:-}"
 
 COMPRESS=release
 DRY_RUN=0
@@ -75,6 +94,10 @@ Options
   --root-uuid UUID     filesystem UUID for the root partition
   --boot-uuid UUID     filesystem UUID for the BOOT partition
   --compress MODE      release (zstd -19), fast (zstd -1) or none
+  --tailscale-tgz PATH static arm64 Tailscale tarball to install; also the
+                       TAILSCALE_TGZ environment variable. Default is the
+                       pinned stable download; if it cannot be fetched the
+                       step warns and skips.
   --dry-run            print the plan and change nothing
   -h, --help           this text
 
@@ -200,6 +223,99 @@ write_excludes() {
 EXCLUDES
 }
 
+# --- tailscale ---------------------------------------------------------------
+# The first boot joins the tailnet only when `command -v tailscale` answers, so
+# the binaries have to be in the image. The static tarball needs no package
+# manager, which is what a mounted rootfs can accept; extracting it here also
+# keeps arm64 explicit instead of relying on the card's packages.
+tailscale_tarball() {
+	local dest="$1"
+	local tgz explicit=0
+
+	if [[ -n "$TAILSCALE_TGZ" ]]; then
+		tgz="$TAILSCALE_TGZ"
+		explicit=1
+		[[ -f "$tgz" ]] || die "no such tailscale tarball: $tgz"
+	else
+		tgz="$WORK/tailscale_${TAILSCALE_VERSION}_arm64.tgz"
+		if command -v curl >/dev/null 2>&1; then
+			curl -fsSL --retry 2 --connect-timeout 10 -o "$tgz" "$TAILSCALE_URL" \
+				|| { log "tailscale: could not fetch $TAILSCALE_URL; skipping (the board stays a LAN peer)"; return 1; }
+		elif command -v wget >/dev/null 2>&1; then
+			wget -q -T 30 -O "$tgz" "$TAILSCALE_URL" \
+				|| { log "tailscale: could not fetch $TAILSCALE_URL; skipping (the board stays a LAN peer)"; return 1; }
+		else
+			log "tailscale: no staged tarball and neither curl nor wget is installed; skipping (the board stays a LAN peer)"
+			return 1
+		fi
+	fi
+
+	rm -rf "$dest"
+	mkdir -p "$dest"
+	if ! tar -xzf "$tgz" -C "$dest" 2>/dev/null; then
+		[[ $explicit -eq 1 ]] && die "invalid tailscale tarball: $tgz"
+		log "tailscale: $tgz is not a readable tarball; skipping (the board stays a LAN peer)"
+		return 1
+	fi
+	return 0
+}
+
+install_tailscale() {
+	local root="$1"
+	local explicit=0
+	[[ -n "$TAILSCALE_TGZ" ]] && explicit=1
+
+	local unpack="$WORK/tailscale"
+	tailscale_tarball "$unpack" || return 0
+
+	# The stable tarball puts both binaries under tailscale_<ver>_arm64/.
+	local top="" d
+	for d in "$unpack"/tailscale_*_arm64; do
+		if [[ -d "$d" ]]; then top="$d"; break; fi
+	done
+	if [[ -z "$top" || ! -s "$top/tailscale" || ! -s "$top/tailscaled" ]]; then
+		[[ $explicit -eq 1 ]] && die "tailscale tarball has no non-empty tailscale and tailscaled: $TAILSCALE_TGZ"
+		log "tailscale: the fetched tarball has no tailscale/tailscaled; skipping (the board stays a LAN peer)"
+		return 0
+	fi
+
+	install -d -m 755 "$root/usr/bin" "$root/usr/sbin"
+	install -m 755 "$top/tailscale"  "$root/usr/bin/tailscale"
+	install -m 755 "$top/tailscaled" "$root/usr/sbin/tailscaled"
+	install -d -m 700 "$root/var/lib/tailscale"
+
+	cat > "$root/etc/systemd/system/tailscaled.service" <<'UNIT'
+[Unit]
+Description=Tailscale node agent
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+ExecStart=/usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock
+ExecStopPost=/usr/bin/tailscale down
+Restart=on-failure
+RuntimeDirectory=tailscale
+RuntimeDirectoryMode=0750
+StateDirectory=tailscale
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+	chmod 644 "$root/etc/systemd/system/tailscaled.service"
+
+	# `systemctl enable` cannot run against a mounted image, so the wants link
+	# is written by hand. The target is the path the board will see.
+	install -d -m 755 "$root/etc/systemd/system/multi-user.target.wants"
+	ln -sfn /etc/systemd/system/tailscaled.service \
+		"$root/etc/systemd/system/multi-user.target.wants/tailscaled.service"
+
+	# The staged tarball may not be the pinned version; name what was installed.
+	local ver="${top##*/tailscale_}"
+	ver="${ver%_arm64}"
+	log "installed tailscale $ver into $root"
+}
+
 # --- the fixes, applied to a mounted root ------------------------------------
 apply_fixes() {
 	local root="$1"
@@ -247,6 +363,10 @@ UUID=$boot_uuid /boot/oem vfat umask=0077 0 1
 UUID=$root_uuid / ext4 rw,relatime,x-systemd.growfs 0 1
 FSTAB
 	chmod 644 "$root/etc/fstab"
+
+	# 5. tailscale, so the first boot can join the tailnet. Its absence is a
+	# warning, not a failed build; a tarball supplied by hand is checked.
+	install_tailscale "$root"
 }
 
 # --- the eMMC's way back -----------------------------------------------------
@@ -480,6 +600,7 @@ while [[ $# -gt 0 ]]; do
 		--root-uuid)   ROOT_UUID="$2"; shift 2 ;;
 		--boot-uuid)   BOOT_UUID="$2"; shift 2 ;;
 		--compress)    COMPRESS="$2"; shift 2 ;;
+		--tailscale-tgz) TAILSCALE_TGZ="$2"; shift 2 ;;
 		--dry-run)     DRY_RUN=1; shift ;;
 		-h|--help)     usage; exit 0 ;;
 		*) die "unknown option: $1" ;;

@@ -328,8 +328,9 @@ $Manager::log = Mojo::Log->new(level => 'fatal');
 
 {
 	package JoinProbeTx;
-	sub new { bless { remote_address => $_[1] }, $_[0] }
+	sub new { bless { remote_address => $_[1], local_port => $_[2] }, $_[0] }
 	sub remote_address { $_[0]->{'remote_address'} }
+	sub local_port { $_[0]->{'local_port'} }
 	package JoinProbeReq;
 	sub new { bless { url => $_[1] }, $_[0] }
 	sub url { $_[0]->{'url'} }
@@ -340,12 +341,13 @@ $Manager::log = Mojo::Log->new(level => 'fatal');
 			params => $p{'params'} || {},
 			answer => undef,
 			session => $p{'session'} || {},
-			tx => JoinProbeTx->new($p{'remote_address'} || '192.0.2.50'),
+			tx => JoinProbeTx->new($p{'remote_address'} || '192.0.2.50', $p{'local_port'}),
 			req => JoinProbeReq->new(Mojo::URL->new('https://192.0.2.10:45545/manager/device/join')),
 		}, $class;
 	}
 	sub param { my ($s, $k) = @_; return $s->{'params'}->{$k} }
 	sub render { my ($s, %o) = @_; $s->{'answer'} = $o{'json'}; return $s }
+	sub rendered { my ($s, $code) = @_; $s->{'status'} = $code; return $s }
 	sub session { my ($s, $k) = @_; return $s->{'session'}->{$k} }
 	sub tx { return $_[0]->{'tx'} }
 	sub req { return $_[0]->{'req'} }
@@ -488,6 +490,61 @@ subs::db_query('delete from paired_devices where uuid = ?', $ADMIT_UUID);
 subs::db_query('delete from remote_machines where signatorial = ?', $ADMIT_BOARD);
 subs::db_query('delete from paired_devices where uuid = ?', $ADMIT_UUID);
 
+# A board that joined under an older flow has no hub row and no sync_hub. It
+# asks the house to vouch it to the hub without a new token. The board identity
+# is the caller's own pinned row, never a body field; the vouch goes to the hub
+# with the shared helper; and the tailnet key rides only the verified peer
+# listener, because a signed request on the main port is not confidential.
+my $READMIT_CALLER = 'f1e2d3c405162738495a6b7c8d9e0f12';
+my $READMIT_HUB = 'aabbccddeeff00112233445566778899';
+admit_caller($READMIT_CALLER);
+{
+	my $caller_row = subs::db_select('remote_machines', undef, { signatorial => $READMIT_CALLER })->hash || {};
+	no warnings 'redefine';
+	local *subs::peer_verify = sub { return 1 };
+	local *subs::peer_allows = sub { return 1 };
+	my $forwarded;
+	local *Manager::_controller_hub_admit = sub {
+		$forwarded = $_[0];
+		return ({ manager => 'https://hub.example:45545/manager', signatorial => $READMIT_HUB,
+			pubkey => 'hubkey', name => 'hub', device => 'server' }, '');
+	};
+	my $minted = 0;
+	local *Manager::_controller_tailnet_key = sub {
+		$minted++;
+		return { login_server => 'https://headscale.example', authkey => 'pkey_readmit', hostname => 'gou' };
+	};
+	local $ENV{'PORT_PEER'} = '45551';
+	my $probe = JoinProbe->new(local_port => 45551, params => {
+		signatorial => $READMIT_CALLER,
+		# A body that names another board must not be believed.
+		board_signatorial => 'ffffffffffffffffffffffffffffffff',
+		board_pubkey => "-----BEGIN PUBLIC KEY-----\nbogus\n-----END PUBLIC KEY-----\n",
+	});
+	Manager::action_11114($probe);
+	my $answer = $probe->{'answer'};
+	ok($answer && $answer->{'ok'}, 'a trusted board can ask to be readmitted');
+	is($forwarded->{'signatorial'}, $READMIT_CALLER, 'the forwarded board is the caller row, not the body');
+	is($forwarded->{'pubkey'}, $PUB, 'with the key pinned on that row');
+	is($forwarded->{'uuid'}, $caller_row->{'uuid'}, 'and the uuid that row carries');
+	is($answer->{'house'}->{'signatorial'}, $READMIT_HUB, 'the hub identity is handed back');
+	is($answer->{'tailnet'}->{'authkey'}, 'pkey_readmit', 'a tailnet key rides the verified listener');
+	is($minted, 1, 'and is minted there');
+
+	$minted = 0;
+	my $main_port = JoinProbe->new(local_port => 45545, params => { signatorial => $READMIT_CALLER });
+	Manager::action_11114($main_port);
+	ok($main_port->{'answer'}->{'ok'}, 'the readmit still answers on the main port');
+	ok(!exists $main_port->{'answer'}->{'tailnet'}, 'but no tailnet key crosses the unverified rail');
+	is($minted, 0, 'and none is minted');
+
+	my $stranger = JoinProbe->new(local_port => 45551,
+		params => { signatorial => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
+	Manager::action_11114($stranger);
+	is($stranger->{'status'}, 403, 'a caller with no pinned row is refused');
+}
+subs::db_query('delete from remote_machines where signatorial = ?', $READMIT_CALLER);
+
 # The Headscale control target lives on one house machine. A trusted peer can
 # ask it to mint a short-lived preauth key; the key is sealed to a one-time
 # secret, so the board token can carry it without the key crossing in the clear.
@@ -524,6 +581,30 @@ like($first_boot, qr/sub _tailnet_join/, 'the board joins the tailnet on first b
 like($first_boot, qr/TS_AUTHKEY/, 'with the preauth key in the environment, not argv');
 like($first_boot, qr/_house_row\(\$hub\)/, 'and files the hub beside the flashing machine');
 like($first_boot, qr/sync_hub/, 'so the board follows the hub');
+
+# A board that joined before the hub flow has no hub row and no sync_hub. Its
+# next boot asks the house to readmit it, without a reflash or a new token.
+my $misc3 = slurp('lib/JawnOS/Controller/manager_misc3.pm');
+my $device_pm = slurp('lib/JawnOS/Controller/manager_device.pm');
+like(slurp('lib/JawnOS/Routes/manager_misc3.pm'),
+	qr#\[11114, 'post', '/manager/controller_readmit', 'action_11114'\]#,
+	'the readmit route is registered');
+like($misc3, qr/sub action_11114/, 'the house answers a readmit');
+like($device_pm, qr/sub _controller_hub_admit/, 'the join and the readmit share the hub vouch');
+like($misc3, qr/&_controller_hub_admit\(\$board\)/, 'the readmit forwards the board to the hub');
+like($misc3, qr/_controller_tailnet_key\(\$c,/, 'and mints a tailnet key for it');
+like($misc3, qr/_controller_peer_listener_request/, 'only on the verified peer listener');
+like($first_boot, qr/sub _controller_hub_join/, 'the board asks to be readmitted once it has a house');
+like($first_boot, qr{/manager/controller_readmit}, 'at the house readmit route');
+like($first_boot, qr/_house_peers\(\)/, 'the board finds the house it joined');
+like($first_boot, qr/peer_secure_url\(\$house, \$url\)/, 'only a listener the house CA proves is asked');
+like($first_boot, qr/setting_setter\(\{ app => '__president', setting => 'sync_hub'/, 'the hub it is given becomes sync_hub');
+like($first_boot, qr/_tailnet_join\(\$answer->\{'tailnet'\}\)/, 'a returned tailnet block is joined');
+like($first_boot, qr/sub _hub_done_present/, 'a completed readmit leaves a marker');
+like($first_boot, qr/controller-hub\.done/, 'named for the hub');
+like($first_boot, qr/!&_hub_done_present\(\)/, 'so the readmit is not repeated every boot');
+unlike($first_boot, qr/sub _controller_hub_join \{.*?\$ua->insecure/s,
+	'the readmit never falls back to an unverified rail');
 
 # The join also files the roster row the Controllers page draws.
 my $joined_roster = subs::db_select('paired_devices', undef, { pubkey => $PUB })->hash || {};
