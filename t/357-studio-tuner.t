@@ -62,8 +62,8 @@ like($style, qr/\.pedal\[data-tuner="yes"\] \.studio_pedal_led\.studio_tuner_tun
 	'the tuner lamp is green in tune');
 
 # --- one power switch, wired the same from every press ---------------------
-like($knobs, qr/e\.stopPropagation\(\);[\s\S]*?studioTunerToggle\(\)/,
-	'the pink switch toggles the tuner and stops the tile toggling it twice');
+like($knobs, qr/e\.stopPropagation\(\);[\s\S]*?studioTunerToggle\(tile\.attr\('chain'\)\)/,
+	'the pink switch toggles the tuner on its own chain and stops the tile toggling it twice');
 like($tuner, qr/studioTunerPaintLamp\(tile\);/, 'the tuner owns its lamp instead of the effect lamp');
 like($rack, qr/if \(typeof studioTunerSync === 'function'\) \{ studioTunerSync\(\); \}/,
 	'one lamp paint keeps the tuner in step with its insert');
@@ -72,10 +72,10 @@ like($tuner, qr/function studioTunerInsert\(ch\)/, 'the tuner reads its own inse
 like($tuner, qr/studioRackFind\(ch, 'Jtune'\)/, 'the tuner follows its place in the track\'s rack');
 like($tuner, qr/ins\.input\.connect\(analyser\)/,
 	'the tuner taps the insert\'s input, so first in the chain is the clean input');
-like($tuner, qr/if \(!ins\) \{ studioSetInsert\(ch, 'Jtune', true\); \}/,
-	'a press adds the tuner to the rack when it is absent');
-like($tuner, qr/studioSetInsertBypass\(ch, 'Jtune', !ins\.bypassed\)/,
-	'the next press bypasses it like any pedal');
+like($tuner, qr/if \(!ins\) \{ studioSetInsert\(ch, 'Jtune', true, chain\); \}/,
+	'a press adds the tuner to the chain its tile shows');
+like($tuner, qr/studioSetInsertBypass\(ch, 'Jtune', !ins\.bypassed, chain\)/,
+	'the next press bypasses it on that chain like any pedal');
 like($tuner, qr/function studioTunerSync\(\)/, 'one function keeps the analyser on the insert');
 like($tuner, qr/No live input/, 'a silent chain says why it cannot tune');
 like($tuner, qr/function studioTunerFollow\(\)/, 'the tuner can move to another chain');

@@ -21,9 +21,23 @@ var studioRackDragChain = null;
 function studioRackFind(ch, name, chain) {
 	var c = studioAudio.channels[ch];
 	if (!c) { return null; }
-	chain = chain || studioChannelChain(ch);
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
 	var map = (chain === 'out') ? c.outInsertByName : c.insertByName;
 	return map[name] || null;
+}
+
+// Every action on the board resolves its insert from the tile it was pressed on:
+// that tile's channel, chain and insert name. Never the selected channel, and
+// never a chain that can flip while the click is in flight, so a tile can only
+// ever act on the insert it draws.
+function studioTileTarget(row) {
+	var tile = $(row).closest('.studio_rack_tile');
+	if (!tile.length) { return null; }
+	var ch = tile.attr('channel');
+	var name = tile.attr('insert');
+	if (!ch || !name) { return null; }
+	var chain = (tile.attr('chain') === 'out') ? 'out' : 'in';
+	return { ch: ch, name: name, chain: chain, ins: studioRackFind(ch, name, chain) };
 }
 
 // A tile with no library entry (an old song's name, or a future effect) is
@@ -68,7 +82,7 @@ function studioRackFallbackTile(ins) {
 		label.appendTo(controls);
 	});
 	controls.appendTo(tile);
-	$('<button class="studio_pedal_foot hover" aria-pressed="false"></button>')
+	$('<button type="button" class="studio_pedal_foot hover" aria-pressed="false"></button>')
 		.attr('hint', studioLayoutText('Bypass this effect without removing it')).text(studioLayoutText('On')).appendTo(tile);
 	return tile;
 }
@@ -117,7 +131,27 @@ function studioRackTile(ch, ins, chain) {
 			studioKnobPaint($(this), tile);
 		}
 	});
-	if (ins.bypassed) { tile.addClass('studio_rack_off'); }
+	var on = !ins.bypassed;
+	if (!on) { tile.addClass('studio_rack_off'); }
+	// The tile is born in step with its insert: the foot says On or Off and the
+	// lamp reads the same state before any later paint runs. Opening the board
+	// draws tiles without a lamp pass, so a bypassed insert must not show "On".
+	tile.find('.studio_pedal_foot')
+		.attr('aria-pressed', on ? 'true' : 'false')
+		.text(studioLayoutText(on ? 'On' : 'Off'));
+	if (tile.attr('data-tuner') === 'yes') {
+		// Jtune's lamp is the tuner's light, not an effect lamp: paint it from the
+		// tuner, so opening the board never shows a stale colour.
+		if (typeof studioTunerPaintLamp === 'function') { studioTunerPaintLamp(tile); }
+	}
+	else {
+		var lampLabel = studioPedalLampLabel(on);
+		tile.find('.studio_pedal_led').attr({
+			'aria-pressed': on ? 'true' : 'false',
+			title: lampLabel,
+			hint: lampLabel
+		});
+	}
 	// A synced time control is resolved against the song's BPM as the tile is
 	// drawn, so a restored song and a new insert sound the same before a knob
 	// moves. An Out insert is browser playback only and is not posted.
@@ -125,6 +159,9 @@ function studioRackTile(ch, ins, chain) {
 	// Small tools on the frame: touch order and removal without leaving the board.
 	var tools = $('#studio_board_tool_template').first().clone();
 	tools.removeAttr('id').removeAttr('style').removeAttr('aria-hidden');
+	// The template already marks them type=button; set it again so a clone can
+	// never become a form submit in some other embedding.
+	tools.find('button').attr('type', 'button');
 	if (tools.length) { tools.appendTo(tile); }
 	return tile;
 }
@@ -304,10 +341,10 @@ function studioRackReorder(ch) {
 	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
-function studioRackMove(ch, name, delta) {
+function studioRackMove(ch, name, delta, chain) {
 	var c = studioAudio.channels[ch];
 	if (!c) { return; }
-	var chain = studioChannelChain(ch);
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
 	var out = chain === 'out';
 	var map = out ? c.outInsertByName : c.insertByName;
 	var list = out ? c.outInserts : c.inserts;
@@ -324,17 +361,13 @@ function studioRackMove(ch, name, delta) {
 	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
-// The footswitch: bypass in place, never remove (contract rule 5).
-function studioSetInsertBypass(ch, name, on) {
-	var chain = studioChannelChain(ch);
+// The footswitch: bypass in place, never remove (contract rule 5). The chain is
+// the tile's own, so a pedal that also exists in the other chain is never
+// switched by a click aimed at this one.
+function studioSetInsertBypass(ch, name, on, chain) {
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
 	var ins = studioRackFind(ch, name, chain);
-	if (!ins) {
-		// A row lamp describes the chain the rack shows even while the rack shows
-		// Out, so a pedal the shown chain does not hold is switched where it lives.
-		chain = (chain === 'out') ? 'in' : 'out';
-		ins = studioRackFind(ch, name, chain);
-	}
-	if (!ins) { return; }
+	if (!ins) { return false; }
 	if (ins.setBypass) { ins.setBypass(on); }
 	else { ins.bypassed = !!on; }
 	studioUpdateFxBadges();
@@ -343,6 +376,7 @@ function studioSetInsertBypass(ch, name, on) {
 	studioSaver();
 	studioListenRearm(ch, chain);
 	if (chain === 'out' && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
+	return true;
 }
 
 // ---- the lamps -------------------------------------------------------------
@@ -351,21 +385,20 @@ function studioSetInsertBypass(ch, name, on) {
 // selected track, dark red when it is bypassed. The insert is the state; the
 // lamp only reads it, so the rack's own footswitch and the lamp can never
 // disagree.
-function studioPedalInsert(ch, name) {
-	// The lamp describes the chain the rack shows; a pedal that only lives in
-	// the input chain still reads on, and is switched where it lives.
-	var chain = studioChannelChain(ch);
-	var direct = studioRackFind(ch, name, chain) || studioRackFind(ch, name, 'in');
+function studioPedalInsert(ch, name, chain) {
+	// Look in the chain asked for - the tile's, or the one the board shows. A
+	// miss may still be the same kind under another name (reverb vs reverb2), but
+	// only within that same chain: the other chain is a different insert.
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
+	var direct = studioRackFind(ch, name, chain);
 	if (direct) { return direct; }
 	var c = studioAudio.channels[ch];
 	if (!c) { return null; }
 	var kind = studioEffectKind(name);
 	var found = null;
-	var lists = (chain === 'out') ? [c.outInserts, c.inserts] : [c.inserts, c.outInserts];
-	lists.forEach(function (list) {
-		list.forEach(function (ins) {
-			if (!found && studioEffectKind(ins.name) === kind) { found = ins; }
-		});
+	var list = (chain === 'out') ? c.outInserts : c.inserts;
+	list.forEach(function (ins) {
+		if (!found && studioEffectKind(ins.name) === kind) { found = ins; }
 	});
 	return found;
 }
@@ -379,7 +412,9 @@ function studioUpdatePedalLamps() {
 	// every tile on the board, painted from the insert it stands for
 	$('#studio_pedalboard_rack .studio_rack_tile').each(function () {
 		var tile = $(this);
-		var ins = studioRackFind(studioPaletteChannel(), tile.attr('insert'), tile.attr('chain'));
+		// The tile's own channel, so a lamp always reads its insert even if the
+		// selection moved while the board was still on screen.
+		var ins = studioRackFind(tile.attr('channel') || studioPaletteChannel(), tile.attr('insert'), tile.attr('chain'));
 		var on = !!(ins && !ins.bypassed);
 		var label = studioPedalLampLabel(on);
 		tile.toggleClass('studio_rack_off', !on);
@@ -404,16 +439,18 @@ function studioUpdatePedalLamps() {
 
 // The lamp is the footswitch: absent means switch it on in this track's rack,
 // present means bypass it in place exactly as the rack row does.
-function studioTogglePedal(ch, name) {
-	var ins = studioPedalInsert(ch, name);
-	if (!ins) { studioSetInsert(ch, name, true); }
-	else { studioSetInsertBypass(ch, ins.name, !ins.bypassed); }
+function studioTogglePedal(ch, name, chain) {
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
+	var ins = studioPedalInsert(ch, name, chain);
+	// An absent effect joins the chain the board is showing, not always In.
+	if (!ins) { studioSetInsert(ch, name, true, chain); }
+	else { studioSetInsertBypass(ch, ins.name, !ins.bypassed, chain); }
 	studioUpdatePedalLamps();
 	studioSaver();
 }
 
-function studioInsertControl(ch, name, control, value) {
-	var chain = studioChannelChain(ch);
+function studioInsertControl(ch, name, control, value, chain) {
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
 	var ins = studioRackFind(ch, name, chain);
 	if (!ins) { return; }
 	ins.set(control, value);
@@ -491,10 +528,9 @@ $(document).on('click', '.studio_chain_choice', function () {
 });
 
 $(document).on('click', '.studio_rack_bypass', function () {
-	var row = $(this).closest('.studio_rack_tile');
-	var ins = studioRackFind(row.attr('channel'), row.attr('insert'), row.attr('chain'));
-	if (!ins) { return; }
-	studioSetInsertBypass(row.attr('channel'), row.attr('insert'), !ins.bypassed);
+	var t = studioTileTarget(this);
+	if (!t || !t.ins) { return; }
+	studioSetInsertBypass(t.ch, t.name, !t.ins.bypassed, t.chain);
 });
 
 // The lamp toggles the same state as the footswitch: a rack row's lamp is its
@@ -504,42 +540,40 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 	e.preventDefault();
 	e.stopPropagation();
 	var target = $(this);
-	var row = target.closest('.studio_rack_tile');
-	if (row.length) {
-		var ins = studioRackFind(row.attr('channel'), row.attr('insert'), row.attr('chain'));
-		if (!ins) { return; }
-		studioSetInsertBypass(row.attr('channel'), row.attr('insert'), !ins.bypassed);
+	if (target.closest('.studio_rack_tile').length) {
+		var t = studioTileTarget(target);
+		if (!t || !t.ins) { return; }
+		studioSetInsertBypass(t.ch, t.name, !t.ins.bypassed, t.chain);
 		return;
 	}
 	var tile = target.closest('.pedal');
 	if (!tile.length) { return; }
 	var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
 	if (!name) { return; }
-	studioTogglePedal(studioPaletteChannel(), name);
+	studioTogglePedal(tile.attr('channel') || studioPaletteChannel(), name, tile.attr('chain'));
 });
 
 $(document).on('click', '.studio_rack_up', function () {
-	var row = $(this).closest('.studio_rack_tile');
-	studioRackMove(row.attr('channel'), row.attr('insert'), -1);
+	var t = studioTileTarget(this);
+	if (t) { studioRackMove(t.ch, t.name, -1, t.chain); }
 });
 
 $(document).on('click', '.studio_rack_down', function () {
-	var row = $(this).closest('.studio_rack_tile');
-	studioRackMove(row.attr('channel'), row.attr('insert'), 1);
+	var t = studioTileTarget(this);
+	if (t) { studioRackMove(t.ch, t.name, 1, t.chain); }
 });
 
 $(document).on('click', '.studio_rack_remove', function () {
-	var row = $(this).closest('.studio_rack_tile');
-	var ch = row.attr('channel'), name = row.attr('insert');
-	if (row.attr('chain') === 'out') { studioSetInsert(ch, name, false, 'out'); }
-	else { studioSetInsert(ch, name, false); }
+	var t = studioTileTarget(this);
+	if (!t || !t.ins) { return; }
+	studioSetInsert(t.ch, t.name, false, t.chain);
 	studioSaver();
 });
 
 $(document).on('input change', '.studio_insert_control', function () {
 	var input = $(this);
 	var row = input.closest('.studio_rack_tile');
-	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val());
+	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val(), row.attr('chain'));
 });
 
 // A text badge has no artwork to reveal on the shelf, so it opens the sheet on

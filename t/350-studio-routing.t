@@ -225,7 +225,7 @@ like($rack, qr/\.studio_chain_choice/, 'the choice buttons are wired');
 like($rack, qr/studioSetInsert\(ch, name, true, chain\);/, 'the palette’s Add uses the selected chain');
 like($rack, qr/studioLayoutText\('Track'\) \+ ' ' \+ ch \+ ' · ' \+ studioLayoutText\(chain === 'out' \? 'Out' : 'In'\)/,
 	'the palette label names the track and the chain');
-like($rack, qr/studioSetInsert\(ch, name, false, 'out'\);/, 'X removes an Out insert from the Out chain');
+like($rack, qr/studioSetInsert\(t\.ch, t\.name, false, t\.chain\);/, 'X removes an insert from the chain its tile shows');
 like($rack, qr/if \(chain !== 'out'\) \{ studioEngineInsertParam\(ch, name, control, value\); \}/,
 	'an output insert’s knob never reaches the native engine');
 my $plan = body($js, 'studioEngineTrackPlan');

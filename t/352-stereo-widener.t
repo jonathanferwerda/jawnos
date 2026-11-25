@@ -42,7 +42,7 @@ like($sw // '', qr/\{\s*control\s*=>\s*'mix',\s*label\s*=>\s*'Mix'\s*\}/,
 # --- the palette ------------------------------------------------------------
 my ($palette) = $studio =~ /palette\s*=>\s*\[\s*qw\(([^)]*)\)\s*\]/s;
 my @palette = split ' ', ($palette // '');
-my $contract = [ qw(reverb flanger fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor) ];
+my $contract = [ qw(reverb flanger phaser fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor) ];
 is_deeply(\@palette, [ @$contract, 'stereowidener' ],
 	'the palette keeps every existing effect and appends the widener');
 unlike($studio, qr/palette_art\s*=>\s*\{[^}]*stereowidener/s,

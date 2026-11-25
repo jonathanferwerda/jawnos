@@ -300,7 +300,7 @@ $(document).on('click', '.button_control', function(e) {
 	// click so the tile's own handler cannot toggle it a second time.
 	if (tile.length && tile.attr('data-tuner') === 'yes') {
 		e.stopPropagation();
-		if (typeof studioTunerToggle === 'function') { studioTunerToggle(); }
+		if (typeof studioTunerToggle === 'function') { studioTunerToggle(tile.attr('chain')); }
 		return;
 	}
 	var control = b.attr('control');
@@ -318,7 +318,7 @@ $(document).on('click', '.button_control', function(e) {
 	// effect on the selected track, exactly as the pedal's lamp does.
 	if (tile.length && tile.attr('data-tuner') !== 'yes' && typeof studioTogglePedal === 'function') {
 		var effect = tile.attr('data-effect');
-		if (effect) { studioTogglePedal(studioPaletteChannel(), effect); }
+		if (effect) { studioTogglePedal(tile.attr('channel') || studioPaletteChannel(), effect, tile.attr('chain')); }
 	}
 	studioSaver();
 });

@@ -103,7 +103,7 @@ our $audio_plan_max_player_buffer = 2_000;
 # resolved into the effect's own `time` or `rate` before the engine sees it.
 our @audio_plan_insert_names = qw(
 	tone distortion delay compressor reverb flanger
-	fuzz amp limiter autotune equalizer maximizer tremolo stereo_panner
+	fuzz amp limiter autotune equalizer maximizer tremolo stereo_panner phaser
 );
 
 our %audio_plan_insert_controls = (
@@ -121,6 +121,7 @@ our %audio_plan_insert_controls = (
 	maximizer  => [qw(ceiling loudness)],
 	tremolo    => [qw(rate depth shape)],
 	stereo_panner => [qw(rate depth shape)],
+	phaser     => [qw(rate depth feedback mix)],
 );
 
 # These controls are an index, not a level: a fractional reverb model, amp

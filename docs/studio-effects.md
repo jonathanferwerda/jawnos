@@ -26,6 +26,7 @@ bypasses it like any pedal, and the song keeps it in the chain.
 | --- | --- | --- |
 | `reverb` | the reverb family | `mix`, `volume`, `model` |
 | `flanger` | swept comb | `rate`, `depth`, `feedback`, `mix` |
+| `phaser` | swept allpass notches | `rate`, `depth`, `feedback`, `mix` |
 | `fuzz` | germanium two-transistor fuzz (JH-2) | `gain`, `tone`, `level` |
 | `amp` | valve amp + cabinet (four voices) | `gain`, `bass`, `mid`, `treble`, `cabinet` |
 | `limiter` | peak limiter | `ceiling`, `release` |
@@ -58,7 +59,7 @@ controls and the shape indexes, not the node.
 
 ## Tempo-synced time controls
 
-`delay.time`, `flanger.rate`, `tremolo.rate` and `stereo_panner.rate` accept a
+`delay.time`, `flanger.rate`, `phaser.rate`, `tremolo.rate` and `stereo_panner.rate` accept a
 `sync` field. It is a **UI-only string**: it is stored in the insert's
 `values.sync`, saved with the song, and resolved by the page into the effect's
 natural `time` or `rate` before anything is sent. It is **not** an engine
@@ -87,7 +88,9 @@ Both sides keep the manual ranges they had. The delay's Time knob still maps to
 bars at 120 BPM is 8 seconds. The browser's `DelayNode` is likewise 8 s. The
 flanger's Rate knob still maps to `0.05..5 Hz`, but the effect accepts up to
 `8 Hz` (a 1/16 at 120 BPM) and clamps a faster resolved rate to that cap. The
-new LFO knobs map to `0.1..20 Hz`; a resolved rate past 20 Hz is clamped there.
+phaser's Rate knob shares that `0.05..5 Hz` mapping and both sides cap the
+resolved rate at `5 Hz`. The new LFO knobs map to `0.1..20 Hz`; a resolved rate
+past 20 Hz is clamped there.
 
 ## Tremolo and stereo panner
 

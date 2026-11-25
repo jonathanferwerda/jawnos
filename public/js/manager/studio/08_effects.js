@@ -100,11 +100,13 @@ function studioEffectNatural(kind, control, value) {
 		case 'compressor.knee':
 			return amount * 24;
 		case 'flanger.rate':
+		case 'phaser.rate':
 			return 0.05 + amount * 4.95;
 		case 'tremolo.rate':
 		case 'stereo_panner.rate':
 			return 0.1 + amount * 19.9;
 		case 'flanger.feedback':
+		case 'phaser.feedback':
 		case 'delay.feedback':
 			return amount * 0.9;
 		case 'delay.time':
@@ -140,6 +142,7 @@ function studioEffectBrowserOnly(name) {
 var studioTempoControls = {
 	delay: 'time',
 	flanger: 'rate',
+	phaser: 'rate',
 	tremolo: 'rate',
 	stereo_panner: 'rate'
 };
@@ -150,6 +153,7 @@ var studioTempoControls = {
 var studioTempoLimits = {
 	delay: { min: 0.001, max: 8 },
 	flanger: { min: 0.05, max: 8 },
+	phaser: { min: 0.05, max: 5 },
 	tremolo: { min: 0.1, max: 20 },
 	stereo_panner: { min: 0.1, max: 20 }
 };
@@ -399,6 +403,7 @@ function studioEffectShell(ctx, name) {
 var studioEffectTypedControls = {
 	'delay.sync': 1,
 	'flanger.sync': 1,
+	'phaser.sync': 1,
 	'tremolo.sync': 1,
 	'stereo_panner.sync': 1
 };
@@ -727,6 +732,89 @@ function studioEffectFlanger(ctx, name) {
 	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
 	fx.set('rate', 20);
 	fx.set('depth', 60);
+	fx.set('feedback', 25);
+	fx.set('mix', 50);
+	studioEffectTempo(fx, applyRate);
+	return fx;
+}
+
+// ---- phaser ----------------------------------------------------------------
+// The MXR Phase 90: four JFET allpass stages swept together by an LFO and summed
+// with the dry signal at a fixed 50/50 blend, which is where the notches come
+// from. The real pedal has one Speed knob; `depth`, `feedback` and `mix` are the
+// documented mods (docs/pedal-audit.md): depth sets the sweep span, feedback
+// returns the last stage to the first for resonance, and mix moves the fixed
+// blend. The engine is engine/src/effect/phaser.rs; the browser uses four
+// `allpass` biquads staggered a little apart for a wider sweep, one LFO driving
+// every corner through a depth gain, and an internal dry/wet pair that feeds
+// `fx.wet` - never `fx.dry`, which is the shell's bypass path.
+var studioPhaserBases = [ 250, 400, 650, 1000 ];
+var studioPhaserSwing = 0.9;
+
+function studioEffectPhaser(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'phaser');
+	var stages = [];
+	var depths = [];
+	var i;
+	for (i = 0; i < studioPhaserBases.length; i++) {
+		var stage = ctx.createBiquadFilter();
+		stage.type = 'allpass';
+		stage.frequency.value = studioPhaserBases[i];
+		stage.Q.value = 0.707;
+		stages.push(stage);
+		var depthGain = ctx.createGain();
+		depthGain.gain.value = 0;
+		depths.push(depthGain);
+	}
+	var lfo = ctx.createOscillator();
+	lfo.type = 'sine';
+	lfo.frequency.value = 1.04;
+	for (i = 0; i < stages.length; i++) { lfo.connect(depths[i]).connect(stages[i].frequency); }
+
+	var feedback = ctx.createGain();
+	feedback.gain.value = 0;
+	// A WebAudio feedback cycle needs a DelayNode; its delay is effectively one
+	// render quantum, not the single sample the engine's tap takes, so the loop
+	// sounds a little more resonant than the native one. The gain stays below
+	// unity, so that is a difference in colour, never in stability.
+	var feedbackDelay = ctx.createDelay(0.02);
+	feedbackDelay.delayTime.value = 0;
+
+	var wet = ctx.createGain();
+	var dry = ctx.createGain();
+	fx.input.connect(stages[0]);
+	for (i = 1; i < stages.length; i++) { stages[i - 1].connect(stages[i]); }
+	stages[stages.length - 1].connect(wet).connect(fx.wet);
+	stages[stages.length - 1].connect(feedback).connect(feedbackDelay).connect(stages[0]);
+	fx.input.connect(dry).connect(fx.wet);
+	try { lfo.start(0); } catch (e) {}
+
+	var depthValue = 0.5;
+	var applyDepth = function () {
+		var amount = studioEffectClamp(depthValue, 0, 1);
+		for (var k = 0; k < depths.length; k++) {
+			depths[k].gain.value = studioPhaserBases[k] * studioPhaserSwing * amount;
+		}
+	};
+	// The manual knob maps to 0.05..5 Hz, the same band the engine holds.
+	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.05, 5); };
+	fx.natural['rate'] = applyRate;
+	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
+	fx.setters['depth'] = function (v) { depthValue = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
+	fx.setters['feedback'] = function (v) {
+		// An allpass has unit magnitude, so a loop gain below 1 cannot run away.
+		feedback.gain.value = studioEffectClamp(studioEffectNatural(fx.name, 'feedback', v), 0, 0.9);
+	};
+	fx.setters['mix'] = function (v) {
+		var n = studioEffectNatural(fx.name, 'mix', v);
+		wet.gain.value = n;
+		dry.gain.value = 1 - n;
+	};
+	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
+	// Slider 20 maps to 1.04 Hz through the shared 0.05 + amount * 4.95 band,
+	// which is also the engine's build() default.
+	fx.set('rate', 20);
+	fx.set('depth', 50);
 	fx.set('feedback', 25);
 	fx.set('mix', 50);
 	studioEffectTempo(fx, applyRate);
@@ -1970,6 +2058,7 @@ var studioEffectAliases = {
 	// so studioInsert builds the pass-through and the engine plan (which asks
 	// for a builder) leaves it out. It is still a real rack insert in the song.
 	flanger: 'flanger',
+	phaser: 'phaser',
 	fuzz: 'fuzz',
 	amp: 'amp',
 	limiter: 'limiter',
@@ -2000,6 +2089,7 @@ var studioEffectBuilders = {
 	delay: studioEffectDelay,
 	reverb: studioEffectReverb,
 	flanger: studioEffectFlanger,
+	phaser: studioEffectPhaser,
 	fuzz: studioEffectFuzz,
 	amp: studioEffectAmp,
 	limiter: studioEffectLimiter,

@@ -2129,7 +2129,7 @@ sub studio_take_path {
 # could never build, before the engine is dialled.
 our %studio_take_inserts = map { $_ => 1 } qw(
 	tone distortion delay compressor reverb flanger fuzz amp limiter
-	autotune equalizer maximizer tremolo stereo_panner
+	autotune equalizer maximizer tremolo stereo_panner phaser
 );
 # The five effects the native master rack can build, in the contract's order.
 # A take names the ones it wants; the engine builds them in this order whatever

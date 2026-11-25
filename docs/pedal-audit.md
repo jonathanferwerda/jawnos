@@ -21,6 +21,7 @@
 | `tone` | **Passive FMV tone stack** (Marshall JMP50 values: 470 pF treble, 33 kΩ slope, 22 nF bass/mid, 250 k/1 M/25 k pots). | `bass`, `mid`, `treble`, `gain` | `engine/src/effect.rs`: a 5×5 nodal solve at the block edge, so the three controls load each other the way the circuit does. `gain` stays an output trim. | The browser keeps the three-biquad approximation; the exact interaction needs an AudioWorklet. |
 | `equalizer` | **Baxandall bass/treble** with shared feedback loading, plus a 1 kHz mid bell. | `low`, `mid`, `high` | `engine/src/effect/equalizer.rs`: one coupled second-order bass/treble section whose poles shift with the balance, then the mid peaking section. Flat is bit-exactly transparent. | `IIRFilterNode` for the coupled section; live knobs rebuild it (the current three biquads are the cheap approximation). |
 | `flanger` | **Electro-Harmonix Electric Mistress**: SAD1024 BBD, input compander, output expander, colour feedback, 6.8 kHz reconstruction. | `rate`, `depth`, `feedback`, `mix` | `engine/src/effect/flanger.rs`: clocked BBD with triangle LFO, compander, filtered colour feedback, clock-tracking bandwidth. | The node graph (gain → compressor → delay → 6.8 kHz LP/HP → mix) is close; the clock term and the expander need an AudioWorklet. |
+| `phaser` | **MXR Phase 90**: four JFET allpass stages swept together by an LFO, summed with the dry signal at a fixed 50/50 blend. Its one knob is Speed. | `rate`, `depth`, `feedback`, `mix` | `engine/src/effect/phaser.rs`: four first-order allpass stages at one swept corner (`a = (1 − tan(π·fc/fs)) / (1 + tan(π·fc/fs))`), an LFO from `rate`, a `depth`-scaled sweep, the last stage returned to the input for resonance and a wet/dry mix. The Phase 90 has no depth, feedback or mix control: those three are the documented mods. | `studioEffectPhaser`: four staggered `allpass` biquads, one LFO through a per-stage depth gain, feedback from the last stage through a DelayNode (a WebAudio cycle needs one) and an internal dry/wet pair feeding the shell's wet node. |
 | `reverb` | **Fender 6G15 spring** (model 1) and **EMT 140 plate** (model 2); Room/Hall/Cave share the same mechanical network at different scales. | `mix`, `volume`, `model` | `engine/src/reverb.rs`: the spring is two dispersive allpass loops; the plate is short lines plus diffusers and a Householder feedback matrix. Still convolution, still zero added latency. | The browser can build the same tank offline into the `ConvolverNode`'s buffer. |
 | `limiter` | **UREI 1176**: FET shunt, 20 µs attack, program-dependent release, soft FET knee, hard ceiling. | `ceiling`, `release` | `engine/src/effect/limiter.rs`: peak follower with a sustain memory blending fast and slow release; the output can never pass the ceiling. | Needs an AudioWorklet for the real detector; `DynamicsCompressor` is the current approximation. |
 | `maximizer` | The same 1176 detector behind a 0..18 dB drive. | `ceiling`, `loudness` | `engine/src/effect/maximizer.rs`: shares `FetDetector` with the limiter. | Same as the limiter. |
@@ -36,7 +37,7 @@ gated `tanh`, and the old amp was one `tanh` plus four biquads, which is why it
 read as compression. Both now derive their shape from the circuit (the JH-2's
 solved node voltages; the valve stages and a generated speaker impulse). The
 other pedals keep their contract but gain a named circuit: RAT, DM-2, Dyna Comp,
-FMV tone stack, Baxandall, Electric Mistress, 6G15/EMT 140, 1176.
+FMV tone stack, Baxandall, Electric Mistress, Phase 90, 6G15/EMT 140, 1176.
 
 ## The honest approximation
 
@@ -52,6 +53,10 @@ FMV tone stack, Baxandall, Electric Mistress, 6G15/EMT 140, 1176.
 - Controls are the contract's, not the pedal's. The JH-2's two real knobs are
   Fuzz and Level; `tone` is the feedback-cap mod. The RAT's Filter and the
   1176's ratio are fixed values because the contract has no control for them.
+  The Phase 90's one knob is Speed and its dry/wet is fixed at 50/50, so
+  `depth`, `feedback` and `mix` are mods: `depth` opens the sweep span,
+  `feedback` adds resonance the pedal does not have, and `mix` moves the fixed
+  blend.
 - The panner is not an L/R insert: the engine pans at the channel stage, so
   its LFO moves the channel's existing pan rather than a separate stereo
   position. A centred channel therefore sweeps both speakers and a hard-left

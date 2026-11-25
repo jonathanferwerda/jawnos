@@ -37,6 +37,9 @@
 			</span>
 			<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
 		</div>
+		<%# A controller has no pedal command in its vocabulary, so the board is a
+		   read-only view then; say so on the sheet instead of leaving it silent. %>
+		<span id="studio_pedalboard_remote" class="studio_pedalboard_remote" role="status" aria-live="polite" style="display:none;"><%= &subs::ui('Read-only: this Studio is controlling another machine, so pedal changes are not sent') %></span>
 		<%# The In/Out switch and the selected track's board. studioRackRender()
 		   fills both; the board holds only the inserts, in signal order. %>
 		<div id="studio_pedalboard_chain" class="studio_pedalboard_chain"></div>
@@ -89,7 +92,7 @@
 					</datalist>
 				</label>
 			<% } %>
-			<button class="studio_pedal_foot hover" effect="<%= $p->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
+			<button type="button" class="studio_pedal_foot hover" effect="<%= $p->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
 		</span>
 	<% } %>
 		<% foreach my $name ( @{$gb::studio->{'palette'}} ) { next if $shelf_has{$name}; %>
@@ -141,16 +144,16 @@
 							</datalist>
 						</label>
 					<% } %></span>
-				<button class="studio_pedal_foot hover" effect="<%= $name %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
+				<button type="button" class="studio_pedal_foot hover" effect="<%= $name %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
 			</span>
 		<% } %>
 	</div>
 	<%# The small tools cloned onto every board tile. The labels stay literal so the
 	   help registry can see them. %>
 	<div id="studio_board_tool_template" class="studio_board_tools" style="display:none;" aria-hidden="true">
-		<button class="studio_rack_up hover" hint="<%= &subs::ui('Move this effect earlier in the chain') %>">‹</button>
-		<button class="studio_rack_down hover" hint="<%= &subs::ui('Move this effect later in the chain') %>">›</button>
-		<button class="studio_rack_remove hover" hint="<%= &subs::ui('Remove this effect from the chain') %>">X</button>
+		<button type="button" class="studio_rack_up hover" hint="<%= &subs::ui('Move this effect earlier in the chain') %>">‹</button>
+		<button type="button" class="studio_rack_down hover" hint="<%= &subs::ui('Move this effect later in the chain') %>">›</button>
+		<button type="button" class="studio_rack_remove hover" hint="<%= &subs::ui('Remove this effect from the chain') %>">X</button>
 	</div>
 	<div id="studio_layout_bar" class="studio_layout_bar">
 		<span class="studio_window_grip hover" hint="<%= &subs::ui('Drag to move the Studio window') %>">⠿</span>

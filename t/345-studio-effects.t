@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/studio.js public/js/manager/studio/02_canvas.js public/js/manager/studio/04_knobs.js public/js/manager/studio/07_layout.js public/js/manager/studio/08_effects.js public/js/manager/studio/09_pedals.js public/js/manager/studio/10_master.js templates/studio/markup.html.ep templates/studio/style.html.ep perl/gb/05_abilities_and_studio.pl perl/help/topics_apps.pl t/345-studio-effects.t
+# tests-for: public/js/manager/studio.js public/js/manager/studio/02_canvas.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/08_effects.js public/js/manager/studio/09_pedals.js public/js/manager/studio/10_master.js templates/studio/markup.html.ep templates/studio/style.html.ep perl/gb/05_abilities_and_studio.pl perl/help/topics_apps.pl t/345-studio-effects.t
 # covers:    The browser side of docs/studio-effects.md: every contract name is in
 #            the palette and built by studioInsert, reverb has its five models on
 #            a dropdown, a track's rack is ordered/bypassed/removed rather than
@@ -18,6 +18,7 @@ my $root = repo_root();
 my $js     = read_file("$root/public/js/manager/studio.js");
 my $canvas = read_file("$root/public/js/manager/studio/02_canvas.js");
 my $knobs  = read_file("$root/public/js/manager/studio/04_knobs.js");
+my $controls_js = read_file("$root/public/js/manager/studio/06_controls.js");
 my $layout = read_file("$root/public/js/manager/studio/07_layout.js");
 my $fx     = read_file("$root/public/js/manager/studio/08_effects.js");
 my $rack   = read_file("$root/public/js/manager/studio/09_pedals.js");
@@ -98,13 +99,13 @@ like($rack, qr/source\.length \? source\.clone\(\)/, 'the board clones one tile 
 
 like($rack, qr/function studioRackReorder\(ch\)/, 'a dragged order is read back');
 like($rack, qr/holder\.sortable\(\{/, 'the rack is a sortable list');
-like($rack, qr/function studioRackMove\(ch, name, delta\)/, 'the Up/Down buttons move an insert');
-like($rack, qr/function studioSetInsertBypass\(ch, name, on\)/, 'the footswitch has its own path');
+like($rack, qr/function studioRackMove\(ch, name, delta, chain\)/, 'the Up/Down buttons move an insert');
+like($rack, qr/function studioSetInsertBypass\(ch, name, on, chain\)/, 'the footswitch has its own path');
 like($rack, qr/if \(ins\.setBypass\) \{ ins\.setBypass\(on\); \}/,
 	'the footswitch bypasses the insert in place');
 like($rack, qr/if \(ins && next\.indexOf\(ins\) === -1\)/,
 	'a dragged order only keeps inserts the channel still has');
-like($rack, qr/studioSetInsert\(ch, name, false\);/, 'X removes the insert');
+like($rack, qr/studioSetInsert\(t\.ch, t\.name, false, t\.chain\);/, 'X removes the insert from the tile\'s own chain');
 
 like($rack, qr/'\.studio_rack_bypass'/, 'the rack wires the footswitch');
 like($rack, qr/'\.studio_rack_up'/, 'the rack wires Up');
@@ -198,16 +199,16 @@ like($studio, qr/palette_knob_colours\s*=>\s*\[ qw\(/, 'there is a fallback knob
 like($rack, qr/function studioUpdatePedalLamps\(\)/, 'one function paints every lamp');
 like($rack, qr/var on = !!\(ins && !ins\.bypassed\);[\s\S]*tile\.find\('\.studio_pedal_led'\)\.attr\(\{/,
 	'a board lamp reads the insert\'s bypass');
-like($rack, qr/var ins = studioPedalInsert\(ch, name\);/, 'a tile reads the selected track\'s insert');
-like($rack, qr/if \(!ins\) \{ studioSetInsert\(ch, name, true\); \}/,
-	'an absent effect is switched on from its lamp');
-like($rack, qr/studioSetInsertBypass\(ch, ins\.name, !ins\.bypassed\);/,
-	'clicking the lamp bypasses exactly as the rack does');
+like($rack, qr/var ins = studioPedalInsert\(ch, name, chain\);/, 'a tile reads its own chain insert');
+like($rack, qr/if \(!ins\) \{ studioSetInsert\(ch, name, true, chain\); \}/,
+	'an absent effect joins the chain the board shows');
+like($rack, qr/studioSetInsertBypass\(ch, ins\.name, !ins\.bypassed, chain\);/,
+	'clicking the lamp bypasses exactly as the rack does, on the same chain');
 like($rack, qr/studioUpdatePedalLamps\(\);\n\tstudioSaver\(\);/, 'the footswitch repaints the lamps');
 like($rack, qr/#pedalboard \.studio_pedal_led/, 'a pedalboard lamp is clickable');
 like($rack, qr/'\.studio_rack_led,/, 'the rack lamps are clickable');
-like($knobs, qr/studioTogglePedal\(studioPaletteChannel\(\), effect\);/,
-	'a pedal button toggles the same insert as its lamp');
+like($knobs, qr/studioTogglePedal\(tile\.attr\('channel'\) \|\| studioPaletteChannel\(\), effect, tile\.attr\('chain'\)\);/,
+	'a pedal button toggles the insert its own tile names');
 like($style, qr/\.studio_pedal_led\s*\{[^}]*width:\s*14px/s, 'the lamp is 14px wide');
 like($style, qr/\.studio_pedal_led\s*\{[^}]*height:\s*14px/s, 'the lamp is 14px tall');
 like($style, qr/\.studio_pedal_led\s*\{[^}]*border-radius:\s*50%/s, 'the lamp is round');
@@ -239,6 +240,57 @@ like($markup, qr/%shelf_kind = /, 'the hidden library maps the artwork names to 
 like($markup, qr/%shelf_has = /, 'and skips a drawn tile when artwork exists');
 unlike($markup, qr/Jtune\s*=>\s*'autotune'/, 'Jtune is not mapped to an audio effect');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork is contained, not cropped');
+
+# --- a board action targets the insert its tile draws ----------------------
+# The tile's own channel, chain and insert name are the target, never the
+# selected channel or the chain the sheet happens to show. A bypass must also
+# stay in that one chain, so a pedal present in both can never be switched by a
+# click aimed at the other.
+like($rack, qr/function studioTileTarget\(row\)/, 'one resolver reads a tile target');
+like($rack, qr/function studioSetInsertBypass\(ch, name, on, chain\)/,
+	'the bypass takes the tile chain');
+like($rack, qr/var ins = studioRackFind\(ch, name, chain\);\n\tif \(!ins\) \{ return false; \}/,
+	'the bypass looks only in that chain and refuses a miss');
+unlike($rack, qr/chain = \(chain === 'out'\) \? 'in' : 'out';/,
+	'the bypass never flips to the other chain');
+like($rack, qr/function studioPedalInsert\(ch, name, chain\)/,
+	'the insert lookup takes a chain');
+unlike($rack, qr/\[c\.outInserts, c\.inserts\]|\[c\.inserts, c\.outInserts\]/,
+	'the insert lookup never searches the other chain');
+like($rack, qr/tile\.attr\('channel'\) \|\| studioPaletteChannel\(\), tile\.attr\('insert'\)/,
+	'a lamp reads the tile own channel and insert');
+like($rack, qr/function studioTogglePedal\(ch, name, chain\)/,
+	'the tile toggle takes the chain too');
+like($rack, qr/function studioInsertControl\(ch, name, control, value, chain\)/,
+	'a typed control takes the tile chain');
+like($controls_js, qr/studioInsertControl\(row\.attr\('channel'\), row\.attr\('insert'\), input\.attr\('control'\), input\.val\(\), row\.attr\('chain'\)\);/,
+	'a typed tile control edits the chain its tile names');
+like($rack, qr/function studioRackMove\(ch, name, delta, chain\)/,
+	'Up and Down move within the tile chain');
+
+# A tool is a real button, never a form submit, and sits above the tile face.
+like($markup, qr/<button type="button" class="studio_rack_up hover"/, 'Up is an explicit button');
+like($markup, qr/<button type="button" class="studio_rack_down hover"/, 'Down is an explicit button');
+like($markup, qr/<button type="button" class="studio_rack_remove hover"/, 'X is an explicit button');
+like($markup, qr/<button type="button" class="studio_pedal_foot hover"/, 'the footswitch is an explicit button');
+like($rack, qr/tools\.find\('button'\)\.attr\('type', 'button'\);/,
+	'a cloned tool keeps type=button');
+like($style, qr/\.studio_board_tools\s*\{[^}]*z-index:\s*6/s,
+	'the tools paint above the title and controls they overlap');
+
+# --- a controller's board says it is read-only -----------------------------
+# A remote target intercepts every press inside the sheet; without pedal
+# commands in the vocabulary the sheet has to say so instead of going silently
+# dead, and the whole board dims when it is not an editing surface.
+like($markup, qr/id="studio_pedalboard_remote"/, 'the board carries a read-only notice');
+like($markup, qr/Read-only: this Studio is controlling another machine/,
+	'and the notice says why the board is read-only');
+like($style, qr/\.studio_board_readonly #studio_pedalboard_rack/, 'a read-only board dims its rack');
+like($style, qr/\.studio_board_readonly \.studio_pedal_foot/, 'and its controls show they are not available');
+like($layout, qr/board\.addClass\('studio_board_readonly'\)\.attr\('aria-disabled', 'true'\);/,
+	'the badge marks the board read-only in remote mode');
+like($layout, qr/\$\('#studio_pedalboard_remote'\)/, 'and shows the notice');
+like($layout, qr/note\.hide\(\);/, 'and hides it when the controller returns to this machine');
 
 # --- the help topic speaks in the pedalboard's words ------------------------
 # every new label is in the Studio topic's own controls list, which is what
@@ -355,6 +407,8 @@ like($rack, qr/^\t\t\tstop: function \(event, ui\) \{/m, 'stop is the fallback f
 like($rack, qr/studioRackReorder\(to\);[\s\S]*?studioRackRender\(to\);/, 'the drop redraws from the model');
 like($rack, qr/\.attr\('channel', ch\)\.attr\('insert', ins\.name\)\.attr\('chain', chain \|\| 'in'\)/,
 	'each tile carries its channel, insert and chain');
+like($rack, qr/tile\.find\('\.studio_pedal_foot'\)\s*\n?\s*\.attr\('aria-pressed', on \? 'true' : 'false'\)/,
+	'a freshly drawn tile\'s foot already matches its insert');
 like($markup, qr/class="knob_control/, 'the library tile carries its controls');
 
 # --- dragging a row reorders the chain, above every panel ------------------

@@ -260,6 +260,13 @@ our $studio = {
 			{ control => 'mix', label => 'Mix' },
 			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
 		] },
+		phaser => { label => 'Phaser', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'feedback', label => 'Feedback' },
+			{ control => 'mix', label => 'Mix' },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
+		] },
 		fuzz => { label => 'Fuzz', controls => [
 			{ control => 'gain', label => 'Gain' },
 			{ control => 'tone', label => 'Tone' },
@@ -339,7 +346,7 @@ our $studio = {
 	},
 	# The order the Add list offers them. The entries are wire names; the Add
 	# list shows each effect's label (autotune appears as JawnPitch).
-	palette => [ qw(reverb flanger fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor stereowidener) ],
+	palette => [ qw(reverb flanger phaser fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor stereowidener) ],
 	# A palette effect with no hand-drawn artwork is drawn from the theme instead:
 	# the template gives it the same body, one knob per slider (the colours below,
 	# in control order) and a dropdown per choice, so its tile matches the artwork
@@ -347,6 +354,7 @@ our $studio = {
 	# the shelf already ships; the list at the end is the fallback rotation.
 	palette_art => {
 		flanger   => [ qw(orange blue pink green) ],
+		phaser    => [ qw(orange blue pink green) ],
 		fuzz      => [ qw(cyan yellow red) ],
 		amp       => [ qw(cyan red green yellow) ],
 		limiter   => [ qw(red_numbered blue) ],

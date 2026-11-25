@@ -45,6 +45,7 @@ mod fuzz;
 mod graphic_eq;
 mod limiter;
 mod maximizer;
+mod phaser;
 mod stereo_panner;
 mod tremolo;
 
@@ -56,6 +57,7 @@ pub use fuzz::Fuzz;
 pub use graphic_eq::GraphicEq;
 pub use limiter::Limiter;
 pub use maximizer::Maximizer;
+pub use phaser::Phaser;
 pub use stereo_panner::{PanLfo, StereoPanner};
 pub use tremolo::Tremolo;
 
@@ -1271,6 +1273,7 @@ pub enum InsertKind {
     Maximizer,
     Tremolo,
     StereoPanner,
+    Phaser,
 }
 
 impl InsertKind {
@@ -1291,6 +1294,7 @@ impl InsertKind {
             "maximizer" | "master_maximizer" => Some(InsertKind::Maximizer),
             "tremolo" => Some(InsertKind::Tremolo),
             "stereo_panner" => Some(InsertKind::StereoPanner),
+            "phaser" => Some(InsertKind::Phaser),
             _ => None,
         }
     }
@@ -1312,6 +1316,7 @@ impl InsertKind {
             InsertKind::Maximizer => "maximizer",
             InsertKind::Tremolo => "tremolo",
             InsertKind::StereoPanner => "stereo_panner",
+            InsertKind::Phaser => "phaser",
         }
     }
 
@@ -1342,6 +1347,7 @@ impl InsertKind {
             InsertKind::Tremolo => &["rate", "depth", "shape"],
             // The same three controls; the channel's pan stage applies them.
             InsertKind::StereoPanner => &["rate", "depth", "shape"],
+            InsertKind::Phaser => &["rate", "depth", "feedback", "mix"],
         }
     }
 
@@ -1414,6 +1420,7 @@ impl InsertKind {
             InsertKind::MasterEq => 13,
             InsertKind::Tremolo => 14,
             InsertKind::StereoPanner => 15,
+            InsertKind::Phaser => 16,
         }
     }
 
@@ -1434,6 +1441,7 @@ impl InsertKind {
             13 => InsertKind::MasterEq,
             14 => InsertKind::Tremolo,
             15 => InsertKind::StereoPanner,
+            16 => InsertKind::Phaser,
             _ => return None,
         })
     }
@@ -1448,8 +1456,10 @@ impl InsertKind {
     /// Combo 1x12, limiter −3 dBFS / 0.2 s, autotune 0.4 speed / full amount /
     /// C major, equalizer flat, maximizer −0.8 dBFS / 0.2 loudness, the master
     /// rack's graphic EQ flat on all ten bands, tremolo 5 Hz / 0.5 depth /
-    /// sine, and the stereo panner 5 Hz / 0.5 depth / sine (the browser's
-    /// defaults at its own slider positions).
+    /// sine, the stereo panner 5 Hz / 0.5 depth / sine, and the phaser 1.04 Hz /
+    /// 0.5 depth / 0.25 feedback / 0.5 mix (the browser's slider 20 at its own
+    /// `0.05 + amount · 4.95` rate mapping, which is the Phase 90's default
+    /// speed once `depth`, `feedback` and `mix` are the documented mods).
     pub fn build(self) -> Box<dyn Effect> {
         match self {
             InsertKind::Tone => Box::new(ToneStack::new(0.0, 0.0, 0.0)),
@@ -1469,6 +1479,7 @@ impl InsertKind {
             InsertKind::MasterEq => Box::new(GraphicEq::new()),
             InsertKind::Tremolo => Box::new(Tremolo::new(5.0, 0.5, 0)),
             InsertKind::StereoPanner => Box::new(StereoPanner::new(5.0, 0.5, 0)),
+            InsertKind::Phaser => Box::new(Phaser::new(1.04, 0.5, 0.25, 0.5)),
         }
     }
 }
@@ -1983,6 +1994,7 @@ mod tests {
             Box::new(Maximizer::new(-3.0, 0.5)),
             Box::new(Tremolo::new(8.0, 1.0, 2)),
             Box::new(StereoPanner::new(8.0, 1.0, 2)),
+            Box::new(Phaser::new(5.0, 1.0, 0.9, 1.0)),
             Box::new(graphic),
         ];
         for effect in &mut effects {
@@ -2017,6 +2029,7 @@ mod tests {
             Box::new(Maximizer::new(-12.0, 1.0)),
             Box::new(Tremolo::new(20.0, 1.0, 2)),
             Box::new(StereoPanner::new(20.0, 1.0, 2)),
+            Box::new(Phaser::new(5.0, 1.0, 0.9, 1.0)),
             Box::new(graphic),
         ];
         for effect in &mut effects {
@@ -2590,6 +2603,12 @@ mod tests {
             );
         }
         assert!(!maximizer.set("release", 0.1));
+
+        let mut phaser = Phaser::new(1.04, 0.5, 0.25, 0.5);
+        for name in ["rate", "depth", "feedback", "mix"] {
+            assert!(phaser.set(name, 0.3), "phaser.{name} was not recognised");
+        }
+        assert!(!phaser.set("shape", 0.3));
     }
 
     #[test]
@@ -2740,6 +2759,7 @@ mod tests {
             ("maximizer", InsertKind::Maximizer),
             ("tremolo", InsertKind::Tremolo),
             ("stereo_panner", InsertKind::StereoPanner),
+            ("phaser", InsertKind::Phaser),
         ] {
             assert_eq!(InsertKind::parse(word), Some(kind));
             assert_eq!(kind.name(), word);
@@ -2785,6 +2805,13 @@ mod tests {
         assert_eq!(InsertKind::from_code(14), Some(InsertKind::Tremolo));
         assert_eq!(InsertKind::StereoPanner.code(), 15);
         assert_eq!(InsertKind::from_code(15), Some(InsertKind::StereoPanner));
+        assert_eq!(InsertKind::Phaser.code(), 16);
+        assert_eq!(InsertKind::from_code(16), Some(InsertKind::Phaser));
+        assert_eq!(
+            InsertKind::Phaser.controls(),
+            &["rate", "depth", "feedback", "mix"]
+        );
+        assert_eq!(InsertKind::Phaser.build().name(), "phaser");
         assert_eq!(
             InsertKind::StereoPanner.controls(),
             &["rate", "depth", "shape"]

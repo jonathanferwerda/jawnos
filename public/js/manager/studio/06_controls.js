@@ -318,7 +318,7 @@ $(document).on('input change', '.studio_pedal_text', function (event) {
 			|| (typeof studioTempoManualMs === 'function' && studioTempoManualMs(value) !== null);
 		if (!complete) { return; }
 	}
-	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val());
+	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val(), row.attr('chain'));
 });
 
 // A rack knob that names a synced time control is applied through the shelf

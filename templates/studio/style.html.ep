@@ -77,7 +77,9 @@
 		top: 4px;
 		display: flex;
 		gap: 2px;
-		z-index: 4;
+		/* Above the title and controls that share the tile's face, so a tool is
+		   always the thing the pointer lands on. */
+		z-index: 6;
 	}
 	.studio_board_tools button {
 		font-size: 10px;
@@ -91,6 +93,28 @@
 		opacity: .6;
 		font-size: 12px;
 		padding: 8px;
+	}
+	/* A controller mirrors another machine and has no pedal command, so the
+	   sheet says it is read-only rather than swallowing every press in silence. */
+	.studio_pedalboard_remote {
+		display: block;
+		padding: 4px 10px;
+		font-size: 12px;
+		line-height: 1.25;
+		color: var(--ink);
+		background: var(--accent-soft, var(--panel-2));
+		border-bottom: 1px solid var(--line);
+	}
+	.studio_board_readonly #studio_pedalboard_rack {
+		opacity: .55;
+	}
+	.studio_board_readonly .studio_pedal_foot,
+	.studio_board_readonly .studio_pedal_led,
+	.studio_board_readonly .studio_board_tools,
+	.studio_board_readonly .studio_chain_choice,
+	.studio_board_readonly #studio_palette_add,
+	.studio_board_readonly #studio_palette_effect {
+		cursor: var(--jawnos-cursor-not-allowed, not-allowed);
 	}
 	.studio_pedalboard_bar {
 		display: flex;

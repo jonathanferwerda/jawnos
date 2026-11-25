@@ -34,14 +34,14 @@ like($js, qr/function studioTempoDivision\(text\)/, 'the division parser has one
 like($js, qr/function studioTempoManualMs\(text\)/, 'a manual millisecond value has its own reader');
 like($js, qr/function studioTempoResolveValue\(kind, sync, bpm\)/, 'one resolver turns a division into seconds or hertz');
 like($js, qr/function studioTempoSyncAll\(\)/, 'every synced insert is re-applied in one pass');
-like($js, qr/var studioTempoControls = \{[\s\S]*?delay: 'time'[\s\S]*?flanger: 'rate'[\s\S]*?tremolo: 'rate'[\s\S]*?stereo_panner: 'rate'/,
-	'the four synced controls are the delay time and three LFO rates');
+like($js, qr/var studioTempoControls = \{[\s\S]*?delay: 'time'[\s\S]*?flanger: 'rate'[\s\S]*?phaser: 'rate'[\s\S]*?tremolo: 'rate'[\s\S]*?stereo_panner: 'rate'/,
+	'the five synced controls are the delay time and four LFO rates');
 like($js, qr/function studioEffectTyped\(kind, control\)/, 'a typed control is stored as text, not a number');
 like($js, qr/\\\.sync\$\/\.test/,
 	'the engine never receives the sync string');
 
 # --- the sync control on each effect ---------------------------------------
-for my $kind (qw(delay flanger tremolo stereo_panner)) {
+for my $kind (qw(delay flanger phaser tremolo stereo_panner)) {
 	like($studio, qr/\b\Q$kind\E\s*=>\s*\{[\s\S]{0,600}?control\s*=>\s*'sync'/,
 		"$kind carries a sync control in the contract table");
 	like($studio, qr/control\s*=>\s*'sync',[^}]*?typed\s*=>\s*1/s,

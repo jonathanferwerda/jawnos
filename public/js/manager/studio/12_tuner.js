@@ -188,11 +188,12 @@ function studioTunerSync() {
 	studioTunerAttach(ch, ins);
 }
 
-function studioTunerToggle() {
+function studioTunerToggle(chain) {
 	var ch = studioPaletteChannel();
-	var ins = studioRackFind(ch, 'Jtune');
-	if (!ins) { studioSetInsert(ch, 'Jtune', true); }
-	else { studioSetInsertBypass(ch, 'Jtune', !ins.bypassed); }
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
+	var ins = studioRackFind(ch, 'Jtune', chain);
+	if (!ins) { studioSetInsert(ch, 'Jtune', true, chain); }
+	else { studioSetInsertBypass(ch, 'Jtune', !ins.bypassed, chain); }
 	studioTunerSync();
 }
 

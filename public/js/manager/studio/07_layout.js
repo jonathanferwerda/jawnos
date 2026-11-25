@@ -1629,15 +1629,23 @@ $(document).on('change', '#studio_remote_monitor', function () {
 
 function studioRemoteBadge() {
 	var status = $('#studio_remote_status');
-	if (!status.length) { return; }
+	var board = $('#pedalboard');
+	var note = $('#studio_pedalboard_remote');
 	if (!studioRemoteTarget) {
-		status.text('').removeClass('on');
+		if (status.length) { status.text('').removeClass('on'); }
 		$('#studio').removeClass('studio_remote_controller');
+		board.removeClass('studio_board_readonly').removeAttr('aria-disabled');
+		note.hide();
 		return;
 	}
 	var label = studioRemoteMachineLabels[studioRemoteTarget] || studioRemoteTarget;
-	status.text(studioRemoteText('Controlling') + ' ' + label).addClass('on');
+	if (status.length) { status.text(studioRemoteText('Controlling') + ' ' + label).addClass('on'); }
 	$('#studio').addClass('studio_remote_controller');
+	// The board mirrors this machine's own song and the command vocabulary has no
+	// pedal move, so its tools would do nothing. Mark it read-only and say why on
+	// the sheet instead of intercepting every press with no explanation.
+	board.addClass('studio_board_readonly').attr('aria-disabled', 'true');
+	note.text(studioRemoteText('Read-only: this Studio is controlling another machine, so pedal changes are not sent')).show();
 }
 
 // Remember the local song before its controls are repainted with a peer's
@@ -1790,6 +1798,7 @@ function studioRemoteWindowOpened() {
 		studioRemoteRestoring = false;
 		studioRemoteTimersStart();
 		studioRemotePickerLoad();
+		studioRemoteBadge();
 	};
 	(function wait() {
 		var now = document.getElementById('studio');
