@@ -168,6 +168,7 @@ SKIP: {
 	like( $device, qr/extern "C" fn jawn_audio_start/, 'the C ABI has a start' );
 	like( $device, qr/extern "C" fn jawn_audio_stop/, 'a stop' );
 	like( $device, qr/extern "C" fn jawn_audio_status/, 'and a status' );
+	like( $device, qr/extern "C" fn jawn_audio_backends/, 'and a backends report for the app page' );
 	unlike( $device, qr/^\s*use jni/m, 'no jni dependency is needed' );
 	like( $device, qr/set_direction::<Input>\(\)/, 'the first slice opens an input stream' );
 	like(

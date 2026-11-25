@@ -550,6 +550,14 @@ pub extern "C" fn jawn_audio_status() -> *mut c_char {
     into_c_string(lock_control().status.clone())
 }
 
+/// The same one-line JSON `--backends --json` prints, for the app's page. The
+/// JNI shim calls it so the phone can say `oboe:true` without a CLI
+/// (docs/studio-oboe-slice.md §9 item 2).
+#[no_mangle]
+pub extern "C" fn jawn_audio_backends() -> *mut c_char {
+    into_c_string(crate::backends::json(&crate::backends::availability()))
+}
+
 /// Free a string returned by any of the functions above.
 ///
 /// # Safety
