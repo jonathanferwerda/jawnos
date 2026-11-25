@@ -1108,7 +1108,9 @@ function studioEngineTransportApply(transport, rttMs) {
 		// correct for the two output buffers: a sample rendered into a buffer is
 		// heard after that buffer's length, and the browser's is its own latency.
 		var rtt = (isFinite(rttMs) && rttMs > 0) ? (rttMs / 1000) : 0;
-		var browserLatency = (isFinite(ctx.outputLatency) && ctx.outputLatency > 0) ? ctx.outputLatency : 0;
+		var browserLatency = (isFinite(ctx.outputLatency) && ctx.outputLatency > 0)
+			? ctx.outputLatency
+			: ((isFinite(ctx.baseLatency) && ctx.baseLatency > 0) ? ctx.baseLatency : 0);
 		var rate = Number(transport.rate) || ctx.sampleRate || 0;
 		var engineLatency = (Number(transport.buffer) > 0 && rate > 0)
 			? (Number(transport.buffer) / rate) : 0;

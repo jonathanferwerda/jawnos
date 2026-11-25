@@ -888,6 +888,11 @@ like(
 );
 like(
 	$transport,
+	qr/\(\(isFinite\(ctx\.baseLatency\) && ctx\.baseLatency > 0\) \? ctx\.baseLatency : 0\);/,
+	'baseLatency is the fallback when outputLatency is not reported'
+);
+like(
+	$transport,
 	qr/studioEngineClockSet\(pos, ctx\.currentTime - \(rtt \/ 2\), loopStart, loopEnd, latency\);/,
 	'the socket round trip and the output shift reach the clock'
 );
