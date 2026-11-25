@@ -79,6 +79,31 @@
 			<% foreach my $b ( @{$p->{'buttons'}} ) { %>
 				<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;" flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" hint="<%= &subs::ui($b->{'hint'} || &subs::format_name($b->{'control'})) %>" src="<%= $button_icon->('depressed', $b->{'colour'}) %>">
 			<% } %>
+			<%# A hand-drawn shelf tile may still carry a choice or a tempo field the
+			   artwork does not paint: the pedals entry lists the control and its
+			   place, and the same handlers the drawn tiles use do the rest. %>
+			<% foreach my $s ( @{$p->{'selects'} || []} ) { %>
+				<% my $shelf_effect = $gb::studio->{'effects'}->{$p->{'name'}} || {}; %>
+				<% my ($pick) = grep { ($_->{'control'} || '') eq $s->{'control'} } @{$shelf_effect->{'controls'} || []}; %>
+				<select class="studio_pedal_model pedal_select" channel="<%= $ch %>" control="<%= $s->{'control'} %>" style="position:absolute;left:<%= $s->{'left'} %>;top:<%= $s->{'top'} %>;width:<%= $s->{'width'} %>;z-index:6;" hint="<%= &subs::ui(($pick && $pick->{'hint'}) || 'Choose the option') %>">
+					<% my $oi = 0; %>
+					<% foreach my $option ( @{($pick && $pick->{'options'}) || []} ) { %>
+						<option value="<%= $oi %>"><%= &subs::ui($option) %></option>
+						<% $oi++; %>
+					<% } %>
+				</select>
+			<% } %>
+			<% if ($p->{'sync'}) { %>
+				<label class="pedal_select_row pedal_sync_row">
+					<span class="pedal_knob_label"><%= &subs::ui('Sync') %></span>
+					<input type="text" class="studio_pedal_text pedal_text" channel="<%= $ch %>" control="sync" list="studio_tempo_<%= &subs::html_name($ch) %>_sync" hint="<%= &subs::ui('A note division, milliseconds, or off') %>" value="" placeholder="off">
+					<datalist id="studio_tempo_<%= &subs::html_name($ch) %>_sync">
+						<% foreach my $division ( @{$gb::studio->{'tempo_divisions'}} ) { %>
+							<option value="<%= $division %>"></option>
+						<% } %>
+					</datalist>
+				</label>
+			<% } %>
 			<% if ($p->{'name'} eq 'reverb2') { %>
 				<select class="studio_pedal_model pedal_model" channel="<%= $ch %>" control="model" hint="<%= &subs::ui('Choose the reverb model') %>">
 					<% my $mi = 0; %>

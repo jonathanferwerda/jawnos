@@ -183,6 +183,115 @@ our $studio = {
 		},{
 			control => 'lfo', colour => 'pink', left => '68%', top => '58%', width => '24%'
 		}]
+	},{
+		# The ten newer pedals wear the same hand-drawn face as the shelf: a
+		# marker border, a crayon field and a cream nameplate. The artwork asset is
+		# namespaced `pedal_*` because `slider` is already the UI fader graphic.
+		name => 'harmonizer',
+		image => 'pedal_harmonizer',
+		knobs => [{
+			control => 'mix', colour => 'pink', left => '8%', top => '62%', width => '20%'
+		}],
+		selects => [
+			{ control => 'key', left => '5%', top => '28%', width => '43%' },
+			{ control => 'scale', left => '52%', top => '28%', width => '43%' },
+			{ control => 'degree', left => '5%', top => '44%', width => '90%' }
+		]
+	},{
+		name => 'de_esser',
+		image => 'pedal_de_esser',
+		knobs => [{
+			control => 'thresh', colour => 'blue', left => '4%', top => '32%', width => '26%'
+		},{
+			control => 'freq', colour => 'cyan', left => '37%', top => '32%', width => '26%'
+		},{
+			control => 'amount', colour => 'red', left => '69%', top => '32%', width => '26%'
+		}]
+	},{
+		name => 'modulator',
+		image => 'pedal_modulator',
+		sync => 1,
+		knobs => [{
+			control => 'rate', colour => 'pink', left => '4%', top => '32%', width => '26%'
+		},{
+			control => 'depth', colour => 'cyan', left => '37%', top => '32%', width => '26%'
+		},{
+			control => 'mix', colour => 'blue', left => '69%', top => '32%', width => '26%'
+		}]
+	},{
+		name => 'pitch_shift',
+		image => 'pedal_pitch_shift',
+		knobs => [{
+			control => 'semitones', colour => 'orange', left => '16%', top => '36%', width => '26%'
+		},{
+			control => 'mix', colour => 'cyan', left => '56%', top => '36%', width => '26%'
+		}]
+	},{
+		name => 'gate',
+		image => 'pedal_gate',
+		knobs => [{
+			control => 'thresh', colour => 'red', left => '4%', top => '28%', width => '26%'
+		},{
+			control => 'attack', colour => 'yellow', left => '37%', top => '28%', width => '26%'
+		},{
+			control => 'hold', colour => 'green', left => '69%', top => '28%', width => '26%'
+		},{
+			control => 'release', colour => 'cyan', left => '20%', top => '56%', width => '26%'
+		},{
+			control => 'range', colour => 'blue', left => '53%', top => '56%', width => '26%'
+		}]
+	},{
+		name => 'slider',
+		image => 'pedal_slider',
+		sync => 1,
+		knobs => [{
+			control => 'rate', colour => 'cyan', left => '4%', top => '32%', width => '26%'
+		},{
+			control => 'depth', colour => 'pink', left => '37%', top => '32%', width => '26%'
+		},{
+			control => 'duty', colour => 'blue', left => '69%', top => '32%', width => '26%'
+		}]
+	},{
+		name => 'overdrive',
+		image => 'pedal_overdrive',
+		knobs => [{
+			control => 'drive', colour => 'orange', left => '4%', top => '32%', width => '26%'
+		},{
+			control => 'tone', colour => 'red', left => '37%', top => '32%', width => '26%'
+		},{
+			control => 'level', colour => 'yellow', left => '69%', top => '32%', width => '26%'
+		}]
+	},{
+		name => 'wah',
+		image => 'pedal_wah',
+		sync => 1,
+		knobs => [{
+			control => 'rate', colour => 'yellow', left => '4%', top => '32%', width => '26%'
+		},{
+			control => 'depth', colour => 'orange', left => '37%', top => '32%', width => '26%'
+		},{
+			control => 'mix', colour => 'pink', left => '69%', top => '32%', width => '26%'
+		}]
+	},{
+		name => 'chorus',
+		image => 'pedal_chorus',
+		sync => 1,
+		knobs => [{
+			control => 'rate', colour => 'blue', left => '4%', top => '32%', width => '26%'
+		},{
+			control => 'depth', colour => 'cyan', left => '37%', top => '32%', width => '26%'
+		},{
+			control => 'mix', colour => 'pink', left => '69%', top => '32%', width => '26%'
+		}]
+	},{
+		name => 'vibrato',
+		image => 'pedal_vibrato',
+		sync => 1,
+		knobs => [{
+			control => 'rate', colour => 'pink', left => '16%', top => '36%', width => '26%'
+		},{
+			control => 'depth', colour => 'blue', left => '56%', top => '36%', width => '26%'
+		}]
 	}],
 	# The drum machine's voices. `name` is the wire name the browser renders and
 	# plays; `key` is the computer key it starts on; `note` is the Web MIDI note

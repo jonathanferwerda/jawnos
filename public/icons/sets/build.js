@@ -386,6 +386,16 @@ const ICONS = {
 	'delayed': 'pedal',
 	'reverb2': 'pedal',
 	'synth': 'pedal',
+	'pedal_harmonizer': 'pedal',
+	'pedal_de_esser': 'pedal',
+	'pedal_modulator': 'pedal',
+	'pedal_pitch_shift': 'pedal',
+	'pedal_gate': 'pedal',
+	'pedal_slider': 'pedal',
+	'pedal_overdrive': 'pedal',
+	'pedal_wah': 'pedal',
+	'pedal_chorus': 'pedal',
+	'pedal_vibrato': 'pedal',
 	'cord': 'cord',
 	'jack': 'jack',
 	'slider': 'groove',
@@ -817,8 +827,18 @@ const PEDAL_SIZES = {
 	delayed: [352, 404],
 	reverb2: [344, 408],
 	synth: [256, 256],
+	pedal_harmonizer: [344, 408],
+	pedal_de_esser: [344, 408],
+	pedal_modulator: [344, 408],
+	pedal_pitch_shift: [344, 408],
+	pedal_gate: [344, 408],
+	pedal_slider: [344, 408],
+	pedal_overdrive: [344, 408],
+	pedal_wah: [344, 408],
+	pedal_chorus: [344, 408],
+	pedal_vibrato: [344, 408],
 };
-const PEDAL_LABELS = { synth: 'JawnSynth' };
+const PEDAL_LABELS = { synth: 'JawnSynth', pedal_harmonizer: 'Harmonizer', pedal_de_esser: 'De-esser', pedal_modulator: 'Modulator', pedal_pitch_shift: 'Pitch Shift', pedal_gate: 'Gate', pedal_slider: 'Slider', pedal_overdrive: 'Overdrive', pedal_wah: 'Wah', pedal_chorus: 'Chorus', pedal_vibrato: 'Vibrato' };
 const pedalLabel = name => PEDAL_LABELS[name] || (name.charAt(0).toUpperCase() + name.slice(1));
 const PEDAL_NAMES = {};
 Object.keys(PEDAL_SIZES).forEach(n => { PEDAL_NAMES[n] = 1; });
@@ -1453,6 +1473,16 @@ const HUE_OVERRIDES = {
 	delayed: 130,
 	reverb2: 22,
 	synth: 265,
+	pedal_harmonizer: 210,
+	pedal_de_esser: 168,
+	pedal_modulator: 286,
+	pedal_pitch_shift: 32,
+	pedal_gate: 96,
+	pedal_slider: 196,
+	pedal_overdrive: 8,
+	pedal_wah: 44,
+	pedal_chorus: 336,
+	pedal_vibrato: 268,
 	// the paperwork keeps one calm hue: a quote, an invoice, a receipt and
 	// their kin are the same family of paper
 	quote: 210,
