@@ -1,0 +1,63 @@
+<%# The complete Synth surface, with no page wrapper: the standalone Synth window
+   wraps it in #synth and the Studio Synth panel includes it inside its own #synth.
+   Every control is addressed by a class as well as its id, so two hosts can be
+   open at once and the shared handlers reach both. %>
+<div class="synth_toolbar">
+	<label for="synth_preset">Preset</label>
+	<select id="synth_preset" class="synth_select synth_preset" hint="Choose a preset"></select>
+	<label for="synth_sound">Sound</label>
+	<select id="synth_sound" class="synth_select synth_sound" hint="Where the notes are made: the JawnOS engine while the transport plays, or this browser">
+		<option value="engine" selected>Engine</option><option value="browser">Browser</option>
+	</select>
+	<label>MIDI</label>
+	<select id="synth_midi" class="synth_select synth_midi" hint="A connected USB MIDI keyboard"></select>
+	<button id="synth_midi_connect" class="hover synth_midi_connect" hint="Connect a USB MIDI keyboard">Connect</button>
+	<button id="synth_keyboard_toggle" class="hover synth_keyboard_toggle" hint="Play the piano with your computer keyboard (A W S E D F T G Y H U J K …)">Keys: off</button>
+	<button id="synth_arp_toggle" class="hover synth_arp_toggle" hint="Arpeggiate the notes you hold">Arp: off</button>
+	<select id="synth_arp_rate" class="synth_select synth_arp_rate" hint="Arpeggiator speed (steps per second)">
+		<option value="4">4</option><option value="6">6</option><option value="8" selected>8</option><option value="10">10</option><option value="12">12</option><option value="16">16</option>
+	</select>
+	<select id="synth_arp_mode" class="synth_select synth_arp_mode" hint="Arpeggiator pattern">
+		<option value="up">up</option><option value="down">down</option><option value="updown">up/down</option><option value="random">random</option>
+	</select>
+	<select id="synth_arp_octaves" class="synth_select synth_arp_octaves" hint="Arpeggiator octaves">
+		<option value="1">1 oct</option><option value="2">2 oct</option><option value="3">3 oct</option><option value="4">4 oct</option>
+	</select>
+	<button id="synth_mono_toggle" class="hover synth_mono_toggle" hint="One voice, gliding between notes">Mono: off</button>
+	<input id="synth_glide" class="synth_glide" type="range" min="0" max="300" value="0" style="width:70px;" hint="Glide (milliseconds between notes when Mono is on)">
+	<select id="synth_learn_param" class="synth_select synth_learn_param" hint="The parameter to map, then press Learn and move a knob on your controller"></select>
+	<button id="synth_learn" class="hover synth_learn" hint="Arm MIDI learn for the chosen parameter">Learn</button>
+	<button id="synth_learn_clear" class="hover synth_learn_clear" hint="Forget every learned mapping">Clear</button>
+	<span id="synth_learn_state" class="synth_voices synth_learn_state" style="margin-left:0;"></span>
+	<span id="synth_octave" class="synth_voices synth_octave" style="margin-left:0;" hint="Octave for the computer keyboard (Z down, X up)"></span>
+	<span id="synth_voices" class="synth_voices synth_voice_count"></span>
+</div>
+
+<div class="synth_keys" id="synth_keys"></div>
+
+<div class="synth_controls">
+	<div class="synth_knob"><label>Cutoff</label><input type="range" class="synth_param" param="filter.cutoff" min="0" max="100" value="55"></div>
+	<div class="synth_knob"><label>Resonance</label><input type="range" class="synth_param" param="filter.q" min="0" max="100" value="15"></div>
+	<div class="synth_knob"><label>Filter env</label><input type="range" class="synth_param" param="filter.env" min="0" max="100" value="30"></div>
+	<div class="synth_knob"><label>Attack</label><input type="range" class="synth_param" param="amp.a" min="0" max="100" value="8"></div>
+	<div class="synth_knob"><label>Decay</label><input type="range" class="synth_param" param="amp.d" min="0" max="100" value="30"></div>
+	<div class="synth_knob"><label>Sustain</label><input type="range" class="synth_param" param="amp.s" min="0" max="100" value="60"></div>
+	<div class="synth_knob"><label>Release</label><input type="range" class="synth_param" param="amp.r" min="0" max="100" value="30"></div>
+	<div class="synth_knob"><label>Detune</label><input type="range" class="synth_param" param="osc2.detune" min="0" max="100" value="55"></div>
+	<div class="synth_knob"><label>LFO</label><input type="range" class="synth_param" param="lfo.rate" min="0" max="100" value="0"></div>
+	<div class="synth_knob"><label>Drive</label><input type="range" class="synth_param" param="drive" min="0" max="100" value="0"></div>
+</div>
+
+<div class="synth_hint">Play the keys above, or a connected MIDI keyboard. In Studio, arm a channel whose input is Synth to record what you play.</div>
+
+<div class="synth_seq_toolbar">
+	<button id="synth_seq_toggle" class="hover synth_seq_toggle" hint="Loop this step grid through the synth">Seq: off</button>
+	<select id="synth_seq_rate" class="synth_select synth_seq_rate" hint="Sequencer speed (steps per second)">
+		<option value="4">4</option><option value="6">6</option><option value="8" selected>8</option><option value="12">12</option><option value="16">16</option>
+	</select>
+	<select id="synth_seq_steps" class="synth_select synth_seq_steps" hint="Grid length (steps)">
+		<option value="8">8 steps</option><option value="16" selected>16 steps</option><option value="24">24 steps</option><option value="32">32 steps</option>
+	</select>
+	<button id="synth_seq_clear" class="hover synth_seq_clear" hint="Clear every cell">Clear</button>
+</div>
+<div class="synth_seq" id="synth_seq"></div>

@@ -1,14 +1,14 @@
 # tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep templates/studio/drums.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/09_pedals.js public/js/manager/studio/11_drums.js public/js/manager/windows.js public/js/manager/windows/02_fit.js public/js/manager/taskbar.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
-# covers:    The Studio layout as four interior panel windows: a taskbar in the
+# covers:    The Studio layout as six interior panel windows: a taskbar in the
 #            top bar, a title bar with Minimize and Maximize, a drag handle, a
 #            corner resize grip and a remembered box for the transport, the
-#            tracks, the channels and the drums; the panel stack raises on a
-#            press and the taskbar restores or minimizes; the compact per-track
-#            panel with its controls; a dynamic track list with Add track and a
-#            twice-pressed Delete; the pedalboard as the one FX surface; a help
-#            topic that names the new controls; and a Studio window that follows
-#            the shared window stack instead of pinning its own z-index.
-#            Structure only; pixels are not asserted here.
+#            tracks, the channels, the drums, the synth and the notes; the
+#            panel stack raises on a press and the taskbar restores or
+#            minimizes; the compact per-track panel with its controls; a dynamic
+#            track list with Add track and a twice-pressed Delete; the pedalboard
+#            as the one FX surface; a help topic that names the new controls; and
+#            a Studio window that follows the shared window stack instead of
+#            pinning its own z-index. Structure only; pixels are not asserted here.
 
 use strict;
 use warnings;
@@ -65,7 +65,7 @@ like($markup, qr/id="studio_panel_taskbar"[^>]*class="studio_panel_taskbar"/,
 	'the layout bar carries the panel taskbar');
 like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_arrange"[\s\S]*id="studio_panel_taskbar"[\s\S]*id="studio_add_track"/,
 	'the taskbar sits between Arrange and Add track');
-for my $panel (qw(transport tracks mixer drums)) {
+for my $panel (qw(transport tracks mixer drums synth notes)) {
 	like($markup, qr/class="studio_panel_task hover" data-panel="$panel"/,
 		"$panel has a taskbar entry");
 }
@@ -133,14 +133,14 @@ like($layout, qr/'contextmenu', '#studio_panel_taskbar'/, 'a right-click on the 
 like($layout, qr/'.studio_panel_menu \.studio_menu_row'/, 'the menu rows are wired');
 like($layout, qr/if \(!e\.ctrlKey \|\| !e\.altKey \|\| e\.metaKey \|\| e\.shiftKey\) \{ return; \}/,
 	'the shortcut handler requires Ctrl+Alt and no other modifier');
-like($layout, qr/'1': 'transport', '2': 'tracks', '3': 'mixer', '4': 'drums'/,
-	'Ctrl+Alt+1..4 name the four panels');
+like($layout, qr/'1': 'transport', '2': 'tracks', '3': 'mixer', '4': 'drums', '5': 'synth', '6': 'notes'/,
+	'Ctrl+Alt+1..6 name the six panels');
 like($layout, qr/if \(key === '0'\) \{ studioPanelToggleAllMinimized\(true\);/, 'Ctrl+Alt+0 toggles all');
 like($layout, qr/if \(key === 't'\) \{ studioArrangeWindows\(true\);/, 'Ctrl+Alt+T tiles');
 like($layout, qr/if \(key === 'c'\) \{ studioCascadeWindows\(true\);/, 'Ctrl+Alt+C cascades');
 like($layout, qr/function studioPanelShortcutTyping\(e\)/, 'typing in a field does not fire a preset');
 like($help, qr/right-click menu/, 'help names the taskbar menu');
-like($help, qr/Ctrl\+Alt\+1 to Ctrl\+Alt\+4/, 'help names the panel shortcuts');
+like($help, qr/Ctrl\+Alt\+1 to Ctrl\+Alt\+6/, 'help names the panel shortcuts');
 like($help, qr/Ctrl\+Alt\+T tiles and Ctrl\+Alt\+C cascades/, 'help names the tile/cascade shortcuts');
 like($help, qr/The bottom edge resizes the window/, 'help names the bottom edge grip');
 
@@ -205,7 +205,7 @@ unlike($maker, qr/left:' \. \(\$settings->\{'dimensions'\}->\{'left'\}\) \. 'px'
 	'the undefined left is never written as left:px');
 
 # --- one layout engine owns the panel windows -------------------------------
-like($layout, qr/var studioPanelNames = \['transport', 'tracks', 'mixer', 'drums'\]/,
+like($layout, qr/var studioPanelNames = \['transport', 'tracks', 'mixer', 'drums', 'synth', 'notes'\]/,
 	'the panels have a fixed taskbar order');
 like($layout, qr/function studioPanelElement\(name\)/, 'one helper finds a panel');
 like($layout, qr/function studioPanelStateFor\(name\)/, 'one helper owns a panel state');
@@ -254,8 +254,16 @@ like($layout, qr/var transportHeight = Math\.max\(64, Math\.min\(112/, 'the tran
 like($layout, qr/drums: \{ left: tracksWidth \+ gap, top: middleTop/, 'the drums sit beside the timeline');
 like($layout, qr/mixer: \{ left: 0, top: height - mixerHeight/, 'the console sits at the foot');
 like($layout, qr/if \(width < 720\)/, 'a narrow desk stacks the windows');
-like($layout, qr/state\.minimized = false;[\s\S]*?state\.maximized = false;/,
-	'Arrange brings every window back');
+like($layout, qr/synth: \{ left: 0, top: synthTop, width: width, height: synthHeight \},\n\t\tmixer/,
+	'the synth is a full-width band above the console');
+# Arrange restores every window except the note editor, which only counts as
+# open when a clip is loaded; otherwise it would cover the tracks and drums.
+like($layout, qr/var notes_open = \$\('#studio_notes'\)\.attr\('data-studio-notes-open'\) === '1';/,
+	'Arrange asks whether a note clip is open');
+like($layout, qr/if \(name === 'notes' && !notes_open\) \{ state\.minimized = true; \}/,
+	'Arrange leaves the closed note editor minimized');
+like($layout, qr/state\.minimized = false;\n\t\tstate\.maximized = false;\n\t\tif \(name === 'notes' && !notes_open\)/,
+	'Arrange brings the other windows back');
 like($help, qr/Arrange, beside the panel taskbar/, 'help describes Arrange beside the taskbar');
 like($help, qr/the drum machine sits beside it/, 'help puts the drums beside the timeline');
 

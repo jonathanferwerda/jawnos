@@ -69,7 +69,7 @@ like( $socket, qr/drums \\"player\\" must be a player name/, 'a chart may name i
 like( $socket, qr/drums \\"style\\" must be one of soft, hard, aggressive/, 'and how hard they play' );
 like( $socket, qr/\\"drums\\":\{\},\\"drum_kit\\":\\"\{\}\\"/, 'status reports the chart and the loaded kit' );
 like( $socket, qr/\\"drums\\":0,\\"drum_kit\\":\\"off\\"/, 'the resting transport reports no chart' );
-like( $socket, qr/update needs \\"clips\\", \\"master\\", \\"master_values\\", \\"drums\\" or \\"sends\\"/,
+like( $socket, qr/update needs \\"clips\\", \\"master\\", \\"master_values\\", \\"drums\\", \\"sends\\" or \\"synth_clips\\"/,
 	'a chart alone is a valid update' );
 
 # --- the manager forwards and validates it ----------------------------------
@@ -83,7 +83,7 @@ like( $controller, qr/transport drums "style" must be soft, hard or aggressive/,
 	'and an unknown style' );
 like( $controller, qr/row \\"\$name\\" holds a value that is not a velocity 0\.\.100/,
 	'a velocity is a whole number from 0 to 100' );
-like( $controller, qr/update needs "clips", "sends", "master", "master_values" or "drums"/,
+like( $controller, qr/update needs "clips", "sends", "master", "master_values", "drums" or "synth_clips"/,
 	'and the route accepts a chart-only update' );
 
 # --- the page sends the chart and stops its own scheduler -------------------

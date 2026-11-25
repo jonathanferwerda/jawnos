@@ -108,7 +108,7 @@ use jawn_audio::{
     PlayTrack, Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
     TransportSource, MASTER_ORDER,
 };
-use jawn_audio::playback::{AppRoute, DrumChart, SynthPlan, TransportHit, TransportNote};
+use jawn_audio::playback::{AppRoute, DrumChart, SynthClip, SynthNote, SynthPlan, TransportHit, TransportNote};
 use jawn_drums::{Kit, Performance, Player, Style, Voice};
 use jawn_synth::{Engine as SynthEngine, Envelope, FilterKind, Patch, Wave};
 use jawn_audio::uplink::{Uplink, UplinkConfig, UplinkSourceSpec, UplinkStatus};
@@ -3895,6 +3895,14 @@ impl Server {
             Ok(drums) => drums,
             Err(error) => return error_line(&error),
         };
+        // The scheduled Studio note clips. Parsed before any device opens, so a
+        // wrong note or range is this command's refusal, not a silent clip.
+        let (synth_clips_requested, synth_clips) = match parse_synth_clips(get(object, "synth_clips")) {
+            Ok(SynthClipsField::Absent) => (false, None),
+            Ok(SynthClipsField::Touch) => (true, None),
+            Ok(SynthClipsField::Replace(clips)) => (true, Some(clips)),
+            Err(error) => return error_line(&error),
+        };
         // The Studio output cords. Validated here, before any device opens, so
         // a self edge, a second destination for one source or a cycle is one
         // clear refusal and no thread.
@@ -3922,24 +3930,38 @@ impl Server {
                 session.control.set_tempo(bpm, beats_per_bar, gain);
                 session.control.set_loop(loop_start, loop_end);
                 session.control.seek(position);
-                // A `start` on a playing transport may carry a chart or a new
-                // output-cord graph: both ride the plan channel like an
-                // `update`, so the device stays open.
+                // A `start` on a playing transport may carry a chart, a new
+                // output-cord graph or a scheduled-clip plan: all ride the plan
+                // channel like an `update`, so the device stays open. A plan
+                // with no `clips` array (a tempo-only start) is a marker that
+                // leaves the running clips alone.
                 let sends_changed = get(object, "sends").is_some();
-                if drums.is_some() || sends_changed {
+                if drums.is_some() || sends_changed || synth_clips_requested {
                     let chart = drums.as_ref().map(|chart| chart.clone());
+                    let clip_count = synth_clips.as_ref().map(|clips| clips.len());
                     let plan = TransportPlan {
                         clips: None,
                         master: None,
                         master_values: None,
                         drums: chart,
                         synth: None,
-                        sends: Some(sends),
+                        synth_clips,
+                        // A request that carried `sends` may replace the graph,
+                        // exactly as before; a synth-clips-only tempo start keeps
+                        // the one the transport is already following.
+                        sends: if drums.is_some() || sends_changed {
+                            Some(sends)
+                        } else {
+                            None
+                        },
                     };
                     if session.plan_tx.send(plan).is_err() {
                         return error_line(
                             "the transport's render thread is no longer accepting plans",
                         );
+                    }
+                    if let Some(count) = clip_count {
+                        session.synth_clips = count;
                     }
                     if let Some(chart) = drums {
                         session.drums = chart.length;
@@ -4015,6 +4037,7 @@ impl Server {
             .as_ref()
             .map(|chart| chart.kit_name().to_string())
             .unwrap_or_else(|| "off".to_string());
+        let synth_clip_count = synth_clips.as_ref().map(|clips| clips.len()).unwrap_or(0);
         let control = Arc::new(TransportControl::new(spec, position, loop_start, loop_end));
         control.set_playing(true);
         let error = Arc::new(Mutex::new(String::new()));
@@ -4047,6 +4070,7 @@ impl Server {
                         master,
                         master_values,
                         drums,
+                        synth_clips.unwrap_or_default(),
                         sends,
                         plan_rx,
                         live_rx,
@@ -4074,6 +4098,7 @@ impl Server {
             // A start carries no synth patch; the page sends one with a
             // `synth` command once the transport is playing.
             synth: 0,
+            synth_clips: synth_clip_count,
             drum_routes,
             synth_routes: 0,
             plan_tx,
@@ -4129,6 +4154,12 @@ impl Server {
             Ok(drums) => drums,
             Err(error) => return error_line(&error),
         };
+        let (synth_clips_requested, synth_clips) = match parse_synth_clips(get(object, "synth_clips")) {
+            Ok(SynthClipsField::Absent) => (false, None),
+            Ok(SynthClipsField::Touch) => (true, None),
+            Ok(SynthClipsField::Replace(clips)) => (true, Some(clips)),
+            Err(error) => return error_line(&error),
+        };
         let sends = match parse_sends(get(object, "sends")) {
             Ok(sends) => sends,
             Err(error) => return error_line(&error),
@@ -4138,9 +4169,10 @@ impl Server {
             && master_values.is_none()
             && drums.is_none()
             && sends.is_none()
+            && !synth_clips_requested
         {
             return error_line(
-                "update needs \"clips\", \"master\", \"master_values\", \"drums\" or \"sends\": the change for the running transport",
+                "update needs \"clips\", \"master\", \"master_values\", \"drums\", \"sends\" or \"synth_clips\": the change for the running transport",
             );
         }
         let clip_count = clips.as_ref().map(|clips| clips.len());
@@ -4148,12 +4180,14 @@ impl Server {
         let drum_count = drums.as_ref().map(|chart| chart.length);
         let drum_routes = drums.as_ref().map(|chart| chart.routing.len());
         let drum_kit = drums.as_ref().map(|chart| chart.kit_name().to_string());
+        let synth_clip_count = synth_clips.as_ref().map(|clips| clips.len());
         let plan = TransportPlan {
             clips,
             master,
             master_values,
             drums,
             synth: None,
+            synth_clips,
             sends,
         };
         let session = match self.transport.as_mut() {
@@ -4181,6 +4215,9 @@ impl Server {
         }
         if let Some(kit) = drum_kit {
             session.drum_kit = kit;
+        }
+        if let Some(count) = synth_clip_count {
+            session.synth_clips = count;
         }
         self.transport_status()
     }
@@ -4254,6 +4291,7 @@ impl Server {
                 patch: Some(patch),
                 routing: None,
             }),
+            synth_clips: None,
             sends: None,
         };
         if session.plan_tx.send(plan).is_err() {
@@ -4295,6 +4333,7 @@ impl Server {
                 patch: None,
                 routing: Some(routing),
             }),
+            synth_clips: None,
             sends: None,
         };
         if session.plan_tx.send(plan).is_err() {
@@ -5469,6 +5508,16 @@ fn parse_master_values(value: Option<&Value>) -> Result<Option<Vec<(String, f32)
 /// keeping the per-block strip list small.
 const MAX_APP_ROUTES: usize = 16;
 
+/// The most scheduled synth clips one transport plan may carry. The Studio has
+/// 32 channels and a song rarely arms more than a handful, so 64 is a generous
+/// ceiling that still bounds the per-clip synth buffers.
+const MAX_SYNTH_CLIPS: usize = 64;
+
+/// The most notes one scheduled synth clip may carry. A sixteen-bar loop at a
+/// dense sixteenth grid is a few hundred notes; 4096 is far above that while
+/// keeping a malicious plan from allocating without bound.
+const MAX_SYNTH_CLIP_NOTES: usize = 4096;
+
 /// The `routing` field shared by `drums.routing` and the synth's `routing`
 /// action: one strip per channel the app is patched into.
 ///
@@ -5795,6 +5844,221 @@ fn parse_drums(value: Option<&Value>) -> Result<Option<DrumChart>, String> {
         chart = chart.with_performance(performance);
     }
     Ok(Some(chart))
+}
+
+/// The `synth_clips` field on a transport `start` or `update`: the scheduled
+/// Studio note clips, each with its own patch.
+///
+/// ```text
+/// {"synth_clips":{"clips":[
+///   {"patch":{...},"notes":[{"n":60,"t":0,"d":1,"v":0.8}],
+///    "start":0.0,"beats":16.0,"loop":1,"channel":1,
+///    "gain":1.0,"pan":0.0,"inserts":["reverb"]}
+/// ]}}
+/// ```
+///
+/// `start` is seconds on the song timeline; `beats` and the notes' `t`/`d` are
+/// beats, so the engine restretches a clip with the transport's tempo. Every
+/// refusal names the field it is about, e.g. `synth_clips.clips[2].notes[7].n`.
+/// An object with no `clips` array is a marker with nothing to replace (a
+/// tempo-only `start`); it leaves a running plan alone.
+enum SynthClipsField {
+    /// The field was absent.
+    Absent,
+    /// The field was present but carried no `clips` array.
+    Touch,
+    /// A replacement plan; an empty list removes every scheduled clip.
+    Replace(Vec<SynthClip>),
+}
+
+fn parse_synth_clips(value: Option<&Value>) -> Result<SynthClipsField, String> {
+    let fields = match value {
+        None | Some(Value::Null) => return Ok(SynthClipsField::Absent),
+        Some(Value::Obj(fields)) => fields,
+        _ => return Err("synth_clips must be an object with \"clips\"".to_string()),
+    };
+    let entries = match get(fields, "clips") {
+        None | Some(Value::Null) => return Ok(SynthClipsField::Touch),
+        Some(Value::Arr(entries)) => entries,
+        _ => return Err("synth_clips.clips must be an array of clip objects".to_string()),
+    };
+    if entries.len() > MAX_SYNTH_CLIPS {
+        return Err(format!(
+            "synth_clips carries {} clips, but the engine takes at most {MAX_SYNTH_CLIPS}",
+            entries.len()
+        ));
+    }
+    let mut clips = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let label = format!("synth_clips.clips[{index}]");
+        let fields = match entry {
+            Value::Obj(fields) => fields,
+            _ => return Err(format!("{label} must be an object")),
+        };
+        // The patch is parsed by the synth's own reader, so a clip accepts
+        // exactly the patch fields the live synth does.
+        let patch = match get(fields, "patch") {
+            Some(Value::Obj(_)) => parse_synth_patch(get(fields, "patch"))
+                .map_err(|error| format!("{label}.{error}"))?,
+            _ => {
+                return Err(format!(
+                    "{label}.patch must be an object with the browser patch fields"
+                ))
+            }
+        };
+
+        let note_values = match get(fields, "notes") {
+            Some(Value::Arr(note_values)) => note_values,
+            _ => return Err(format!("{label}.notes must be an array of note objects")),
+        };
+        if note_values.len() > MAX_SYNTH_CLIP_NOTES {
+            return Err(format!(
+                "{label}.notes carries {} notes, but a clip takes at most {MAX_SYNTH_CLIP_NOTES}",
+                note_values.len()
+            ));
+        }
+        let mut notes = Vec::with_capacity(note_values.len());
+        for (slot, note) in note_values.iter().enumerate() {
+            let note_label = format!("{label}.notes[{slot}]");
+            let note_fields = match note {
+                Value::Obj(note_fields) => note_fields,
+                _ => return Err(format!("{note_label} must be an object")),
+            };
+            let number = match get(note_fields, "n") {
+                Some(Value::Num(value))
+                    if value.is_finite()
+                        && value.fract() == 0.0
+                        && *value >= 0.0
+                        && *value <= 127.0 =>
+                {
+                    *value as u8
+                }
+                _ => {
+                    return Err(format!(
+                        "{note_label}.n must be a whole MIDI note from 0 to 127"
+                    ))
+                }
+            };
+            let start = match get(note_fields, "t") {
+                Some(Value::Num(value)) if value.is_finite() && *value >= 0.0 => *value,
+                _ => {
+                    return Err(format!(
+                        "{note_label}.t must be a finite number of beats, not negative"
+                    ))
+                }
+            };
+            let length = match get(note_fields, "d") {
+                Some(Value::Num(value)) if value.is_finite() && *value > 0.0 => *value,
+                _ => {
+                    return Err(format!(
+                        "{note_label}.d must be a finite number of beats greater than zero"
+                    ))
+                }
+            };
+            let velocity = match get(note_fields, "v") {
+                Some(Value::Num(value))
+                    if value.is_finite() && *value >= 0.0 && *value <= 1.0 =>
+                {
+                    *value as f32
+                }
+                _ => return Err(format!("{note_label}.v must be a number from 0 to 1")),
+            };
+            notes.push(SynthNote {
+                note: number,
+                t: start,
+                d: length,
+                v: velocity,
+            });
+        }
+
+        let start = match get(fields, "start") {
+            Some(Value::Num(value)) if value.is_finite() && *value >= 0.0 => *value,
+            _ => {
+                return Err(format!(
+                    "{label}.start must be a finite number of seconds, not negative"
+                ))
+            }
+        };
+        let beats = match get(fields, "beats") {
+            Some(Value::Num(value)) if value.is_finite() && *value > 0.0 => *value,
+            _ => {
+                return Err(format!(
+                    "{label}.beats must be a finite number of beats greater than zero"
+                ))
+            }
+        };
+        let looped = match get(fields, "loop") {
+            None | Some(Value::Null) => false,
+            Some(Value::Num(value)) if *value == 0.0 => false,
+            Some(Value::Num(value)) if *value == 1.0 => true,
+            Some(Value::Bool(value)) => *value,
+            _ => return Err(format!("{label}.loop must be 0 or 1")),
+        };
+        let channel = match get(fields, "channel") {
+            None | Some(Value::Null) => None,
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= 1.0
+                    && *value <= 32.0 =>
+            {
+                Some(*value as usize)
+            }
+            _ => {
+                return Err(format!(
+                    "{label}.channel must be a whole number from 1 to 32"
+                ))
+            }
+        };
+        let gain = match get(fields, "gain") {
+            None | Some(Value::Null) => 1.0,
+            Some(Value::Num(value)) if value.is_finite() && *value >= 0.0 && *value <= 1.0 => {
+                *value as f32
+            }
+            _ => return Err(format!("{label}.gain must be a number from 0 to 1")),
+        };
+        let pan = match get(fields, "pan") {
+            None | Some(Value::Null) => 0.0,
+            Some(Value::Num(value)) if value.is_finite() && *value >= -1.0 && *value <= 1.0 => {
+                *value as f32
+            }
+            _ => return Err(format!("{label}.pan must be a number from -1 to 1")),
+        };
+        let inserts = match get(fields, "inserts") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Arr(names)) => {
+                let mut inserts = Vec::with_capacity(names.len());
+                for (slot, name) in names.iter().enumerate() {
+                    let word = match name {
+                        Value::Str(word) => word.as_str(),
+                        _ => {
+                            return Err(format!(
+                                "{label}.inserts[{slot}] must be an insert name"
+                            ))
+                        }
+                    };
+                    let kind = InsertKind::parse(word).ok_or_else(|| {
+                        format!("{label}.inserts[{slot}]: no such insert: {word}")
+                    })?;
+                    inserts.push(kind);
+                }
+                inserts
+            }
+            _ => return Err(format!("{label}.inserts must be an array of insert names")),
+        };
+        clips.push(SynthClip {
+            patch,
+            notes,
+            start,
+            beats,
+            looped,
+            channel,
+            gain,
+            pan,
+            inserts,
+        });
+    }
+    Ok(SynthClipsField::Replace(clips))
 }
 
 /// The `synth` command's `patch` field: the browser's patch JSON, field for
@@ -6626,6 +6890,9 @@ struct TransportSession {
     /// the patch's own limit, not the live voice count, exactly as the page
     /// shows the patch's `voices` knob.
     synth: usize,
+    /// How many scheduled Studio synth clips the plan carries. Beside the live
+    /// synth's voice count, so the page can show that the engine owns a clip.
+    synth_clips: usize,
     /// How many routing strips the drum chart feeds through.
     drum_routes: usize,
     /// How many routing strips the synth feeds through.
@@ -6735,7 +7002,7 @@ impl TransportSession {
             .map(|gain| f32::from_bits(gain.load(Ordering::Acquire)))
             .unwrap_or(1.0);
         format!(
-            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"synth\":{},\"apps\":{},\"monitor_input\":{},\"monitor_gain\":{}{}}}",
+            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{},\"drums\":{},\"drum_kit\":\"{}\",\"synth\":{},\"synth_clips\":{},\"apps\":{},\"monitor_input\":{},\"monitor_gain\":{}{}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
@@ -6747,6 +7014,7 @@ impl TransportSession {
             self.drums,
             jawn_audio::loopback::json_escape(&self.drum_kit),
             self.synth,
+            self.synth_clips,
             self.drum_routes + self.synth_routes,
             self.monitor_input,
             monitor_gain,
@@ -6759,7 +7027,7 @@ impl TransportSession {
 /// default tempo and signature, with no loop. The route always has a shape to
 /// answer with, exactly as an idle `status` does.
 fn default_transport_line() -> String {
-    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"drums\":0,\"drum_kit\":\"off\",\"synth\":0,\"apps\":0,\"monitor_input\":false,\"monitor_gain\":1}}"
+    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0,\"drums\":0,\"drum_kit\":\"off\",\"synth\":0,\"synth_clips\":0,\"apps\":0,\"monitor_input\":false,\"monitor_gain\":1}}"
         .to_string()
 }
 
@@ -6778,6 +7046,7 @@ fn run_transport(
     master: Vec<InsertKind>,
     master_values: Vec<(String, f32)>,
     drums: Option<DrumChart>,
+    synth_clips: Vec<SynthClip>,
     sends: Vec<(usize, usize)>,
     plans: std::sync::mpsc::Receiver<TransportPlan>,
     live: std::sync::mpsc::Receiver<TransportLive>,
@@ -6789,6 +7058,7 @@ fn run_transport(
         .with_clips(clips)
         .with_master(master)
         .with_master_values(master_values)
+        .with_synth_clips(synth_clips)
         .with_sends(sends)
         .with_plan_rx(plans)
         .with_live_rx(live)
@@ -10209,6 +10479,7 @@ break"}"#).is_err());
             drums: 0,
             drum_kit: "off".to_string(),
             synth: 0,
+            synth_clips: 0,
             drum_routes: 0,
             synth_routes: 0,
             plan_tx,
@@ -10634,6 +10905,176 @@ break"}"#).is_err());
             assert!(answer.contains(needle), "{line}: {answer}");
             assert!(server.transport.is_none(), "{line} started a transport");
         }
+    }
+
+    #[test]
+    fn synth_clips_parse_a_clip_field_for_field() {
+        let object = parse_object(
+            r#"{"synth_clips":{"clips":[{"patch":{},"notes":[{"n":60,"t":0.0,"d":1.0,"v":0.8}],"start":1.5,"beats":16.0,"loop":1,"channel":3,"gain":0.5,"pan":-0.25,"inserts":["reverb"]}]}}"#,
+        )
+        .expect("parse");
+        let clips = match parse_synth_clips(get(&object, "synth_clips")).expect("parse clips") {
+            SynthClipsField::Replace(clips) => clips,
+            _ => panic!("a clips array should be a replacement plan"),
+        };
+        assert_eq!(clips.len(), 1);
+        let clip = &clips[0];
+        assert_eq!(clip.notes.len(), 1);
+        assert_eq!(clip.notes[0].note, 60);
+        assert_eq!(clip.start, 1.5);
+        assert_eq!(clip.beats, 16.0);
+        assert!(clip.looped);
+        assert_eq!(clip.channel, Some(3));
+        assert_eq!(clip.gain, 0.5);
+        assert_eq!(clip.pan, -0.25);
+        assert_eq!(clip.inserts, vec![InsertKind::Reverb]);
+
+        // An object with no clips array is a marker, not a replacement.
+        let marker = parse_object(r#"{"synth_clips":{}}"#).expect("parse");
+        assert!(matches!(
+            parse_synth_clips(get(&marker, "synth_clips")).expect("parse marker"),
+            SynthClipsField::Touch
+        ));
+        // An absent field leaves the running plan alone.
+        let empty = parse_object(r#"{}"#).expect("parse");
+        assert!(matches!(
+            parse_synth_clips(get(&empty, "synth_clips")).expect("parse absent"),
+            SynthClipsField::Absent
+        ));
+    }
+
+    #[test]
+    fn a_transport_refuses_a_malformed_synth_clip_by_name() {
+        let mut server = socket_server();
+        for (line, needle) in [
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":[1]}"#,
+                "synth_clips",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[7]}}"#,
+                "synth_clips.clips[0]",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"notes":[],"start":0,"beats":4}]}}"#,
+                "synth_clips.clips[0].patch",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"start":0,"beats":4}]}}"#,
+                "synth_clips.clips[0].notes",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[{"n":128,"t":0,"d":1,"v":0.5}],"start":0,"beats":4}]}}"#,
+                "synth_clips.clips[0].notes[0].n",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[{"n":60,"t":-1,"d":1,"v":0.5}],"start":0,"beats":4}]}}"#,
+                "synth_clips.clips[0].notes[0].t",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[{"n":60,"t":0,"d":0,"v":0.5}],"start":0,"beats":4}]}}"#,
+                "synth_clips.clips[0].notes[0].d",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[{"n":60,"t":0,"d":1,"v":2}],"start":0,"beats":4}]}}"#,
+                "synth_clips.clips[0].notes[0].v",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[],"start":-1,"beats":4}]}}"#,
+                "synth_clips.clips[0].start",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[],"start":0,"beats":0}]}}"#,
+                "synth_clips.clips[0].beats",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[],"start":0,"beats":4,"loop":2}]}}"#,
+                "synth_clips.clips[0].loop",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[],"start":0,"beats":4,"channel":0}]}}"#,
+                "synth_clips.clips[0].channel",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[],"start":0,"beats":4,"gain":2}]}}"#,
+                "synth_clips.clips[0].gain",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[],"start":0,"beats":4,"pan":-2}]}}"#,
+                "synth_clips.clips[0].pan",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","synth_clips":{"clips":[{"patch":{},"notes":[],"start":0,"beats":4,"inserts":["nope"]}]}}"#,
+                "synth_clips.clips[0].inserts[0]",
+            ),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+            assert!(server.transport.is_none(), "{line} started a transport");
+        }
+    }
+
+    #[test]
+    fn a_transport_start_carries_scheduled_synth_clips() {
+        let mut server = socket_server();
+        let clip = |beat: f64| {
+            format!(
+                r#"{{"patch":{{}},"notes":[{{"n":60,"t":{beat},"d":0.25,"v":0.8}}],"start":0.0,"beats":1.0,"loop":1,"channel":1}}"#
+            )
+        };
+        let line = format!(
+            r#"{{"cmd":"transport","action":"start","position":0,"synth_clips":{{"clips":[{},{}]}}}}"#,
+            clip(0.0),
+            clip(0.5)
+        );
+        let started = reply(server.handle(&line));
+        assert!(started.contains("\"ok\":true"), "{started}");
+        assert!(started.contains("\"synth_clips\":2"), "{started}");
+
+        // A tempo-only `start` (no clips array) is accepted and leaves the
+        // running plan alone. A `start` with a replacement counts the new set.
+        let marker = reply(server.handle(
+            r#"{"cmd":"transport","action":"start","position":0,"bpm":140,"synth_clips":{}}"#,
+        ));
+        assert!(marker.contains("\"ok\":true"), "{marker}");
+        assert!(marker.contains("\"synth_clips\":2"), "{marker}");
+
+        let update = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","synth_clips":{"clips":[{"patch":{},"notes":[],"start":0,"beats":2}]}}"#,
+        ));
+        assert!(update.contains("\"ok\":true"), "{update}");
+        assert!(update.contains("\"synth_clips\":1"), "{update}");
+
+        // An empty plan is a real update that removes every scheduled clip.
+        let removed = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","synth_clips":{"clips":[]}}"#,
+        ));
+        assert!(removed.contains("\"ok\":true"), "{removed}");
+        assert!(removed.contains("\"synth_clips\":0"), "{removed}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_synth_clip_plan_alone_is_a_valid_update() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"ok\":true"), "{started}");
+        assert!(started.contains("\"synth_clips\":0"), "{started}");
+
+        let touched = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","synth_clips":{}}"#,
+        ));
+        assert!(touched.contains("\"ok\":true"), "{touched}");
+
+        // An update with no field at all is still refused, and the message names
+        // the scheduled-clip field.
+        let empty = reply(server.handle(r#"{"cmd":"transport","action":"update"}"#));
+        assert!(empty.contains("\"ok\":false"), "{empty}");
+        assert!(empty.contains("synth_clips"), "{empty}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
     }
 
     #[test]

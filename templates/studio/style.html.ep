@@ -1218,6 +1218,7 @@
 	/* The top bar is the panels' taskbar: a small button per interior window. */
 	.studio_panel_taskbar {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 3px;
 		flex: 1 1 auto;
@@ -2509,5 +2510,49 @@
 	#studio_export_state {
 		font-size: 12px;
 		opacity: .8;
+	}
+	/* ---- the synth and note panels -----------------------------------------
+	   The shared synth surface is scoped to #synth, which is the panel body;
+	   these rules give the window its box and make that body the scroller. The
+	   note editor's ResizeObserver keeps its canvases on the box it measures. */
+	#studio_synth,
+	#studio_notes {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
+	}
+	#studio_synth .studio_synth_body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow: auto;
+	}
+	#studio_synth .studio_synth_library {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 3px;
+		padding: 3px 6px;
+		font-size: 11px;
+		flex: 0 0 auto;
+	}
+	#studio_synth .studio_synth_library button {
+		min-width: 22px;
+		padding: 0 5px;
+		font-size: 11px;
+	}
+	#studio_synth .studio_synth_save_name {
+		width: 100px;
+		font-size: 11px;
+	}
+	#studio_synth .studio_synth_loops {
+		max-width: 140px;
+		font-size: 11px;
+	}
+	#studio_notes #studio_notes_body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow: hidden;
 	}
 </style>

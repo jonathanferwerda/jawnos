@@ -410,6 +410,9 @@ function studioEngineClipsPost(seq) {
 		// a stop or a re-upload of the takes.
 		var drums = studioEngineDrumPlan();
 		if (drums) { fields.drums_json = JSON.stringify(drums); }
+		// Note clips are notes, not staged audio files: they ride their own plan
+		// beside the audio clips, so an edit reaches the engine's voices too.
+		fields.synth_clips_json = JSON.stringify(studioEngineSynthClipPlan());
 		var values = studioEngineMasterValues();
 		if (values.length) { fields.master_values_json = JSON.stringify(values); }
 		studioEngineTransportPost('update', fields, function (data) {
@@ -546,6 +549,9 @@ function studioEngineClipPlan() {
 		}
 		ordered.forEach(function (take, i) {
 			if (!take || take.status == 'recording') { return; }
+			// A note clip is a note plan, not an audio file: the engine renders it
+			// with its own voices from studioEngineSynthClipPlan.
+			if (take.note_clip) { return; }
 			if (take.encoding && take.encoding.indexOf('video') !== -1) { blocked++; return; }
 			var dom = take.duration || (take.buffer && take.buffer.duration) || 0;
 			if (!(dom > 0)) { blocked++; return; }
@@ -719,10 +725,52 @@ function studioEngineClipStageAll(plan) {
 	});
 }
 
-// The native drum chart, in the engine's wire shape: eight voice rows of
-// sixteenth-note velocities. A muted row travels empty, because a missing or
-// short row is silence to the engine, which is what the browser's lamp means.
-// The chart is tiny, so it rides every plan beside the clips.
+// The note clips the engine renders with its own voices, in the contract's wire
+// shape. Every armed channel's note clips carry their own patch, and the channel
+// strip folds in the fader, pan and enabled Out pedals exactly as the app
+// routing does. studioEngineClipPlan skips these takes: they are notes, not
+// audio files for the engine to stage.
+function studioEngineSynthClipPlan() {
+	var clips = [];
+	var anySolo = studioAnySolo();
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
+		var armed = m.armed && (m.armed.state == 'rec' || m.armed.state == 'play' || m.armed.state == 'loop');
+		if (!armed) { return; }
+		var silent = m.mute || (anySolo && !m.solo);
+		var gain = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()) * (silent ? 0 : 1);
+		var pan = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
+		// Only enabled inserts travel; the Stereo Widener is browser-only, so it
+		// is left out rather than refusing the note clips.
+		var inserts = [];
+		var strip = studioAudio.channels[ch];
+		if (strip && strip.outInserts) {
+			strip.outInserts.forEach(function (ins) {
+				if (!ins || ins.bypassed || !ins.name) { return; }
+				if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
+				inserts.push(studioEffectKind(ins.name));
+			});
+		}
+		m.media.out.forEach(function (take) {
+			if (!take || !take.note_clip) { return; }
+			var beats = studioNoteClipBeats(take);
+			if (!(beats > 0) || !Array.isArray(take.notes) || !take.notes.length) { return; }
+			clips.push({
+				patch: take.patch || {},
+				notes: take.notes,
+				start: Math.max(0, take.startTime || 0),
+				beats: beats,
+				loop: take.loop ? 1 : 0,
+				channel: Number(ch),
+				gain: gain,
+				pan: pan,
+				inserts: inserts
+			});
+		});
+	});
+	return { clips: clips };
+}
+
 function studioEngineDrumPlan() {
 	if (typeof studioDrums === 'undefined' || !studioDrums || !studioDrums.loaded) { return null; }
 	// The panel can hand the kit to the browser. A silent one-step chart turns
@@ -858,6 +906,9 @@ function studioEngineTransportStart(pos, ready, exact) {
 		fields.sends_json = JSON.stringify(studioEngineSends());
 		var drums = studioEngineDrumPlan();
 		if (drums) { fields.drums_json = JSON.stringify(drums); }
+		// Note clips are the engine's own voices rather than staged files, and the
+		// same plan rides the first start beside them.
+		fields.synth_clips_json = JSON.stringify(studioEngineSynthClipPlan());
 		// The master rack is the same for every take. It rides this first `start`
 		// and every later plan update, where an unchanged rack is a no-op. Its
 		// knob values ride beside it, so the engine starts with the mix the page
@@ -1388,6 +1439,149 @@ function studioTakeUsesBuffer(take) {
 	if (take.encoding && take.encoding.indexOf('video') !== -1) { return false; }
 	return true;
 }
+
+// ---- note clips -------------------------------------------------------------
+//
+// A note clip's notes are the source of truth: `notes` in beats from the clip
+// start, one `patch` and a length in beats. The rendered WAV is only the
+// browser's playback cache, so an edit, a tempo change or a page load rebuilds
+// it instead of keeping it.
+
+// The clip's musical length in beats, or 0 when it has none.
+function studioNoteClipBeats(take) {
+	var beats = studioKnobNumber(take && take.beats, 0) || 0;
+	return beats > 0 ? beats : 0;
+}
+
+// The clip's length in seconds at the song's current tempo.
+function studioNoteClipSeconds(take) {
+	var beats = studioNoteClipBeats(take);
+	if (!(beats > 0)) { return 0; }
+	var bpm = studioKnobNumber(mixer['time'] && mixer['time']['bpm'], 120) || 120;
+	return beats * 60 / bpm;
+}
+
+// A stable name for one clip's engine staging, made once when the clip is born.
+function studioNoteClipId() {
+	return 'synth_' + Date.now() + '_' + Math.floor(Math.random() * 1e9).toString(36);
+}
+
+// Render a note clip's notes with the browser synth. The notes are in beats, so
+// the same take restretches at a new tempo without any note change.
+function studioNoteClipRender(take) {
+	var synth = window.jawnosSynth;
+	if (!take || !synth || typeof synth.render !== 'function') {
+		return Promise.reject(new Error('the browser synth cannot render note clips here'));
+	}
+	var bpm = studioKnobNumber(mixer['time'] && mixer['time']['bpm'], 120) || 120;
+	var rate = studioSampleRate() || (studioAudio.ctx && studioAudio.ctx.sampleRate) || 44100;
+	return synth.render({
+		notes: Array.isArray(take.notes) ? take.notes : [],
+		patch: take.patch || null,
+		bpm: bpm,
+		beats: studioNoteClipBeats(take),
+		rate: rate
+	});
+}
+
+// 600 peak buckets from channel 0, the shape the recordings and drum loops use.
+function studioNoteClipPeaks(buffer) {
+	var peaks = new Float32Array(600);
+	var data = buffer.getChannelData(0);
+	var stride = Math.max(1, Math.floor(data.length / 600));
+	for (var b = 0; b < 600; b++) {
+		var peak = 0;
+		for (var i = b * stride; i < (b + 1) * stride && i < data.length; i++) {
+			var v = Math.abs(data[i]);
+			if (v > peak) { peak = v; }
+		}
+		peaks[b] = peak;
+	}
+	return peaks;
+}
+
+// Put a rendered buffer on the take as its playback cache. The notes stay the
+// source of truth, so the take keeps no server uuid: the blob is never uploaded.
+function studioNoteClipApply(take, buffer) {
+	if (!take || !buffer) { return take; }
+	// A real-audio take captured notes from the punch, while its audio start was
+	// pulled earlier to cancel input latency. The first note edit makes the
+	// notes the source, so the clip moves to the punch it was played on.
+	if (take.punchTime !== undefined && take.punchTime !== null) { take.startTime = take.punchTime; }
+	if (take.src) {
+		if (studioWaveformCache[take.src]) { delete studioWaveformCache[take.src]; }
+		try { URL.revokeObjectURL(take.src); } catch (e) {}
+	}
+	take.buffer = buffer;
+	take.data = studioBufferToWav(buffer);
+	take.src = URL.createObjectURL(take.data);
+	take.encoding = 'audio/wav';
+	// The musical length, not the buffer's rounded frame count, so a loop repeats
+	// exactly every `beats`.
+	take.duration = studioNoteClipSeconds(take) || buffer.duration;
+	take.waveform = studioNoteClipPeaks(buffer);
+	studioWaveformCache[take.src] = take.waveform;
+	take.note_clip = 1;
+	take.uuid = null;
+	if (!take.clip_id) { take.clip_id = studioNoteClipId(); }
+	delete take.engine_file;
+	delete take.engine_key;
+	delete take.engine_staging;
+	delete take.engine_failed;
+	if (take.track) { take.track.src = take.src; }
+	studioTakesChanged();
+	return take;
+}
+
+// Re-render one clip after an edit. The timer collapses a drag's commits into
+// one render, and the generation makes a slow render land only if the clip did
+// not change again while it ran.
+function studioNoteClipRerender(ch, take) {
+	if (!take) { return Promise.resolve(take); }
+	var gen = (take.note_render_gen = (take.note_render_gen || 0) + 1);
+	if (take.note_render_timer) { clearTimeout(take.note_render_timer); }
+	return new Promise(function (resolve) {
+		take.note_render_timer = setTimeout(function () {
+			take.note_render_timer = 0;
+			studioNoteClipRender(take).then(function (buffer) {
+				if (take.note_render_gen !== gen) { resolve(take); return; }
+				studioNoteClipApply(take, buffer);
+				mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + (take.duration || 0));
+				studioSaver();
+				if (ch !== undefined && ch !== null && typeof studioDrawChannel === 'function') { studioDrawChannel(ch); }
+				resolve(take);
+			}).catch(function (error) {
+				console.log('studio: could not render the note clip', error);
+				resolve(take);
+			});
+		}, 140);
+	});
+}
+
+// A note clip read back from a song has no cache yet: render it at the current
+// tempo. The load path makes the hidden element; this only makes one when a
+// caller has none.
+function studioNoteClipLoad(take) {
+	if (!take) { return Promise.resolve(null); }
+	if (!take.track) {
+		var el = document.createElement('video');
+		el.className = 'studio_video';
+		el.style.display = 'none';
+		el.preload = 'auto';
+		$('#studio_track_container').append(el);
+		take.track = el;
+	}
+	take.duration = studioNoteClipSeconds(take) || take.duration || 0;
+	return studioNoteClipRender(take).then(function (buffer) {
+		studioNoteClipApply(take, buffer);
+		return take;
+	}).catch(function (error) {
+		console.log('studio: could not render the loaded note clip', error);
+		return take;
+	});
+}
+
+window.studioNoteClipRerender = studioNoteClipRerender;
 
 // Keep every take aligned to the transport. A take maps timeline position to
 // its own source time as  source = (position - startTime) + offset, where

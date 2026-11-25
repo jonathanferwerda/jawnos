@@ -17,6 +17,7 @@
      15_house_patch.js - the plan's other sources in the input picker: monitor, mute, inserts, bus take
      16_bounce.js  - print a take or a selection through its pedal chain
      17_tools.js   - cursor/select/cut, the cross-lane selection and its actions
+     19_notes.js   - the note editor: piano roll, notes in beats, velocity lane
      12_tuner.js  - the chromatic tuner on Jtune: listening, pitch, note, arrows
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */

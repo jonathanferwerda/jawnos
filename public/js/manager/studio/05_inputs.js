@@ -866,6 +866,161 @@ function studioMonitorDetachApp(ch) {
 	return;
 }
 
+// ---- synth note capture ----------------------------------------------------
+//
+// A channel patched to the Synth app records the notes that were played beside
+// its audio. The tap is the synth's own voice layer, so Arp, Seq, Mono and MIDI
+// are captured, and each event carries the AudioContext time it sounded. The
+// take's punch point is the anchor: the audio start is shifted back by the input
+// latency, but the notes belong to the punch.
+
+function studioSynthTakePlug(ch) {
+	var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+	return (plug && plug['app'] === 'synth') ? plug : null;
+}
+
+// One capture per recording take: the raw note edges, the open notes it pairs
+// on/off, and the song-time anchor the punch sits at.
+function studioSynthNoteCaptureStart(ch, take) {
+	if (!take || !studioSynthTakePlug(ch)) { return null; }
+	var synth = window.jawnosSynth;
+	if (!synth || typeof synth.onnote !== 'function') { return null; }
+	var ctx = (typeof synth.context === 'function') ? synth.context() : null;
+	var capture = { take: take, events: [], pairs: [], open: {}, anchor: ctx ? ctx.currentTime : 0, off: null };
+	// The punch's own AudioContext time is the anchor, so a note played on the
+	// punch is at beat 0 even though the take started a little earlier in song
+	// time to make room for the input latency.
+	var seg = studioAudio.playSeg;
+	var punch = (take.punchTime === undefined || take.punchTime === null) ? take.startTime : take.punchTime;
+	// The segment clock belongs to the studio's context. A synth still on its
+	// own context falls back to the audio clock both it and this capture use.
+	if (ctx && studioAudio.ctx && ctx === studioAudio.ctx && seg && isFinite(seg.pos0) && isFinite(seg.ctx0)) {
+		capture.anchor = seg.ctx0 + (punch - seg.pos0);
+	}
+	capture.off = synth.onnote(function (event) { studioSynthCaptureEvent(capture, event); });
+	take.synthCapture = capture;
+	// The browser voices stay audible and recording while the engine owns the
+	// transport; without that API the live graph is the only path.
+	if (typeof synth.capture === 'function') { try { synth.capture(true); } catch (e) {} }
+	return capture;
+}
+
+// Store every edge as it arrives and pair an off with the oldest open note of
+// that pitch, so a monophonic or stolen voice still gets exactly one off.
+function studioSynthCaptureEvent(capture, event) {
+	if (!capture || !event) { return; }
+	var note = Math.round(Number(event.note));
+	if (!(note >= 0 && note <= 127)) { return; }
+	var time = Number(event.time);
+	if (!isFinite(time)) { return; }
+	var velocity = Number(event.velocity);
+	if (!isFinite(velocity)) { velocity = 0.8; }
+	capture.events.push({ on: !!event.on, note: note, velocity: velocity, time: time });
+	if (event.on) {
+		if (!capture.open[note]) { capture.open[note] = []; }
+		capture.open[note].push({ note: note, t: time, v: velocity });
+		return;
+	}
+	var opens = capture.open[note];
+	if (!opens || !opens.length) { return; }
+	var started = opens.shift();
+	capture.pairs.push({ note: note, t: started.t, d: Math.max(0.01, time - started.t), v: started.v });
+}
+
+// Turn the paired events into the editor's note shape (beats from the punch).
+// A loop quantizes to a sixteenth and clips to the loop length; a real take
+// keeps the timing it was played at.
+function studioSynthCaptureNotes(capture, beat, beats, quantize) {
+	var list = [];
+	capture.pairs.forEach(function (pair) {
+		var t = (pair.t - capture.anchor) / beat;
+		var d = pair.d / beat;
+		if (quantize) {
+			t = Math.round(t * 16) / 16;
+			d = Math.max(1 / 16, Math.round(d * 16) / 16);
+		}
+		if (t < 0) { t = 0; }
+		if (quantize) {
+			if (!(t < beats)) { return; }
+			if (t + d > beats) { d = beats - t; }
+		}
+		if (!(d > 0)) { return; }
+		list.push({
+			n: pair.note,
+			t: Math.round(t * 10000) / 10000,
+			d: Math.round(d * 10000) / 10000,
+			v: Math.round(Math.max(0, Math.min(1, pair.v)) * 1000) / 1000
+		});
+	});
+	list.sort(function (a, b) { return (a.t - b.t) || (a.n - b.n); });
+	return list;
+}
+
+// Turn a recorded loop take into a note clip: the notes become the source of
+// truth, the clip is placed on its punch, and the rendered WAV replaces the
+// recording. The contract's integration name for the same step.
+function studioSynthLoopTake(ch, take, notes, patch, beats) {
+	if (!take) { return null; }
+	take.notes = notes || [];
+	take.patch = patch || null;
+	take.beats = Number(beats) || 0;
+	take.note_clip = 1;
+	take.clip_id = (typeof studioNoteClipId === 'function') ? studioNoteClipId() : null;
+	if (take.punchTime !== undefined && take.punchTime !== null) { take.startTime = take.punchTime; }
+	take.duration = studioNoteClipSeconds(take) || take.duration || 0;
+	mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
+	if (typeof studioNoteClipLoad === 'function') {
+		studioNoteClipLoad(take).then(function () {
+			studioSaver();
+			studioDrawChannel(ch);
+		});
+	}
+	return take;
+}
+
+// Close the tap and write what was played onto the take. A loop take becomes a
+// note clip (its rendered WAV replaces the recording); a real take keeps its
+// audio and carries the notes for a later edit.
+function studioSynthNoteCaptureStop(ch, take) {
+	if (!take || !take.synthCapture) { return null; }
+	var capture = take.synthCapture;
+	delete take.synthCapture;
+	if (typeof capture.off === 'function') { try { capture.off(); } catch (e) {} }
+	var synth = window.jawnosSynth;
+	if (synth && typeof synth.capture === 'function') { try { synth.capture(false); } catch (e) {} }
+	var ctx = (synth && typeof synth.context === 'function') ? synth.context() : null;
+	var now = ctx ? ctx.currentTime : null;
+	// A note still held at the stop is closed here, so nothing hangs forever.
+	Object.keys(capture.open).forEach(function (note) {
+		(capture.open[note] || []).forEach(function (started) {
+			var end = (now !== null && now > started.t) ? now : started.t + 0.01;
+			capture.pairs.push({ note: started.note, t: started.t, d: Math.max(0.01, end - started.t), v: started.v });
+		});
+		delete capture.open[note];
+	});
+	var bpm = studioKnobNumber(mixer['time'] && mixer['time']['bpm'], 120) || 120;
+	var beat = 60 / bpm;
+	var duration = Number(take.duration) || 0;
+	var loop = !!take.loop;
+	var patch = (synth && typeof synth.getPatch === 'function') ? synth.getPatch() : null;
+	var notes, beats;
+	if (loop) {
+		// A loop's length is grid-locked, so the notes are quantized to a
+		// sixteenth and clipped to that length.
+		beats = Math.max(1 / 16, Math.round((duration / beat) * 16) / 16);
+		notes = studioSynthCaptureNotes(capture, beat, beats, true);
+		return studioSynthLoopTake(ch, take, notes, patch, beats);
+	}
+	// A real take keeps the audio and the raw timing; beats come from the take
+	// duration, so the notes still line up with the recorded sound.
+	beats = Math.round((duration / beat) * 10000) / 10000;
+	take.notes = studioSynthCaptureNotes(capture, beat, beats, false);
+	take.patch = patch;
+	take.beats = beats;
+	take.note_clip = 0;
+	return take;
+}
+
 function studioStartTake(ch, looping, at) {
 	var media = mixer[ch] && mixer[ch].media;
 	if (!media || !media.in) {
@@ -910,8 +1065,11 @@ function studioStartTake(ch, looping, at) {
 	// monitoring latency. `at` is the punch-in point when a count-in ran.
 	var from = (at === undefined || at === null) ? mixer['time']['position'] : at;
 	var latency = studioRecordOffset(ch);
-	var take = { startTime: from - latency, latency: latency, offset: 0, duration: 0, status: 'recording', track: el, loop: !!looping, region: looping ? studioLoopRegion() : null };
+	var take = { startTime: from - latency, latency: latency, offset: 0, duration: 0, status: 'recording', track: el, loop: !!looping, region: looping ? studioLoopRegion() : null, punchTime: from };
 	media.out[ir] = take;
+	// A synth-input channel records the notes too, so a loop take becomes an
+	// editable note clip and a real take can be edited later.
+	studioSynthNoteCaptureStart(ch, take);
 
 	var mime = studioPickMime(!!media.video);
 	var options = {};
@@ -929,6 +1087,9 @@ function studioStartTake(ch, looping, at) {
 	}
 	recorder.ondataavailable = function(event) {
 		if (!event.data || !event.data.size) { return; }
+		// A synth loop take became a note clip when it stopped; the rendered clip
+		// is its audio now, so the capture blob never replaces it.
+		if (take.note_clip) { return; }
 		take.data = event.data;
 		take.encoding = event.data.type;
 		take.status = 'stop';
@@ -971,6 +1132,9 @@ function studioStopTake(ch, ir) {
 			take.duration = Math.max(0, mixer['time']['position'] - take.startTime);
 		}
 		mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
+		// A synth take carries the notes that were played; a loop take becomes a
+		// note clip here, a real take just keeps them for a later edit.
+		studioSynthNoteCaptureStop(ch, take);
 	}
 	if (media.rec) { media.rec[ir] = null; }
 }

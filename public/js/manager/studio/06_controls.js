@@ -124,6 +124,15 @@ function studioReleaseTakes() {
 		if (!/^[0-9]+$/.test(ch) || !m || !m.media || !m.media.out) { return; }
 		m.media.out.forEach(function(take) {
 			if (!take) { return; }
+			// A window closed mid-take leaves its note capture open; close it so a
+			// later recording does not feed a dead take.
+			if (take.synthCapture) {
+				if (typeof take.synthCapture.off === 'function') { try { take.synthCapture.off(); } catch (e) {} }
+				delete take.synthCapture;
+				if (window.jawnosSynth && typeof window.jawnosSynth.capture === 'function') {
+					try { window.jawnosSynth.capture(false); } catch (e) {}
+				}
+			}
 			if (take.track) {
 				try { if (!take.track.paused) { take.track.pause(); } } catch (e) {}
 				if (take.track.parentNode) { take.track.parentNode.removeChild(take.track); }
@@ -286,7 +295,61 @@ $(document).on('change', '#studio_bpm', function() {
 	// Every tempo-synced time control resolves against the new BPM; the engine
 	// is sent the resolved seconds or hertz, never the division string.
 	if (typeof studioTempoSyncAll === 'function') { studioTempoSyncAll(); }
+	// Notes and clip lengths are stored in beats, so a tempo change restretches
+	// every note clip (the seconds change, the notes do not).
+	studioNoteClipsRestretch();
+	studioEngineTempoChanged();
+	studioSaver();
 });
+
+// The song end from its takes, longer or shorter as the note clips restretch.
+function studioTakesDuration() {
+	var end = 0;
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
+		m.media.out.forEach(function (take) {
+			if (!take) { return; }
+			end = Math.max(end, (take.startTime || 0) + (take.duration || 0));
+		});
+	});
+	return end;
+}
+
+// A tempo change restretches every note clip: its length in seconds is its
+// length in beats at the new tempo, and its browser cache is re-rendered. The
+// notes themselves never change, and the editor is told to redraw.
+function studioNoteClipsRestretch() {
+	var found = false;
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
+		m.media.out.forEach(function (take) {
+			if (!take || !take.note_clip) { return; }
+			found = true;
+			take.duration = studioNoteClipSeconds(take);
+			studioNoteClipRerender(ch, take);
+		});
+	});
+	if (found) { mixer['time']['duration'] = studioTakesDuration(); }
+	if (typeof window.studioNotesRefresh === 'function') { window.studioNotesRefresh(); }
+}
+
+// While the engine owns the transport, an audio clip replacement is refused
+// mid-song, but a `start` may carry the note plan: the tempo fields retune the
+// transport and the synth clips rebuild against the new BPM with no clips array.
+function studioEngineTempoChanged() {
+	if (!mixer['time'] || !mixer['time']['engine_transport']) { return; }
+	if (studioEngineTransportStarting) { return; }
+	// The browser cache is the same notes at the new tempo, engine or not.
+	studioNoteClipsRestretch();
+	var ctx = studioAudio.ctx;
+	var seg = studioAudio.playSeg;
+	var pos = (ctx && seg) ? (seg.pos0 + (ctx.currentTime - seg.ctx0)) : (mixer['time']['position'] || 0);
+	var fields = studioEngineTransportFields(pos);
+	fields.synth_clips_json = JSON.stringify(studioEngineSynthClipPlan());
+	studioEngineTransportPost('start', fields, function (data) {
+		if (!data || data.ok !== true) { studioEngineTransportDrop(); }
+	});
+}
 
 $(document).on('click', '#studio_bpm', function() {
 	var timestamp = Date.now();
@@ -470,7 +533,9 @@ function studioSave() {
 	$.each(mixer, function(i,v) {
 		if (!/^[0-9]+$/.test(i) || !mixer[i].media || !mixer[i].media.out) { return; }
 		mixer[i].media.out.forEach(function(take, ir) {
-			if (take && take.data && take.data.size && !take.uuid) {
+			// A note clip's audio is a browser cache rebuilt on load, so it is
+			// never uploaded; only a real recorded or rendered take goes.
+			if (take && take.data && take.data.size && !take.uuid && !take.note_clip) {
 				// A rendered WAV (an exported drum loop, for instance) keeps its
 				// extension; the browser recorder's blobs are webm.
 				var ext = (take.data.type && take.data.type.indexOf('wav') !== -1) ? '.wav' : '.webm';
@@ -614,13 +679,28 @@ function studioLoad(uuid) {
 					$('#studio_track_container').append(el);
 					var startTime = studioKnobNumber(vr['startTime'], 0);
 					var duration = studioKnobNumber(vr['duration'], 0);
-					mixer[i].media.out[ir] = {
+					var loaded = {
 						uuid: vr['uuid'], startTime: startTime, offset: studioKnobNumber(vr['offset'], 0),
 						duration: duration, encoding: vr['encoding'], src: vr['src'], status: 'stop', track: el,
 						loop: vr['loop'] ? true : false,
-						printed: vr['printed'] ? true : false
+						printed: vr['printed'] ? true : false,
+						note_clip: vr['note_clip'] ? 1 : 0,
+						notes: Array.isArray(vr['notes']) ? vr['notes'] : null,
+						patch: vr['patch'] || null,
+						beats: studioKnobNumber(vr['beats'], 0) || 0,
+						clip_id: vr['clip_id'] || null
 					};
-					studioTakeRequestBuffer(mixer[i].media.out[ir]);
+					mixer[i].media.out[ir] = loaded;
+					if (loaded.note_clip) {
+						// The notes are the source of truth: keep the stored beats and
+						// render at the current tempo instead of fetching the old blob.
+						loaded.duration = studioNoteClipSeconds(loaded) || duration;
+						studioNoteClipLoad(loaded);
+						duration = loaded.duration;
+					}
+					else {
+						studioTakeRequestBuffer(loaded);
+					}
 					mixer['time']['duration'] = Math.max(mixer['time']['duration'], startTime + duration);
 				});
 			});

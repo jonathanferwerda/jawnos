@@ -1936,6 +1936,128 @@ sub studio_transport_drums {
 	return (undef, \%out);
 }
 
+# The scheduled synth clips ride a transport `start` and every later `update`:
+# one patch per clip, its notes in beats, and where the clip sits on the song
+# timeline. The shape and ranges are checked here; the engine is the authority
+# on the patch fields and the effect names. An object with no `clips` array is
+# a marker (a tempo-only start) and leaves a running plan alone.
+sub studio_transport_synth_clips {
+	my ($c) = @_;
+
+	my $raw = $c->param('synth_clips_json');
+	$raw = $c->param('synth_clips') unless defined $raw && length $raw;
+	return (undef, undef) unless defined $raw && length $raw;
+
+	my $data = eval { decode_json $raw };
+	return ('transport synth_clips must be a JSON object', undef) unless ref $data eq 'HASH';
+
+	my %out;
+	my $clips = $data->{'clips'};
+	if (defined $clips) {
+		return ('transport synth_clips "clips" must be an array of clip objects', undef)
+			unless ref $clips eq 'ARRAY';
+		return ('transport synth_clips carries more than 64 clips', undef) if @{$clips} > 64;
+
+		my @clean;
+		for my $i (0 .. $#{$clips}) {
+			my $clip = $clips->[$i];
+			my $label = 'transport synth_clips clip ' . ($i + 1);
+			return ("$label must be an object", undef) unless ref $clip eq 'HASH';
+
+			my %one;
+			return ("$label needs a patch object", undef) unless ref $clip->{'patch'} eq 'HASH';
+			$one{'patch'} = $clip->{'patch'};
+
+			my $notes = $clip->{'notes'};
+			return ("$label notes must be an array", undef) unless ref $notes eq 'ARRAY';
+			return ("$label has more than 4096 notes", undef) if @{$notes} > 4096;
+			my @clean_notes;
+			for my $j (0 .. $#{$notes}) {
+				my $note = $notes->[$j];
+				my $at = "$label note " . ($j + 1);
+				return ("$at must be an object", undef) unless ref $note eq 'HASH';
+
+				my $n = $note->{'n'};
+				return ("$at n must be a whole MIDI note from 0 to 127", undef)
+					unless defined $n && !ref $n && $n =~ /\A\s*\d+\s*\z/ && $n >= 0 && $n <= 127;
+
+				my $t = &studio_transport_decimal($note->{'t'});
+				return ("$at t must be a number of beats, not negative", undef)
+					unless defined $t && $t >= 0;
+
+				my $d = &studio_transport_decimal($note->{'d'});
+				return ("$at d must be a number of beats greater than zero", undef)
+					unless defined $d && $d > 0;
+
+				my $v = &studio_transport_decimal($note->{'v'});
+				return ("$at v must be a number from 0 to 1", undef)
+					unless defined $v && $v >= 0 && $v <= 1;
+
+				push @clean_notes, { n => int($n), t => $t, d => $d, v => $v };
+			}
+			$one{'notes'} = \@clean_notes;
+
+			my $start = &studio_transport_decimal($clip->{'start'});
+			return ("$label start must be a finite number of seconds, not negative", undef)
+				unless defined $start && $start >= 0;
+			$one{'start'} = $start;
+
+			my $beats = &studio_transport_decimal($clip->{'beats'});
+			return ("$label beats must be a finite number greater than zero", undef)
+				unless defined $beats && $beats > 0;
+			$one{'beats'} = $beats;
+
+			my $loop = $clip->{'loop'};
+			if (defined $loop) {
+				my $on = ref $loop ? ($loop ? 1 : 0)
+					: ($loop =~ /\A\s*[01]\s*\z/ ? int($loop) : undef);
+				return ("$label loop must be 0 or 1", undef) unless defined $on;
+				$one{'loop'} = $on;
+			}
+
+			if (defined $clip->{'channel'}) {
+				my $channel = $clip->{'channel'};
+				return ("$label channel must be a whole number from 1 to 32", undef)
+					unless !ref $channel && $channel =~ /\A\s*\d+\s*\z/ && $channel >= 1 && $channel <= 32;
+				$one{'channel'} = int($channel);
+			}
+
+			if (defined $clip->{'gain'}) {
+				my $gain = &studio_transport_decimal($clip->{'gain'});
+				return ("$label gain must be a number from 0 to 1", undef)
+					unless defined $gain && $gain >= 0 && $gain <= 1;
+				$one{'gain'} = $gain;
+			}
+
+			if (defined $clip->{'pan'}) {
+				my $pan = &studio_transport_decimal($clip->{'pan'});
+				return ("$label pan must be a number from -1 to 1", undef)
+					unless defined $pan && $pan >= -1 && $pan <= 1;
+				$one{'pan'} = $pan;
+			}
+
+			if (defined $clip->{'inserts'}) {
+				my $inserts = $clip->{'inserts'};
+				return ("$label inserts must be an array of names", undef)
+					unless ref $inserts eq 'ARRAY';
+				return ("$label has more than 32 inserts", undef) if @{$inserts} > 32;
+				my @names;
+				for my $name (@{$inserts}) {
+					return ("$label insert must be a name", undef)
+						unless defined $name && !ref $name && $name =~ /\A[a-z0-9_]{1,24}\z/;
+					push @names, $name;
+				}
+				$one{'inserts'} = \@names;
+			}
+
+			push @clean, \%one;
+		}
+		$out{'clips'} = \@clean;
+	}
+
+	return (undef, \%out);
+}
+
 # One transport decimal: a finite JSON number, not a ref and not an empty
 # string. The exponent form is accepted, as the engine's parser accepts it.
 sub studio_transport_decimal {
@@ -2020,6 +2142,11 @@ sub studio_transport_fields {
 	my ($drums_error, $drums) = &studio_transport_drums($c);
 	return ($drums_error, undef) if defined $drums_error;
 	$fields{'drums'} = $drums if defined $drums;
+	# The scheduled Studio synth clips: one patch per clip, its notes in beats
+	# and where it sits on the timeline, so the engine plays the voices itself.
+	my ($synth_clips_error, $synth_clips) = &studio_transport_synth_clips($c);
+	return ($synth_clips_error, undef) if defined $synth_clips_error;
+	$fields{'synth_clips'} = $synth_clips if defined $synth_clips;
 	my $raw_clips = $c->param('clips_json');
 	$raw_clips = $c->param('clips') unless defined $raw_clips && length $raw_clips;
 	if (@{$clips}) {
@@ -2059,8 +2186,9 @@ sub studio_transport_fields {
 		&& !exists $fields{'sends'}
 		&& !exists $fields{'master'}
 		&& !exists $fields{'master_values'}
-		&& !exists $fields{'drums'}) {
-		return ('update needs "clips", "sends", "master", "master_values" or "drums": the change for the running transport', undef);
+		&& !exists $fields{'drums'}
+		&& !exists $fields{'synth_clips'}) {
+		return ('update needs "clips", "sends", "master", "master_values", "drums" or "synth_clips": the change for the running transport', undef);
 	}
 
 	return (undef, \%fields);

@@ -1305,6 +1305,289 @@ impl DrumRender {
     }
 }
 
+/// Frames one beat lasts at the transport's tempo. A missing or nonsense BPM
+/// falls back to 120, which is the transport's own default, so a clip still
+/// plays rather than vanishing.
+fn frames_per_beat(bpm_bits: u64, rate: u32) -> f64 {
+    let bpm = f64::from_bits(bpm_bits);
+    if bpm.is_finite() && bpm > 0.0 {
+        rate as f64 * 60.0 / bpm
+    } else {
+        rate as f64 * 0.5
+    }
+}
+
+/// Build the live state for a scheduled synth-clip plan. Everything here
+/// allocates (the synth, its buffers, the strips), so it runs in `prepared` or
+/// at a plan edge, never in the steady-state block loop.
+fn build_clip_renders(
+    clips: &[SynthClip],
+    rate: u32,
+    period: usize,
+    bpm_bits: u64,
+) -> Vec<SynthClipRender> {
+    clips
+        .iter()
+        .map(|clip| SynthClipRender::new(clip, rate, period, bpm_bits))
+        .collect()
+}
+
+/// One scheduled synth clip's live state: its own synth, its channel strip and
+/// the note schedule converted to frames for the current tempo.
+///
+/// Built at `prepared` or a plan edge; a steady-state block only reads it. The
+/// onset/offset frames are cached and rebuilt when the BPM moves, because the
+/// wire's note times are beats.
+struct SynthClipRender {
+    clip: SynthClip,
+    synth: Synth,
+    strip: AppStrip,
+    /// Planar block, left half then right half, sized in `prepared`.
+    block: Vec<f32>,
+    /// The same block interleaved for the app router.
+    stereo: Vec<f32>,
+    /// Note onsets for one pass, in clip-local frames, sorted ascending.
+    onsets: Vec<(i64, u8, f32)>,
+    /// Note offsets for one pass, in clip-local frames, sorted ascending.
+    offsets: Vec<(i64, u8)>,
+    /// The device rate, kept for a tempo-change conversion.
+    rate: u32,
+    /// The BPM bits the cached frames were converted with.
+    bpm_bits: u64,
+    /// Timeline frame where the clip begins.
+    start_frame: i64,
+    /// Clip length in frames at `bpm_bits`; never zero.
+    length_frames: i64,
+    /// A one-shot clip has played to its end; only a release tail remains.
+    finished: bool,
+}
+
+impl SynthClipRender {
+    fn new(clip: &SynthClip, rate: u32, period: usize, bpm_bits: u64) -> Self {
+        let mut synth = Synth::new(clip.patch, rate as f32);
+        synth.prepare(period);
+        let route = AppRoute {
+            gain: clip.gain.clamp(0.0, 1.0),
+            pan: clip.pan.clamp(-1.0, 1.0),
+            inserts: clip.inserts.clone(),
+            channel: clip.channel,
+        };
+        let mut render = SynthClipRender {
+            clip: clip.clone(),
+            synth,
+            strip: AppStrip::new(&route, rate, period),
+            block: vec![0.0; period.saturating_mul(2)],
+            stereo: vec![0.0; period.saturating_mul(2)],
+            onsets: Vec::with_capacity(clip.notes.len()),
+            offsets: Vec::with_capacity(clip.notes.len()),
+            rate,
+            bpm_bits: 0,
+            start_frame: 0,
+            length_frames: 1,
+            finished: false,
+        };
+        render.start_frame = (clip.start.max(0.0) * rate as f64).round() as i64;
+        render.retune(bpm_bits);
+        render
+    }
+
+    /// Convert the clip's beats to frames for `bpm_bits`. The vectors already
+    /// hold one entry per note and one per note end, so a steady tempo never
+    /// allocates; a tempo move rebuilds them here, at a block edge.
+    fn retune(&mut self, bpm_bits: u64) {
+        let fpb = frames_per_beat(bpm_bits, self.rate);
+        self.length_frames = ((self.clip.beats * fpb).round() as i64).max(1);
+        self.onsets.clear();
+        self.offsets.clear();
+        for note in &self.clip.notes {
+            let start = (note.t.max(0.0) * fpb).round() as i64;
+            let length = (note.d.max(0.0) * fpb).round() as i64;
+            self.onsets.push((start, note.note, note.v));
+            self.offsets.push((start + length.max(1), note.note));
+        }
+        self.onsets.sort_unstable_by_key(|entry| entry.0);
+        self.offsets.sort_unstable_by_key(|entry| entry.0);
+        self.bpm_bits = bpm_bits;
+    }
+
+    /// Reconvert only when the tempo moved. Returns whether it did, so the
+    /// caller can release a note whose end is now behind the playhead.
+    fn retune_if_needed(&mut self, bpm_bits: u64) -> bool {
+        if self.bpm_bits == bpm_bits {
+            return false;
+        }
+        self.retune(bpm_bits);
+        true
+    }
+
+    /// The clip-local frame for an absolute song frame. A looped clip wraps at
+    /// its own length; before its start the value stays negative, which the
+    /// renderer reads as "not started yet".
+    fn local_at(&self, song: i64, length: i64) -> i64 {
+        let raw = song - self.start_frame;
+        if self.clip.looped && raw >= 0 {
+            raw % length
+        } else {
+            raw
+        }
+    }
+
+    /// Render one block of this clip into `self.stereo`, which the app router
+    /// then pans through `self.strip`.
+    ///
+    /// Note onsets and offsets are scheduled sample-accurately: the synth
+    /// renders in segments between the events, so a note starts on the exact
+    /// frame its beat lands on. A transport loop wrap (or the clip's own loop
+    /// boundary) releases every voice and restarts the cursor at the new
+    /// position. A note already under the playhead is not retriggered: only an
+    /// onset exactly at the cursor is a trigger, so a seek into the middle of a
+    /// held note leaves it silent rather than restarting it.
+    fn render_block(
+        &mut self,
+        song_start: u64,
+        frames: usize,
+        loop_bounds: (u64, u64),
+        bpm_bits: u64,
+    ) {
+        let samples = frames.saturating_mul(2);
+        self.block[..samples].fill(0.0);
+        self.stereo[..samples].fill(0.0);
+
+        let retuned = self.retune_if_needed(bpm_bits);
+        let length = self.length_frames.max(1);
+        let start = self.start_frame;
+        let raw = song_start as i64 - start;
+
+        // A one-shot clip that has already reached its end leaves only a
+        // release tail. Release the voices once, then render that tail.
+        if !self.clip.looped && raw >= length {
+            if !self.finished {
+                self.synth.all_notes_off();
+                self.finished = true;
+            }
+            if self.synth.active_voices() > 0 {
+                self.render_tail(frames);
+            }
+            return;
+        }
+        self.finished = false;
+        // The whole block lands before the clip begins: no schedule, no voices.
+        if raw + frames as i64 <= 0 {
+            return;
+        }
+
+        let mut local = self.local_at(song_start as i64, length);
+        if retuned {
+            // The new tempo may have moved a held note's end behind the
+            // playhead; release it now rather than leave it sounding forever.
+            for index in 0..self.offsets.len() {
+                let (at, note) = self.offsets[index];
+                if at < local {
+                    self.synth.note_off(note);
+                }
+            }
+        }
+        let mut on_at = self.onsets.partition_point(|entry| entry.0 < local);
+        let mut off_at = self.offsets.partition_point(|entry| entry.0 < local);
+
+        let mut song = song_start as i64;
+        let mut seg_start = 0usize;
+        let mut releasing = false;
+        for frame in 0..frames {
+            if releasing {
+                // Finish the samples up to the boundary with the old voices,
+                // then release cleanly before this frame's events.
+                self.render_seg(seg_start, frame, frames);
+                self.synth.all_notes_off();
+                seg_start = frame;
+                releasing = false;
+            }
+            // Offsets first, so a note that ends on the same frame another
+            // begins releases before the retrigger.
+            let off_due = off_at < self.offsets.len() && self.offsets[off_at].0 <= local;
+            let on_due = on_at < self.onsets.len() && self.onsets[on_at].0 <= local;
+            if off_due || on_due {
+                self.render_seg(seg_start, frame, frames);
+                seg_start = frame;
+                while off_at < self.offsets.len() && self.offsets[off_at].0 <= local {
+                    let (at, note) = self.offsets[off_at];
+                    if at == local {
+                        self.synth.note_off(note);
+                    }
+                    off_at += 1;
+                }
+                while on_at < self.onsets.len() && self.onsets[on_at].0 <= local {
+                    let (at, note, velocity) = self.onsets[on_at];
+                    if at == local {
+                        self.synth.note_on(note, velocity);
+                    }
+                    on_at += 1;
+                }
+            }
+            local += 1;
+            song += 1;
+            if loop_bounds.1 > loop_bounds.0 && song >= loop_bounds.1 as i64 {
+                // The transport loop moves the song position; the clip cursor
+                // follows it, and every voice releases at the wrap.
+                let span = (loop_bounds.1 - loop_bounds.0) as i64;
+                song = loop_bounds.0 as i64 + (song - loop_bounds.1 as i64) % span;
+                local = self.local_at(song, length);
+                on_at = self.onsets.partition_point(|entry| entry.0 < local);
+                off_at = self.offsets.partition_point(|entry| entry.0 < local);
+                if !self.clip.looped {
+                    self.finished = song - start >= length;
+                }
+                releasing = true;
+            } else if self.clip.looped && local >= length {
+                // The clip's own loop: a fresh pass starts on the next frame.
+                local -= length;
+                on_at = 0;
+                off_at = 0;
+                releasing = true;
+            } else if !self.clip.looped && local >= length && !self.finished {
+                self.finished = true;
+                on_at = self.onsets.len();
+                off_at = self.offsets.len();
+                releasing = true;
+            }
+        }
+        self.render_seg(seg_start, frames, frames);
+        if releasing {
+            // The boundary landed exactly on the block edge.
+            self.synth.all_notes_off();
+        }
+        self.to_stereo(frames);
+    }
+
+    /// Render `start..end` of the block into the planar buffer. A segment with
+    /// no frames is a no-op.
+    fn render_seg(&mut self, start: usize, end: usize, frames: usize) {
+        if end <= start {
+            return;
+        }
+        let samples = frames.saturating_mul(2);
+        let (block, synth) = (&mut self.block, &mut self.synth);
+        let (left, right) = block[..samples].split_at_mut(frames);
+        synth.render(&mut left[start..end], &mut right[start..end]);
+    }
+
+    /// The release tail of a retired or finished clip: render the block with
+    /// no schedule, so the voices finish their normal release.
+    fn render_tail(&mut self, frames: usize) {
+        self.render_seg(0, frames, frames);
+        self.to_stereo(frames);
+    }
+
+    /// Interleave the planar block for the app router.
+    fn to_stereo(&mut self, frames: usize) {
+        let (block, stereo) = (&self.block, &mut self.stereo);
+        for frame in 0..frames {
+            stereo[frame * 2] = block[frame];
+            stereo[frame * 2 + 1] = block[frames + frame];
+        }
+    }
+}
+
 /// A whole replacement placement plan for a running transport.
 ///
 /// The control thread parses a plan (a full set of takes, already decoded) and
@@ -1330,6 +1613,10 @@ pub struct TransportPlan {
     /// transport that already has a synth retunes it in place, so held notes
     /// keep sounding; otherwise the render thread builds one here.
     pub synth: Option<SynthPlan>,
+    /// A replacement scheduled-synth-clip plan, or `None` to leave the running
+    /// clips alone. A clip or patch change rebuilds the per-clip synths here,
+    /// at a block edge; the device stays open.
+    pub synth_clips: Option<Vec<SynthClip>>,
     /// A replacement output-cord plan, as `(from, to)` channel pairs. `None`
     /// leaves the current graph alone; the socket has already refused a self
     /// edge, a second destination for one source and a cycle.
@@ -1353,6 +1640,54 @@ pub struct SynthPlan {
     /// Studio sends this because the synth app does not know which channel it
     /// feeds.
     pub routing: Option<Vec<AppRoute>>,
+}
+
+/// One scheduled synth note, in beats from its clip's start.
+///
+/// The wire carries `t` and `d` in beats, so a tempo change restretches the
+/// note without new note data: the render thread converts both to frames with
+/// the transport's current BPM each block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SynthNote {
+    /// MIDI note number, `0..=127`.
+    pub note: u8,
+    /// Start, in beats from the clip's start; never negative.
+    pub t: f64,
+    /// Length, in beats; always greater than zero.
+    pub d: f64,
+    /// Note-on velocity, `0..=1`.
+    pub v: f32,
+}
+
+/// One scheduled Studio synth clip: a patch, its notes and where it sits on
+/// the song timeline.
+///
+/// Each clip renders through its own [`jawn_synth::Synth`], so two clips may
+/// play different patches at once, exactly as the browser's per-take voices do.
+/// `gain`, `pan` and `inserts` are the clip's Studio channel strip, and
+/// `channel` names the output-cord destination (`None` sums into the pre-master
+/// bus).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SynthClip {
+    /// The clip's patch. One synth per clip, built at a plan edge.
+    pub patch: Patch,
+    /// The clip's notes, in beats from `start`.
+    pub notes: Vec<SynthNote>,
+    /// Timeline placement in seconds, never negative.
+    pub start: f64,
+    /// Clip length in beats; a looping clip repeats every `beats`.
+    pub beats: f64,
+    /// Repeat from `start` every `beats`.
+    pub looped: bool,
+    /// The Studio channel this clip follows, 1..=32, or `None` for the
+    /// pre-master bus.
+    pub channel: Option<usize>,
+    /// Fader gain, `0..=1`.
+    pub gain: f32,
+    /// `-1.0` (hard left) ..= `1.0` (hard right), equal-power.
+    pub pan: f32,
+    /// The channel's insert chain, in the order the page gave it.
+    pub inserts: Vec<InsertKind>,
 }
 
 /// A note edge for the transport's native synth, read at a block edge.
@@ -1478,6 +1813,15 @@ pub struct TransportSource {
     /// The same block interleaved for the app bus. The synth writes planar
     /// halves; this is the only per-block copy, and it allocates nothing.
     synth_stereo: Vec<f32>,
+    /// The scheduled Studio synth-clip plan, as it last arrived. Compared
+    /// whole, so a plan that repeats the same clips rebuilds nothing.
+    synth_clips: Vec<SynthClip>,
+    /// One live render per scheduled clip: its synth, strip and note schedule.
+    clip_renders: Vec<SynthClipRender>,
+    /// Clips a plan just removed or replaced. Their voices are released with
+    /// the normal envelope and kept here until the tail is silent, so an edit
+    /// never cuts a note. Dropped once silent.
+    retired_clips: Vec<SynthClipRender>,
     /// The pre-master bus: every source with no channel, and every channel with
     /// no send, summed before the master chain. The drums and the synth land
     /// here when they are unpatched, and the take's live input joins them. One
@@ -1535,6 +1879,9 @@ impl TransportSource {
             synth: None,
             synth_block: Vec::new(),
             synth_stereo: Vec::new(),
+            synth_clips: Vec::new(),
+            clip_renders: Vec::new(),
+            retired_clips: Vec::new(),
             pre_master: Vec::new(),
             clip_stereo: Vec::new(),
             sends: Vec::new(),
@@ -1600,6 +1947,14 @@ impl TransportSource {
     /// device is never reopened.
     pub fn with_drums(mut self, chart: DrumChart) -> Self {
         self.drums = Some(chart);
+        self
+    }
+
+    /// The scheduled Studio synth clips to play before the device opens. A
+    /// later [`TransportPlan`] may replace them at a block edge; the device
+    /// stays open.
+    pub fn with_synth_clips(mut self, clips: Vec<SynthClip>) -> Self {
+        self.synth_clips = clips;
         self
     }
 
@@ -1676,6 +2031,7 @@ impl TransportSource {
             master_values,
             drums,
             synth,
+            synth_clips,
             sends,
         } = plan;
         // The destination strips and the source-to-channel map are rebuilt once
@@ -1712,6 +2068,15 @@ impl TransportSource {
                 .map(|chart| chart.routing.clone())
                 .unwrap_or_default();
             if before != after {
+                routing_dirty = true;
+            }
+        }
+        // A scheduled-clip replacement rebuilds the per-clip synths here, at
+        // the block edge; the device stays open. A plan that repeats the same
+        // clips rebuilds nothing, so an unrelated knob turn never cuts a note.
+        if let Some(clip_plan) = synth_clips {
+            if clip_plan != self.synth_clips {
+                self.apply_synth_clips(clip_plan);
                 routing_dirty = true;
             }
         }
@@ -1825,6 +2190,48 @@ impl TransportSource {
     fn apply_hit(&mut self, hit: TransportHit) {
         if let Some(render) = self.drum_render.as_mut() {
             render.machine.trigger_at(hit.voice, hit.velocity, 0);
+        }
+    }
+
+    /// Replace the scheduled synth-clip plan at a block edge.
+    ///
+    /// Every outgoing clip's voices are released with the normal envelope and
+    /// its render is kept in `retired_clips` until the tail is silent, so a
+    /// clip edit or removal never cuts a note or clicks. The new clips build
+    /// their synths and buffers here, which is the only allocation this path
+    /// performs; the device stays open. A plan that names the same clips again
+    /// is a no-op.
+    fn apply_synth_clips(&mut self, clips: Vec<SynthClip>) {
+        if clips == self.synth_clips {
+            return;
+        }
+        for mut render in std::mem::take(&mut self.clip_renders) {
+            render.synth.all_notes_off();
+            render.finished = true;
+            self.retired_clips.push(render);
+        }
+        self.synth_clips = clips;
+        if self.rate > 0 && self.period > 0 {
+            self.clip_renders =
+                build_clip_renders(&self.synth_clips, self.rate, self.period, self.bpm_bits);
+        }
+    }
+
+    /// Render one block of every scheduled synth clip, then the release tails
+    /// of any clips a plan just retired. Each clip renders and copies on its
+    /// own buffers, so nothing here allocates.
+    fn render_synth_clips(&mut self, song_start: u64, frames: usize) {
+        let bpm_bits = self.bpm_bits;
+        let loop_bounds = self.clip_loop;
+        for render in self.clip_renders.iter_mut() {
+            render.render_block(song_start, frames, loop_bounds, bpm_bits);
+        }
+        for render in self.retired_clips.iter_mut() {
+            if render.synth.active_voices() > 0 {
+                render.render_tail(frames);
+            } else {
+                render.stereo[..frames.saturating_mul(2)].fill(0.0);
+            }
         }
     }
 
@@ -2025,7 +2432,14 @@ impl TransportSource {
             .as_ref()
             .map(|chart| chart.routing.as_slice())
             .unwrap_or(empty);
-        let specs = channel_specs(&self.clips, drum_routing, &self.synth_routes, &self.sends);
+        let specs = channel_specs(
+            &self.clips,
+            drum_routing,
+            &self.synth_routes,
+            &self.clip_renders,
+            &self.retired_clips,
+            &self.sends,
+        );
         let mut old: Vec<Option<SendStrip>> = std::mem::take(&mut self.send_strips)
             .into_iter()
             .map(Some)
@@ -2157,6 +2571,8 @@ fn channel_specs(
     clips: &[TransportClip],
     drums: &[AppRoute],
     synth: &[AppRoute],
+    synth_clips: &[SynthClipRender],
+    retired: &[SynthClipRender],
     sends: &[(usize, usize)],
 ) -> Vec<(usize, f32, Vec<InsertKind>)> {
     let mut specs: Vec<(usize, f32, Vec<InsertKind>)> = Vec::new();
@@ -2165,6 +2581,16 @@ fn channel_specs(
     }
     for route in drums.iter().chain(synth.iter()) {
         note_channel(&mut specs, route.channel, route.gain, &route.inserts);
+    }
+    // A scheduled clip's channel and a retired clip's tail both need their
+    // destination strip while they are heard.
+    for render in synth_clips.iter().chain(retired.iter()) {
+        note_channel(
+            &mut specs,
+            render.clip.channel,
+            render.clip.gain,
+            &render.clip.inserts,
+        );
     }
     for &(from, to) in sends {
         note_channel(&mut specs, Some(from), 1.0, &[]);
@@ -2265,6 +2691,10 @@ impl RenderSource for TransportSource {
         // A routing that arrived before the device opened builds its strips
         // here, where an insert's `prepare` is allowed to allocate.
         self.synth_strips = build_app_strips(&self.synth_routes, rate, period);
+        // The scheduled synth clips build one synth per clip here; a plan that
+        // arrived before the device opened is heard from the start.
+        self.retired_clips.clear();
+        self.clip_renders = build_clip_renders(&self.synth_clips, rate, period, self.bpm_bits);
         // The output-cord destination strips are built from the clips and taps
         // that arrived before the device opened. Their blocks are sized for the
         // prepared period, so a re-prepare rebuilds them rather than reusing a
@@ -2375,6 +2805,17 @@ impl RenderSource for TransportSource {
                 self.clip_position = self.control.seek_frames();
                 self.mixer.reset();
                 reanchor_drums = true;
+                // Every scheduled clip voice releases at the new position. The
+                // cursor is recomputed from the seek frame, and only an onset
+                // exactly there retriggers, so a note already under the
+                // playhead is not restarted.
+                for render in self.clip_renders.iter_mut() {
+                    render.synth.all_notes_off();
+                    render.finished = false;
+                }
+                for render in self.retired_clips.iter_mut() {
+                    render.synth.all_notes_off();
+                }
             }
             let bpm_bits = self.control.bpm_bits();
             if bpm_bits != self.bpm_bits {
@@ -2430,16 +2871,21 @@ impl RenderSource for TransportSource {
         let has_live = self.live.is_some();
         let has_drums = self.drum_render.is_some();
         let has_synth = self.synth.is_some();
-        if has_clips || has_live || has_drums || has_synth {
+        let has_synth_clips = !self.clip_renders.is_empty() || !self.retired_clips.is_empty();
+        if has_clips || has_live || has_drums || has_synth || has_synth_clips {
             // The drum machine schedules this block's steps and renders once,
             // before the mix reads every bus; `trigger_at` places a step at its
             // own frame inside the block. The synth renders after the note
-            // edges above, once for the whole block.
+            // edges above, once for the whole block. Each scheduled clip does
+            // the same on its own synth, sample-accurate between its notes.
             if has_drums {
                 self.render_drums(song_start, frames);
             }
             if has_synth {
                 self.render_synth(frames);
+            }
+            if has_synth_clips {
+                self.render_synth_clips(song_start, frames);
             }
             let TransportSource {
                 clips,
@@ -2453,6 +2899,8 @@ impl RenderSource for TransportSource {
                 drum_stereo,
                 synth_strips,
                 synth_stereo,
+                clip_renders,
+                retired_clips,
                 pre_master,
                 clip_stereo,
                 send_strips,
@@ -2549,6 +2997,31 @@ impl RenderSource for TransportSource {
                     send_strips,
                 )?;
             }
+            // Every scheduled clip routes through its own strip, exactly as the
+            // live synth does: its channel's own block if it names one, else the
+            // pre-master bus. A retired clip's release tail routes the same way
+            // until it is silent.
+            for render in clip_renders.iter_mut() {
+                route_app_source(
+                    std::slice::from_mut(&mut render.strip),
+                    &render.stereo[..samples],
+                    frames,
+                    &mut pre_master[..samples],
+                    send_strips,
+                )?;
+            }
+            for render in retired_clips.iter_mut() {
+                route_app_source(
+                    std::slice::from_mut(&mut render.strip),
+                    &render.stereo[..samples],
+                    frames,
+                    &mut pre_master[..samples],
+                    send_strips,
+                )?;
+            }
+            // A retired clip that finished its release has nothing left to
+            // route; drop it after its last block has been heard.
+            retired_clips.retain(|render| render.synth.active_voices() > 0);
             // One destination per source and no cycle, so this walk visits each
             // strip once, upstream before downstream. `clip_stereo` is free
             // here and carries the total between channels.
@@ -3837,6 +4310,8 @@ mod tests {
                 synth: None,
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the moved plan");
         let mut second = vec![0.0f32; 8];
@@ -3858,6 +4333,8 @@ mod tests {
                 synth: None,
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the trimmed plan");
         let mut third = vec![0.0f32; 8];
@@ -3893,6 +4370,8 @@ mod tests {
                 synth: None,
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the empty plan");
         let mut second = vec![0.0f32; 8];
@@ -4021,6 +4500,8 @@ mod tests {
                 synth: None,
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the knob plan");
         let mut second = vec![0.0f32; 800];
@@ -4452,6 +4933,8 @@ mod tests {
                 synth: None,
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the chart update");
         let second = left_channel(&drum_block(&mut source, 1_000));
@@ -4661,6 +5144,8 @@ mod tests {
                 synth: None,
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the step-only update");
         let second = drum_block(&mut source, 4_096);
@@ -5094,6 +5579,8 @@ mod tests {
                 synth: Some(synth_patch_plan(4_000.0)),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -5120,6 +5607,8 @@ mod tests {
                 }),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the routing");
         let muted = drum_block(&mut source, 256);
@@ -5143,6 +5632,8 @@ mod tests {
                 synth: Some(synth_patch_plan(9_000.0)),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the second patch");
         let still_muted = drum_block(&mut source, 256);
@@ -5232,6 +5723,8 @@ mod tests {
                 synth: Some(synth_patch_plan(4_000.0)),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -5259,6 +5752,8 @@ mod tests {
                 synth: Some(synth_patch_plan(4_000.0)),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -5300,6 +5795,8 @@ mod tests {
                 synth: Some(synth_patch_plan(4_000.0)),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -5336,6 +5833,8 @@ mod tests {
                 synth: Some(synth_patch_plan(2_000.0)),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -5353,6 +5852,8 @@ mod tests {
                 synth: Some(synth_patch_plan(12_000.0)),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the second patch");
         let out = drum_block(&mut source, 1_000);
@@ -5386,6 +5887,8 @@ mod tests {
                 synth: Some(synth_patch_plan(4_000.0)),
 
                 sends: None,
+
+                synth_clips: None,
             })
             .expect("send the patch");
         note_on(&notes, 60);
@@ -5476,5 +5979,210 @@ mod tests {
                 "frame {frame} did not pass the master limiter: {out:?}"
             );
         }
+    }
+
+    // --- scheduled synth clips -----------------------------------------------
+
+    /// A steady tone: a sine with a flat amp envelope and no release, so a note
+    /// is audible exactly while it is held and silent the frame it is released.
+    fn steady_patch() -> Patch {
+        let mut patch = Patch::default();
+        patch.engine = jawn_synth::Engine::Subtractive;
+        patch.wave = jawn_synth::Wave::Sine;
+        patch.noise = 0.0;
+        patch.drive = 0.0;
+        patch.voices = 8;
+        patch.filter.cutoff = 2_000.0;
+        patch.filter.q = 1.0;
+        patch.filter.env = 0.0;
+        patch.amp = jawn_synth::Envelope {
+            a: 0.0,
+            d: 0.0,
+            s: 1.0,
+            r: 0.0,
+        };
+        patch.fenv = jawn_synth::Envelope {
+            a: 0.0,
+            d: 0.0,
+            s: 0.0,
+            r: 0.0,
+        };
+        patch.lfo = jawn_synth::Lfo {
+            rate: 0.0,
+            pitch: 0.0,
+            cutoff: 0.0,
+            amp: 0.0,
+        };
+        patch.osc[0].level = 0.5;
+        patch.osc[1].level = 0.0;
+        patch
+    }
+
+    fn scheduled_note(note: u8, t: f64, d: f64, v: f32) -> SynthNote {
+        SynthNote { note, t, d, v }
+    }
+
+    fn scheduled_clip(notes: Vec<SynthNote>, start: f64, beats: f64, looped: bool) -> SynthClip {
+        SynthClip {
+            patch: steady_patch(),
+            notes,
+            start,
+            beats,
+            looped,
+            channel: None,
+            gain: 1.0,
+            pan: 0.0,
+            inserts: Vec::new(),
+        }
+    }
+
+    /// A transport whose only source is the scheduled clips, prepared at 8 kHz
+    /// (120 bpm is exactly 4000 frames per beat).
+    fn synth_clip_transport(
+        clips: Vec<SynthClip>,
+        period: usize,
+    ) -> (Arc<TransportControl>, TransportSource) {
+        let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
+        let mut source = TransportSource::new(Arc::clone(&control)).with_synth_clips(clips);
+        source.prepared(8_000, period).expect("prepare");
+        (control, source)
+    }
+
+    #[test]
+    fn a_scheduled_clip_sounds_at_its_note_and_stops_at_its_end() {
+        // The note starts at 0.25 beats (frame 1000) and lasts a quarter beat
+        // (400 frames), so block one is silent, block two carries the onset,
+        // and block three is silent again after the release.
+        let clip = scheduled_clip(vec![scheduled_note(60, 0.25, 0.25, 0.9)], 0.0, 1.0, false);
+        let (_, mut source) = synth_clip_transport(vec![clip], 1_000);
+        let first = block_once(&mut source, 1_000);
+        assert!(
+            first.iter().all(|sample| sample.abs() < 1e-9),
+            "the clip sounded before its note's beat: {first:?}"
+        );
+        let second = block_once(&mut source, 1_000);
+        let onset = first_audible(&left_channel(&second), 1e-6)
+            .expect("the scheduled note never sounded");
+        assert!(onset <= 8, "the note landed at frame {onset}, not on its beat");
+        // The note ends at 0.5 beats (frame 2000), the first frame of block
+        // three. Only the short release tail is left; the rest of that block is
+        // silent, and block four is exactly silent.
+        let third = left_channel(&block_once(&mut source, 1_000));
+        assert!(
+            third[500..].iter().all(|sample| sample.abs() < 1e-9),
+            "the note outlived its end"
+        );
+        let fourth = block_once(&mut source, 1_000);
+        assert!(
+            fourth.iter().all(|sample| *sample == 0.0),
+            "the released note never reached silence"
+        );
+    }
+
+    #[test]
+    fn a_looped_clip_repeats_every_clip_length() {
+        // A 0.1-beat note at the top of each 0.25-beat clip: one pass is 1000
+        // frames, so three blocks hear the note three times.
+        let clip = scheduled_clip(vec![scheduled_note(60, 0.0, 0.1, 0.9)], 0.0, 0.25, true);
+        let (_, mut source) = synth_clip_transport(vec![clip], 1_000);
+        for pass in 0..3 {
+            let out = block_once(&mut source, 1_000);
+            let onset = first_audible(&left_channel(&out), 1e-6)
+                .unwrap_or_else(|| panic!("loop pass {pass} never sounded"));
+            assert!(onset <= 8, "pass {pass} landed at frame {onset}");
+        }
+    }
+
+    #[test]
+    fn a_seek_releases_a_clip_and_does_not_retrigger_a_note_under_the_playhead() {
+        // A one-beat note from the clip start. The transport is moved into the
+        // middle of it, where no onset sits: the seek releases the voice and
+        // the cursor starts there, so nothing retriggers.
+        let clip = scheduled_clip(vec![scheduled_note(60, 0.0, 1.0, 0.9)], 0.0, 2.0, false);
+        let (control, mut source) = synth_clip_transport(vec![clip], 1_000);
+        assert!(
+            peak(&block_once(&mut source, 1_000)) > 1e-4,
+            "the note never sounded"
+        );
+        control.seek(2_000);
+        let after = block_once(&mut source, 1_000);
+        assert_eq!(
+            source.clip_renders[0].synth.active_voices(),
+            0,
+            "a seek retriggered a note already under the playhead"
+        );
+        let tail = left_channel(&after);
+        assert!(
+            tail[500..].iter().all(|sample| sample.abs() < 1e-9),
+            "the seek left the old note sounding past its release"
+        );
+        // A seek back to the note's onset plays it again.
+        control.seek(0);
+        let again = block_once(&mut source, 1_000);
+        assert!(
+            peak(&again) > 1e-4,
+            "a seek back to the onset did not restart the clip: {again:?}"
+        );
+    }
+
+    #[test]
+    fn a_scheduled_clip_follows_its_channel_or_the_master_bus() {
+        // One clip is patched into channel 1 and panned hard left; the other
+        // has no channel (the pre-master bus) and is panned hard right. Both
+        // must arrive, and the channel clip must have registered its strip for
+        // the output-cord graph.
+        let mut left = scheduled_clip(vec![scheduled_note(60, 0.0, 0.5, 0.9)], 0.0, 1.0, false);
+        left.channel = Some(1);
+        left.pan = -1.0;
+        let mut right = scheduled_clip(vec![scheduled_note(67, 0.0, 0.5, 0.9)], 0.0, 1.0, false);
+        right.channel = None;
+        right.pan = 1.0;
+        let (_, mut source) = synth_clip_transport(vec![left, right], 1_000);
+        let out = block_once(&mut source, 1_000);
+        assert!(peak(&left_channel(&out)) > 1e-4, "the channel clip was silent");
+        assert!(peak(&right_channel(&out)) > 1e-4, "the master clip was silent");
+        assert!(
+            source.send_strips.iter().any(|strip| strip.channel == 1),
+            "the clip's channel did not get a destination strip"
+        );
+    }
+
+    #[test]
+    fn a_plan_replaces_scheduled_clips_without_reopening_the_device() {
+        let first = scheduled_clip(vec![scheduled_note(60, 0.0, 0.1, 0.9)], 0.0, 1.0, false);
+        let control = Arc::new(TransportControl::new(click_spec(120.0, 4, 0.0), 0, 0, 0));
+        let (plans, plans_rx) = std::sync::mpsc::channel();
+        let mut source = TransportSource::new(Arc::clone(&control))
+            .with_synth_clips(vec![first])
+            .with_plan_rx(plans_rx);
+        source.prepared(8_000, 1_000).expect("prepare");
+        assert!(
+            peak(&block_once(&mut source, 1_000)) > 1e-4,
+            "the first clip never sounded"
+        );
+
+        // The replacement's note sits at 0.25 beats, so it lands on the next
+        // block's first frame. The device is never closed.
+        let replacement =
+            scheduled_clip(vec![scheduled_note(67, 0.25, 0.25, 0.9)], 0.0, 2.0, false);
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: None,
+                drums: None,
+                synth: None,
+                synth_clips: Some(vec![replacement]),
+                sends: None,
+            })
+            .expect("send the replacement plan");
+        let second = block_once(&mut source, 1_000);
+        assert!(
+            peak(&second) > 1e-4,
+            "the replacement clip did not sound: {:?}",
+            left_channel(&second)
+        );
+        assert_eq!(source.synth_clips.len(), 1, "the plan did not replace the clip set");
+        assert_eq!(source.clip_renders.len(), 1, "one synth per scheduled clip");
     }
 }

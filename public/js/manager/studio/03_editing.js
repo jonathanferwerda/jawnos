@@ -254,8 +254,29 @@ function studioReindexTakes(ch) {
 	media.out.forEach(function (t, i) { if (t && t.track) { t.track.id = 'studio_channel_' + ch + '_' + i; } });
 }
 
+// Cut a note list at a beat. A note that spans the cut becomes two: the left
+// keeps its attack and stops on the cut, the right starts on the cut with what
+// duration was left.
+function studioNoteSplit(notes, at) {
+	var left = [], right = [];
+	(notes || []).forEach(function (note) {
+		if (!note) { return; }
+		var t = Number(note.t) || 0;
+		var d = Math.max(0, Number(note.d) || 0);
+		var copy = function (t2, d2) { return { n: note.n, t: t2, d: Math.max(0.015625, d2), v: note.v }; };
+		if (t >= at - 1e-9) { right.push(copy(t - at, d)); }
+		else if (t + d > at + 1e-9) {
+			left.push(copy(t, at - t));
+			right.push(copy(0, t + d - at));
+		}
+		else { left.push(copy(t, d)); }
+	});
+	return { left: left, right: right };
+}
+
 // Razor: cut a clip in two at timeline position t. Both halves share the source;
-// the right half is a new in-point into it.
+// the right half is a new in-point into it. A note clip instead cuts its notes
+// at the split beat, and each half is rendered from its own notes.
 function studioSplitTake(ch, take, t) {
 	var media = mixer[ch] && mixer[ch].media;
 	if (!media || !media.out) { return null; }
@@ -263,6 +284,12 @@ function studioSplitTake(ch, take, t) {
 	if (index == -1) { return null; }
 	var end = take.startTime + (take.duration || 0);
 	if (t <= take.startTime + 0.02 || t >= end - 0.02) { return null; }
+
+	var noteSplit = !!take.note_clip;
+	var bpm = studioKnobNumber(mixer['time'] && mixer['time']['bpm'], 120) || 120;
+	var beat = 60 / bpm;
+	var splitBeat = noteSplit ? Math.max(0, (t - take.startTime) / beat) : 0;
+	var halves = noteSplit ? studioNoteSplit(take.notes || [], splitBeat) : null;
 
 	var right = {
 		uuid: take.uuid || null,
@@ -276,14 +303,28 @@ function studioSplitTake(ch, take, t) {
 	// A printed take already carries its Out pedals in its audio, and both
 	// halves index the same printed buffer, so the right half must not run the
 	// chain a second time on playback.
-	if (take.printed) { right.printed = true; }
-	if (take.buffer) { right.buffer = take.buffer; }
+	if (!noteSplit && take.printed) { right.printed = true; }
+	if (!noteSplit && take.buffer) { right.buffer = take.buffer; }
 	// A razor cut ends the looper behaviour: both halves become ordinary clips.
 	take.loop = false;
 	right.loop = false;
 	// A saved clip already has a server file, so both halves reference it. An
 	// unsaved clip has to carry its blob so both halves get uploaded.
-	if (!take.uuid) { right.data = take.data; }
+	if (!noteSplit && !take.uuid) { right.data = take.data; }
+	// Both note halves get their own length and a fresh engine id; their notes
+	// are cut at the split beat and re-rendered below.
+	if (noteSplit) {
+		right.uuid = null;
+		right.src = null;
+		delete right.data;
+		right.encoding = 'audio/wav';
+		right.note_clip = 1;
+		right.notes = halves.right;
+		right.patch = take.patch || null;
+		right.beats = Math.max(0, studioNoteClipBeats(take) - splitBeat);
+		right.duration = right.beats * beat;
+		right.clip_id = studioNoteClipId();
+	}
 
 	var el = document.createElement('video');
 	el.className = 'studio_video';
@@ -293,9 +334,22 @@ function studioSplitTake(ch, take, t) {
 	$('#studio_track_container').append(el);
 	right.track = el;
 
-	take.duration = t - take.startTime;
+	if (noteSplit) {
+		take.notes = halves.left;
+		take.beats = splitBeat;
+		take.duration = splitBeat * beat;
+		take.clip_id = studioNoteClipId();
+		take.note_clip = 1;
+	}
+	else {
+		take.duration = t - take.startTime;
+	}
 	media.out.splice(index + 1, 0, right);
 	studioReindexTakes(ch);
+	if (noteSplit) {
+		studioNoteClipRerender(ch, take);
+		studioNoteClipRerender(ch, right);
+	}
 	studioTakesChanged();
 	return right;
 }
@@ -331,8 +385,217 @@ function studioLoopMenuRows(menu) {
 	});
 }
 
+// ---- the saved synth loop library ------------------------------------------
+//
+// A synth loop is the sequencer grid plus the patch it played. The panel
+// publishes the saved list and the song setting keeps it, exactly as the drum
+// loops do; the track menu can then place one as an editable note clip.
+
+function studioSynthLoopLibrary() {
+	var library = window.jawnos_studio_synth_loops;
+	if (!library || typeof library.length !== 'number') {
+		library = [];
+		window.jawnos_studio_synth_loops = library;
+	}
+	return library;
+}
+
+function studioSynthLoopPersist() {
+	studioSaveSettings([{ setting: 'synth_loops', value: JSON.stringify(studioSynthLoopLibrary()) }]);
+}
+
+function studioSynthLoopOptions() {
+	var select = $('#studio_synth_loops');
+	if (!select.length) { return; }
+	var chosen = select.val();
+	select.empty();
+	select.append($('<option></option>').attr('value', '').text(studioLayoutText('No saved loop')));
+	studioSynthLoopLibrary().forEach(function (item, index) {
+		if (!item || !item.name) { return; }
+		select.append($('<option></option>').attr('value', String(index)).text(item.name));
+	});
+	if (chosen !== null && chosen !== undefined && select.find('option[value="' + chosen + '"]').length) {
+		select.val(chosen);
+	}
+}
+
+function studioSynthChosenLoop() {
+	var select = $('#studio_synth_loops');
+	if (!select.length) { return null; }
+	var index = parseInt(select.val(), 10);
+	var library = studioSynthLoopLibrary();
+	if (!(index >= 0) || !library[index]) { return null; }
+	return library[index];
+}
+
+// The sequencer grid in beats: step n is n/rate seconds from the loop start,
+// each lit cell is its row above the root, and the grid's own steps/rate give
+// the clip length. The gate is the sequencer's own 0.6 of a step.
+function studioSynthSeqNotes(seq, bpm) {
+	var beat = 60 / (studioKnobNumber(bpm, 120) || 120);
+	var rate = Math.max(0.5, studioKnobNumber(seq.rate, 8) || 8);
+	var steps = Math.max(1, Math.round(studioKnobNumber(seq.steps, 16) || 16));
+	var rows = Math.max(1, Math.round(studioKnobNumber(seq.rows, 13) || 13));
+	var root = Math.round(studioKnobNumber(seq.root, 60) || 60);
+	var cells = seq.cells || {};
+	var stepSeconds = 1 / rate;
+	var gateSeconds = 0.6 / rate;
+	var notes = [];
+	for (var row = 0; row < rows; row++) {
+		for (var step = 0; step < steps; step++) {
+			if (!cells[row + ':' + step]) { continue; }
+			notes.push({
+				n: root + row,
+				t: (step * stepSeconds) / beat,
+				d: gateSeconds / beat,
+				v: 0.85
+			});
+		}
+	}
+	notes.sort(function (a, b) { return (a.t - b.t) || (a.n - b.n); });
+	return { notes: notes, beats: (steps * stepSeconds) / beat };
+}
+
+// Save the current grid and patch under a name; editing the sequencer afterwards
+// cannot change the saved loop.
+function studioSynthSaveLoop() {
+	var synth = window.jawnosSynth;
+	if (!synth || !synth.seq || typeof synth.seq.get !== 'function') { return false; }
+	var name = String($('#studio_synth_save_name').val() || '').trim();
+	if (!name) { return false; }
+	var seq = synth.seq.get();
+	var bpm = studioKnobNumber(mixer['time'] && mixer['time']['bpm'], 120) || 120;
+	var grid = studioSynthSeqNotes(seq, bpm);
+	var library = studioSynthLoopLibrary();
+	library.push({
+		name: name,
+		patch: (typeof synth.getPatch === 'function') ? synth.getPatch() : null,
+		notes: grid.notes,
+		beats: grid.beats,
+		seq: seq
+	});
+	studioSynthLoopPersist();
+	studioSynthLoopOptions();
+	$('#studio_synth_loops').val(String(library.length - 1));
+	return true;
+}
+
+// Load a saved grid back into the sequencer and its rate/steps selects, then
+// ask the panel to rebuild the cells.
+function studioSynthLoadLoop() {
+	var item = studioSynthChosenLoop();
+	var synth = window.jawnosSynth;
+	if (!item || !synth || !synth.seq) { return false; }
+	var seq = item.seq || {};
+	if (typeof synth.seq.set === 'function') {
+		synth.seq.set({ rate: seq.rate, steps: seq.steps, root: seq.root });
+	}
+	if (typeof synth.seq.setCells === 'function') { synth.seq.setCells(seq.cells || {}); }
+	var grid = (typeof synth.seq.get === 'function') ? synth.seq.get() : {};
+	$('.synth_seq_rate').val(String(grid.rate));
+	$('.synth_seq_steps').val(String(grid.steps));
+	$(document).trigger('jawnos_synth_panel');
+	return true;
+}
+
+function studioSynthDeleteLoop() {
+	var select = $('#studio_synth_loops');
+	var index = parseInt(select.val(), 10);
+	var library = studioSynthLoopLibrary();
+	if (!(index >= 0) || !library[index]) { return false; }
+	library.splice(index, 1);
+	studioSynthLoopPersist();
+	studioSynthLoopOptions();
+	return true;
+}
+
+$(document).on('click', '#studio_synth_save_loop', function (e) {
+	e.preventDefault();
+	studioSynthSaveLoop();
+});
+
+$(document).on('click', '#studio_synth_load_loop', function (e) {
+	e.preventDefault();
+	studioSynthLoadLoop();
+});
+
+$(document).on('click', '#studio_synth_delete_loop', function (e) {
+	e.preventDefault();
+	studioSynthDeleteLoop();
+});
+
+// The panel may be inserted after this file runs, so the list is filled on the
+// same event that rebuilds its sequencer grid.
+$(document).on('jawnos_synth_panel', function () { studioSynthLoopOptions(); });
+$(function () { studioSynthLoopOptions(); });
+
+// A saved synth loop becomes an editable note clip at the clicked time: the
+// notes and patch are the source of truth, and the rendered WAV is its cache.
+function studioSynthInsertLoop(ch, at, item) {
+	ch = String(ch);
+	if (!item || !item.name) { return null; }
+	var m = mixer[ch];
+	if (!m) { return null; }
+	if (!m.media) { m.media = {}; }
+	if (!m.media.out) { m.media.out = []; }
+	var el = document.createElement('video');
+	el.className = 'studio_video';
+	el.style.display = 'none';
+	el.preload = 'auto';
+	$('#studio_track_container').append(el);
+	var patch = item.patch ? JSON.parse(JSON.stringify(item.patch)) : null;
+	if (!patch && window.jawnosSynth && typeof window.jawnosSynth.getPatch === 'function') {
+		patch = window.jawnosSynth.getPatch();
+	}
+	var take = {
+		uuid: null,
+		startTime: Math.max(0, at || 0),
+		offset: 0,
+		duration: 0,
+		status: 'stop',
+		note_clip: 1,
+		notes: JSON.parse(JSON.stringify(item.notes || [])),
+		patch: patch,
+		beats: Number(item.beats) || 0,
+		clip_id: studioNoteClipId(),
+		loop: true,
+		encoding: 'audio/wav',
+		track: el
+	};
+	take.duration = studioNoteClipSeconds(take);
+	m.media.out.push(take);
+	studioReindexTakes(ch);
+	mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
+	studioNoteClipLoad(take).then(function () { studioDrawChannel(ch); });
+	studioSelectedTake = { ch: ch, take: take };
+	studioSaver();
+	studioDrawChannel(ch);
+	studioTakesChanged();
+	return take;
+}
+
+// The synth loop section of a loop track's menu, beside the drum loops.
+function studioSynthLoopMenuRows(menu) {
+	$('<div class="studio_menu_head"></div>').text(studioLayoutText('Add synth loop')).appendTo(menu);
+	var library = studioSynthLoopLibrary();
+	if (!library.length) {
+		$('<button type="button" class="studio_menu_row" disabled></button>')
+			.text(studioLayoutText('No saved loops'))
+			.appendTo(menu);
+		return;
+	}
+	library.forEach(function (item, index) {
+		if (!item || !item.name) { return; }
+		$('<button type="button" class="studio_menu_row studio_synth_loop_row"></button>')
+			.attr('data-synth-loop', index)
+			.text(item.name)
+			.appendTo(menu);
+	});
+}
+
 // What a copy keeps: everything needed to place the clip again on any track.
-// A saved clip points at its file by uuid; an unsaved one carries its blob.
+// A saved clip points at its file by uuid; an unsaved one carries its blob. A
+// note clip's notes travel instead of its rendered cache.
 function studioClipSnapshot(take) {
 	if (!take) { return null; }
 	return {
@@ -344,7 +607,11 @@ function studioClipSnapshot(take) {
 		duration: take.duration || 0,
 		encoding: take.encoding,
 		loop: !!take.loop,
-		printed: !!take.printed
+		printed: !!take.printed,
+		note_clip: take.note_clip ? 1 : 0,
+		notes: take.notes ? JSON.parse(JSON.stringify(take.notes)) : null,
+		patch: take.patch ? JSON.parse(JSON.stringify(take.patch)) : null,
+		beats: take.beats || 0
 	};
 }
 
@@ -358,12 +625,21 @@ function studioClipMenu(hit, px, py) {
 	studioClipMenuRow(menu, 'copy', studioLayoutText('Copy'), false);
 	// Paste needs a snapshot, so it reads disabled until something is copied
 	studioClipMenuRow(menu, 'paste', studioLayoutText('Paste'), !studioClipboard);
+	// A note-backed clip opens its notes in the sixth panel; an ordinary audio
+	// take has none, so there is no row to offer.
+	if (hit.take.note_clip || hit.take.notes) {
+		studioClipMenuRow(menu, 'notes', studioLayoutText('Notes'), false);
+	}
 	$('<div class="studio_menu_head"></div>').text(studioLayoutText('Take')).appendTo(menu);
 	studioClipMenuRow(menu, 'delete', studioLayoutText('Delete'), false);
 	studioClipMenuRow(menu, 'bounce', studioLayoutText('Bounce'), false);
-	// Only a loop track takes a drum loop; another track keeps the clip menu.
+	// Only a loop track takes a drum or synth loop; another track keeps the clip
+	// menu.
 	var loopTrack = mixer[hit.ch] && mixer[hit.ch].armed && mixer[hit.ch].armed.state == 'loop';
-	if (loopTrack) { studioLoopMenuRows(menu); }
+	if (loopTrack) {
+		studioLoopMenuRows(menu);
+		studioSynthLoopMenuRows(menu);
+	}
 	$('body').append(menu);
 	var margin = 6;
 	var left = Math.min(px, $(window).width() - menu.outerWidth() - margin);
@@ -372,12 +648,13 @@ function studioClipMenu(hit, px, py) {
 }
 
 // A loop track with no take under the pointer still gets a menu: it offers the
-// saved drum loops and nothing else.
+// saved drum and synth loops and nothing else.
 function studioLoopMenu(ch, at, px, py) {
 	$('.studio_menu').remove();
 	studioClipMenuTarget = { ch: ch, take: null, t: at };
 	var menu = $('<div class="studio_menu studio_clip_menu studio_drum_loop_menu"></div>').attr('data-channel', ch);
 	studioLoopMenuRows(menu);
+	studioSynthLoopMenuRows(menu);
 	$('body').append(menu);
 	var margin = 6;
 	var left = Math.min(px, $(window).width() - menu.outerWidth() - margin);
@@ -396,22 +673,34 @@ function studioPasteTake(ch, t) {
 	if (!m.media.out) { m.media.out = []; }
 	var clip = studioClipboard;
 	var pasted = {
-		uuid: clip.uuid || null,
+		uuid: clip.note_clip ? null : (clip.uuid || null),
 		startTime: Math.max(0, t),
 		offset: clip.offset || 0,
 		duration: clip.duration || 0,
 		status: 'stop',
-		src: clip.src,
+		src: clip.note_clip ? null : clip.src,
 		encoding: clip.encoding,
 		loop: false
 	};
+	// A copied note clip carries its notes and patch, gets a fresh engine id and
+	// is rendered from them; its rendered blob is never copied.
+	if (clip.note_clip) {
+		pasted.note_clip = 1;
+		pasted.notes = clip.notes ? JSON.parse(JSON.stringify(clip.notes)) : [];
+		pasted.patch = clip.patch ? JSON.parse(JSON.stringify(clip.patch)) : null;
+		pasted.beats = clip.beats || 0;
+		pasted.clip_id = studioNoteClipId();
+		pasted.duration = studioNoteClipSeconds(pasted) || pasted.duration;
+	}
 	// A copied printed take is already wet, so it keeps that flag and its
 	// rendered buffer; otherwise the copy would run the Out chain again.
-	if (clip.printed) { pasted.printed = true; }
-	if (clip.buffer) { pasted.buffer = clip.buffer; }
+	if (!clip.note_clip && clip.printed) { pasted.printed = true; }
+	if (!clip.note_clip && clip.buffer) { pasted.buffer = clip.buffer; }
 	// A saved clip already has a server file; an unsaved one must carry its blob
-	// so the pasted copy gets uploaded too.
-	if (!clip.uuid) { pasted.data = clip.data; }
+	// so the pasted copy gets uploaded too. A note clip carries neither.
+	if (!clip.note_clip) {
+		if (!clip.uuid) { pasted.data = clip.data; }
+	}
 
 	var el = document.createElement('video');
 	el.className = 'studio_video';
@@ -423,6 +712,7 @@ function studioPasteTake(ch, t) {
 
 	m.media.out.push(pasted);
 	studioReindexTakes(ch);
+	if (pasted.note_clip) { studioNoteClipRerender(ch, pasted); }
 	mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, pasted.startTime + (pasted.duration || 0));
 	studioSelectedTake = { ch: ch, take: pasted };
 	studioDrawChannel(ch);
@@ -457,6 +747,7 @@ $(document).on('click', '.studio_clip_menu .studio_menu_row', function (e) {
 	var row = $(this);
 	if (row.prop('disabled')) { return; }
 	var loop = row.attr('data-loop');
+	var synthLoop = row.attr('data-synth-loop');
 	var hit = studioClipMenuTarget;
 	if (loop !== undefined) {
 		$('.studio_menu').remove();
@@ -464,6 +755,14 @@ $(document).on('click', '.studio_clip_menu .studio_menu_row', function (e) {
 		if (!hit || typeof studioDrumsInsertLoop !== 'function') { return; }
 		var item = studioDrumsLoopLibrary()[parseInt(loop, 10)];
 		if (item) { studioDrumsInsertLoop(hit.ch, hit.t, item); }
+		return;
+	}
+	if (synthLoop !== undefined) {
+		$('.studio_menu').remove();
+		studioClipMenuTarget = null;
+		if (!hit) { return; }
+		var synthItem = studioSynthLoopLibrary()[parseInt(synthLoop, 10)];
+		if (synthItem) { studioSynthInsertLoop(hit.ch, hit.t, synthItem); }
 		return;
 	}
 	var command = row.attr('data-command');
@@ -485,11 +784,23 @@ $(document).on('click', '.studio_clip_menu .studio_menu_row', function (e) {
 	else if (command == 'paste') {
 		studioPasteTake(hit.ch, hit.t);
 	}
+	else if (command == 'notes') {
+		if (typeof window.studioNotesOpen === 'function') { window.studioNotesOpen(hit.ch, hit.take); }
+	}
 	else if (command == 'delete') {
 		studioRemoveTake(hit.ch, hit.take);
 	}
 	else if (command == 'bounce') {
-		studioBounceTake(hit.ch, hit.take);
+		// A printed take is ordinary audio: its notes no longer edit it.
+		var bounced = studioBounceTake(hit.ch, hit.take);
+		if (bounced && typeof bounced.then === 'function') {
+			bounced.then(function (ok) {
+				if (!ok) { return; }
+				delete hit.take.note_clip;
+				delete hit.take.notes;
+				studioSaver();
+			});
+		}
 	}
 });
 

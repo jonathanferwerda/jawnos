@@ -1598,6 +1598,10 @@ $(document).on('keydown', function (e) {
 		return;
 	}
 	if (studioDrumsTyping() || !studioDrums.focus || e.repeat) { return; }
+	// The synth's computer keys own the press while they are on and the synth
+	// panel took the last focus; the drum map hands the key back.
+	if (typeof jawnosSynth !== 'undefined' && typeof jawnosSynth.keysOn === 'function' && jawnosSynth.keysOn()
+		&& typeof jawnosSynth.keysOwned === 'function' && jawnosSynth.keysOwned(e.target)) { return; }
 	if (typeof studioSelectedTake !== 'undefined' && studioSelectedTake) { return; }
 	var voice = studioDrumsVoiceForKey(e.key);
 	if (!voice) { return; }

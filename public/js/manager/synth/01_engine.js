@@ -11,6 +11,45 @@
 		return Math.max(lo, Math.min(hi, n));
 	}
 
+	// ---- note capture ----------------------------------------------------------
+	// Studio records the notes the synth plays, so the lowest voice layer reports
+	// every note edge: on when a voice is born, exactly one off when that voice is
+	// released or stolen. Arp, Seq, Mono and MIDI all go through here because they
+	// all end in a voice. The offline renderer's voices are silent to the tap, and
+	// the tap is paused while it schedules them, so a render never looks like you
+	// playing. `window.jawnosSynth.onnote` subscribes.
+	var noteListeners = [];
+	var offlineRendering = false;
+
+	function noteEmit(on, note, velocity, at) {
+		if (!noteListeners.length) { return; }
+		var time = (S.ctx && !offlineRendering) ? S.ctx.currentTime : at;
+		var event = { on: !!on, note: note, velocity: velocity, time: time };
+		noteListeners.slice().forEach(function (fn) { try { fn(event); } catch (e) {} });
+	}
+
+	function noteTapOn(voice, at) {
+		if (!voice || offlineRendering) { return; }
+		voice.tapped = true;
+		noteEmit(true, voice.note, voice.velocity, at);
+	}
+
+	function noteTapOff(voice, at) {
+		if (!voice || !voice.tapped || voice.tappedOff) { return; }
+		voice.tappedOff = true;
+		if (offlineRendering) { return; }
+		noteEmit(false, voice.note, voice.velocity, at);
+	}
+
+	function subscribeNote(fn) {
+		if (typeof fn !== 'function') { return function () {}; }
+		noteListeners.push(fn);
+		return function () {
+			var at = noteListeners.indexOf(fn);
+			if (at >= 0) { noteListeners.splice(at, 1); }
+		};
+	}
+
 	// A harmonic recipe for a PeriodicWave, so piano/organ/bell voices get their
 	// partials without any samples: real[0] (DC) is dropped by Web Audio.
 	function periodicWave(ctx, harmonics) {
@@ -112,7 +151,8 @@
 		engineBusy: false,
 		engineWarned: false,
 		enginePoll: null,
-		muted: false
+		muted: false,
+		capture: false   // a Studio take records the browser graph, not the engine
 	};
 
 	function copyPatch(p) { return JSON.parse(JSON.stringify(p)); }
@@ -203,27 +243,42 @@
 		S.ctx = null; S.out = null; S.drive = null; S.comp = null; S.post = null; S.lfo = null;
 	}
 
-	function applyLfo() {
-		if (!S.ctx) { return; }
-		var l = S.patch.lfo || {};
-		var rate = clampNumber(l.rate, 0, 20, 0);
-		S.lfo.frequency.value = rate > 0 ? rate : 5;
-		S.lfoPitch.gain.value = (l.pitch || 0) * 1200;      // fraction of an octave
-		S.lfoCutoff.gain.value = (l.cutoff || 0) * 2400;
-		S.lfoAmp.gain.value = (l.amp || 0) * 0.5;
+	// The LFO depths and the drive curve are pure functions of the patch, so the
+	// offline renderer can build the same master chain without the live nodes.
+	function lfoParams(patch) {
+		var l = (patch && patch.lfo) || {};
+		return {
+			rate: clampNumber(l.rate, 0, 20, 0),
+			pitch: l.pitch || 0,
+			cutoff: l.cutoff || 0,
+			amp: l.amp || 0
+		};
 	}
 
-	function applyDrive() {
-		if (!S.drive || !S.ctx) { return; }
-		var amount = clampNumber(S.patch.drive, 0, 1, 0);
-		if (amount <= 0.001) { S.drive.curve = null; return; }
+	function driveCurve(amount) {
+		amount = clampNumber(amount, 0, 1, 0);
+		if (amount <= 0.001) { return null; }
 		var n = 1024, curve = new Float32Array(n), k = amount * 40;
 		for (var i = 0; i < n; i++) {
 			var x = (i * 2) / n - 1;
 			curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
 		}
-		S.drive.curve = curve;
-		S.drive.oversample = '4x';
+		return curve;
+	}
+
+	function applyLfo() {
+		if (!S.ctx) { return; }
+		var l = lfoParams(S.patch);
+		S.lfo.frequency.value = l.rate > 0 ? l.rate : 5;
+		S.lfoPitch.gain.value = l.pitch * 1200;      // fraction of an octave
+		S.lfoCutoff.gain.value = l.cutoff * 2400;
+		S.lfoAmp.gain.value = l.amp * 0.5;
+	}
+
+	function applyDrive() {
+		if (!S.drive || !S.ctx) { return; }
+		S.drive.curve = driveCurve(S.patch.drive);
+		if (S.drive.curve) { S.drive.oversample = '4x'; }
 	}
 
 	// ---- the arpeggiator: held notes are stepped through, in time ---------------
@@ -316,14 +371,32 @@
 		filter.frequency.exponentialRampToValueAtTime(Math.max(40, baseHz * (0.2 + s * 0.8)), t0 + a + d);
 	}
 
-	function newVoice(note, velocity, glideFrom) {
-		var ctx = S.ctx, p = S.patch;
-		var t0 = ctx.currentTime;
-		var freq = midiToFreq(note + (S.patch.transpose || 0));
-		S.lastFreq = freq;
+	// A voice's surroundings are explicit, so the offline renderer can speak the
+	// same DSP on its own context, patch, output and start time without reading
+	// the live S.* graph.
+	function liveVoiceContext() {
+		return {
+			ctx: S.ctx,
+			patch: S.patch,
+			out: S.out,
+			start: S.ctx.currentTime,
+			bend: S.bend || 0,
+			mod: S.mod || 0,
+			lfoPitch: S.lfoPitch,
+			lfoCutoff: S.lfoCutoff,
+			offline: false
+		};
+	}
+
+	function newVoice(note, velocity, glideFrom, vctx) {
+		var host = vctx || liveVoiceContext();
+		var ctx = host.ctx, p = host.patch, out = host.out;
+		var t0 = host.start;
+		var freq = midiToFreq(note + (p.transpose || 0));
+		if (!host.offline) { S.lastFreq = freq; }
 		var amp = ctx.createGain();
 		amp.gain.value = 0.0001;
-		amp.connect(S.out);
+		amp.connect(out);
 		var voice = { id: S.nextId++, note: note, freq: freq, velocity: velocity, amp: amp, nodes: [], released: false, started: t0 };
 
 		if (p.engine === 'pluck') {
@@ -353,12 +426,16 @@
 			voice.nodes.push(delay, damp, fb, src);
 			voiceEnv(amp.gain, p.amp || { a: 0.001, d: 1.6, s: 0, r: 0.35 }, t0, 0.5 + velocity * 0.5);
 			voice.stopSoon = function (t1) {
+				noteTapOff(voice, t1);
 				var r = Math.max(0.05, (p.amp && p.amp.r) || 0.35);
 				amp.gain.cancelScheduledValues(t1);
 				if (amp.gain.cancelAndHoldAtTime) { amp.gain.cancelAndHoldAtTime(t1); }
 				amp.gain.setTargetAtTime(0.0001, t1, r / 4);
-				setTimeout(function () { killVoice(voice, false); }, (r + 0.1) * 1000);
+				// only the live graph needs the cleanup timer; an offline render ends
+				// with its buffer and must not leave a timer behind
+				if (!host.offline) { setTimeout(function () { killVoice(voice, false); }, (r + 0.1) * 1000); }
 			};
+			if (!host.offline) { noteTapOn(voice, t0); }
 			return voice;
 		}
 
@@ -375,7 +452,7 @@
 		var oscLevels = p.osc || [{ level: 1 }, { level: 0.5 }];
 		oscLevels.forEach(function (o, idx) {
 			var osc = ctx.createOscillator();
-			var detune = S.bend * 200 + (o.detune || 0) + (S.mod * 50);
+			var detune = host.bend * 200 + (o.detune || 0) + (host.mod * 50);
 			if (waveType && !o.wave) { osc.setPeriodicWave(waveType); }
 			else { osc.type = o.wave || p.wave || 'sawtooth'; }
 			var oct = Math.pow(2, o.octave || 0);
@@ -394,7 +471,7 @@
 			voice.nodes.push(osc, g);
 			voice.oscs = voice.oscs || [];
 			voice.oscs.push(osc);
-			if (S.lfoPitch) { S.lfoPitch.connect(osc.detune); }
+			if (host.lfoPitch) { host.lfoPitch.connect(osc.detune); }
 		});
 		if (p.noise > 0) {
 			var nlen = Math.max(1, Math.floor(ctx.sampleRate * 0.06));
@@ -409,22 +486,26 @@
 			nsrc.start(t0);
 			voice.nodes.push(nsrc, ng);
 		}
-		if (S.lfoCutoff) { S.lfoCutoff.connect(filter.frequency); }
+		if (host.lfoCutoff) { host.lfoCutoff.connect(filter.frequency); }
 		filterEnv(filter, ((p.filter && p.filter.cutoff) || 3000) * (0.6 + 0.7 * velocity), (p.fenv && { a: p.fenv.a, d: p.fenv.d, s: p.fenv.s, amount: (p.filter && p.filter.env) || 0 }) || { a: 0.01, d: 0.2, s: 0, amount: 0 }, t0, (p.filter && p.filter.keytrack) || 0, freq);
 		voiceEnv(amp.gain, p.amp || { a: 0.01, d: 0.3, s: 0.7, r: 0.3 }, t0, 0.25 + velocity * 0.6);
 		voice.stopSoon = function (t1) {
+			noteTapOff(voice, t1);
 			var r = Math.max(0.02, (p.amp && p.amp.r) || 0.3);
 			amp.gain.cancelScheduledValues(t1);
 			if (amp.gain.cancelAndHoldAtTime) { amp.gain.cancelAndHoldAtTime(t1); }
 			amp.gain.setTargetAtTime(0.0001, t1, r / 4);
 			(voice.oscs || []).forEach(function (osc) { try { osc.stop(t1 + r + 0.1); } catch (e) {} });
-			setTimeout(function () { killVoice(voice, false); }, (r + 0.2) * 1000);
+			if (!host.offline) { setTimeout(function () { killVoice(voice, false); }, (r + 0.2) * 1000); }
 		};
+		if (!host.offline) { noteTapOn(voice, t0); }
 		return voice;
 	}
 
 	function killVoice(voice, immediate) {
 		if (!voice || voice.dead) { return; }
+		// a stolen voice still owes its one off, even if its release never came
+		noteTapOff(voice, S.ctx ? S.ctx.currentTime : voice.started);
 		voice.dead = true;
 		if (immediate) {
 			(voice.oscs || []).forEach(function (osc) { try { osc.stop(); } catch (e) {} });
@@ -516,17 +597,120 @@
 
 	function voices() { return Object.keys(S.voices).length; }
 
+	// ---- offline render --------------------------------------------------------
+	// Studio renders a loop to a buffer for browser playback: the same voices and
+	// the same master chain on a fresh OfflineAudioContext. Notes are in beats, so
+	// a tempo change only re-renders; the live graph is never touched.
+	// opts = { notes: [{ n, t, d, v }], patch, bpm, beats, rate }
+	function render(opts) {
+		opts = opts || {};
+		var notes = Array.isArray(opts.notes) ? opts.notes.slice() : [];
+		var bpm = clampNumber(opts.bpm, 1, 400, 120);
+		var rate = Math.round(clampNumber(opts.rate, 8000, 96000, 44100));
+		var secondsPerBeat = 60 / bpm;
+		var beats = clampNumber(opts.beats, 0, 4096, 0);
+		if (!(beats > 0)) {
+			notes.forEach(function (n) {
+				beats = Math.max(beats, (Number(n.t) || 0) + (Number(n.d) || 0));
+			});
+		}
+		if (!(beats > 0)) { beats = 1; }
+		var length = Math.max(1, Math.ceil(beats * 60 / bpm * rate));
+
+		var Ctor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+		if (!Ctor) { return Promise.reject(new Error('OfflineAudioContext is not available here')); }
+		var ctx;
+		try { ctx = new Ctor(2, length, rate); } catch (e) { return Promise.reject(e); }
+
+		// the same master chain as attach(): out -> drive -> compressor -> post
+		var out = ctx.createGain();
+		var shaper = ctx.createWaveShaper();
+		var comp = ctx.createDynamicsCompressor();
+		comp.threshold.value = -12;
+		comp.ratio.value = 4;
+		var post = ctx.createGain();          // mute-free: a render is what was played
+		post.gain.value = 1;
+		out.connect(shaper).connect(comp).connect(post).connect(ctx.destination);
+		var patch = patchArg(opts);
+		var curve = driveCurve(patch.drive);
+		if (curve) { shaper.curve = curve; shaper.oversample = '4x'; }
+
+		// the shared LFO with the same three taps the live voices read
+		var lfo = ctx.createOscillator();
+		lfo.type = 'sine';
+		var depths = lfoParams(patch);
+		lfo.frequency.value = depths.rate > 0 ? depths.rate : 5;
+		var lfoPitch = ctx.createGain();
+		var lfoCutoff = ctx.createGain();
+		var lfoAmp = ctx.createGain();
+		lfoPitch.gain.value = depths.pitch * 1200;
+		lfoCutoff.gain.value = depths.cutoff * 2400;
+		lfoAmp.gain.value = depths.amp * 0.5;
+		lfo.connect(lfoPitch);
+		lfo.connect(lfoCutoff);
+		lfo.connect(lfoAmp);
+		lfoAmp.connect(out.gain);
+		lfo.start(0);
+
+		notes.sort(function (a, b) { return (Number(a.t) || 0) - (Number(b.t) || 0); });
+		var mono = !!patch.mono;
+		var current = null, lastFreq = 0;
+		var scheduleError = null;
+		offlineRendering = true;
+		try {
+			notes.forEach(function (n) {
+				var note = Math.round(clampNumber(n.n, 0, 127, 60));
+				var at = Math.max(0, (Number(n.t) || 0) * secondsPerBeat);
+				var d = Math.max(0.01, (Number(n.d) || 0) * secondsPerBeat);
+				var velocity = clampNumber(n.v, 0, 1, 0.8);
+				var glideFrom = 0;
+				if (mono) {
+					if (current && current.stopSoon) { current.released = true; current.stopSoon(at); }
+					glideFrom = (patch.glide > 0) ? lastFreq : 0;
+				}
+				var v = newVoice(note, velocity, glideFrom, {
+					ctx: ctx, patch: patch, out: out, start: at,
+					bend: 0, mod: 0, lfoPitch: lfoPitch, lfoCutoff: lfoCutoff,
+					offline: true
+				});
+				lastFreq = v.freq;
+				if (mono) { current = v; }
+				v.released = true;
+				if (v.stopSoon) { v.stopSoon(at + d); }
+			});
+		} catch (e) {
+			scheduleError = e;
+		} finally {
+			offlineRendering = false;      // the tap is live again: no renderer voice is left to make
+		}
+		if (scheduleError) { return Promise.reject(scheduleError); }
+
+		var rendering;
+		try { rendering = ctx.startRendering(); } catch (e) { return Promise.reject(e); }
+		return Promise.resolve(rendering);
+	}
+
+	function patchArg(opts) {
+		var patch = copyPatch(opts.patch || S.patch || PRESETS[S.preset]);
+		return patchDefaults(patch);
+	}
+
 	// ---- patch access ----------------------------------------------------------
+
+	function patchDefaults(patch) {
+		if (!patch.osc) { patch.osc = [{ octave: 0, detune: 0, level: 1 }, { octave: 0, detune: 0, level: 0.4 }]; }
+		if (!patch.amp) { patch.amp = { a: 0.01, d: 0.3, s: 0.7, r: 0.3 }; }
+		if (!patch.fenv) { patch.fenv = { a: 0.01, d: 0.2, s: 0.0, r: 0.2 }; }
+		if (!patch.filter) { patch.filter = { type: 'lowpass', cutoff: 3000, q: 1, env: 0, keytrack: 0 }; }
+		if (!patch.lfo) { patch.lfo = { rate: 0, pitch: 0, cutoff: 0, amp: 0 }; }
+		if (patch.mono == null) { patch.mono = false; }
+		if (patch.glide == null) { patch.glide = 0; }
+		return patch;
+	}
 
 	function patchShapes() {
 		if (!S.patch) { S.patch = copyPatch(PRESETS[S.preset]); }
-		if (!S.patch.osc) { S.patch.osc = [{ octave: 0, detune: 0, level: 1 }, { octave: 0, detune: 0, level: 0.4 }]; }
-		if (!S.patch.amp) { S.patch.amp = { a: 0.01, d: 0.3, s: 0.7, r: 0.3 }; }
-		if (!S.patch.fenv) { S.patch.fenv = { a: 0.01, d: 0.2, s: 0.0, r: 0.2 }; }
-		if (!S.patch.filter) { S.patch.filter = { type: 'lowpass', cutoff: 3000, q: 1, env: 0, keytrack: 0 }; }
-		if (!S.patch.lfo) { S.patch.lfo = { rate: 0, pitch: 0, cutoff: 0, amp: 0 }; }
-		if (S.patch.mono == null) { S.patch.mono = false; }
-		if (S.patch.glide == null) { S.patch.glide = 0; }
+		patchDefaults(S.patch);
 	}
 
 	function set(param, value) {
@@ -576,8 +760,27 @@
 		if (S.post) { S.post.gain.value = S.muted ? 0 : 1; }
 	}
 
+	// A Studio take records the browser graph, so while capture is on the browser
+	// voices stay audible even when the Sound choice is the engine (which keeps
+	// playing the rest of the song) and no live note is sent to the engine. The
+	// saved Sound choice and its panel select are untouched; turning capture off
+	// hands the mute decision back to engineSyncOutput().
+	function synthCapture(on) {
+		on = !!on;
+		if (on === S.capture) { return S.capture; }
+		S.capture = on;
+		if (on) {
+			engineAllOff();          // the browser take owns the live notes now
+			applyMute(false);        // the take records post -> channel, so it must sound
+		}
+		else {
+			engineSyncOutput();
+		}
+		return S.capture;
+	}
+
 	function engineSyncOutput() {
-		applyMute(S.sound === 'engine' && S.enginePlaying);
+		applyMute(!S.capture && S.sound === 'engine' && S.enginePlaying);
 	}
 
 	function engineFallback() {
@@ -616,7 +819,9 @@
 	function engineLive() { return S.sound === 'engine' && S.enginePlaying && !!S.ctx; }
 
 	function engineNote(note, velocity, on) {
-		if (!engineLive()) { return; }
+		// while a Studio take captures the browser graph, the engine must not sound
+		// a second voice for the same key
+		if (S.capture || !engineLive()) { return; }
 		engineApi('note', { note: note, velocity: velocity, on: on ? 1 : 0 });
 	}
 
@@ -659,8 +864,7 @@
 		if (S.sound !== 'engine') { S.enginePlaying = false; S.enginePatchJson = null; }
 		engineSyncOutput();
 		enginePollEnsure();
-		var sel = document.getElementById('synth_sound');
-		if (sel) { sel.value = S.sound; }
+		$('.synth_sound').val(S.sound);
 	}
 
 	function loadPreset(name) {
@@ -737,6 +941,16 @@
 		allNotesOff: allNotesOff,
 		releaseAll: allNotesOff,
 		voices: voices,
+		// Studio captures note clips through the same voice layer (Arp, Seq, Mono
+		// and MIDI included) and renders a loop offline for playback.
+		onnote: subscribeNote,
+		render: render,
+		// the computer-keyboard ownership the Studio drum map can ask about
+		keysOn: function () { return keyboardOn; },
+		keysOwned: keysOwned,
+		// a Studio take records the browser graph: audible browser voices and no
+		// engine notes while on, the normal Sound choice restored when off
+		capture: synthCapture,
 		seq: {
 			set: function (opts) {
 				opts = opts || {};
@@ -860,13 +1074,50 @@
 
 	// The computer keyboard plays the piano: the usual A W S E D F T G Y H U J K row,
 	// Z/X shift the octave. Off until the Keys button turns it on, and it never
-	// steals a keypress aimed at a form field.
+	// steals a keypress aimed at a form field. The key handler only sounds while a
+	// synth host owns the last press: the standalone Synth window's roll or the
+	// Studio panel (`#studio_synth`). Clicking anywhere else hands the keys back, so
+	// the Studio drum map can play too.
 	var keyboardOn = false, keyboardOctave = 4, keyboardHeld = {};
+	var keyboardOwner = null;   // 'standalone' | 'studio' | null
 	var KEYMAP = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ';': 16, "'": 17 };
 
 	function synthKeyboardNote(k) { return keyboardOctave * 12 + 12 + KEYMAP[k]; }
 
-	function synthRenderOctave() { $('#synth_octave').text('octave ' + keyboardOctave); }
+	// Which synth host an element belongs to: Studio's own panel, or the standalone
+	// Synth window's roll (a #synth that is not the Studio panel's body).
+	function synthOwnerFor(el) {
+		if (!el) { return null; }
+		var $el = $(el);
+		if (!$el.length) { return null; }
+		if ($el.closest('#studio_synth').length) { return 'studio'; }
+		if ($el.closest('.wind[app="synth"]').length) { return 'standalone'; }
+		if ($el.closest('#synth').length && !$el.closest('#studio').length) { return 'standalone'; }
+		return null;
+	}
+
+	function standaloneSynthHost() {
+		return $('#synth').filter(function () { return !$(this).closest('#studio_synth').length; }).length > 0;
+	}
+
+	// Answered for the Studio drum map: is the synth's computer keyboard the owner
+	// of key events right now (and, when an element is given, does it belong to
+	// that owner)? False unless Keys is on and a synth host owns the last press.
+	function keysOwned(el) {
+		if (!keyboardOn || !keyboardOwner) { return false; }
+		if (!el) { return true; }
+		var owner = synthOwnerFor(el);
+		return !owner || owner === keyboardOwner;
+	}
+
+	function synthKeysOwned(e) {
+		if (!keyboardOn) { return false; }
+		var owner = synthOwnerFor(e && e.target);
+		if (owner) { keyboardOwner = owner; }
+		return !!keyboardOwner;
+	}
+
+	function synthRenderOctave() { $('.synth_octave').text('octave ' + keyboardOctave); }
 
 	// The standalone window's controls. The studio's Synth pedal drives the same
 	// engine through KNOBS, so a patch set in one place reads the same in the other.
@@ -894,19 +1145,31 @@
 	}
 
 	function synthPopulateMidi() {
-		var sel = $('#synth_midi');
-		if (!sel.length) { return; }
+		var hosts = $('.synth_midi');
+		if (!hosts.length) { return; }
 		var devs = window.jawnosSynth.midi.devices();
-		sel.empty();
-		if (!devs.length) { sel.append($('<option></option>').attr('value', '').text('no MIDI device')); return; }
-		devs.forEach(function (d) { sel.append($('<option></option>').attr('value', d.id).text(d.name || d.manufacturer || d.id)); });
-		sel.val(window.jawnosSynth.midi.selected() || '');
+		hosts.each(function () {
+			var sel = $(this);
+			sel.empty();
+			if (!devs.length) { sel.append($('<option></option>').attr('value', '').text('no MIDI device')); return; }
+			devs.forEach(function (d) { sel.append($('<option></option>').attr('value', d.id).text(d.name || d.manufacturer || d.id)); });
+			sel.val(window.jawnosSynth.midi.selected() || '');
+		});
 	}
 
 	// Make sure the engine is running on whatever context is at hand: the studio's
 	// own when its window is open (so a studio-hosted panel rides it), else a new one.
 	function synthEnsureAudio() {
-		if (window.jawnosSynth.context()) { return; }
+		var current = window.jawnosSynth.context();
+		if (current) {
+			// A host that built its context at page load, or a Studio page whose
+			// context was replaced, can be suspended until a gesture. The first
+			// key is that gesture, so resume the graph it will play on.
+			if (current.state === 'suspended' && typeof current.resume === 'function') {
+				try { current.resume(); } catch (e) {}
+			}
+			return;
+		}
 		var Ctor = window.AudioContext || window.webkitAudioContext;
 		var ctx = (typeof studioAudio !== 'undefined' && studioAudio.ctx) ? studioAudio.ctx : (Ctor ? new Ctor() : null);
 		if (ctx) { window.jawnosSynth.attach(ctx, ctx.destination); }
@@ -927,6 +1190,9 @@
 		synthPopulateLearn();
 		synthRenderOctave();
 		synthFocusOctave();
+		// opening the standalone Synth window hands it the computer keyboard; the
+		// Studio panel only takes it once it is clicked
+		if (standaloneSynthHost()) { keyboardOwner = 'standalone'; }
 		return ctx;
 	};
 
@@ -965,7 +1231,7 @@
 		synthSyncSliders();
 	});
 
-	$(document).on('change', '#synth_sound', function () {
+	$(document).on('change', '.synth_sound', function () {
 		synthSetSound($(this).val());
 	});
 
@@ -974,22 +1240,23 @@
 		window.jawnosSynth.setKnob($(this).attr('param'), $(this).val());
 	});
 
-	$(document).on('click', '#synth_midi_connect', function () {
+	$(document).on('click', '.synth_midi_connect', function () {
 		var el = $(this);
 		el.text('connecting…');
 		window.jawnosSynth.midi.start().then(function () {
 			synthPopulateMidi();
-			el.text(window.jawnosSynth.midi.devices().length ? 'MIDI ready' : 'no MIDI device');
-		}).catch(function () { el.text('MIDI unavailable'); });
+			$('.synth_midi_connect').text(window.jawnosSynth.midi.devices().length ? 'MIDI ready' : 'no MIDI device');
+		}).catch(function () { $('.synth_midi_connect').text('MIDI unavailable'); });
 	});
 
-	$(document).on('change', '#synth_midi', function () {
+	$(document).on('change', '.synth_midi', function () {
 		window.jawnosSynth.midi.select($(this).val());
+		$('.synth_midi').val($(this).val());
 	});
 
-	$(document).on('click', '#synth_keyboard_toggle', function () {
+	$(document).on('click', '.synth_keyboard_toggle', function () {
 		keyboardOn = !keyboardOn;
-		$(this).text('Keys: ' + (keyboardOn ? 'on' : 'off'));
+		$('.synth_keyboard_toggle').text('Keys: ' + (keyboardOn ? 'on' : 'off'));
 		if (!keyboardOn) {
 			Object.keys(keyboardHeld).forEach(function (k) {
 				jawnosSynth.noteOff(keyboardHeld[k]);
@@ -1001,94 +1268,118 @@
 		synthFocusOctave();
 	});
 
-	$(document).on('click', '#synth_arp_toggle', function () {
+	$(document).on('click', '.synth_arp_toggle', function () {
 		var on = window.jawnosSynth.arp.get().on;
 		window.jawnosSynth.arp.set({ on: !on });
-		$(this).text('Arp: ' + (!on ? 'on' : 'off'));
+		$('.synth_arp_toggle').text('Arp: ' + (!on ? 'on' : 'off'));
 	});
 
-	$(document).on('change', '#synth_arp_rate, #synth_arp_mode, #synth_arp_octaves', function () {
+	$(document).on('change', '.synth_arp_rate, .synth_arp_mode, .synth_arp_octaves', function () {
 		window.jawnosSynth.arp.set({
-			rate: $('#synth_arp_rate').val(),
-			mode: $('#synth_arp_mode').val(),
-			octaves: $('#synth_arp_octaves').val()
+			rate: $('.synth_arp_rate').val(),
+			mode: $('.synth_arp_mode').val(),
+			octaves: $('.synth_arp_octaves').val()
 		});
+		var g = window.jawnosSynth.arp.get();
+		$('.synth_arp_rate').val(String(g.rate));
+		$('.synth_arp_mode').val(g.mode);
+		$('.synth_arp_octaves').val(String(g.octaves));
 	});
 
 	// ---- mono / glide ---------------------------------------------------------
-	$(document).on('click', '#synth_mono_toggle', function () {
+	$(document).on('click', '.synth_mono_toggle', function () {
 		var mono = window.jawnosSynth.getPatch().mono;
 		window.jawnosSynth.set('mono', !mono);
-		$(this).text('Mono: ' + (!mono ? 'on' : 'off'));
+		$('.synth_mono_toggle').text('Mono: ' + (!mono ? 'on' : 'off'));
 	});
-	$(document).on('input change', '#synth_glide', function () {
-		window.jawnosSynth.set('glide', parseFloat($(this).val()) / 1000);
+	$(document).on('input change', '.synth_glide', function () {
+		var ms = parseFloat($(this).val());
+		window.jawnosSynth.set('glide', ms / 1000);
+		$('.synth_glide').val(String(ms));
 	});
 
 	// ---- MIDI learn -----------------------------------------------------------
 	function synthPopulateLearn() {
-		var sel = $('#synth_learn_param');
-		if (!sel.length || sel.data('filled')) { return; }
-		window.jawnosSynth.knobNames().forEach(function (name) {
-			sel.append($('<option></option>').attr('value', name).text(name));
+		$('.synth_learn_param').each(function () {
+			var sel = $(this);
+			if (sel.data('filled')) { return; }
+			window.jawnosSynth.knobNames().forEach(function (name) {
+				sel.append($('<option></option>').attr('value', name).text(name));
+			});
+			sel.data('filled', 1);
 		});
-		sel.data('filled', 1);
 	}
-	$(document).on('click', '#synth_learn', function () {
-		var param = $('#synth_learn_param').val();
+	$(document).on('click', '.synth_learn', function () {
+		var param = $('.synth_learn_param').val();
 		window.jawnosSynth.learn.start(param);
-		$('#synth_learn_state').text('learning ' + param + ' — move a knob');
+		$('.synth_learn_state').text('learning ' + param + ' — move a knob');
 	});
-	$(document).on('click', '#synth_learn_clear', function () {
+	$(document).on('click', '.synth_learn_clear', function () {
 		window.jawnosSynth.learn.clear();
-		$('#synth_learn_state').text('learned cleared');
+		$('.synth_learn_state').text('learned cleared');
 	});
 
 	// ---- step sequencer -------------------------------------------------------
 	function synthBuildSeq() {
-		var host = $('#synth_seq');
-		if (!host.length) { return; }
-		host.empty();
-		var g = window.jawnosSynth.seq.get();
-		for (var row = g.rows - 1; row >= 0; row--) {
-			var line = $('<div class="synth_seq_row"></div>');
-			line.append($('<span class="synth_seq_label"></span>').text(window.jawnosSynth.noteName(g.root + row)));
-			for (var step = 0; step < g.steps; step++) {
-				var cell = $('<span class="synth_seq_cell"></span>').attr('row', row).attr('step', step);
-				if (window.jawnosSynth.seq.cell(row, step)) { cell.addClass('on'); }
-				line.append(cell);
+		$('.synth_seq').each(function () {
+			var host = $(this);
+			host.empty();
+			var g = window.jawnosSynth.seq.get();
+			for (var row = g.rows - 1; row >= 0; row--) {
+				var line = $('<div class="synth_seq_row"></div>');
+				line.append($('<span class="synth_seq_label"></span>').text(window.jawnosSynth.noteName(g.root + row)));
+				for (var step = 0; step < g.steps; step++) {
+					var cell = $('<span class="synth_seq_cell"></span>').attr('row', row).attr('step', step);
+					if (window.jawnosSynth.seq.cell(row, step)) { cell.addClass('on'); }
+					line.append(cell);
+				}
+				host.append(line);
 			}
-			host.append(line);
-		}
+		});
 	}
 	$(document).on('click', '.synth_seq_cell', function () {
 		var row = parseInt($(this).attr('row'), 10), step = parseInt($(this).attr('step'), 10);
 		$(this).toggleClass('on', window.jawnosSynth.seq.toggleCell(row, step));
 	});
-	$(document).on('click', '#synth_seq_toggle', function () {
+	$(document).on('click', '.synth_seq_toggle', function () {
 		var on = window.jawnosSynth.seq.get().on;
 		window.jawnosSynth.seq.set({ on: !on });
-		$(this).text('Seq: ' + (!on ? 'on' : 'off'));
+		$('.synth_seq_toggle').text('Seq: ' + (!on ? 'on' : 'off'));
 		synthEnsureAudio();
 	});
-	$(document).on('change', '#synth_seq_rate, #synth_seq_steps', function () {
-		window.jawnosSynth.seq.set({ rate: $('#synth_seq_rate').val(), steps: $('#synth_seq_steps').val() });
+	$(document).on('change', '.synth_seq_rate, .synth_seq_steps', function () {
+		window.jawnosSynth.seq.set({ rate: $('.synth_seq_rate').val(), steps: $('.synth_seq_steps').val() });
+		var g = window.jawnosSynth.seq.get();
+		$('.synth_seq_rate').val(String(g.rate));
+		$('.synth_seq_steps').val(String(g.steps));
 		synthBuildSeq();
 	});
-	$(document).on('click', '#synth_seq_clear', function () {
+	$(document).on('click', '.synth_seq_clear', function () {
 		window.jawnosSynth.seq.clear();
 		$('.synth_seq_cell').removeClass('on');
 	});
 	window.jawnosSynth.seq.onstep(function (step) {
-		var host = $('#synth_seq');
-		if (!host.length) { return; }
-		host.find('.synth_seq_playing').removeClass('synth_seq_playing');
-		host.find('.synth_seq_cell[step="' + step + '"]').addClass('synth_seq_playing');
+		$('.synth_seq').each(function () {
+			var host = $(this);
+			host.find('.synth_seq_playing').removeClass('synth_seq_playing');
+			host.find('.synth_seq_cell[step="' + step + '"]').addClass('synth_seq_playing');
+		});
+	});
+
+	// The last press decides which synth host owns the computer keyboard. A press
+	// anywhere else (the drum map, another Studio panel) hands it back.
+	$(document).on('pointerdown', function (e) {
+		keyboardOwner = synthOwnerFor(e.target);
+	});
+	$(document).on('focusin', function (e) {
+		var owner = synthOwnerFor(e.target);
+		if (owner) { keyboardOwner = owner; }
 	});
 
 	$(document).on('keydown', function (e) {
 		if (!keyboardOn || e.metaKey || e.ctrlKey || e.altKey) { return; }
 		if ($(e.target).is('input, select, textarea, [contenteditable]')) { return; }
+		if (!synthKeysOwned(e)) { return; }
 		var k = String(e.key || '').toLowerCase();
 		if (k === 'z') { keyboardOctave = Math.max(0, keyboardOctave - 1); synthRenderOctave(); synthFocusOctave(); e.preventDefault(); return; }
 		if (k === 'x') { keyboardOctave = Math.min(8, keyboardOctave + 1); synthRenderOctave(); synthFocusOctave(); e.preventDefault(); return; }
@@ -1111,19 +1402,58 @@
 		$('.piano_key[midi="' + note + '"]').removeClass('piano_key_on');
 	});
 
+	// ---- page init -------------------------------------------------------------
+	// The roll, controls and step grid are built once per page, whether the host is
+	// the standalone Synth window or the Studio panel (which may be inserted long
+	// after the page is ready). The guard keeps a second include from initialising
+	// twice; the class-based builders still fill a host that arrives later.
+	var synthPageInited = false;
+
+	function synthStatusTick() {
+		if (document.hidden) { return; }
+		var v = window.jawnosSynth.voices();
+		$('.synth_voice_count').text(v ? (v + ' voice' + (v === 1 ? '' : 's')) : '');
+		var armed = window.jawnosSynth.learn.armed();
+		var mapped = Object.keys(window.jawnosSynth.learn.map()).length;
+		$('.synth_learn_state').text(armed ? ('learning ' + armed + ' — move a knob') : (mapped ? (mapped + ' control' + (mapped === 1 ? '' : 's') + ' learned') : ''));
+	}
+
+	function synthPageInit() {
+		if (synthPageInited || !$('#synth').length) { return false; }
+		synthPageInited = true;
+		pianoInit();
+		$('.synth_sound').val(S.sound);
+		if (standaloneSynthHost()) { keyboardOwner = 'standalone'; }
+		setInterval(synthStatusTick, 250);
+		return true;
+	}
+
+	function synthBuildPanels() {
+		synthBuildKeys(); synthBuildSeq(); synthPopulatePresets(); synthSyncSliders(); synthPopulateMidi(); synthPopulateLearn(); synthRenderOctave();
+	}
+
+	function synthWatchPanels() {
+		if (typeof MutationObserver === 'undefined' || !document.body) { return; }
+		var observer = new MutationObserver(function (records) {
+			var host = false;
+			for (var i = 0; i < records.length && !host; i++) {
+				var added = records[i].addedNodes;
+				for (var j = 0; j < added.length; j++) {
+					var node = added[j];
+					if (node.nodeType !== 1) { continue; }
+					if (node.id === 'synth' || (node.querySelector && node.querySelector('#synth'))) { host = true; break; }
+				}
+			}
+			if (!host) { return; }
+			if (!synthPageInited) { synthPageInit(); }
+			else { synthBuildPanels(); }
+		});
+		observer.observe(document.body, { childList: true, subtree: true });
+	}
+
 	$(function () {
-		if ($('#synth').length) {
-			pianoInit();
-			$('#synth_sound').val(S.sound);
-			setInterval(function () {
-				if (document.hidden) { return; }
-				var v = window.jawnosSynth.voices();
-				$('#synth_voices').text(v ? (v + ' voice' + (v === 1 ? '' : 's')) : '');
-				var armed = window.jawnosSynth.learn.armed();
-				var mapped = Object.keys(window.jawnosSynth.learn.map()).length;
-				$('#synth_learn_state').text(armed ? ('learning ' + armed + ' — move a knob') : (mapped ? (mapped + ' control' + (mapped === 1 ? '' : 's') + ' learned') : ''));
-			}, 250);
-		}
+		synthPageInit();
+		synthWatchPanels();
 	});
 
 	// A studio-hosted panel builds itself on the same classes (its own synth engine
@@ -1140,7 +1470,10 @@
 		$('#studio_synth_hide').show();
 	});
 
-	$(document).on('jawnos_synth_panel', function () { synthBuildKeys(); synthBuildSeq(); synthPopulatePresets(); synthSyncSliders(); });
+	$(document).on('jawnos_synth_panel', function () {
+		synthPageInit();
+		synthBuildPanels();
+	});
 
 	function noteNameToMidi(name) {
 		var m = /^([A-Ga-g])(#|b)?(-?\d+)$/.exec(String(name).replace(/\s+/g, ''));

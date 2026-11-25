@@ -426,8 +426,8 @@ like($code, qr/mastering rack/, 'the panel names the master path');
 
 # --- the panel system and the interior drum window --------------------------
 like($layout, qr/drums: '#studio_drums'/, 'the drums are a registered panel');
-like($layout, qr/var studioPanelNames = \['transport', 'tracks', 'mixer', 'drums'\]/,
-	'the drums are last in the panel taskbar');
+like($layout, qr/var studioPanelNames = \['transport', 'tracks', 'mixer', 'drums', 'synth', 'notes'\]/,
+	'the drums sit in the panel taskbar before the synth and notes windows');
 like($layout, qr/function studioDefaultPanelLayout/, 'the drums take a place in the preset');
 like($layout, qr/drums: \{ left: tracksWidth \+ gap, top: middleTop/,
 	'the preset puts the drums beside the timeline');

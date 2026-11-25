@@ -526,13 +526,21 @@ function studioSaver() {
 		song[i]['mixer'] = { out: [] };
 		mixer[i].media.out.forEach(function(take, ir) {
 			if (!take) { return; }
+			// A note clip's notes are the source of truth and its WAV is only a
+			// browser cache, so it keeps no uuid and no stale blob URL. A real
+			// take keeps its file and may still carry notes for a later edit.
 			song[i]['mixer'].out[ir] = {
-				uuid: take.uuid, startTime: take.startTime, offset: take.offset || 0,
-				duration: take.duration, encoding: take.encoding, src: take.src,
+				uuid: take.note_clip ? null : take.uuid, startTime: take.startTime, offset: take.offset || 0,
+				duration: take.duration, encoding: take.encoding, src: take.note_clip ? null : take.src,
 				loop: take.loop ? 1 : 0,
 				// A bounced take already carries its Out pedals; the reloaded
 				// take must keep skipping them on playback and export.
-				printed: take.printed ? 1 : 0
+				printed: take.printed ? 1 : 0,
+				note_clip: take.note_clip ? 1 : 0,
+				notes: take.notes || null,
+				patch: take.patch || null,
+				beats: take.beats || 0,
+				clip_id: take.clip_id || null
 			};
 		});
 	});

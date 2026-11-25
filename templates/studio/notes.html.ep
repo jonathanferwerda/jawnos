@@ -1,0 +1,180 @@
+<%# The Notes panel: a piano roll over one note clip.
+   A note clip is a take carrying { note_clip, notes: [{n,t,d,v}], beats, patch };
+   `t` and `d` are BEATS, so a tempo change restretches the clip without touching
+   a note. This is the sixth interior Studio window. The panel registry, the
+   geometry and the takes that open here belong to 07_layout.js and the capture
+   code; this file only carries the shell and the editor markup, and
+   public/js/manager/studio/19_notes.js does the drawing and editing.
+
+   Keep the IDs stable: the script addresses them by name. A Close button in the
+   bar hides the panel without losing the take, exactly as the other panels do. %>
+<style>
+	/* Scoped to this panel: the Studio theme variables are already in scope. */
+	#studio_notes {
+		/* A first-open box; the panel registry's inline geometry wins. */
+		width: 540px;
+		height: 340px;
+	}
+	#studio_notes .studio_notes_title {
+		font-weight: 600;
+	}
+	#studio_notes .studio_notes_meta {
+		margin-left: 8px;
+		font-size: 11px;
+		opacity: .7;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	#studio_notes #studio_notes_body {
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		box-sizing: border-box;
+		padding: 4px 6px 2px;
+	}
+	#studio_notes .studio_notes_toolbar {
+		flex: 0 0 auto;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 3px 8px;
+		padding: 1px 0 5px;
+		font-size: 12px;
+	}
+	#studio_notes .studio_notes_toolbar button,
+	#studio_notes .studio_notes_toolbar select {
+		font-size: 12px;
+	}
+	#studio_notes .studio_notes_toolbar button {
+		min-width: 26px;
+	}
+	#studio_notes .studio_notes_spacer {
+		flex: 1 1 auto;
+	}
+	#studio_notes .studio_notes_editor {
+		position: relative;
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: row;
+		overflow: hidden;
+		box-sizing: border-box;
+		border: 1px solid var(--line, #333);
+		border-radius: 4px;
+		background: var(--panel-2, #1b1f27);
+	}
+	#studio_notes #studio_notes_keys {
+		flex: 0 0 44px;
+		width: 44px;
+		height: 100%;
+		display: block;
+		cursor: var(--jawnos-cursor-default, default);
+	}
+	#studio_notes #studio_notes_grid {
+		flex: 1 1 auto;
+		width: auto;
+		height: 100%;
+		min-width: 0;
+		display: block;
+		touch-action: none;
+		cursor: var(--jawnos-cursor-crosshair, crosshair);
+	}
+	#studio_notes .studio_notes_hint {
+		position: absolute;
+		inset: 0;
+		display: none;
+		align-items: center;
+		justify-content: center;
+		padding: 16px;
+		box-sizing: border-box;
+		text-align: center;
+		font-size: 13px;
+		color: var(--ink, #e8edf5);
+		background: var(--panel-2, #1b1f27);
+		opacity: .88;
+		pointer-events: none;
+	}
+	#studio_notes.studio_notes_empty .studio_notes_hint {
+		display: flex;
+	}
+	#studio_notes.studio_notes_empty #studio_notes_keys,
+	#studio_notes.studio_notes_empty #studio_notes_grid,
+	#studio_notes.studio_notes_empty #studio_notes_velocity_canvas {
+		opacity: .25;
+	}
+	#studio_notes .studio_notes_velocity {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		height: 42px;
+		padding-top: 4px;
+		box-sizing: border-box;
+	}
+	#studio_notes .studio_notes_velocity_label {
+		flex: 0 0 44px;
+		font-size: 11px;
+		opacity: .75;
+	}
+	#studio_notes #studio_notes_velocity_canvas {
+		flex: 1 1 auto;
+		min-width: 0;
+		height: 34px;
+		display: block;
+		border: 1px solid var(--line, #333);
+		border-radius: 3px;
+		background: var(--panel-2, #1b1f27);
+	}
+	#studio_notes #studio_notes_velocity_readout {
+		flex: 0 0 66px;
+		font-size: 11px;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+</style>
+<div id="studio_notes" class="studio_panel studio_notes_empty" data-studio-notes-open="0">
+	<div class="studio_panel_bar">
+		<span class="studio_drag_handle" data-studio-drag="notes" hint="<%= &subs::ui('Drag to move the note editor') %>"><%= &subs::ui('Notes') %></span>
+		<span id="studio_notes_title" class="studio_notes_title"><%= &subs::ui('No clip') %></span>
+		<span id="studio_notes_meta" class="studio_notes_meta" aria-live="polite"></span>
+		<span class="studio_panel_buttons">
+			<button class="studio_panel_pin hover" data-panel="notes" aria-pressed="false" hint="<%= &subs::ui('Keep this panel above the others') %>">📌</button>
+			<button class="studio_panel_min hover" data-panel="notes" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
+			<button class="studio_panel_max hover" data-panel="notes" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
+			<button id="studio_notes_close" class="studio_panel_close studio_notes_close hover" data-panel="notes" hint="<%= &subs::ui('Close the note editor') %>" aria-label="<%= &subs::ui('Close the note editor') %>">×</button>
+		</span>
+	</div>
+	<span class="studio_resize_handle" data-studio-resize="notes" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+	<span class="studio_panel_bottom" data-studio-bottom="notes" hint="<%= &subs::ui('Drag the bottom edge to resize this panel\'s height') %>"></span>
+	<div id="studio_notes_body">
+		<div class="studio_notes_toolbar">
+			<button id="studio_notes_zoom_out" class="hover" aria-label="<%= &subs::ui('See more of the clip') %>" hint="<%= &subs::ui('See more of the clip') %>">&minus;</button>
+			<button id="studio_notes_zoom_in" class="hover" aria-label="<%= &subs::ui('See less of the clip, in more detail') %>" hint="<%= &subs::ui('See less of the clip, in more detail') %>">+</button>
+			<label class="studio_notes_snap_label"><%= &subs::ui('Snap') %>
+				<select id="studio_notes_snap" aria-label="<%= &subs::ui('Choose the note grid snap') %>" hint="<%= &subs::ui('Where a note lands when it is moved or added') %>">
+					<option value="0"><%= &subs::ui('Off') %></option>
+					<option value="0.25">1/4</option>
+					<option value="0.125">1/8</option>
+					<option value="0.0625" selected>1/16</option>
+					<option value="0.03125">1/32</option>
+				</select>
+			</label>
+			<span class="studio_notes_spacer"></span>
+			<button id="studio_notes_clear" class="hover" hint="<%= &subs::ui('Remove every note from this clip') %>"><%= &subs::ui('Clear') %></button>
+			<button class="studio_notes_close hover" hint="<%= &subs::ui('Close the note editor') %>"><%= &subs::ui('Close') %></button>
+		</div>
+		<div id="studio_notes_editor" class="studio_notes_editor">
+			<canvas id="studio_notes_keys" class="studio_notes_keys" width="44" height="260" role="img" aria-label="<%= &subs::ui('Piano keys beside the note grid') %>"></canvas>
+			<canvas id="studio_notes_grid" class="studio_notes_grid" width="480" height="260" tabindex="0" aria-label="<%= &subs::ui('Piano roll grid. Click an empty place to add a note, drag a note to move it, drag its right edge to change its length, right-click a note for its velocity.') %>"></canvas>
+			<div id="studio_notes_empty" class="studio_notes_hint"><%= &subs::ui('Right-click a synth loop to edit its notes.') %></div>
+		</div>
+		<div id="studio_notes_velocity_lane" class="studio_notes_velocity">
+			<span class="studio_notes_velocity_label"><%= &subs::ui('Velocity') %></span>
+			<canvas id="studio_notes_velocity_canvas" width="480" height="34" aria-label="<%= &subs::ui('The velocity of every note in the clip') %>"></canvas>
+			<span id="studio_notes_velocity_readout" class="studio_notes_velocity_readout">—</span>
+		</div>
+	</div>
+</div>

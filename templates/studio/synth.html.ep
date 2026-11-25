@@ -1,0 +1,31 @@
+<% use Mojo::JSON; %>
+<%# The Synth is an interior Studio window carrying the whole standalone surface
+   (synth_inner) inside its own #synth, so the existing page init in
+   public/js/manager/synth/01_engine.js builds the keys, knobs and step grid here
+   too. The shared styles are scoped to #synth, so the panel body inherits them.
+   The saved loop library is an app setting published as an array; the browser
+   part is the integrator's script. %>
+<script>window.jawnos_studio_synth_loops = <%== Mojo::JSON::encode_json(eval { Mojo::JSON::decode_json($settings->{'synth_loops'} || '[]') } || []) %>;</script>
+<%= include 'synth_style' %>
+<div id="studio_synth" class="studio_panel">
+	<div class="studio_panel_bar">
+		<span class="studio_drag_handle" data-studio-drag="synth" hint="<%= &subs::ui('Drag to move the synth') %>"><%= &subs::ui('Synth') %></span>
+		<span class="studio_panel_buttons">
+			<button class="studio_panel_pin hover" data-panel="synth" aria-pressed="false" hint="<%= &subs::ui('Keep this panel above the others') %>">📌</button>
+			<button class="studio_panel_min hover" data-panel="synth" hint="<%= &subs::ui('Minimize this panel') %>">–</button>
+			<button class="studio_panel_max hover" data-panel="synth" aria-pressed="false" hint="<%= &subs::ui('Maximize or restore this panel') %>">□</button>
+		</span>
+	</div>
+	<span class="studio_resize_handle" data-studio-resize="synth" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+	<span class="studio_panel_bottom" data-studio-bottom="synth" hint="<%= &subs::ui('Drag the bottom edge to resize this panel\'s height') %>"></span>
+	<%# The loop library sits above the scrolling surface so Save and Load stay in
+	   reach however small the band is. %>
+	<div class="studio_synth_library">
+		<input id="studio_synth_save_name" class="studio_synth_save_name" placeholder="<%= &subs::ui('Loop name') %>" hint="<%= &subs::ui('Name this synth loop') %>">
+		<button id="studio_synth_save_loop" class="studio_synth_save_loop hover" hint="<%= &subs::ui('Save the synth patch as a loop') %>"><%= &subs::ui('Save loop') %></button>
+		<select id="studio_synth_loops" class="studio_synth_loops" hint="<%= &subs::ui('Choose a synth loop') %>"><option value=""><%= &subs::ui('No saved loop') %></option></select>
+		<button id="studio_synth_load_loop" class="hover" hint="<%= &subs::ui('Load the chosen synth loop') %>"><%= &subs::ui('Load') %></button>
+		<button id="studio_synth_delete_loop" class="hover" hint="<%= &subs::ui('Delete the chosen synth loop') %>"><%= &subs::ui('Delete') %></button>
+	</div>
+	<div id="synth" class="studio_synth_body"><%= include 'synth_inner' %></div>
+</div>

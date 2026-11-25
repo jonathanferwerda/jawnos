@@ -1,4 +1,4 @@
-// Studio layout: four interior panel windows, their taskbar and the dynamic
+// Studio layout: six interior panel windows, their taskbar and the dynamic
 // track list. The channel state itself still lives in mixer[] and
 // studioAudio.channels[]; these helpers only move the existing controls around
 // and call the same apply functions.
@@ -24,10 +24,12 @@ var studioPanelSelectors = {
 	transport: '#studio_transport_panel',
 	tracks: '#studio_tracks_panel',
 	mixer: '#studio_mixer',
-	drums: '#studio_drums'
+	drums: '#studio_drums',
+	synth: '#studio_synth',
+	notes: '#studio_notes'
 };
 
-var studioPanelNames = ['transport', 'tracks', 'mixer', 'drums'];
+var studioPanelNames = ['transport', 'tracks', 'mixer', 'drums', 'synth', 'notes'];
 var studioPanelState = {};
 var studioPanelZ = 10;
 // Pinning is a stacking choice, not a geometry: pinned panels live in their own
@@ -44,7 +46,9 @@ var studioLegacyHidden = {
 	transport: 'hide_transport',
 	tracks: 'hide_tracks',
 	mixer: 'hide_channel_strips',
-	drums: 'hide_drums'
+	drums: 'hide_drums',
+	synth: 'hide_synth',
+	notes: 'hide_notes'
 };
 
 var STUDIO_PANEL_MIN_WIDTH = 180;
@@ -101,6 +105,8 @@ function studioPanelBox(left, top, width, height, size) {
 
 // The first-open layout, and what Arrange lays down: the DAW reading order in
 // interior windows. A narrow desk stacks the same panels one above the other.
+// The synth gets a full-width band of its own so its toolbar fits; the notes
+// editor is a centred overlay over the main working band.
 function studioDefaultPanelLayout(size) {
 	size = size || studioPanelDeskSize();
 	var gap = 4;
@@ -109,28 +115,50 @@ function studioDefaultPanelLayout(size) {
 	if (width < 720) {
 		var transportH = Math.max(64, Math.min(104, Math.round(height * 0.18)));
 		var drumsH = Math.max(110, Math.min(190, Math.round(height * 0.24)));
+		var synthH = Math.max(110, Math.min(190, Math.round(height * 0.22)));
 		var mixerH = Math.max(110, Math.min(170, Math.round(height * 0.24)));
-		var tracksH = Math.max(STUDIO_PANEL_MIN_HEIGHT, height - transportH - drumsH - mixerH - gap * 3);
+		var tracksH = Math.max(STUDIO_PANEL_MIN_HEIGHT, height - transportH - drumsH - synthH - mixerH - gap * 4);
 		var drumsTop = transportH + gap + tracksH + gap;
-		var mixerTop = drumsTop + drumsH + gap;
+		var synthTop = drumsTop + drumsH + gap;
+		var mixerTop = synthTop + synthH + gap;
+		var notesW = Math.round(width * 0.78);
+		var notesH = Math.round(height * 0.55);
 		return {
 			transport: { left: 0, top: 0, width: width, height: transportH },
 			tracks: { left: 0, top: transportH + gap, width: width, height: tracksH },
 			drums: { left: 0, top: drumsTop, width: width, height: drumsH },
-			mixer: { left: 0, top: mixerTop, width: width, height: mixerH }
+			synth: { left: 0, top: synthTop, width: width, height: synthH },
+			mixer: { left: 0, top: mixerTop, width: width, height: mixerH },
+			notes: {
+				left: Math.round((width - notesW) / 2),
+				top: Math.round((height - notesH) / 2),
+				width: notesW,
+				height: notesH
+			}
 		};
 	}
 	var transportHeight = Math.max(64, Math.min(112, Math.round(height * 0.16)));
 	var mixerHeight = Math.max(120, Math.min(220, Math.round(height * 0.28)));
+	var synthHeight = Math.max(150, Math.min(220, Math.round(height * 0.25)));
 	var middleTop = transportHeight + gap;
-	var middleHeight = Math.max(STUDIO_PANEL_MIN_HEIGHT, height - transportHeight - mixerHeight - gap * 2);
+	var middleHeight = Math.max(STUDIO_PANEL_MIN_HEIGHT, height - transportHeight - synthHeight - mixerHeight - gap * 3);
 	var drumsWidth = Math.max(300, Math.min(380, Math.round(width * 0.36)));
 	var tracksWidth = Math.max(STUDIO_PANEL_MIN_WIDTH, width - drumsWidth - gap);
+	var synthTop = middleTop + middleHeight + gap;
+	var notesWidth = Math.round(width * 0.70);
+	var notesHeight = Math.round(middleHeight * 0.70);
 	return {
 		transport: { left: 0, top: 0, width: width, height: transportHeight },
 		tracks: { left: 0, top: middleTop, width: tracksWidth, height: middleHeight },
 		drums: { left: tracksWidth + gap, top: middleTop, width: drumsWidth, height: middleHeight },
-		mixer: { left: 0, top: height - mixerHeight, width: width, height: mixerHeight }
+		synth: { left: 0, top: synthTop, width: width, height: synthHeight },
+		mixer: { left: 0, top: height - mixerHeight, width: width, height: mixerHeight },
+		notes: {
+			left: Math.round((width - notesWidth) / 2),
+			top: middleTop + Math.round((middleHeight - notesHeight) / 2),
+			width: notesWidth,
+			height: notesHeight
+		}
 	};
 }
 
@@ -242,6 +270,10 @@ function studioLoadPanelStates() {
 			state.maximized = !!(saved && saved.maximized);
 			state.pinned = !!(saved && saved.pinned);
 		}
+		// The note editor is a working surface over the desk, not part of the
+		// first-open arrangement: with no saved record it starts minimized and
+		// stays out of the way until studioNotesOpen() restores it.
+		if (name === 'notes' && !saved) { state.minimized = true; }
 		var box = studioPanelBox(state.left, state.top, state.width, state.height);
 		state.left = box.left;
 		state.top = box.top;
@@ -254,9 +286,12 @@ function studioLoadPanelStates() {
 }
 
 // Arrange is a one-press preset: every panel comes back visible, unmaximized
-// and laid out in the DAW reading order.
+// and laid out in the DAW reading order. The note editor is the exception: it
+// only counts as open when a note clip is loaded (data-studio-notes-open="1"),
+// so Arrange leaves it minimized rather than covering the tracks and drums.
 function studioArrangeWindows(persist) {
 	var layout = studioDefaultPanelLayout(studioPanelDeskSize());
+	var notes_open = $('#studio_notes').attr('data-studio-notes-open') === '1';
 	$.each(studioPanelNames, function (i, name) {
 		var state = studioPanelStateFor(name);
 		var box = layout[name];
@@ -266,6 +301,7 @@ function studioArrangeWindows(persist) {
 		state.height = box.height;
 		state.minimized = false;
 		state.maximized = false;
+		if (name === 'notes' && !notes_open) { state.minimized = true; }
 		studioApplyPanelGeometry(name);
 		if (persist) { studioPersistPanelState(name); }
 	});
@@ -358,7 +394,7 @@ $(document).on('click', '.studio_panel_menu .studio_menu_row', function () {
 	else if (action === 'minimize') { studioPanelToggleAllMinimized(true); }
 });
 
-// Keyboard: Ctrl+Alt+1..4 raises that panel (or brings it back), 0 toggles all
+// Keyboard: Ctrl+Alt+1..6 raises that panel (or brings it back), 0 toggles all
 // minimized, T tiles and C cascades. The drum key map ignores modifiers, so the
 // same letters still play drums without Ctrl+Alt.
 function studioPanelShortcutTyping(e) {
@@ -375,7 +411,7 @@ $(document).on('keydown', function (e) {
 	if (typeof topWindow === 'function' && (topWindow() || '') !== 'studio') { return; }
 	if (studioPanelShortcutTyping(e)) { return; }
 	var key = String(e.key || '').toLowerCase();
-	var panel_keys = { '1': 'transport', '2': 'tracks', '3': 'mixer', '4': 'drums' };
+	var panel_keys = { '1': 'transport', '2': 'tracks', '3': 'mixer', '4': 'drums', '5': 'synth', '6': 'notes' };
 	if (panel_keys[key]) {
 		studioPanelSetMinimized(panel_keys[key], false, true);
 		studioPanelRaise(panel_keys[key]);

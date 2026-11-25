@@ -1,4 +1,4 @@
-# tests-for: engine/src/playback.rs engine/src/socket.rs lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/studio/01_transport.js public/js/manager/studio/11_drums.js public/js/manager/synth/01_engine.js templates/studio/drums.html.ep templates/synth.html.ep perl/help/topics_apps.pl
+# tests-for: engine/src/playback.rs engine/src/socket.rs lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/studio/01_transport.js public/js/manager/studio/11_drums.js public/js/manager/synth/01_engine.js templates/studio/drums.html.ep templates/synth.html.ep templates/synth_inner.html.ep templates/synth_style.html.ep perl/help/topics_apps.pl
 # covers:    the choice between the engine's voices and the browser's, so a
 #            person can audition what the transport will play. The drum panel
 #            carries a Sound list saved with the song; the synth app carries its
@@ -32,6 +32,7 @@ my $mixer      = read_file("$root/engine/src/mixer.rs");
 my $inputs_js  = read_file("$root/public/js/manager/studio/05_inputs.js");
 my $drums_tpl  = read_file("$root/templates/studio/drums.html.ep");
 my $synth_tpl  = read_file("$root/templates/synth.html.ep");
+my $synth_inner = read_file("$root/templates/synth_inner.html.ep");
 my $help       = read_file("$root/perl/help/topics_apps.pl");
 
 # --- the engine renders the synth on the running transport ------------------
@@ -51,7 +52,7 @@ like( $socket, qr/fn synth_command\(/, 'the synth command exists' );
 like( $socket, qr/fn drums_command\(/, 'the drums command exists' );
 like( $socket, qr/fn parse_synth_patch\(/, 'the browser patch is parsed, not passed through' );
 like( $socket, qr/\\"drums\\":\{\},\\"drum_kit\\":\\"\{\}\\",\\"synth\\":\{\}/, 'status reports the synth beside the drums' );
-like( $socket, qr/\\"synth\\":0,\\"apps\\":0,\\"monitor_input\\"/, 'a resting transport reports no synth and no app strips' );
+like( $socket, qr/\\"synth\\":0,\\"synth_clips\\":0,\\"apps\\":0,\\"monitor_input\\"/, 'a resting transport reports no synth, no scheduled clips and no app strips' );
 
 # --- the manager forwards them through one helper ---------------------------
 like( $engine_pm, qr/sub audio_engine_synth/, 'the Perl client speaks the synth command' );
@@ -97,8 +98,10 @@ like( $synth, qr/engineSendPatch|action: 'patch'/, 'the patch is sent once per c
 like( $synth, qr/engineApi\('note'/, 'a key event is one note' );
 like( $synth, qr/engineApi\('all_off'/, 'letting go releases every engine voice' );
 like( $synth, qr/engineFallback/, 'a refused note falls back to the browser' );
-like( $synth_tpl, qr/id="synth_sound"/, 'the synth toolbar has a Sound list' );
-like( $synth_tpl, qr/<option value="engine" selected>.*<option value="browser">/s,
+like( $synth_tpl, qr#<div id="synth"><%= include 'synth_inner' %></div>#, 'the standalone page is the shared surface in #synth' );
+like( $synth_tpl, qr#<%= include 'synth_style' %>#, 'with the shared styles' );
+like( $synth_inner, qr/id="synth_sound"/, 'the synth toolbar has a Sound list' );
+like( $synth_inner, qr/<option value="engine" selected>.*<option value="browser">/s,
 	'with the engine first' );
 
 # --- the transport silences the engine chart for the browser choice ---------

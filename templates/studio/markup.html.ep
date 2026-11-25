@@ -204,6 +204,8 @@
 			<button class="studio_panel_task hover" data-panel="tracks" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Tracks') %></button>
 			<button class="studio_panel_task hover" data-panel="mixer" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Channels') %></button>
 			<button class="studio_panel_task hover" data-panel="drums" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Drums') %></button>
+			<button class="studio_panel_task hover" data-panel="synth" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Synth') %></button>
+			<button class="studio_panel_task hover" data-panel="notes" aria-pressed="true" hint="<%= &subs::ui('Show this panel, or minimize it') %>"><%= &subs::ui('Notes') %></button>
 		</div>
 		<%# Effects are added from the pedalboard now, so this end of the bar
 		   carries the track action instead of a second effect palette. %>
@@ -211,8 +213,11 @@
 	</div>
 	<div id="studio_grid" class="studio_grid">
 	<%# The drum machine is an interior panel window; its own template carries
-	   its data, its markup and its script. %>
+	   its data, its markup and its script. The full Synth surface and the note
+	   editor are interior windows too. %>
 	<%= include 'studio/drums' %>
+	<%= include 'studio/synth' %>
+	<%= include 'studio/notes' %>
 	<div id="studio_tracks_panel" class="studio_panel">
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="tracks" hint="<%= &subs::ui('Drag to move the track listing') %>"><%= &subs::ui('Tracks') %></span>
