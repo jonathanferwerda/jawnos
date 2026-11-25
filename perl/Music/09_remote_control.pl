@@ -306,6 +306,9 @@ sub music_output_catalogue {
 		next if $self && (($rm->{'signatorial'} || '') eq $self);
 		my $key = $rm->{'fqdn'} || $rm->{'ip'} || '';
 		next unless length $key;
+		# Loopback is this machine under another name, never a speaker: a
+		# peer row left with 127.0.0.1 is a stale address, not an output.
+		next if $key =~ /^(?:127\.|localhost$|\[?::1\]?$)/i;
 		my $label = &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key;
 		$add->($key, $label);
 	}

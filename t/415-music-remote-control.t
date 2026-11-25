@@ -286,6 +286,7 @@ like($queue_src, qr/\&subs::machine_name\(\) \|\| \&subs::ui\('Local'\)/, 'a loc
 		{ uuid => 'u1', hostname => 'Laptop', fqdn => 'laptop.jonathanferwerda.com', ip => '1.2.3.4', connection => 'active', device => 'computer' },
 		{ uuid => 'u2', hostname => 'hub', fqdn => 'hub.jonathanferwerda.com', ip => '1.2.3.5', connection => 'active', device => 'server' },
 		{ uuid => 'u3', hostname => 'me', ip => '127.0.0.1' },
+		{ uuid => 'u4', hostname => 'Dev', fqdn => '127.0.0.1', ip => '127.0.0.1', connection => 'active', device => 'computer' },
 	] };
 	local *subs::signatorial_designer = sub { return 'SELF' };
 	local *subs::machine_name = sub { return 'Table' };
@@ -295,7 +296,7 @@ like($queue_src, qr/\&subs::machine_name\(\) \|\| \&subs::ui\('Local'\)/, 'a loc
 	is($catalogue->{'current'}, 'me', 'the output in use is the first one on');
 	is_deeply([ map { $_->{'key'} } @{$catalogue->{'outputs'}} ],
 		[ 'me', 'srv', 'laptop.jonathanferwerda.com', 'hub.jonathanferwerda.com' ],
-		'the catalogue is this machine, the server, and the reachable peers, never the synthetic self row');
+		'the catalogue is this machine, the server, and the reachable peers, never the synthetic self row or a loopback address');
 	is($catalogue->{'outputs'}[0]{'label'}, 'Table (internal speaker)', 'the machine output names itself and its speaker');
 	my (@writes, @sent);
 	local *subs::setting_setter = sub { push @writes, $_[0] };
