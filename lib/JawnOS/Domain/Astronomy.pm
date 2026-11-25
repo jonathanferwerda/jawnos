@@ -896,7 +896,7 @@ sub astronomy_measure_write ($app, $values, $timestamp = undef, $opts = {}) {
 	$restore_zone->();
 	my $rows = eval {
 		&db_query(
-			"select uuid, timestamp, measures from appointments where app = ? and type = 'measure'"
+			"select uuid, timestamp, measures, warranty, seen from appointments where app = ? and type = 'measure'"
 			. " and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ?"
 			. " order by cast(timestamp as integer) desc",
 			$app, $day_begin, $day_end
@@ -905,6 +905,18 @@ sub astronomy_measure_write ($app, $values, $timestamp = undef, $opts = {}) {
 	my $want = { %{$values} };
 	delete $want->{location};
 	my $entry_ts = $timestamp + 0;
+	# A reading records a moment that has happened, so the row may never be dated
+	# ahead of the clock. Noon is the stable representative time for its day,
+	# used once it has passed; before then the row takes the reading's own moment
+	# (normally now), because a future timestamp is an appointment to every other
+	# reader - the upcoming list, the alarm, and the watch.
+	my $now = &rightNow();
+	my $row_ts = $day_begin + 12 * 3600 * 1000;
+	$row_ts = $now if $row_ts > $now;
+	# A permanent reading carries the same long warranty as every other measure
+	# row. Without one the culler never expires it, and the appointment reads as
+	# a record with no term.
+	my $warranty = &ago_calc('-10y', $now);
 	my $clean = sub {
 		my ($v) = @_;
 		return undef unless defined $v && !ref $v && length "$v";
@@ -923,13 +935,22 @@ sub astronomy_measure_write ($app, $values, $timestamp = undef, $opts = {}) {
 			$entry->{$key} = $value;
 			$dirty = 1;
 		}
-		return $row->{'uuid'} unless $dirty;
-		$entry->{'ts'} = $entry_ts;
-		$entry->{'uuid'} ||= substr(md5_sum($app . '-' . $row->{'uuid'} . '-' . $entry_ts), 0, 32);
-		$measures->[-1] = $entry;
-		&db_update('appointments',
-			{ measures => encode_json($measures), server_time => &rightNow() },
-			{ uuid => $row->{'uuid'}, app => $app });
+		# A row written before this rule may have no warranty, no `seen` flag and a
+		# timestamp ahead of the clock. The next pass repairs those in place, even
+		# when the reading itself is unchanged.
+		my $fix = {};
+		$fix->{'warranty'} = $warranty unless defined $row->{'warranty'} && $row->{'warranty'} =~ /\S/;
+		$fix->{'seen'} = 'yes' unless defined $row->{'seen'} && $row->{'seen'} eq 'yes';
+		$fix->{'timestamp'} = $row_ts if (0 + ($row->{'timestamp'} || 0)) > $now;
+		if ($dirty) {
+			$entry->{'ts'} = $entry_ts;
+			$entry->{'uuid'} ||= substr(md5_sum($app . '-' . $row->{'uuid'} . '-' . $entry_ts), 0, 32);
+			$measures->[-1] = $entry;
+			$fix->{'measures'} = encode_json($measures);
+		}
+		return $row->{'uuid'} unless $dirty || scalar keys %{$fix};
+		$fix->{'server_time'} = &rightNow();
+		&db_update('appointments', $fix, { uuid => $row->{'uuid'}, app => $app });
 		return $row->{'uuid'};
 	}
 	my @clean;
@@ -945,7 +966,7 @@ sub astronomy_measure_write ($app, $values, $timestamp = undef, $opts = {}) {
 	$entry{'uuid'} = $uuid . '-astronomy';
 	&db_insert('appointments', {
 		app => $app,
-		timestamp => $day_begin + 12 * 3600 * 1000,
+		timestamp => $row_ts,
 		type => 'measure',
 		duration => 1000,
 		measures => encode_json([ \%entry ]),
@@ -953,6 +974,8 @@ sub astronomy_measure_write ($app, $values, $timestamp = undef, $opts = {}) {
 		server_time => &rightNow(),
 		device => (&subs::device_setter() // ''),
 		source => 'astronomy',
+		seen => 'yes',
+		warranty => $warranty,
 	});
 	return $entry{'uuid'};
 }

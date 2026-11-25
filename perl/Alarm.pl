@@ -60,7 +60,10 @@ sub alarm_clock() {
 		# pass at once, so a short window still shows both ends
 		my $retry_stop = 0;
 		my $next_moment = $last_moment + (2 * 1000);
-		my $query = &subs::db_query('select * from appointments where (timestamp <= ? and seen is null) or ((type = ? or type = ? or type = ? or type=? or type = ?) and stop_timestamp is not null and stop_timestamp <= ? and stop_seen is null ) order by timestamp',
+		# A daily measurement is a reading, not an appointment to announce. It is
+		# left out here as well as on the start menu, so a future noon anchor can
+		# never wake the house for a reading.
+		my $query = &subs::db_query("select * from appointments where coalesce(type, '') <> 'measure' and ((timestamp <= ? and seen is null) or ((type = ? or type = ? or type = ? or type=? or type = ?) and stop_timestamp is not null and stop_timestamp <= ? and stop_seen is null )) order by timestamp",
 			$next_moment, 'start','record','video','audio','screen',$next_moment);
 
 		my $alarm = $query->hashes;

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Astronomy.pm lib/JawnOS/Domain/Budget2.pm lib/JawnOS/Domain/Evaluation.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Domain/Web.pm templates/apps/weather/now.html.ep templates/apps/weather/style.html.ep templates/handbook/evaluation.html.ep templates/apps/evaluation_wide_controls.html.ep public/js/manager/weather.js perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl scripts/moon_backfill.pl scripts/space_weather_backfill.pl
+# tests-for: lib/JawnOS/Domain/Astronomy.pm lib/JawnOS/Domain/Budget2.pm lib/JawnOS/Domain/Evaluation.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Domain/Web.pm templates/apps/weather/now.html.ep templates/apps/weather/style.html.ep templates/handbook/evaluation.html.ep templates/apps/evaluation_wide_controls.html.ep public/js/manager/weather.js perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl scripts/moon_backfill.pl scripts/space_weather_backfill.pl perl/Alarm.pl
 # covers:    the moon computed locally (no scraper), NOAA's space-weather products
 #            parsed into one reading, the measure writer/backfill, the whole-house
 #            digest and its automatic fit, the manual-only guard, and the weather
@@ -293,7 +293,60 @@ sub utc_ms {
 	&subs::astronomy_measure_write('moon', { illumination => 50 }, 1200);
 	is($zone_seen, 'America/New_York', 'the day bounds are computed in the house zone');
 	is($ENV{'TZ'}, $before, 'and the process zone is put back afterwards');
-	is($inserted[0][1]{'timestamp'}, 1000 + 12 * 3600 * 1000, 'the row is anchored at noon of that day');
+	is($inserted[0][1]{'timestamp'}, 1500, 'before noon the row is stamped at the moment, not ahead of the clock');
+	is($inserted[0][1]{'seen'}, 'yes', 'a reading is not an appointment to announce');
+	ok(defined $inserted[0][1]{'warranty'} && $inserted[0][1]{'warranty'} =~ /^\d{12,}$/ && $inserted[0][1]{'warranty'} > 1500,
+		'and it carries the house warranty rather than none');
+}
+
+# --- after noon the stable noon anchor is used ------------------------------
+{
+	my (@inserted, %set);
+	my $day_begin = utc_ms(2026, 11, 25, 5, 0, 0);   # midnight Eastern
+	my $now = utc_ms(2026, 11, 25, 18, 0, 0);        # 1pm Eastern
+	local *subs::clock_zone_house = sub { return 'America/New_York' };
+	local *subs::period_bounds = sub { return ($day_begin, $day_begin + 86400000) };
+	local *subs::rightNow = sub { return $now };
+	local *subs::device_setter = sub { return 'test-device' };
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::setting_setter = sub { my ($d) = @_; $set{ $d->{'setting'} } = $d->{'value'}; };
+	local *subs::db_insert = sub { push @inserted, [ @_ ] };
+	local *subs::db_query = sub { return FakeResult->new([]) };
+	&subs::astronomy_measure_write('space_weather', { kp => 2 }, $now);
+	is($inserted[0][1]{'timestamp'}, $day_begin + 12 * 3600 * 1000,
+		"once noon has passed the row sits at the day's noon");
+}
+
+# --- a row from before the rule is repaired in place ------------------------
+{
+	my (@inserted, @updated, %set);
+	my $day_begin = utc_ms(2026, 11, 25, 5, 0, 0);
+	my $now = utc_ms(2026, 11, 25, 18, 0, 0);
+	local *subs::clock_zone_house = sub { return 'America/New_York' };
+	local *subs::period_bounds = sub { return ($day_begin, $day_begin + 86400000) };
+	local *subs::rightNow = sub { return $now };
+	local *subs::device_setter = sub { return 'test-device' };
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::setting_setter = sub { my ($d) = @_; $set{ $d->{'setting'} } = $d->{'value'}; };
+	local *subs::db_insert = sub { push @inserted, [ @_ ] };
+	local *subs::db_update = sub { push @updated, [ @_ ] };
+	local *subs::db_query = sub {
+		return FakeResult->new([ {
+			uuid => 'old-row',
+			timestamp => $day_begin + 12 * 3600 * 1000 + 86400000,
+			measures => encode_json([ { kp => 2 } ]),
+			warranty => '',
+			seen => undef,
+		} ]);
+	};
+	my $uuid = &subs::astronomy_measure_write('space_weather', { kp => 2 }, $now);
+	is($uuid, 'old-row', 'the day keeps its row');
+	is(scalar @inserted, 0, 'and nothing is inserted');
+	is(scalar @updated, 1, 'an unchanged reading still repairs the row');
+	is($updated[0][1]{'seen'}, 'yes', 'the missing seen flag is added');
+	ok(defined $updated[0][1]{'warranty'} && $updated[0][1]{'warranty'} > $now, 'the missing warranty is added');
+	is($updated[0][1]{'timestamp'}, $day_begin + 12 * 3600 * 1000,
+		'and a future timestamp is pulled back to noon');
 }
 
 # --- the backfill walks local days and writes each one ----------------------
@@ -485,6 +538,12 @@ sub utc_ms {
 		'the space weather backfill script exists');
 	like(read_file("$root/public/js/manager/weather.js"), qr/weather_space_local/,
 		'the card has a local magnetic field section');
+}
+
+# --- the alarm never wakes the house for a reading --------------------------
+{
+	my $alarm = read_file("$root/perl/Alarm.pl");
+	like($alarm, qr/coalesce\(type, ''\) <> 'measure'/, 'the alarm query leaves a daily measurement out');
 }
 
 done_testing();

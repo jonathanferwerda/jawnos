@@ -176,7 +176,10 @@ sub next_appointment_time {
 	$last_moment = &subs::rightNow() unless $last_moment;
 	my $next_moment = $last_moment + (7 * 24 * 60 * 60 * 1000);
 	my $next_values = [];
-	my $next_appts = &subs::db_query('select app,uuid,timestamp,stop_timestamp,next_duty from appointments where (timestamp >= ? and seen is null) or ((type = ? or type = ? or type = ? or type=? or type = ?) and stop_timestamp is not null and stop_timestamp >= ? and stop_seen is null ) order by timestamp limit ?',
+	# A daily measurement is a reading, not an event still to come. It is left
+	# out here as well as on the start menu, so a row dated later today can never
+	# be announced as the next appointment.
+	my $next_appts = &subs::db_query("select app,uuid,timestamp,stop_timestamp,next_duty from appointments where coalesce(type, '') <> 'measure' and ((timestamp >= ? and seen is null) or ((type = ? or type = ? or type = ? or type=? or type = ?) and stop_timestamp is not null and stop_timestamp >= ? and stop_seen is null )) order by timestamp limit ?",
 		$last_moment, 'start','record','video','audio','screen',$last_moment,$limit)->hashes;
 	push @{$next_appts}, @{&subs::db_query('select app,uuid,next_duty,timestamp,stop_timestamp from appointments where duties is not null and next_duty >= ? and next_duty is not null limit ?', $last_moment,$limit)->hashes};
 	my @seen_uuids;

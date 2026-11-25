@@ -86,4 +86,27 @@ is(&subs::day_key(undef), '', 'no moment has no day key');
 	Mojo::IOLoop->remove($id) if defined $id;
 }
 
+# ------------------------------------------------- next appointment skips readings
+# The moon, space weather and the magnetometer write one measure row a day. The
+# next-appointment feed drives the alarm and the watch, so a reading must never be
+# reported as the next appointment - even when its representative time is later
+# today.
+{
+	package CalendarFakeResult;
+	sub new { my ($class, $rows) = @_; return bless { rows => $rows || [] }, $class; }
+	sub hashes { return $_[0]->{rows}; }
+	sub hash { return $_[0]->{rows}->[0]; }
+	package main;
+
+	my @sql;
+	local *subs::db_query = sub {
+		push @sql, $_[0];
+		return CalendarFakeResult->new([]);
+	};
+	local *subs::rightNow = sub { return ts(2026, 11, 25, 16, 44, 0) };
+	&subs::next_appointment_time({ now => ts(2026, 11, 25, 16, 44, 0) });
+	ok(scalar @sql, 'the next-appointment feed queries the database');
+	like($sql[0], qr/coalesce\(type, ''\) <> 'measure'/, 'and leaves a daily measurement out');
+}
+
 done_testing();
