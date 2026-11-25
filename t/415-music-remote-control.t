@@ -263,6 +263,14 @@ like($music, qr{url: '/music/remote_outputs'}, 'the panel uses the output route'
 like($music, qr{url: '/music/remote_device'}, 'and the device route');
 like($music, qr/data-music-remote-output/, 'a chosen output is sent');
 like($music, qr/data-music-remote-device/, 'and a chosen device');
+like($music, qr/function musicRemoteDeviceTarget/, 'the panel resolves which machine the Output names');
+like($music, qr/entry\.uuid/, 'from the catalogue\'s machine uuid');
+like($music, qr/devices_for/, 'and caches the devices by that machine, not by the window');
+like($music, qr/section\.show\(\)/, 'the sound section is shown for This machine too');
+like($music, qr/jawnDeviceUuid/, 'a controller naming itself is treated as local');
+like($taskbar, qr/function jawnosSoundTaskbarMusicDeviceTarget/, 'the Sound pill follows the Output as well');
+like($taskbar, qr/\[data-music-output\]'\)\.closest\('\.taskbar_panel_row'\)\.show\(\)/, 'its Output row stays for This machine');
+like($help, qr/Device list follows the Output/, 'the help says the Device list follows the Output');
 
 # --- the glow is the literal yes/no the stylesheet reads --------------------
 like($music, qr/this\.setAttribute\('selected',/, 'the chip state is written as a literal yes/no');
@@ -352,6 +360,8 @@ like($queue_src, qr/\&subs::machine_name\(\) \|\| \&subs::ui\('Local'\)/, 'a loc
 		[ 'me', 'srv', 'laptop.jonathanferwerda.com', 'hub.jonathanferwerda.com' ],
 		'the catalogue is this machine, the server, and the reachable peers, never the synthetic self row or a loopback address');
 	is($catalogue->{'outputs'}[0]{'label'}, 'Table (internal speaker)', 'the machine output names itself and its speaker');
+	is($catalogue->{'outputs'}[1]{'uuid'}, 'u2', 'the server output names the server machine');
+	is($catalogue->{'outputs'}[2]{'uuid'}, 'u1', 'a room output names its machine');
 	my (@writes, @sent);
 	local *subs::setting_setter = sub { push @writes, $_[0] };
 	local *Websocket::send = sub { push @sent, [ @_ ] };

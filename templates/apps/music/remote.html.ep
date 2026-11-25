@@ -53,6 +53,7 @@
 				<select id="music_remote_device" data-music-remote-device hint="<%= &subs::ui('The speaker, headphones or Bluetooth device the controlled machine plays through') %>"></select>
 			</div>
 		</div>
-		<p class="music_cfg_note"><%= &subs::ui('Written on the machine you are controlling, not on this one.') %></p>
+		<p class="music_cfg_note" data-music-remote-device-where style="display:none;"></p>
+		<p class="music_cfg_note" data-music-remote-sound-note></p>
 	</div>
 </div>

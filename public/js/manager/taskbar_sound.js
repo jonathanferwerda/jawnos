@@ -21,7 +21,7 @@ var jawnosSoundTaskbarWheelTimer = {};
 // The Music transport in the panel. The machine list and the remembered remote
 // target are read once and refreshed when the panel opens; the remote player's
 // state is polled only while the panel is on screen.
-var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0, queue: null, queue_target: '', queue_at: 0, outputs: null, outputs_target: '', devices: null, devices_target: '', devices_at: 0 };
+var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0, queue: null, queue_target: '', queue_at: 0, outputs: null, outputs_target: '', outputs_at: 0, devices: null, devices_for: null, devices_at: 0 };
 
 function jawnosSoundTaskbarPercent(value) {
 	var pct = parseFloat(value);
@@ -262,7 +262,6 @@ function jawnosSoundTaskbarMusicLoad() {
 			jawnosSoundTaskbarPanelRefresh();
 			jawnosSoundTaskbarMusicQueueLoad(1);
 			jawnosSoundTaskbarMusicOutputsLoad(1);
-			jawnosSoundTaskbarMusicDevicesLoad(1);
 		}
 	});
 }
@@ -293,10 +292,9 @@ function jawnosSoundTaskbarMusicStateLoad() {
 			jawnosSoundTaskbarMusicRepaint();
 			jawnosSoundTaskbarMusicQueueLoad();
 			// a Bluetooth pair or a plug appears and disappears; a slow re-read
-			// keeps the device list honest without polling the sound server
-			if (Date.now() - (jawnosSoundTaskbarMusic.devices_at || 0) > 30000) {
-				jawnosSoundTaskbarMusicDevicesLoad();
-			}
+			// keeps the outputs and the device list honest without polling the
+			// sound server. OutputsLoad refreshes whichever half is stale.
+			jawnosSoundTaskbarMusicOutputsLoad();
 		}
 	});
 }
@@ -328,16 +326,16 @@ function jawnosSoundTaskbarMusicRepaint() {
 		// The volume row belongs to a peer's Music app; this machine's own level
 		// is the house and device sliders.
 		section.find('[data-music-volume]').closest('.taskbar_panel_row').toggle(remote);
-		// the output belongs to the controlled machine; this machine's own
-		// outputs are the house and device sliders above
-		section.find('[data-music-output]').closest('.taskbar_panel_row').toggle(remote);
-		// a device list needs a backend that can choose one; a phone's bridge
-		// carries no such list, so the row stays away
+		// Output applies to This machine too, so its row is always present; the
+		// Device row shows once the chosen Output names a machine whose hardware
+		// can be chosen (a phone's bridge cannot).
+		section.find('[data-music-output]').closest('.taskbar_panel_row').show();
+		var device_target = jawnosSoundTaskbarMusicDeviceTarget();
 		var devices = jawnosSoundTaskbarMusic.devices;
-		var devices_ready = !!(devices && jawnosSoundTaskbarMusic.devices_target === jawnosSoundTaskbarMusicTarget()
-			&& (devices.backend == 'pactl' || devices.backend == 'wpctl')
-			&& devices.outputs && devices.outputs.length);
-		section.find('[data-music-device]').closest('.taskbar_panel_row').toggle(remote && devices_ready);
+		var devices_known = device_target !== null && devices && jawnosSoundTaskbarMusic.devices_for === device_target;
+		var devices_ready = device_target !== null && (!devices_known
+			|| ((devices.backend == 'pactl' || devices.backend == 'wpctl') && devices.outputs && devices.outputs.length));
+		section.find('[data-music-device]').closest('.taskbar_panel_row').toggle(devices_ready);
 		if (remote && state) {
 			var pct = Math.round((state.muted ? 0 : (parseFloat(state.volume) || 0)) * 100);
 			var slider = section.find('[data-music-volume]');
@@ -375,18 +373,14 @@ function jawnosSoundTaskbarMusicPickerPaint(section) {
 	if (document.activeElement !== picker[0]) { picker.val(target); }
 }
 // The machine being controlled has its own outputs (its speaker, the server,
-// and every peer it can stream to). Read them from that machine, never from
-// this one, and show the one it says it is playing through.
+// and every peer it can stream to). This machine is a valid choice, so an empty
+// target means here. Read them from that machine, never from this one.
 function jawnosSoundTaskbarMusicOutputsLoad(force) {
 	var target = jawnosSoundTaskbarMusicTarget();
-	if (!target) {
-		jawnosSoundTaskbarMusic.outputs = null;
-		jawnosSoundTaskbarMusic.outputs_target = '';
+	if (!force && jawnosSoundTaskbarMusic.outputs_target === target && jawnosSoundTaskbarMusic.outputs
+		&& (Date.now() - (jawnosSoundTaskbarMusic.outputs_at || 0)) < 30000) {
 		jawnosSoundTaskbarMusicOutputsPaint();
-		return;
-	}
-	if (!force && jawnosSoundTaskbarMusic.outputs_target === target && jawnosSoundTaskbarMusic.outputs) {
-		jawnosSoundTaskbarMusicOutputsPaint();
+		jawnosSoundTaskbarMusicDevicesLoad(force);
 		return;
 	}
 	$.ajax({
@@ -399,43 +393,69 @@ function jawnosSoundTaskbarMusicOutputsLoad(force) {
 			if (!r || !r.ok || jawnosSoundTaskbarMusicTarget() !== target) { return; }
 			jawnosSoundTaskbarMusic.outputs = r;
 			jawnosSoundTaskbarMusic.outputs_target = target;
+			jawnosSoundTaskbarMusic.outputs_at = Date.now();
 			jawnosSoundTaskbarMusicOutputsPaint();
+			jawnosSoundTaskbarMusicDevicesLoad(force);
 		}
 	});
 }
 function jawnosSoundTaskbarMusicOutputsPaint() {
-	var picker = $('[data-music-output]');
-	if (!picker.length) { return; }
+	var first = $('[data-music-output]').first();
+	if (!first.length) { return; }
 	var target = jawnosSoundTaskbarMusicTarget();
 	var data = jawnosSoundTaskbarMusic.outputs;
-	if (!target || !data || jawnosSoundTaskbarMusic.outputs_target !== target || !data.outputs || !data.outputs.length) {
-		picker.empty();
+	if (!data || jawnosSoundTaskbarMusic.outputs_target !== target || !data.outputs || !data.outputs.length) {
+		$('[data-music-output]').empty();
 		return;
 	}
-	var signature = $.map(data.outputs, function(output) { return output.key; }).join(',');
-	if (picker.data('roster') !== signature) {
-		picker.empty();
-		$.each(data.outputs, function(i, output) {
-			if (!output || !output.key) { return; }
-			picker.append($('<option></option>').attr('value', output.key).text(output.label || output.key));
-		});
-		picker.data('roster', signature);
-	}
-	if (document.activeElement !== picker[0]) { picker.val(data.current || ''); }
+	var signature = $.map(data.outputs, function(output) { return output.key; }).join('\u001f');
+	$('[data-music-output]').each(function() {
+		var picker = $(this);
+		if (picker.data('roster') !== signature) {
+			picker.empty();
+			$.each(data.outputs, function(i, output) {
+				if (!output || !output.key) { return; }
+				picker.append($('<option></option>').attr('value', output.key).text(output.label || output.key));
+			});
+			picker.data('roster', signature);
+		}
+		if (document.activeElement !== this) { picker.val(data.current || ''); }
+	});
 }
-// The physical output behind the controlled machine's own speaker: its sound
-// card, headphone jack or Bluetooth sink. This is the Sound app's default
-// output, read from and written on that machine.
+function jawnosSoundTaskbarMusicOutputEntry(key) {
+	var data = jawnosSoundTaskbarMusic.outputs;
+	if (!data || !data.outputs) { return null; }
+	for (var i = 0; i < data.outputs.length; i++) {
+		if (data.outputs[i] && data.outputs[i].key === key) { return data.outputs[i]; }
+	}
+	return null;
+}
+// The machine whose hardware the Device picker shows: Me is the widget's
+// target (this machine when it is empty), a room is that room, and naming this
+// machine itself is local so the write acts here.
+function jawnosSoundTaskbarMusicDeviceTarget() {
+	var picker = $('[data-music-output]').first();
+	var key = picker.length ? (picker.val() || '') : '';
+	if (!key && jawnosSoundTaskbarMusic.outputs) { key = jawnosSoundTaskbarMusic.outputs.current || ''; }
+	var entry = jawnosSoundTaskbarMusicOutputEntry(key);
+	if (!entry) { return null; }
+	if (entry.key === 'me') { return jawnosSoundTaskbarMusicTarget(); }
+	var uuid = entry.uuid || '';
+	var own = '';
+	try { own = (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : (localStorage.getItem('device_uuid') || ''); } catch (e) { own = ''; }
+	if (uuid && own && uuid === own) { uuid = ''; }
+	return uuid || null;
+}
 function jawnosSoundTaskbarMusicDevicesLoad(force) {
-	var target = jawnosSoundTaskbarMusicTarget();
-	if (!target) {
+	var device_target = jawnosSoundTaskbarMusicDeviceTarget();
+	if (device_target === null) {
 		jawnosSoundTaskbarMusic.devices = null;
-		jawnosSoundTaskbarMusic.devices_target = '';
+		jawnosSoundTaskbarMusic.devices_for = null;
 		jawnosSoundTaskbarMusic.devices_at = 0;
 		jawnosSoundTaskbarMusicDevicesPaint();
 		return;
 	}
-	if (!force && jawnosSoundTaskbarMusic.devices_target === target && jawnosSoundTaskbarMusic.devices
+	if (!force && jawnosSoundTaskbarMusic.devices_for === device_target && jawnosSoundTaskbarMusic.devices
 		&& (Date.now() - (jawnosSoundTaskbarMusic.devices_at || 0)) < 30000) {
 		jawnosSoundTaskbarMusicDevicesPaint();
 		return;
@@ -445,40 +465,39 @@ function jawnosSoundTaskbarMusicDevicesLoad(force) {
 		type: 'GET',
 		dataType: 'json',
 		cache: false,
-		data: { target: target },
+		data: { target: device_target },
 		success: function(r) {
-			if (!r || !r.ok || jawnosSoundTaskbarMusicTarget() !== target) { return; }
+			if (!r || !r.ok || jawnosSoundTaskbarMusicDeviceTarget() !== device_target) { return; }
 			jawnosSoundTaskbarMusic.devices = r;
-			jawnosSoundTaskbarMusic.devices_target = target;
+			jawnosSoundTaskbarMusic.devices_for = device_target;
 			jawnosSoundTaskbarMusic.devices_at = Date.now();
 			jawnosSoundTaskbarMusicDevicesPaint();
 		}
 	});
 }
 function jawnosSoundTaskbarMusicDevicesPaint() {
-	var picker = $('[data-music-device]');
-	if (!picker.length) { return; }
-	var target = jawnosSoundTaskbarMusicTarget();
+	var device_target = jawnosSoundTaskbarMusicDeviceTarget();
 	var data = jawnosSoundTaskbarMusic.devices;
-	var row = picker.closest('.taskbar_panel_row');
-	if (!target || !data || jawnosSoundTaskbarMusic.devices_target !== target
-		|| (data.backend != 'pactl' && data.backend != 'wpctl')
-		|| !data.outputs || !data.outputs.length) {
-		picker.empty();
-		row.hide();
-		return;
-	}
-	row.show();
-	var signature = $.map(data.outputs, function(device) { return device.id; }).join('\u001f');
-	if (picker.data('roster') !== signature) {
-		picker.empty();
-		$.each(data.outputs, function(i, device) {
-			if (!device || !device.id) { return; }
-			picker.append($('<option></option>').attr('value', device.id).text(device.label || device.id));
-		});
-		picker.data('roster', signature);
-	}
-	if (document.activeElement !== picker[0]) { picker.val(data.current || ''); }
+	var known = device_target !== null && data && jawnosSoundTaskbarMusic.devices_for === device_target;
+	var supported = device_target !== null && (!known || ((data.backend == 'pactl' || data.backend == 'wpctl')
+		&& data.outputs && data.outputs.length));
+	$('[data-music-device]').each(function() {
+		var picker = $(this);
+		var row = picker.closest('.taskbar_panel_row');
+		if (!supported) { picker.empty(); row.hide(); return; }
+		row.show();
+		if (!known) { return; }
+		var signature = $.map(data.outputs, function(device) { return device.id; }).join('\u001f');
+		if (picker.data('roster') !== signature) {
+			picker.empty();
+			$.each(data.outputs, function(i, device) {
+				if (!device || !device.id) { return; }
+				picker.append($('<option></option>').attr('value', device.id).text(device.label || device.id));
+			});
+			picker.data('roster', signature);
+		}
+		if (document.activeElement !== this) { picker.val(data.current || ''); }
+	});
 }
 // A drag is a lot of events; one POST per settle keeps the peer's player from
 // being re-tuned on every pixel while still feeling immediate.
@@ -591,8 +610,6 @@ function jawnosSoundTaskbarMusicMount(target) {
 	jawnosSoundTaskbarMusicLoad();
 	jawnosSoundTaskbarMusicStateLoad();
 	jawnosSoundTaskbarMusicQueueLoad(1);
-	jawnosSoundTaskbarMusicOutputsLoad(1);
-	jawnosSoundTaskbarMusicDevicesLoad(1);
 }
 // A short list of the controlled machine's own queue, so the Sound window can
 // switch tracks without opening that machine's Music window.
@@ -916,7 +933,6 @@ $(document).on('change', '[data-music-section] [data-music-target]', function() 
 			jawnosSoundTaskbarMusicRepaint();
 			jawnosSoundTaskbarMusicQueueLoad(1);
 			jawnosSoundTaskbarMusicOutputsLoad(1);
-			jawnosSoundTaskbarMusicDevicesLoad(1);
 		},
 		error: function() {
 			jawnosSoundTaskbarFail(jawnosT('Could not remember that machine.'));
@@ -928,7 +944,7 @@ $(document).on('change', '[data-music-section] [data-music-target]', function() 
 $(document).on('change', '[data-music-section] [data-music-output]', function() {
 	var output = $(this).val() || '';
 	var target = jawnosSoundTaskbarMusicTarget();
-	if (!output || !target) { return; }
+	if (!output) { return; }
 	$.ajax({
 		url: '/music/remote_output',
 		type: 'POST',
@@ -941,6 +957,10 @@ $(document).on('change', '[data-music-section] [data-music-output]', function() 
 				return;
 			}
 			if (jawnosSoundTaskbarMusic.outputs) { jawnosSoundTaskbarMusic.outputs.current = output; }
+			// the Device list belongs to whichever machine the new Output names
+			jawnosSoundTaskbarMusic.devices = null;
+			jawnosSoundTaskbarMusic.devices_for = null;
+			jawnosSoundTaskbarMusic.devices_at = 0;
 			jawnosSoundTaskbarMusicOutputsPaint();
 			setTimeout(function() { jawnosSoundTaskbarMusicOutputsLoad(1); }, 600);
 		},
@@ -953,13 +973,13 @@ $(document).on('change', '[data-music-section] [data-music-output]', function() 
 
 $(document).on('change', '[data-music-section] [data-music-device]', function() {
 	var id = $(this).val() || '';
-	var target = jawnosSoundTaskbarMusicTarget();
-	if (!id || !target) { return; }
+	var device_target = jawnosSoundTaskbarMusicDeviceTarget();
+	if (!id || device_target === null) { return; }
 	$.ajax({
 		url: '/music/remote_device',
 		type: 'POST',
 		dataType: 'json',
-		data: { target: target, id: id },
+		data: { target: device_target, id: id },
 		success: function(r) {
 			if (!r || !r.ok) {
 				jawnosSoundTaskbarFail((r && r.error) || jawnosT('Could not control that machine.'));

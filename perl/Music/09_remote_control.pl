@@ -292,22 +292,27 @@ sub music_output_catalogue {
 	my $settings = &subs::settings_grabber({ app => 'music' }) || {};
 	my $mao = eval { decode_json($settings->{'mao'} // '') } || {};
 	my $self = &subs::signatorial_designer();
+	my $rows = &subs::remote_machine_lister() || [];
+	# The server row owns the `srv` player's hardware; the controller resolves
+	# a key to the machine it names so the Device picker can follow the Output.
+	my ($server) = grep { ($_->{'device'} || '') eq 'server' && ($_->{'connection'} || '') eq 'active' } @{$rows};
 	my (@outputs, %seen);
 	my $add = sub {
-		my ($key, $label) = @_;
+		my ($key, $label, $uuid) = @_;
 		return unless defined $key && length $key && !$seen{$key}++;
 		my $state = $mao->{$key} // 'off';
 		$state = 'off' unless $state =~ /^(?:off|on|stereo|left|right)$/;
 		push @outputs, {
 			key => $key,
 			label => $label,
+			uuid => ($uuid || ''),
 			state => $state,
 			on => &music_output_on($state)
 		};
 	};
 	$add->('me', (&subs::machine_name() || &subs::ui('This machine')) . ' (' . &subs::ui('internal speaker') . ')');
-	$add->('srv', &subs::ui('Server'));
-	foreach my $rm ( @{&subs::remote_machine_lister() || []} ) {
+	$add->('srv', &subs::ui('Server'), ($server ? $server->{'uuid'} : ''));
+	foreach my $rm ( @{$rows} ) {
 		next if (($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1');
 		next if $self && (($rm->{'signatorial'} || '') eq $self);
 		my $key = $rm->{'fqdn'} || $rm->{'ip'} || '';
@@ -316,7 +321,7 @@ sub music_output_catalogue {
 		# peer row left with 127.0.0.1 is a stale address, not an output.
 		next if $key =~ /^(?:127\.|localhost$|\[?::1\]?$)/i;
 		my $label = &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key;
-		$add->($key, $label);
+		$add->($key, $label, $rm->{'uuid'});
 	}
 	my $current = 'me';
 	foreach my $output ( @outputs ) {
