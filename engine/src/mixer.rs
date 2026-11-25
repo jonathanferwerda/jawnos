@@ -700,12 +700,14 @@ impl Mixer {
             .map_err(|error| format!("track {index}: {error:?}"))
     }
 
-    /// Place one prepared mono block with track `index`'s pan.
-    pub fn pan_into(&self, index: usize, mono: &[f32], stereo: &mut [f32]) -> Result<(), String> {
+    /// Place one prepared mono block with track `index`'s pan. A `stereo_panner`
+    /// insert in the track's chain moves that pan, so the phase it advances is
+    /// the track's own.
+    pub fn pan_into(&mut self, index: usize, mono: &[f32], stereo: &mut [f32]) -> Result<(), String> {
         let count = self.tracks.len();
         let track = self
             .tracks
-            .get(index)
+            .get_mut(index)
             .ok_or_else(|| format!("no track {index} (the mixer has {count})"))?;
         track
             .channel

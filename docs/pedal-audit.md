@@ -26,6 +26,7 @@
 | `maximizer` | The same 1176 detector behind a 0..18 dB drive. | `ceiling`, `loudness` | `engine/src/effect/maximizer.rs`: shares `FetDetector` with the limiter. | Same as the limiter. |
 | `autotune` (JawnPitch) | Not an analogue pedal: a monophonic pitch corrector. | `speed`, `amount`, `key`, `scale` | `engine/src/effect/autotune.rs`: autocorrelation period, nearest scale tone, two crossfaded delay taps. Deliberately not polyphonic. | The browser has its own detector and grain shifter. |
 | `stereowidener` | A mid/side width control, not a pedal. | `width`, `mix` | Browser only; the native insert chain is mono. | `studioEffectStereoWidener`. |
+| `stereo_panner` | An LFO on the channel's pan; not a pedal. | `rate`, `depth`, `shape` | `engine/src/effect/stereo_panner.rs`: a pass-through insert whose `rate`, `depth` and `shape` configure the channel's pan LFO. The channel applies `pan + depth * lfo` per sample at its pan stage, where the L/R pair exists; depth 0 is the plain pan exactly, and the last panner in chain order wins. | `studioEffectStereoPanner`, a `StereoPannerNode` with an LFO on its `pan`; a tempo-synced rate is resolved to Hz before it is sent. |
 | `tuner` (Jtune) | Listen-only chromatic tuner. | — | No audio path, no `InsertKind`. | The browser taps its input for the display. |
 
 ## What the audit changes, in one paragraph
@@ -51,6 +52,10 @@ FMV tone stack, Baxandall, Electric Mistress, 6G15/EMT 140, 1176.
 - Controls are the contract's, not the pedal's. The JH-2's two real knobs are
   Fuzz and Level; `tone` is the feedback-cap mod. The RAT's Filter and the
   1176's ratio are fixed values because the contract has no control for them.
+- The panner is not an L/R insert: the engine pans at the channel stage, so
+  its LFO moves the channel's existing pan rather than a separate stereo
+  position. A centred channel therefore sweeps both speakers and a hard-left
+  one only reaches the middle, because the result is clamped to `-1..1`.
 
 ## Verification
 

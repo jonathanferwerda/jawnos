@@ -274,7 +274,10 @@ mod tests {
         assert_eq!(InsertKind::Tremolo.code(), 14);
         assert_eq!(InsertKind::from_code(14), Some(InsertKind::Tremolo));
         assert_eq!(InsertKind::Tremolo.build().name(), "tremolo");
-        // A true stereo panner needs the L/R pair the mono chain does not hold.
-        assert_eq!(InsertKind::parse("stereo_panner"), None);
+        // The panner is native, but configures the channel's pan stage.
+        assert_eq!(
+            InsertKind::parse("stereo_panner"),
+            Some(InsertKind::StereoPanner)
+        );
     }
 }

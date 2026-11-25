@@ -36,18 +36,25 @@ bypasses it like any pedal, and the song keeps it in the chain.
 | `delay` | existing | `time`, `feedback`, `vol` |
 | `compressor` | existing | `thresh`, `attack`, `ratio`, `release`, `knee`, `mix` |
 | `tremolo` | amplitude modulation, three LFO shapes | `rate`, `depth`, `shape` |
+| `stereo_panner` | channel pan modulation, three LFO shapes | `rate`, `depth`, `shape` |
 
 The names and controls above are the contract. **What each pedal models** —
 the real circuit, the control mapping and the honest approximation — is in
 `docs/pedal-audit.md`. Read it before changing a pedal's sound: the two sides
 share the control names, not a claim of a sample-identical circuit.
 
-`stereowidener` and `stereo_panner` are **browser-only** inserts. The engine's
-insert chain is mono and its pan is one static value applied after the chain, so
-neither a mid/side matrix nor a true panner can live there. `InsertKind::parse`
-answers `None` for both names; a native take or listen omits the pedal instead
-of faking a mono version (engine/src/effect.rs). The browser builds them with
-`studioEffectStereoWidener` and `studioEffectStereoPanner`.
+`stereowidener` is a **browser-only** insert. A mid/side matrix needs an L/R
+pair, and the engine's insert chain is mono, so `InsertKind::parse` answers
+`None` for it; a native take or listen omits the pedal instead of faking a
+mono version (engine/src/effect.rs). The browser builds it with
+`studioEffectStereoWidener`.
+
+`stereo_panner` is **native**, but not as a mono insert. The engine builds it
+as a transparent pass-through that carries an LFO configuration, and the
+channel applies that LFO at its own pan stage, where the L/R pair exists
+(`engine/src/effect/stereo_panner.rs`, `Effect::pan_lfo`). The browser keeps
+`studioEffectStereoPanner` with a `StereoPannerNode`; the two sides share the
+controls and the shape indexes, not the node.
 
 ## Tempo-synced time controls
 
@@ -91,8 +98,15 @@ the browser is `studioEffectTremolo`; both hold the same rate/depth/shape band.
 The square shape keeps its edges (it is the pedal's hard switch), while knob
 moves are one-pole smoothed.
 
-`stereo_panner` modulates a `StereoPannerNode`'s `pan` with the same three-shape
-LFO. It is browser-only for the reason above; there is no mono stand-in.
+`stereo_panner` modulates the channel's pan with the same three-shape LFO.
+The insert chain is mono, so the engine does not pan inside it: the
+`stereo_panner` insert is a pass-through that hands its LFO to the channel's
+pan stage, which applies `pan + depth * lfo` per sample around the channel's
+own pan (clamped to `-1..1`). `depth` is the swing in the `-1..1` field, so
+depth 0 is exactly the plain pan and is bit-identical to it. When the rack
+holds two panners, the last one in chain order wins; a bypassed panner is not
+run, so it does not modulate. The browser's `StereoPannerNode` is the mirror,
+with the channel pan applied afterwards.
 
 The `sync` string never reaches either engine: the page sends `delay.time` in
 seconds (up to 8) or an LFO `rate` in Hz, in the effect's own units.

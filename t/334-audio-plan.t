@@ -534,7 +534,9 @@ sub route {
 			my ($kind, $list) = ($1, $2);
 			next if $kind eq 'MasterEq'; # the rack's ten bands, not a source insert
 			my @controls = $list =~ /"([a-z0-9_]+)"/g;
-			$engine_controls{lc $kind} = \@controls;
+			# A variant is CamelCase; the contract's control key is snake_case.
+			(my $key = $kind) =~ s/(?<=[a-z0-9])(?=[A-Z])/_/g;
+			$engine_controls{lc $key} = \@controls;
 		}
 	}
 	my %plan_controls = map {

@@ -45,6 +45,7 @@ mod fuzz;
 mod graphic_eq;
 mod limiter;
 mod maximizer;
+mod stereo_panner;
 mod tremolo;
 
 pub use amp::Amp;
@@ -55,6 +56,7 @@ pub use fuzz::Fuzz;
 pub use graphic_eq::GraphicEq;
 pub use limiter::Limiter;
 pub use maximizer::Maximizer;
+pub use stereo_panner::{PanLfo, StereoPanner};
 pub use tremolo::Tremolo;
 
 /// How long a control takes to travel most of the way to a new value.
@@ -87,6 +89,14 @@ pub trait Effect: Send {
     }
     /// The name the take report and the chain order use.
     fn name(&self) -> &'static str;
+    /// The pan modulation this insert configures, if any. Most effects return
+    /// `None`; `stereo_panner` returns its LFO so the channel can apply it at
+    /// the pan stage, where the L/R pair exists. A [channel](Channel) takes the
+    /// last such configuration in chain order; a bypassed insert is not run, so
+    /// it configures nothing.
+    fn pan_lfo(&self) -> Option<PanLfo> {
+        None
+    }
 }
 
 /// The fraction of the remaining distance a one-pole covers in one sample.
@@ -1240,10 +1250,10 @@ impl Effect for Compressor {
 /// answers `None`: a take omits the pedal, and the help topic says the native
 /// take does not process it yet.
 ///
-/// `stereo_panner` is browser-only for the same reason: a true panner places a
-/// mono source across an L/R pair, and this chain hands the pair only to the
-/// channel's own static pan after the inserts. A mono pass-through would not
-/// pan anything, so `parse` refuses the name and a native take omits it.
+/// `stereo_panner` is **native**, but not as a mono insert: it is a transparent
+/// pass-through that hands its LFO to the channel's pan stage, which is where
+/// the L/R pair exists ([`StereoPanner`], [`Effect::pan_lfo`]). A true panner
+/// still belongs there rather than inside the mono chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InsertKind {
     Tone,
@@ -1260,6 +1270,7 @@ pub enum InsertKind {
     MasterEq,
     Maximizer,
     Tremolo,
+    StereoPanner,
 }
 
 impl InsertKind {
@@ -1279,6 +1290,7 @@ impl InsertKind {
             "master_eq" => Some(InsertKind::MasterEq),
             "maximizer" | "master_maximizer" => Some(InsertKind::Maximizer),
             "tremolo" => Some(InsertKind::Tremolo),
+            "stereo_panner" => Some(InsertKind::StereoPanner),
             _ => None,
         }
     }
@@ -1299,6 +1311,7 @@ impl InsertKind {
             InsertKind::MasterEq => "master_eq",
             InsertKind::Maximizer => "maximizer",
             InsertKind::Tremolo => "tremolo",
+            InsertKind::StereoPanner => "stereo_panner",
         }
     }
 
@@ -1327,6 +1340,8 @@ impl InsertKind {
             InsertKind::Maximizer => &["ceiling", "loudness"],
             // `sync` is a tempo division held by the page, not an engine knob.
             InsertKind::Tremolo => &["rate", "depth", "shape"],
+            // The same three controls; the channel's pan stage applies them.
+            InsertKind::StereoPanner => &["rate", "depth", "shape"],
         }
     }
 
@@ -1398,6 +1413,7 @@ impl InsertKind {
             InsertKind::Maximizer => 12,
             InsertKind::MasterEq => 13,
             InsertKind::Tremolo => 14,
+            InsertKind::StereoPanner => 15,
         }
     }
 
@@ -1417,6 +1433,7 @@ impl InsertKind {
             12 => InsertKind::Maximizer,
             13 => InsertKind::MasterEq,
             14 => InsertKind::Tremolo,
+            15 => InsertKind::StereoPanner,
             _ => return None,
         })
     }
@@ -1430,8 +1447,9 @@ impl InsertKind {
     /// 0.65 gain / 0.45 tone / 0.6 level, amp 0.5 gain (0 dB) / flat tone /
     /// Combo 1x12, limiter −3 dBFS / 0.2 s, autotune 0.4 speed / full amount /
     /// C major, equalizer flat, maximizer −0.8 dBFS / 0.2 loudness, the master
-    /// rack's graphic EQ flat on all ten bands, and tremolo 5 Hz / 0.5 depth /
-    /// sine.
+    /// rack's graphic EQ flat on all ten bands, tremolo 5 Hz / 0.5 depth /
+    /// sine, and the stereo panner 5 Hz / 0.5 depth / sine (the browser's
+    /// defaults at its own slider positions).
     pub fn build(self) -> Box<dyn Effect> {
         match self {
             InsertKind::Tone => Box::new(ToneStack::new(0.0, 0.0, 0.0)),
@@ -1450,6 +1468,7 @@ impl InsertKind {
             InsertKind::Maximizer => Box::new(Maximizer::new(-0.8, 0.2)),
             InsertKind::MasterEq => Box::new(GraphicEq::new()),
             InsertKind::Tremolo => Box::new(Tremolo::new(5.0, 0.5, 0)),
+            InsertKind::StereoPanner => Box::new(StereoPanner::new(5.0, 0.5, 0)),
         }
     }
 }
@@ -1581,6 +1600,22 @@ impl EffectChain {
         }
     }
 
+    /// The pan LFO the channel should apply, if the chain configures one. The
+    /// last insert in chain order wins, so a later panner overrides an earlier
+    /// one; a bypassed insert is not run and therefore configures nothing.
+    pub fn pan_lfo(&self) -> Option<PanLfo> {
+        let mut lfo = None;
+        for slot in &self.inserts {
+            if slot.bypassed {
+                continue;
+            }
+            if let Some(config) = slot.effect.pan_lfo() {
+                lfo = Some(config);
+            }
+        }
+        lfo
+    }
+
     /// The chain order, for a status line: `tone,distortion`. Bypassed inserts
     /// are still in the rack, so they are still named.
     pub fn insert_names(&self) -> String {
@@ -1619,6 +1654,13 @@ pub struct Channel {
     strip: Strip,
     chain: EffectChain,
     scratch: Vec<f32>,
+    /// The rate [`prepare`](Channel::prepare) was sized for, so the pan LFO's
+    /// phase step is known at the pan stage.
+    rate: u32,
+    /// The pan LFO's position in turns. The channel owns it because only the
+    /// pan stage knows where in the signal the modulation lands; a
+    /// `stereo_panner` insert only supplies the rate, depth and shape.
+    pan_phase: f32,
 }
 
 impl Channel {
@@ -1630,6 +1672,8 @@ impl Channel {
             strip: Strip::new(gain, pan),
             chain: EffectChain::new(),
             scratch: Vec::new(),
+            rate: 48_000,
+            pan_phase: 0.0,
         }
     }
 
@@ -1711,8 +1755,10 @@ impl Channel {
     /// Size the scratch buffer and every insert. Allocation happens here and
     /// nowhere else.
     pub fn prepare(&mut self, rate: u32, max_frames: usize) {
+        self.rate = rate.max(1);
         self.scratch = vec![0.0; max_frames];
         self.chain.prepare(rate, max_frames);
+        self.pan_phase = 0.0;
     }
 
     /// Run the trim and the insert chain over one mono block, in place, and
@@ -1736,18 +1782,13 @@ impl Channel {
         self.chain.process(block)
     }
 
-    /// Place one prepared mono block with the channel's equal-power pan.
+    /// Place one prepared mono block with the channel's equal-power pan,
+    /// modulated by a `stereo_panner` insert when the chain configures one.
     /// `stereo` is overwritten and must be twice the block's length.
-    pub fn pan_into(&self, mono: &[f32], stereo: &mut [f32]) -> Result<(), GraphError> {
-        if stereo.len() != mono.len() * 2 {
-            return Err(GraphError::BadBlock {
-                expected: mono.len() * 2,
-                found: stereo.len(),
-            });
-        }
-        let (left, right) = pan_coefficients(self.strip.pan.get());
-        stereo.fill(0.0);
-        mix_mono_into_stereo_with_gains(stereo, mono, left, right)
+    pub fn pan_into(&mut self, mono: &[f32], stereo: &mut [f32]) -> Result<(), GraphError> {
+        let lfo = self.chain.pan_lfo();
+        let pan = self.strip.pan.get();
+        place_mono(mono, stereo, pan, lfo, self.rate, &mut self.pan_phase)
     }
 
     /// `input` is one mono block; `stereo` must be twice as long and is
@@ -1776,11 +1817,21 @@ impl Channel {
             .process(&mut self.scratch[..frames])
             .expect("a prepared channel block is never too long");
         // Gain was applied before the inserts; the output only needs the pan.
-        self.pan_into(&self.scratch[..frames], stereo)
+        let lfo = self.chain.pan_lfo();
+        let pan = self.strip.pan.get();
+        place_mono(
+            &self.scratch[..frames],
+            stereo,
+            pan,
+            lfo,
+            self.rate,
+            &mut self.pan_phase,
+        )
     }
 
     pub fn reset(&mut self) {
         self.chain.reset();
+        self.pan_phase = 0.0;
     }
 
     /// The chain order, for a take report: `tone,distortion`. Bypassed inserts
@@ -1788,6 +1839,58 @@ impl Channel {
     pub fn insert_names(&self) -> String {
         self.chain.insert_names()
     }
+}
+
+/// Place one prepared mono block with a channel's pan, applying a `stereo_panner`
+/// LFO when the chain configures one.
+///
+/// The plain path is exactly the equal-power pan the channel has always used.
+/// A panner at `depth = 0` deliberately takes that same path, so it is
+/// bit-identically transparent; the phase still advances, so raising the depth
+/// later does not restart the sweep. With a positive depth the pan moves around
+/// the channel's own position and is clamped to the -1..1 field. Allocation-free
+/// and per sample, like the rest of the pan stage.
+fn place_mono(
+    mono: &[f32],
+    stereo: &mut [f32],
+    pan: f32,
+    lfo: Option<PanLfo>,
+    sample_rate: u32,
+    phase: &mut f32,
+) -> Result<(), GraphError> {
+    if stereo.len() != mono.len() * 2 {
+        return Err(GraphError::BadBlock {
+            expected: mono.len() * 2,
+            found: stereo.len(),
+        });
+    }
+    stereo.fill(0.0);
+    match lfo {
+        Some(lfo) if lfo.depth > 0.0 => {
+            let step = lfo.phase_step(sample_rate);
+            for (frame, sample) in mono.iter().enumerate() {
+                let position = (pan + lfo.depth * lfo.value(*phase)).clamp(-1.0, 1.0);
+                let (left, right) = pan_coefficients(position);
+                stereo[frame * 2] += sample * left;
+                stereo[frame * 2 + 1] += sample * right;
+                *phase += step;
+                if *phase >= 1.0 {
+                    *phase -= 1.0;
+                }
+            }
+        }
+        other => {
+            // No panner, or one at zero depth: the exact plain pan. Keep the
+            // LFO advancing when a panner is present so a later depth change
+            // joins the sweep where it is, not at the top of a fresh one.
+            if let Some(lfo) = other {
+                *phase = (*phase + lfo.phase_step(sample_rate) * mono.len() as f32) % 1.0;
+            }
+            let (left, right) = pan_coefficients(pan);
+            let _ = mix_mono_into_stereo_with_gains(stereo, mono, left, right);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1879,6 +1982,7 @@ mod tests {
             Box::new(Equalizer::new(6.0, -6.0, 3.0)),
             Box::new(Maximizer::new(-3.0, 0.5)),
             Box::new(Tremolo::new(8.0, 1.0, 2)),
+            Box::new(StereoPanner::new(8.0, 1.0, 2)),
             Box::new(graphic),
         ];
         for effect in &mut effects {
@@ -1912,6 +2016,7 @@ mod tests {
             Box::new(Equalizer::new(15.0, 15.0, 15.0)),
             Box::new(Maximizer::new(-12.0, 1.0)),
             Box::new(Tremolo::new(20.0, 1.0, 2)),
+            Box::new(StereoPanner::new(20.0, 1.0, 2)),
             Box::new(graphic),
         ];
         for effect in &mut effects {
@@ -2634,6 +2739,7 @@ mod tests {
             ("equalizer", InsertKind::Equalizer),
             ("maximizer", InsertKind::Maximizer),
             ("tremolo", InsertKind::Tremolo),
+            ("stereo_panner", InsertKind::StereoPanner),
         ] {
             assert_eq!(InsertKind::parse(word), Some(kind));
             assert_eq!(kind.name(), word);
@@ -2677,13 +2783,31 @@ mod tests {
         assert_eq!(InsertKind::MasterEq.build().name(), "master_eq");
         assert_eq!(InsertKind::Tremolo.code(), 14);
         assert_eq!(InsertKind::from_code(14), Some(InsertKind::Tremolo));
-        // Stereo Widener is browser only: the insert chain is mono, so there
-        // is no kind to build and a native take omits the pedal (see
+        assert_eq!(InsertKind::StereoPanner.code(), 15);
+        assert_eq!(InsertKind::from_code(15), Some(InsertKind::StereoPanner));
+        assert_eq!(
+            InsertKind::StereoPanner.controls(),
+            &["rate", "depth", "shape"]
+        );
+        // `sync` is the page's tempo string, never an engine control.
+        assert_eq!(InsertKind::StereoPanner.control_index("sync"), None);
+        assert_eq!(InsertKind::StereoPanner.build().name(), "stereo_panner");
+        // Stereo Widener is still browser only: the insert chain is mono, so
+        // there is no kind to build and a native take omits the pedal (see
         // `InsertKind`). Both the track and the rack spelling are refused.
         assert_eq!(InsertKind::parse("stereowidener"), None);
         assert_eq!(InsertKind::parse("master_stereowidener"), None);
-        // Stereo Panner is browser only for the same reason.
-        assert_eq!(InsertKind::parse("stereo_panner"), None);
+        // The panner is native, but configures the channel's pan stage rather
+        // than processing the mono signal.
+        let panner = InsertKind::StereoPanner.build();
+        assert_eq!(
+            panner.pan_lfo(),
+            Some(PanLfo {
+                rate_hz: 5.0,
+                depth: 0.5,
+                shape: 0
+            })
+        );
         assert_eq!(InsertKind::parse("banana"), None);
     }
 
@@ -2715,6 +2839,95 @@ mod tests {
             assert!(stereo[frame * 2].abs() < 1e-6);
             assert!((stereo[frame * 2 + 1] - mono[frame]).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn a_panner_at_zero_depth_is_bit_identical_to_the_plain_pan() {
+        let input = sine(220.0, 0.4, 512);
+
+        let mut plain = Channel::new(1.0, 0.25);
+        plain.prepare(RATE, 512);
+        let mut expected = vec![0.0f32; 1024];
+        plain.process(&input, &mut expected).expect("plain");
+
+        let mut channel = Channel::new(1.0, 0.25);
+        channel.push(InsertKind::StereoPanner.build());
+        assert!(channel.set("stereo_panner.depth", 0.0));
+        channel.prepare(RATE, 512);
+        let mut out = vec![0.0f32; 1024];
+        channel.process(&input, &mut out).expect("panner");
+        assert_eq!(out, expected, "a zero-depth panner changed the pan");
+    }
+
+    #[test]
+    fn the_panner_moves_the_channel_pan_per_sample() {
+        // A DC input makes the output the pan coefficients themselves. At 4 Hz
+        // one cycle is 12 000 frames here: the sine is centred at the start and
+        // halfway, hard right a quarter in, hard left three quarters in.
+        let mut channel = Channel::new(1.0, 0.0);
+        channel.push(InsertKind::StereoPanner.build());
+        assert!(channel.set("stereo_panner.rate", 4.0));
+        assert!(channel.set("stereo_panner.depth", 1.0));
+        assert!(channel.set("stereo_panner.shape", 0.0));
+        channel.prepare(RATE, 12_000);
+
+        let input = vec![1.0f32; 12_000];
+        let mut stereo = vec![0.0f32; 24_000];
+        channel.process(&input, &mut stereo).expect("panner");
+
+        let centre = std::f32::consts::FRAC_1_SQRT_2;
+        assert!((stereo[0] - centre).abs() < 1e-4, "start was not centred");
+        assert!((stereo[1] - centre).abs() < 1e-4, "start was not centred");
+        assert!(stereo[3000 * 2].abs() < 1e-4, "the crest was not hard right");
+        assert!((stereo[3000 * 2 + 1] - 1.0).abs() < 1e-4);
+        assert!((stereo[6000 * 2] - centre).abs() < 1e-4, "halfway was not centred");
+        assert!((stereo[9000 * 2] - 1.0).abs() < 1e-4, "the trough was not hard left");
+        assert!(stereo[9000 * 2 + 1].abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_last_panner_in_chain_order_wins() {
+        let mut channel = Channel::new(1.0, 0.0);
+        channel.push(Box::new(StereoPanner::new(1.0, 1.0, 2)));
+        channel.push(Box::new(StereoPanner::new(2.0, 0.0, 0)));
+        assert_eq!(
+            channel.chain.pan_lfo(),
+            Some(PanLfo {
+                rate_hz: 2.0,
+                depth: 0.0,
+                shape: 0
+            })
+        );
+    }
+
+    #[test]
+    fn a_bypassed_panner_configures_nothing() {
+        let mut channel = Channel::new(1.0, 0.0);
+        channel.push(InsertKind::StereoPanner.build());
+        assert_eq!(channel.chain.pan_lfo().map(|lfo| lfo.depth), Some(0.5));
+        assert!(channel.bypass("stereo_panner", true));
+        assert_eq!(channel.chain.pan_lfo(), None);
+        assert!(channel.bypass("stereo_panner", false));
+        assert_eq!(channel.chain.pan_lfo().map(|lfo| lfo.depth), Some(0.5));
+    }
+
+    #[test]
+    fn the_pan_lfo_resets_with_the_channel() {
+        // Half a cycle, so the phase is not already at the start; a reset must
+        // make the next half-block sound exactly like the first.
+        let input = vec![0.5f32; 6000];
+        let mut channel = Channel::new(1.0, 0.0);
+        channel.push(InsertKind::StereoPanner.build());
+        assert!(channel.set("stereo_panner.rate", 4.0));
+        assert!(channel.set("stereo_panner.depth", 1.0));
+        channel.prepare(RATE, 6000);
+
+        let mut first = vec![0.0f32; 12_000];
+        channel.process(&input, &mut first).expect("first");
+        channel.reset();
+        let mut second = vec![0.0f32; 12_000];
+        channel.process(&input, &mut second).expect("second");
+        assert_eq!(first, second, "reset did not restart the pan LFO");
     }
 
     #[test]
