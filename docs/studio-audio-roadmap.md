@@ -1326,6 +1326,24 @@ long kick, Metal is gated and cracky, and the crate's tests pin those difference
 quietly collapse back into "all the same". `t/413` covers the wire shape, the manager, the page and
 the engine seams.
 
+**A player sits on the chart (2026-11-25, in the tree).** The engine's drum chart can now be
+played, not just stamped: `jawn-drums` has a `Performance` (a `Player` in a `Style`) that shapes each
+cell as the transport schedules it. Seven players, named in the spirit of a GarageBand Drummer:
+`studio` (the uncoloured house player), `tuck` (soft, brushes, behind the click), `wren` (soft,
+swinging offbeat hats, light hands), `odile` (hard, dry, on the grid), `moxie` (hard,
+four-on-the-floor), `bram` (aggressive, a big backbeat right on the click) and `dov`
+(aggressive, wide and loud). Three styles - `soft`, `hard` and `aggressive` - scale the level, the
+dynamic spread and the accent on the metre, so the same player can sit back or lean in. A player never
+changes which steps fire: it moves each hit a few milliseconds (never ahead of the grid), widens or
+narrows its velocity by a deterministic function of the absolute step, and accents the downbeat and
+the backbeat. Each pass of a loop is therefore a different pass, and the same chart still renders
+identically on every machine. On the wire `drums` gains optional `player` and `style`; a chart
+without them is the plain grid, so every song written before this plays exactly as it did. The
+manager validates both and forwards them, and the drum panel now offers a Player list (Machine,
+Session, Tuck, Wren, Odile, Moxie, Bram, Dov) and a Style list (Soft, Hard, Aggressive), with a note
+under the chart naming the feel. The choice is saved with the song and rides the chart plan; the
+Browser path still plays the chart as written, so the lists are disabled there.
+
 **The voices A/B (2026-11-24, in the tree).** The drum panel carries a Sound list beside Kit and
 the Synth toolbar carries its own: Engine or Browser. The drum choice is saved with the song; the
 synth choice is remembered on the machine. Chosen for the engine, the chart rides the transport plan

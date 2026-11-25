@@ -2040,8 +2040,9 @@
 	.studio_drums_step[aria-pressed="true"] {
 		opacity: calc(.4 + var(--drums-velocity, 1) * .6);
 	}
-	/* the drum machine's Kit and Sound lists sit beside Loop, in the same small type */
-	.studio_drums_kit_label, .studio_drums_sound_label {
+	/* the drum machine's Kit, Sound, Player and Style lists sit beside Loop, in the same small type */
+	.studio_drums_kit_label, .studio_drums_sound_label,
+	.studio_drums_player_label, .studio_drums_style_label {
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
@@ -2056,6 +2057,22 @@
 		max-width: 92px;
 		font-size: 11px;
 		padding: 1px 3px;
+	}
+	#studio_drums_player {
+		max-width: 96px;
+		font-size: 11px;
+		padding: 1px 3px;
+	}
+	#studio_drums_style {
+		max-width: 96px;
+		font-size: 11px;
+		padding: 1px 3px;
+	}
+	.studio_drums_player_note {
+		flex: 1 1 100%;
+	}
+	.studio_drums_player_note:empty {
+		display: none;
 	}
 	/* ---- the drum machine -------------------------------------------------
 	   Eight rows of sixteen steps. Every surface takes its colours from the

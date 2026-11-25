@@ -25,6 +25,7 @@ my $drums      = read_file("$root/engine/crates/jawn-drums/src/lib.rs");
 my $kit        = read_file("$root/engine/crates/jawn-drums/src/kit.rs");
 my $machine    = read_file("$root/engine/crates/jawn-drums/src/machine.rs");
 my $pattern    = read_file("$root/engine/crates/jawn-drums/src/pattern.rs");
+my $player     = read_file("$root/engine/crates/jawn-drums/src/player.rs");
 my $build_test = read_file("$root/t/332-engine-build.t");
 my $roadmap    = read_file("$root/docs/studio-audio-roadmap.md");
 
@@ -70,6 +71,16 @@ like( $machine, qr/pub fn trigger_at\(&mut self, slot: usize, velocity: u8, offs
 like( $machine, qr/pub fn render\(&mut self, left: &mut \[f32\], right: &mut \[f32\]\)/,
 	'render takes two f32 blocks' );
 like( $pattern, qr/pub fn events_at\(/, 'a chart names its events for a block' );
+like( $drums, qr/pub use player::\{[^}]*\bPlayer\b[^}]*\bStyle\b[^}]*\}/s,
+	'the players and styles are public' );
+like( $player, qr/pub const ALL: \[Player; 7\]/, 'seven players, the house player first' );
+like( $player, qr/pub const ALL: \[Style; 3\]/, 'soft, hard and aggressive' );
+# The player's own style is the same mapping the panel's table carries (t/346):
+# choosing a player there moves the Style list to this setting.
+like( $player, qr/Player::Tuck \| Player::Wren => Style::Soft/, 'Tuck and Wren play soft' );
+like( $player, qr/Player::Studio \| Player::Odile \| Player::Moxie => Style::Hard/,
+	'Session, Odile and Moxie play hard' );
+like( $player, qr/Player::Bram \| Player::Dov => Style::Aggressive/, 'Bram and Dov play aggressive' );
 
 # The wire names are the ones a saved song and the browser already use.
 for my $name (qw(kick snare closed_hat open_hat clap low_tom high_tom rim)) {
@@ -77,6 +88,12 @@ for my $name (qw(kick snare closed_hat open_hat clap low_tom high_tom rim)) {
 }
 for my $name (qw(acoustic electronic techno beats latin pearl tama gretsch 808 metal)) {
 	like( $kit, qr/Kit::\w+\s*=>\s*"$name"/, "the kit wire name $name is kept" );
+}
+for my $name (qw(studio tuck wren odile moxie bram dov)) {
+	like( $player, qr/Player::\w+\s*=>\s*"$name"/, "the player wire name $name is kept" );
+}
+for my $name (qw(soft hard aggressive)) {
+	like( $player, qr/Style::\w+\s*=>\s*"$name"/, "the style wire name $name is kept" );
 }
 
 # --- the roadmap says what these crates are for -----------------------------

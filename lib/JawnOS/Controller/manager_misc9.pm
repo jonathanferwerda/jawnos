@@ -1880,6 +1880,23 @@ sub studio_transport_drums {
 		$out{'loop'} = $on;
 	}
 
+	# The player and the style are the engine's expression layer. The names are
+	# the ones jawn-drums pins; an unknown one is a clear refusal here rather
+	# than a socket line after the device work has started.
+	my $player = $data->{'player'};
+	if (defined $player) {
+		return ('transport drums "player" must be a player name', undef)
+			unless !ref $player && $player =~ /\A(?:studio|tuck|wren|odile|moxie|bram|dov)\z/;
+		$out{'player'} = $player;
+	}
+
+	my $play_style = $data->{'style'};
+	if (defined $play_style) {
+		return ('transport drums "style" must be soft, hard or aggressive', undef)
+			unless !ref $play_style && $play_style =~ /\A(?:soft|hard|aggressive)\z/;
+		$out{'style'} = $play_style;
+	}
+
 	my $steps = $data->{'steps'};
 	if (defined $steps) {
 		return ('transport drums "steps" must be an object of voice rows', undef)
@@ -1908,6 +1925,10 @@ sub studio_transport_drums {
 	# The channel taps the kit follows: its patched channel's fader, pan and Out
 	# inserts, so the engine's kit sits in the mix exactly where the browser's
 	# would. An empty list is an unpatched kit.
+	#
+	# `player` and `style` ride through untouched once validated: the engine
+	# reads them as the expression layer and a chart without them is the plain
+	# grid, so a song saved before players existed still plays as written.
 	my ($routing_error, $routing) = &studio_app_routing_data($data->{'routing'}, 'transport drums routing');
 	return ($routing_error, undef) if defined $routing_error;
 	$out{'routing'} = $routing;

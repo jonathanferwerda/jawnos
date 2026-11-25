@@ -109,7 +109,7 @@ use jawn_audio::{
     TransportSource, MASTER_ORDER,
 };
 use jawn_audio::playback::{AppRoute, DrumChart, SynthPlan, TransportHit, TransportNote};
-use jawn_drums::{Kit, Voice};
+use jawn_drums::{Kit, Performance, Player, Style, Voice};
 use jawn_synth::{Engine as SynthEngine, Envelope, FilterKind, Patch, Wave};
 use jawn_audio::uplink::{Uplink, UplinkConfig, UplinkSourceSpec, UplinkStatus};
 
@@ -5667,6 +5667,12 @@ fn parse_sends(value: Option<&Value>) -> Result<Option<Vec<(usize, usize)>>, Str
 /// voice names; any other key is ignored. A row shorter than `length` is
 /// zero-padded, a longer one is cut, and a velocity must be a whole 0..=100 or
 /// the field is refused by name (`drums.steps.kick[3]`), never clamped.
+///
+/// `player` and `style` are optional and name the expression: `"player":
+/// "wren"` plays the chart through that character at their own style, and a
+/// `"style"` overrides how hard anyone plays. A style with no player plays it
+/// through the uncoloured house player. No player at all is the plain grid,
+/// exactly as the page has always sent it, so old songs do not change.
 fn parse_drums(value: Option<&Value>) -> Result<Option<DrumChart>, String> {
     let fields = match value {
         None | Some(Value::Null) => return Ok(None),
@@ -5705,6 +5711,40 @@ fn parse_drums(value: Option<&Value>) -> Result<Option<DrumChart>, String> {
         Some(Value::Num(value)) if *value == 0.0 => false,
         Some(Value::Num(value)) if *value == 1.0 => true,
         _ => return Err("drums \"loop\" must be 0 or 1".to_string()),
+    };
+    let player = match get(fields, "player") {
+        None | Some(Value::Null) => None,
+        Some(Value::Str(name)) => match Player::from_name(name) {
+            Some(player) => Some(player),
+            None => {
+                let names: Vec<&str> = Player::ALL.iter().map(|player| player.name()).collect();
+                return Err(format!(
+                    "drums \"player\" must be a player name ({})",
+                    names.join(", ")
+                ));
+            }
+        },
+        _ => return Err("drums \"player\" must be a player name".to_string()),
+    };
+    let style = match get(fields, "style") {
+        None | Some(Value::Null) => None,
+        Some(Value::Str(name)) => match Style::from_name(name) {
+            Some(style) => Some(style),
+            None => {
+                let names: Vec<&str> = Style::ALL.iter().map(|style| style.name()).collect();
+                return Err(format!(
+                    "drums \"style\" must be one of {}",
+                    names.join(", ")
+                ));
+            }
+        },
+        _ => return Err("drums \"style\" must be one of soft, hard, aggressive".to_string()),
+    };
+    let performance = match (player, style) {
+        (None, None) => None,
+        (Some(player), Some(style)) => Some(Performance::new(player, style)),
+        (Some(player), None) => Some(Performance::of(player)),
+        (None, Some(style)) => Some(Performance::new(Player::Studio, style)),
     };
     let mut steps = vec![[0u8; Voice::COUNT]; length];
     if let Some(value) = get(fields, "steps") {
@@ -5750,9 +5790,11 @@ fn parse_drums(value: Option<&Value>) -> Result<Option<DrumChart>, String> {
         }
     }
     let routing = parse_app_routing(get(fields, "routing"), "drums.routing")?;
-    Ok(Some(
-        DrumChart::new(kit, length, looped, steps).with_routing(routing),
-    ))
+    let mut chart = DrumChart::new(kit, length, looped, steps).with_routing(routing);
+    if let Some(performance) = performance {
+        chart = chart.with_performance(performance);
+    }
+    Ok(Some(chart))
 }
 
 /// The `synth` command's `patch` field: the browser's patch JSON, field for
@@ -10495,6 +10537,34 @@ break"}"#).is_err());
     }
 
     #[test]
+    fn a_drum_chart_reads_its_player_and_style() {
+        let chart = |json: &str| {
+            let object = parse_object(json).expect("parse");
+            parse_drums(get(&object, "drums"))
+                .expect("parse drums")
+                .expect("a chart")
+        };
+
+        // No player is the plain grid, exactly as every older song sends it.
+        assert_eq!(chart(r#"{"drums":{"length":4}}"#).performance, None);
+        // A player alone plays their own style.
+        assert_eq!(
+            chart(r#"{"drums":{"length":4,"player":"wren"}}"#).performance,
+            Some(Performance::new(Player::Wren, Style::Soft))
+        );
+        // A style overrides how hard that player is playing.
+        assert_eq!(
+            chart(r#"{"drums":{"length":4,"player":"wren","style":"aggressive"}}"#).performance,
+            Some(Performance::new(Player::Wren, Style::Aggressive))
+        );
+        // A style with no player is the house player playing that style.
+        assert_eq!(
+            chart(r#"{"drums":{"length":4,"style":"hard"}}"#).performance,
+            Some(Performance::new(Player::Studio, Style::Hard))
+        );
+    }
+
+    #[test]
     fn a_transport_refuses_a_malformed_drum_chart_by_name() {
         let mut server = socket_server();
         for (line, needle) in [
@@ -10541,6 +10611,22 @@ break"}"#).is_err());
             (
                 r#"{"cmd":"transport","action":"start","drums":{"length":4,"routing":[{"pan":-3}]}}"#,
                 "drums.routing[0].pan",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"player":"nobody"}}"#,
+                "player",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"player":7}}"#,
+                "player",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"player":"wren","style":"loud"}}"#,
+                "style",
+            ),
+            (
+                r#"{"cmd":"transport","action":"start","drums":{"length":4,"style":3}}"#,
+                "style",
             ),
         ] {
             let answer = reply(server.handle(line));

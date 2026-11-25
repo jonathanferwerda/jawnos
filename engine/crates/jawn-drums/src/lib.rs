@@ -22,6 +22,11 @@
 //!   pool of overlapping hits, and an allocation-free block renderer.
 //! - [`Pattern`] is an optional sixteenth-note chart a future transport can
 //!   schedule against [`Machine::trigger_at`].
+//! - [`Performance`] is the human on the kit: a named [`Player`] (Tuck, Wren,
+//!   Odile, Moxie, Bram, Dov) in a [`Style`] (soft, hard, aggressive) turns a
+//!   chart cell into a velocity and a small timing offset. It is a pure
+//!   function of the cell and the absolute step, so each loop pass differs and
+//!   the render path still allocates nothing.
 //!
 //! # Deliberate divergences from the browser
 //!
@@ -47,7 +52,9 @@
 //!
 //! A trigger takes `0..=100`. `0` is off and does not allocate a voice; `1..=100`
 //! is mapped to the linear gain `velocity / 100` and clamped to that range. A
-//! plain Studio click is `70`, an accent is `100`.
+//! plain Studio click is `70`, an accent is `100`. A [`Performance`] adjusts the
+//! velocity a chart cell carries before it reaches [`Machine::trigger_at`]; the
+//! machine itself still takes a plain `0..=100`.
 
 #![forbid(unsafe_code)]
 
@@ -55,11 +62,13 @@ mod dsp;
 mod kit;
 mod machine;
 mod pattern;
+mod player;
 
 pub use dsp::{render_voice, render_voice_with_seed, voice_seed, DEFAULT_SEED};
 pub use kit::Kit;
 pub use machine::{Machine, MAX_HITS};
 pub use pattern::{sixteenth_frames, Pattern, PatternEvent};
+pub use player::{Performance, Played, Player, Style};
 
 /// The waveform of a pitched drum voice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

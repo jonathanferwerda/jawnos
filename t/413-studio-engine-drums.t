@@ -39,8 +39,9 @@ ok( length $drums,      'the drum machine script is found' );
 like( $playback, qr/pub struct DrumChart/, 'the transport plan has a drum chart' );
 like( $playback, qr/pub const MAX_STEPS: usize = 128/, 'the chart length is bounded' );
 like( $playback, qr/fn render_drums\(/, 'one block renders and schedules the chart' );
-like( $playback, qr/trigger_at\(voice\.index\(\), velocity, frame\)/,
-	'a step lands at its own frame inside the block' );
+like( $playback, qr/trigger_at\(voice\.index\(\), velocity, frame \+ offset\)/,
+	'a step lands at its own frame plus the player\'s offset inside the block' );
+like( $playback, qr/pub fn with_performance/, 'a chart can be played through a player' );
 like( $playback, qr/A transport loop always begins on chart step 0/,
 	'a loop wrap restarts the chart at loop_start' );
 like( $playback, qr/fn a_seek_restarts_the_drum_chart_at_the_new_position/,
@@ -58,6 +59,8 @@ like( $socket, qr/fn parse_drums\(/, 'the socket parses a drum chart' );
 like( $socket, qr/drums \\"length\\" is required/, 'a chart without a length is refused' );
 like( $socket, qr/drums\.steps\.\{name\}\[\{index\}\] must be a whole number from 0 to 100/,
 	'a velocity outside 0..100 is refused by name' );
+like( $socket, qr/drums \\"player\\" must be a player name/, 'a chart may name its player' );
+like( $socket, qr/drums \\"style\\" must be one of soft, hard, aggressive/, 'and how hard they play' );
 like( $socket, qr/\\"drums\\":\{\},\\"drum_kit\\":\\"\{\}\\"/, 'status reports the chart and the loaded kit' );
 like( $socket, qr/\\"drums\\":0,\\"drum_kit\\":\\"off\\"/, 'the resting transport reports no chart' );
 like( $socket, qr/update needs \\"clips\\", \\"master\\", \\"master_values\\", \\"drums\\" or \\"sends\\"/,
@@ -68,6 +71,10 @@ like( $engine_pm, qr/our \@audio_engine_transport_fields = qw\([^)]*\bdrums\b/s,
 	'the engine transport helper forwards drums' );
 like( $controller, qr/sub studio_transport_drums/, 'the route validates the chart' );
 like( $controller, qr/transport drums needs "length"/, 'a chart must name its length' );
+like( $controller, qr/transport drums "player" must be a player name/,
+	'and refuses an unknown player at the route' );
+like( $controller, qr/transport drums "style" must be soft, hard or aggressive/,
+	'and an unknown style' );
 like( $controller, qr/row \\"\$name\\" holds a value that is not a velocity 0\.\.100/,
 	'a velocity is a whole number from 0 to 100' );
 like( $controller, qr/update needs "clips", "sends", "master", "master_values" or "drums"/,
@@ -77,6 +84,10 @@ like( $controller, qr/update needs "clips", "sends", "master", "master_values" o
 like( $transport, qr/function studioEngineDrumPlan\(\)/, 'the page builds the engine chart' );
 like( $transport, qr/kit: studioDrums\.kit,\s*\n\s*length: length,\s*\n\s*loop:/,
 	'with the kit, length and loop the engine reads' );
+like( $transport, qr/if \(studioDrums\.player\) \{/, 'a named player rides the plan' );
+like( $transport, qr/plan\.player = studioDrums\.player;/, 'with its wire name' );
+like( $transport, qr/plan\.style = studioDrumsStyleName\(studioDrums\.style\)/,
+	'and the style it is playing' );
 is( scalar( () = $transport =~ /fields\.drums_json = JSON\.stringify\(drums\)/g ), 2,
 	'the chart rides both the start and the plan update' );
 like( $transport, qr/studioDrums\.engineAnchor = now/, 'the start anchors the highlight' );

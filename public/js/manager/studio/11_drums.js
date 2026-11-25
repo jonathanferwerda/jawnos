@@ -60,6 +60,8 @@ var studioDrums = {
 	lengthSteps: 16,
 	kit: 'acoustic',
 	sound: 'engine',
+	player: '',
+	style: 'hard',
 	loaded: false,
 	timer: 0,
 	running: false,
@@ -108,6 +110,51 @@ function studioDrumsKitName(name) {
 	return (studioDrumsKitNames().indexOf(name) >= 0) ? name : 'acoustic';
 }
 
+// The player and style tables are data too (perl/gb/05_abilities_and_studio.pl):
+// `name` is the wire name saved in the song and sent to the engine, `label` is
+// the word people read, and a player's own `style` is what the Style list moves
+// to when that player is chosen. An unknown saved name opens on Machine.
+function studioDrumsPlayers() {
+	var table = window.jawnos_studio_drum_players;
+	return (table && table.length) ? table : [];
+}
+
+function studioDrumsPlayerEntry(name) {
+	name = String(name || '');
+	var found = null;
+	studioDrumsPlayers().forEach(function (p) { if (p.name === name) { found = p; } });
+	return found;
+}
+
+function studioDrumsPlayerName(name) {
+	return studioDrumsPlayerEntry(name) ? String(name) : '';
+}
+
+function studioDrumsStyles() {
+	var table = window.jawnos_studio_drum_styles;
+	return (table && table.length) ? table : [];
+}
+
+function studioDrumsStyleNames() {
+	return studioDrumsStyles().map(function (s) { return s.name; });
+}
+
+function studioDrumsStyleFrom(name) {
+	name = String(name || '');
+	return (studioDrumsStyleNames().indexOf(name) >= 0) ? name : '';
+}
+
+function studioDrumsStyleName(name) {
+	return studioDrumsStyleFrom(name) || 'hard';
+}
+
+function studioDrumsStyleLabel(name) {
+	name = studioDrumsStyleName(name);
+	var label = name;
+	studioDrumsStyles().forEach(function (s) { if (s.name === name) { label = studioDrumsText(s.label || name); } });
+	return label;
+}
+
 function studioDrumsVoiceLabel(name) {
 	var label = name;
 	studioDrumsVoices().forEach(function (v) {
@@ -129,6 +176,8 @@ function studioDrumsDefaults() {
 	studioDrums.loop = true;
 	studioDrums.kit = 'acoustic';
 	studioDrums.sound = 'engine';
+	studioDrums.player = '';
+	studioDrums.style = 'hard';
 	studioDrums.loaded = true;
 }
 
@@ -175,7 +224,7 @@ function studioDrumsSave() {
 		voices[v.name] = { mute: studioDrums.muted[v.name] ? 1 : 0 };
 		if (studioDrums.keys[v.name]) { keys[v.name] = studioDrums.keys[v.name]; }
 	});
-	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '', kit: studioDrums.kit, sound: studioDrums.sound === 'browser' ? 'browser' : 'engine', length: studioDrums.lengthSteps };
+	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '', kit: studioDrums.kit, sound: studioDrums.sound === 'browser' ? 'browser' : 'engine', length: studioDrums.lengthSteps, player: studioDrums.player || '', style: studioDrumsStyleName(studioDrums.style) };
 }
 
 // Every chart edit is saved and, while the engine owns the transport, sent as
@@ -227,6 +276,12 @@ function studioDrumsRestore(data) {
 		// A song saved before the choice existed has no sound; it opens on the
 		// engine, and so does any value this build does not know.
 		studioDrums.sound = (data.sound === 'browser') ? 'browser' : 'engine';
+		// A song saved before players existed carries neither field: it opens on
+		// Machine, playing the chart exactly as written. A named player with no
+		// style opens on that player's own setting.
+		studioDrums.player = studioDrumsPlayerName(data.player);
+		var player = studioDrumsPlayerEntry(studioDrums.player);
+		studioDrums.style = studioDrumsStyleFrom(data.style) || (player && player.style) || 'hard';
 		if (data.midi) { studioDrums.midiInput = String(data.midi); }
 	}
 	studioDrums.loaded = true;
@@ -244,6 +299,7 @@ function studioDrumsRender() {
 	$('#studio_drums_loop').prop('checked', !!studioDrums.loop);
 	$('#studio_drums_kit').val(studioDrums.kit);
 	$('#studio_drums_sound').val(studioDrums.sound === 'browser' ? 'browser' : 'engine');
+	studioDrumsRenderPlayer();
 	$('#studio_drums .studio_drums_row').each(function () {
 		var row = $(this);
 		var voice = row.attr('data-voice');
@@ -258,6 +314,41 @@ function studioDrumsRender() {
 	});
 	studioDrumsRenderLength();
 	studioDrumsFocusState();
+}
+
+// The player and style only reach the ear through the engine, so the two lists
+// are disabled while the browser owns the kit. Style is also disabled on
+// Machine, where there is no player to set how hard they play.
+function studioDrumsRenderPlayer() {
+	var engine = studioDrums.sound !== 'browser';
+	$('#studio_drums_player').val(studioDrums.player).prop('disabled', !engine);
+	$('#studio_drums_style')
+		.val(studioDrumsStyleName(studioDrums.style))
+		.prop('disabled', !engine || !studioDrums.player);
+	studioDrumsRenderPlayerNote();
+}
+
+// The footer says who is playing and how, so the two lists never need a manual
+// to explain themselves. It also says why they are disabled on Browser.
+function studioDrumsRenderPlayerNote() {
+	var note = $('#studio_drums_player_note');
+	if (!note.length) { return; }
+	if (studioDrums.sound === 'browser') {
+		note.text(studioDrumsText('Player and Style shape the Engine kit. Choose Engine to hear them.'));
+		return;
+	}
+	if (!studioDrums.player) {
+		note.text(studioDrumsText('Machine plays the chart exactly as written.'));
+		return;
+	}
+	var person = studioDrumsPlayerEntry(studioDrums.player);
+	// A player's name is a name, not a word to translate; the feel around it is.
+	var label = person
+		? (person.plain ? String(person.label || person.name) : studioDrumsText(person.label || person.name))
+		: studioDrums.player;
+	var hint = person && person.hint ? studioDrumsText(person.hint) : '';
+	var style = studioDrumsStyleLabel(studioDrums.style);
+	note.text(label + (hint ? ': ' + hint : '') + ' (' + style + ')');
 }
 
 // The template carries the full 128-step head and rows once; the chart length
@@ -1093,6 +1184,23 @@ $(document).on('change', '#studio_drums_sound', function () {
 		studioDrumsTransport(false);
 		if (studioDrums.sound === 'browser') { studioDrumsTransport(true); }
 	}
+	studioDrumsSaver();
+});
+
+// Choosing a named player moves Style to that player's own setting; a style
+// chosen afterwards overrides it. Both are saved and sent as a plan update,
+// so a running engine hears the change on the next step.
+$(document).on('change', '#studio_drums_player', function () {
+	studioDrums.player = studioDrumsPlayerName($(this).val());
+	var player = studioDrumsPlayerEntry(studioDrums.player);
+	if (player && player.style) { studioDrums.style = studioDrumsStyleName(player.style); }
+	studioDrumsRender();
+	studioDrumsSaver();
+});
+
+$(document).on('change', '#studio_drums_style', function () {
+	studioDrums.style = studioDrumsStyleName($(this).val());
+	studioDrumsRender();
 	studioDrumsSaver();
 });
 

@@ -64,12 +64,51 @@ is_deeply(\@kit_labels,
 like($studio, qr/# The drum kits\. `name` is the wire name saved in the song/,
 	'the table says the name is the wire name and the label is what people read');
 
+# --- the player and style tables -------------------------------------------
+my ($players) = $studio =~ /drum_players\s*=>\s*\[(.*?)\n\t\],/s;
+ok(defined $players, 'the studio data carries a drum player table');
+$players = '' unless defined $players;
+is_deeply([ $players =~ /name\s*=>\s*'([^']+)'/g ],
+	[qw(studio tuck wren odile moxie bram dov)],
+	'the seven players are the ones the panel offers, in order');
+for my $pair ([ studio => 'hard' ], [ tuck => 'soft' ], [ wren => 'soft' ],
+	[ odile => 'hard' ], [ moxie => 'hard' ], [ bram => 'aggressive' ], [ dov => 'aggressive' ]) {
+	my ($name, $style) = @$pair;
+	like($players, qr/\{ name => '\Q$name\E',[\s\S]*?style => '\Q$style\E'/,
+		"the $name player opens on $style");
+}
+like($players, qr/\{ name => 'studio', label => 'Session'/, 'Session is the uncoloured house player');
+like($studio, qr/# The drum players:/, 'the player table says what its columns mean');
+
+my ($styles) = $studio =~ /drum_styles\s*=>\s*\[(.*?)\n\t\],/s;
+ok(defined $styles, 'the studio data carries a drum style table');
+$styles = '' unless defined $styles;
+is_deeply([ $styles =~ /name\s*=>\s*'([^']+)'/g ], [qw(soft hard aggressive)],
+	'the three styles are the ones the panel offers, in order');
+is_deeply([ $styles =~ /label\s*=>\s*'([^']+)'/g ], [qw(Soft Hard Aggressive)],
+	'every style has the label people read');
+
 # --- the panel is included once and is data-driven --------------------------
 my @includes = $markup =~ /include 'studio\/drums'/g;
 is(scalar(@includes), 1, 'the markup includes the drum panel once');
 like($markup, qr/id="studio_drums"|include 'studio\/drums'/, 'the drum panel is a real include');
 like($drums, qr/window\.jawnos_studio_drums/, 'the panel publishes its voice table');
 like($drums, qr/window\.jawnos_studio_drum_kits/, 'the panel publishes its kit table');
+like($drums, qr/window\.jawnos_studio_drum_players/, 'the panel publishes its player table');
+like($drums, qr/window\.jawnos_studio_drum_styles/, 'and its style table');
+like($drums, qr/id="studio_drums_player"/, 'the panel has a Player list');
+like($drums, qr/id="studio_drums_player"[^\n]*Choose who plays the drum chart/,
+	'the Player list explains itself');
+like($drums, qr/<select id="studio_drums_player" aria-label=/, 'the Player list is named for a screen reader');
+like($drums, qr/foreach my \$p \( \@\{\$gb::studio->\{'drum_players'\}\} \)/,
+	'the Player options come from the table, not hard-coded markup');
+like($drums, qr/<option value="">[^\n]*Machine/, 'Machine is the no-player choice');
+like($drums, qr/id="studio_drums_style"/, 'the panel has a Style list');
+like($drums, qr/id="studio_drums_style"[^\n]*Choose how hard the player plays/,
+	'the Style list explains itself');
+like($drums, qr/foreach my \$s \( \@\{\$gb::studio->\{'drum_styles'\}\} \)/,
+	'the Style options come from the table, not hard-coded markup');
+like($drums, qr/id="studio_drums_player_note"/, 'the footer says who is playing and how');
 like($drums, qr/id="studio_drums_kit"/, 'the panel has a Kit list');
 like($drums, qr/id="studio_drums_kit"[^\n]*Choose a drum kit/, 'the Kit list explains itself');
 like($drums, qr/<select id="studio_drums_kit" aria-label=/, 'the Kit list is named for a screen reader');
@@ -242,8 +281,8 @@ like($code, qr/library\.splice\(index, 1\)/, 'delete removes just the chosen loo
 
 # --- length and loop persistence -------------------------------------------
 like($code, qr/function studioDrumsSave\(\)/, 'the chart has one save function');
-like($code, qr/return \{ steps: steps, keys: keys, loop: studioDrums\.loop \? 1 : 0, voices: voices, midi: studioDrums\.midiInput \|\| '', kit: studioDrums\.kit, sound: studioDrums\.sound === 'browser' \? 'browser' : 'engine', length: studioDrums\.lengthSteps \};/,
-	'the saved shape is steps, keys, loop, voices, midi, kit, sound and length');
+like($code, qr/return \{ steps: steps, keys: keys, loop: studioDrums\.loop \? 1 : 0, voices: voices, midi: studioDrums\.midiInput \|\| '', kit: studioDrums\.kit, sound: studioDrums\.sound === 'browser' \? 'browser' : 'engine', length: studioDrums\.lengthSteps, player: studioDrums\.player \|\| '', style: studioDrumsStyleName\(studioDrums\.style\) \};/,
+	'the saved shape is steps, keys, loop, voices, midi, kit, sound, length, player and style');
 like($knobs, qr/drums: studioDrumsSave\(\)/, 'the song stores the drum state in admin');
 like($knobs, qr/studioDrumsRestore\(mixer\['admin'\] && mixer\['admin'\]\['drums'\]\)/,
 	'loading a song restores it');
@@ -271,6 +310,32 @@ like($code, qr/var token = \+\+studioDrums\.buildGen;/, 'each build takes a gene
 like($code, qr/if \(token !== studioDrums\.buildGen\) \{ return; \}/,
 	'an older build cannot overwrite newer buffers');
 like($code, qr/\$\('#studio_drums_kit'\)\.val\(studioDrums\.kit\)/, 'the Kit list shows the chosen kit');
+# --- the player and style choices ------------------------------------------
+like($code, qr/player: '',\s*\n\s*style: 'hard',/, 'the drum machine opens on Machine and Hard');
+like($code, qr/studioDrums\.player = '';\s*\n\s*studioDrums\.style = 'hard';/, 'defaults reset both choices');
+like($code, qr/function studioDrumsPlayers\(\)/, 'the browser reads the published player table');
+like($code, qr/window\.jawnos_studio_drum_players/, 'the player table is the one the panel published');
+like($code, qr/function studioDrumsStyles\(\)/, 'the browser reads the published style table');
+like($code, qr/window\.jawnos_studio_drum_styles/, 'the style table is the one the panel published');
+like($code, qr/function studioDrumsPlayerName\(name\)/, 'a saved player is validated against the table');
+like($code, qr/function studioDrumsStyleFrom\(name\)/, 'a saved style is validated against the table');
+like($code, qr/studioDrumsStyleFrom\(name\) \|\| 'hard'/, 'an unknown style falls back to Hard');
+like($code, qr/studioDrums\.player = studioDrumsPlayerName\(data\.player\)/, 'restore reads the saved player');
+like($code, qr/studioDrums\.style = studioDrumsStyleFrom\(data\.style\) \|\| \(player && player\.style\) \|\| 'hard'/,
+	'restore reads the style, or the player\'s own');
+like($code, qr/\$\('#studio_drums_player'\)\.val\(studioDrums\.player\)/, 'the Player list shows the chosen player');
+like($code, qr/\$\('#studio_drums_style'\)[\s\S]{0,80}\.val\(studioDrumsStyleName\(studioDrums\.style\)\)/,
+	'the Style list shows the chosen style');
+like($code, qr/\.prop\('disabled', !engine\)/, 'the lists are disabled while the browser owns the kit');
+like($code, qr/\.prop\('disabled', !engine \|\| !studioDrums\.player\)/, 'Style is disabled on Machine');
+like($code, qr/function studioDrumsRenderPlayerNote\(\)/, 'the footer explains the choice');
+like($code, qr/Player and Style shape the Engine kit\. Choose Engine to hear them\./,
+	'and says why Browser ignores them');
+like($code, qr/on\('change', '#studio_drums_player'/, 'the Player list has one change path');
+like($code, qr/on\('change', '#studio_drums_style'/, 'the Style list has one change path');
+like($code, qr/studioDrums\.player = studioDrumsPlayerName\(\$\(this\)\.val\(\)\)/, 'a player change validates the name');
+like($code, qr/studioDrums\.style = studioDrumsStyleName\(player\.style\)/,
+	'and moves Style to that player\'s own setting');
 like($code, qr/function studioDrumsVoiceSpec\(kit, name\)/, 'the voice spec is kit-aware');
 like($code, qr/studioDrumsVoiceSpec\(kit, v\.name\)/, 'the build asks for the current kit');
 like($code, qr/function studioDrumsRenderVoice\(off, kit, name\)/, 'the render takes the kit too');
@@ -392,6 +457,11 @@ like($help, qr/The chart follows the transport/, 'help explains the transport');
 like($help, qr/Keys only sound while no text field has focus/, 'help explains the focus guard');
 like($help, qr/Connect MIDI/, 'help explains MIDI');
 like($help, qr/The native engine take cannot record them yet/, 'help states the engine limitation');
+like($help, qr/Beside Sound, Player chooses who plays the chart/, 'help explains the Player list');
+like($help, qr/Machine plays it exactly as written/, 'help names Machine');
+like($help, qr/Tuck, Wren, Odile, Moxie, Bram and Dov/, 'help names the six players');
+like($help, qr/Style sets how hard that player plays/, 'help explains Style');
+like($help, qr/shape the Engine kit only/, 'help says Browser plays the chart as written');
 
 my ($controls) = $help =~ /\$topic\{'studio'\} = \{([\s\S]*?)\n\t\};/;
 ok(defined $controls, 'the studio help topic was found');
@@ -402,7 +472,7 @@ for my $label (
 	'Computer keys follow the Studio window', 'Repeat the drum chart each bar',
 	'Clear the drum chart', 'Play this drum', 'Assign a computer key to this drum',
 	'Mute this drum', 'Click to place a beat, hold Shift for an accent, right-click to set its velocity',
-	'Choose a drum kit',
+	'Choose a drum kit', 'Choose who plays the drum chart', 'Choose how hard the player plays',
 	'Connect a MIDI keyboard to the drums', 'Choose a MIDI input for the drums',
 	'Add a bar to the drum loop', 'Remove a bar from the drum loop',
 	'Add a beat to the drum loop', 'Remove a beat from the drum loop',

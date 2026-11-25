@@ -215,6 +215,29 @@ our $studio = {
 		{ name => '808', label => '808' },
 		{ name => 'metal', label => 'Metal' }
 	],
+	# The drum players: who is playing the chart. `name` is the wire name the
+	# engine and a saved song use; `label` is the word in the Player list, and
+	# `plain` marks a person's name, which is not translated. `style` is the
+	# player's own setting (choosing the player moves the Style list to it),
+	# and `hint` is the one-line feel the panel shows. The engine's names and
+	# habits live in engine/crates/jawn-drums/src/player.rs; `studio` is the
+	# uncoloured house player, for choosing a style on its own.
+	drum_players => [
+		{ name => 'studio', label => 'Session', style => 'hard', hint => 'On the grid, no swing. The style alone shapes the hit.' },
+		{ name => 'tuck', label => 'Tuck', style => 'soft', plain => 1, hint => 'Brushes and a lazy backbeat. Sits behind the click and rounds the snare.' },
+		{ name => 'wren', label => 'Wren', style => 'soft', plain => 1, hint => 'Swings the offbeat sixteenths and keeps the hats light.' },
+		{ name => 'odile', label => 'Odile', style => 'hard', plain => 1, hint => 'On the grid and dry. A tight backbeat that never rushes.' },
+		{ name => 'moxie', label => 'Moxie', style => 'hard', plain => 1, hint => 'Steady four-on-the-floor. The kick leads and the hats stay even.' },
+		{ name => 'bram', label => 'Bram', style => 'aggressive', plain => 1, hint => 'Leans into the kit: a big snare and a kick right on the click.' },
+		{ name => 'dov', label => 'Dov', style => 'aggressive', plain => 1, hint => 'Punk energy. Wide dynamics and heavy accents, no patience for a soft bar.' }
+	],
+	# The drum styles: how hard the player plays. The same names the engine and
+	# a saved song use; the label is what the Style list reads.
+	drum_styles => [
+		{ name => 'soft', label => 'Soft' },
+		{ name => 'hard', label => 'Hard' },
+		{ name => 'aggressive', label => 'Aggressive' }
+	],
 	# The shared effect contract (docs/studio-effects.md) and the circuit map (docs/pedal-audit.md). `effects` is what the
 	# rack palette offers and what the browser's studioInsert() builds; `master`
 	# is the fixed chain after the mix. A control with `options` is a dropdown,

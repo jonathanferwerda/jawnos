@@ -43,7 +43,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
-use jawn_drums::{Kit, Machine, Voice};
+use jawn_drums::{Kit, Machine, Performance, Voice};
 use jawn_synth::{Patch, Synth};
 
 use crate::effect::{Channel, EffectChain, InsertKind};
@@ -871,6 +871,10 @@ pub struct DrumChart {
     pub looped: bool,
     /// Exactly `length` rows; each row is one velocity per voice.
     pub steps: Vec<[u8; Voice::COUNT]>,
+    /// Who is playing the chart, and how hard, or `None` for the grid exactly
+    /// as written. A player moves each hit a few milliseconds and widens or
+    /// narrows its velocity; it never changes which steps fire.
+    pub performance: Option<Performance>,
     /// The channels this app is patched into, each rendered through its own
     /// strip on the pre-master app bus. Empty is the unpatched wire.
     pub routing: Vec<AppRoute>,
@@ -893,8 +897,17 @@ impl DrumChart {
             length,
             looped,
             steps,
+            performance: None,
             routing: Vec::new(),
         }
+    }
+
+    /// Play the chart through a named player, in a style. A chart without one
+    /// plays the grid exactly as written, which is how every song made before
+    /// players existed still sounds.
+    pub fn with_performance(mut self, performance: Performance) -> Self {
+        self.performance = Some(performance);
+        self
     }
 
     /// Attach the Studio channel strips this chart's kit is patched into. A
@@ -1224,6 +1237,10 @@ struct DrumRender {
     strips: Vec<AppStrip>,
     /// The next chart step to trigger.
     step: usize,
+    /// How many sixteenths have been played since this chart was built. It never
+    /// wraps at the chart length, so each loop pass carries a different player
+    /// wobble instead of repeating the first one.
+    steps_played: u64,
     /// Frames elapsed since the chart's step 0, kept in frames so a tempo
     /// change moves the boundaries, not the cursor.
     phase: f64,
@@ -1246,6 +1263,7 @@ impl DrumRender {
             chart,
             strips,
             step: 0,
+            steps_played: 0,
             phase: 0.0,
             next_phase: 0.0,
             step_frames: 0.0,
@@ -1830,6 +1848,7 @@ impl TransportSource {
             render.chart = chart.clone();
             if relength {
                 render.step = 0;
+                render.steps_played = 0;
                 render.phase = 0.0;
                 render.next_phase = 0.0;
                 render.finished = false;
@@ -1874,18 +1893,37 @@ impl TransportSource {
         let loop_bounds = self.clip_loop;
         let mut phase = render.phase;
         let mut song = song_start;
+        let performance = render.chart.performance;
         for frame in 0..frames {
             if !render.finished && phase + 1e-9 >= render.next_phase {
                 let chart_length = render.chart.length.max(1);
+                let metric_step = render.step;
+                let steps_played = render.steps_played;
                 if let Some(row) = render.chart.steps.get(render.step) {
                     for voice in Voice::ALL {
                         let velocity = row[voice.index()];
-                        if velocity > 0 {
-                            render.machine.trigger_at(voice.index(), velocity, frame);
+                        if velocity == 0 {
+                            continue;
                         }
+                        let (velocity, offset) = match performance {
+                            Some(performance) => {
+                                let played = performance.play(
+                                    voice,
+                                    velocity,
+                                    steps_played,
+                                    metric_step,
+                                    q,
+                                    self.rate,
+                                );
+                                (played.velocity, played.offset_frames)
+                            }
+                            None => (velocity, 0),
+                        };
+                        render.machine.trigger_at(voice.index(), velocity, frame + offset);
                     }
                 }
                 render.step += 1;
+                render.steps_played = render.steps_played.wrapping_add(1);
                 if render.step >= chart_length {
                     if render.chart.looped {
                         render.step = 0;
@@ -1900,7 +1938,8 @@ impl TransportSource {
             if loop_bounds.1 > loop_bounds.0 && song >= loop_bounds.1 {
                 let length = loop_bounds.1 - loop_bounds.0;
                 song = loop_bounds.0 + (song - loop_bounds.1) % length;
-                // A transport loop always begins on chart step 0.
+                // A transport loop always begins on chart step 0. `steps_played`
+                // keeps counting, so the next pass is played, not replayed.
                 render.step = 0;
                 render.finished = false;
                 phase = 0.0;
@@ -2295,6 +2334,10 @@ impl RenderSource for TransportSource {
                 // where the transport now is.
                 if let Some(render) = self.drum_render.as_mut() {
                     render.step = 0;
+                    // A seek to the same place hears the same pass: the
+                    // player's wobble is a function of the step since the
+                    // chart's origin, not of how many loops have run.
+                    render.steps_played = 0;
                     render.finished = false;
                     render.phase = 0.0;
                     render.next_phase = 0.0;
@@ -2910,6 +2953,7 @@ impl RenderSource for Playback {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jawn_drums::Player;
 
     fn track(name: &str, level: f32, gain: f32, pan: f32) -> PlayTrack {
         PlayTrack {
@@ -4159,6 +4203,31 @@ mod tests {
         let left = left_channel(&drum_block(&mut source, 64));
         let onset = first_audible(&left, 1e-6).expect("the kick on step 0 never sounded");
         assert!(onset <= 8, "the step 0 onset was at frame {onset}");
+    }
+
+    #[test]
+    fn a_player_sits_behind_the_grid_and_softens_the_hit() {
+        // The same chart, once as written and once through Tuck at his own
+        // (soft) style. The player delays the onset and lowers the peak; the
+        // grid still decides which steps fire.
+        let plain = drum_chart(Kit::Acoustic, 4, true, &[(Voice::Kick, &[100, 0, 0, 0])]);
+        let played = plain.clone().with_performance(Performance::of(Player::Tuck));
+        let (_, mut a) = drum_transport(48_000, 120.0, 0, 0, 0, plain, 12_000);
+        let (_, mut b) = drum_transport(48_000, 120.0, 0, 0, 0, played, 12_000);
+        let plain_block = left_channel(&drum_block(&mut a, 12_000));
+        let played_block = left_channel(&drum_block(&mut b, 12_000));
+        let plain_onset = first_audible(&plain_block, 1e-6).expect("the plain kick never sounded");
+        let played_onset = first_audible(&played_block, 1e-6).expect("the played kick never sounded");
+        assert!(
+            played_onset >= plain_onset + 400,
+            "Tuck should sit ~13 ms back: plain {plain_onset}, played {played_onset}"
+        );
+        assert!(
+            peak(&played_block) < peak(&plain_block),
+            "a soft player should not hit as hard: {} vs {}",
+            peak(&played_block),
+            peak(&plain_block)
+        );
     }
 
     #[test]

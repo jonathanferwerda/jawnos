@@ -653,13 +653,21 @@ function studioEngineDrumPlan() {
 		if (studioDrums.muted[v.name]) { return; }
 		steps[v.name] = (studioDrums.steps[v.name] || []).slice(0, length);
 	});
-	return {
+	var plan = {
 		kit: studioDrums.kit,
 		length: length,
 		loop: studioDrums.loop ? 1 : 0,
 		steps: steps,
 		routing: studioEngineAppRouting('drums')
 	};
+	// A named player is the expression layer. Machine leaves both fields off,
+	// so the engine plays the grid exactly as written; a chart without them is
+	// also how every song made before players existed sounds.
+	if (studioDrums.player) {
+		plan.player = studioDrums.player;
+		plan.style = studioDrumsStyleName(studioDrums.style);
+	}
+	return plan;
 }
 
 // The Synth app's voices are rendered by the engine directly, so their channel

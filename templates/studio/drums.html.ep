@@ -6,6 +6,8 @@
    part is public/js/manager/studio/11_drums.js. %>
 <script>window.jawnos_studio_drums = <%== Mojo::JSON::encode_json($gb::studio->{'drums'}) %>;</script>
 <script>window.jawnos_studio_drum_kits = <%== Mojo::JSON::encode_json($gb::studio->{'drum_kits'}) %>;</script>
+<script>window.jawnos_studio_drum_players = <%== Mojo::JSON::encode_json($gb::studio->{'drum_players'}) %>;</script>
+<script>window.jawnos_studio_drum_styles = <%== Mojo::JSON::encode_json($gb::studio->{'drum_styles'}) %>;</script>
 <script>window.jawnos_studio_drum_loops = <%== Mojo::JSON::encode_json(eval { Mojo::JSON::decode_json($settings->{'drum_loops'} || '[]') } || []) %>;</script>
 <div id="studio_drums" class="studio_panel">
 	<div class="studio_panel_bar">
@@ -23,6 +25,21 @@
 			<select id="studio_drums_sound" aria-label="<%= &subs::ui('Choose where the drums play') %>" hint="<%= &subs::ui('Play the kit on the engine or in the browser') %>">
 				<option value="engine"><%= &subs::ui('Engine') %></option>
 				<option value="browser"><%= &subs::ui('Browser') %></option>
+			</select>
+		</label>
+		<label class="studio_drums_player_label"><%= &subs::ui('Player') %>
+			<select id="studio_drums_player" aria-label="<%= &subs::ui('Choose who plays the drum chart') %>" hint="<%= &subs::ui('Choose who plays the drum chart') %>">
+				<option value=""><%= &subs::ui('Machine') %></option>
+				<% foreach my $p ( @{$gb::studio->{'drum_players'}} ) { %>
+					<option value="<%= $p->{'name'} %>" title="<%= &subs::ui($p->{'hint'}) %>"><%= $p->{'plain'} ? $p->{'label'} : &subs::ui($p->{'label'}) %></option>
+				<% } %>
+			</select>
+		</label>
+		<label class="studio_drums_style_label"><%= &subs::ui('Style') %>
+			<select id="studio_drums_style" aria-label="<%= &subs::ui('Choose how hard the player plays') %>" hint="<%= &subs::ui('Choose how hard the player plays') %>">
+				<% foreach my $s ( @{$gb::studio->{'drum_styles'}} ) { %>
+					<option value="<%= $s->{'name'} %>"><%= &subs::ui($s->{'label'}) %></option>
+				<% } %>
 			</select>
 		</label>
 		<span class="studio_panel_buttons">
@@ -75,6 +92,7 @@
 				<option value=""><%= &subs::ui('No MIDI input') %></option>
 			</select>
 			<span class="studio_drums_note" title="<%= &subs::ui('The browser take records the drums; the engine take does not yet.') %>"><%= &subs::ui('Browser take only') %></span>
+			<span id="studio_drums_player_note" class="studio_drums_note studio_drums_player_note" aria-live="polite"></span>
 			<span id="studio_drums_midi_state" class="studio_drums_note"></span>
 		</div>
 	</div>
