@@ -297,28 +297,59 @@ function jawnosSoundTaskbarMusicIcon(playing) {
 	if (src) { return src; }
 	return playing ? '/icons/pause.jpg' : '/icons/play.jpg';
 }
+// The same controls live in the taskbar panel and in Sound's Remote pill, so
+// one repaint serves every mounted copy.
 function jawnosSoundTaskbarMusicRepaint() {
-	var section = $('#taskbar_sound_panel [data-sound-section="music"]');
-	if (!section.length) { return; }
+	var sections = $('[data-music-section]');
+	if (!sections.length) { return; }
 	var state = jawnosSoundTaskbarMusicState();
 	var playing = state && state.playing ? 1 : 0;
-	section.find('[data-music-role="playpause"] img')
-		.attr('src', jawnosSoundTaskbarMusicIcon(playing))
-		.attr('hint', playing ? jawnosT('Pause') : jawnosT('Play'));
-	section.find('[data-music-role="playpause"]').attr('aria-label', playing ? jawnosT('Pause') : jawnosT('Play'));
-	var now = (state && (state.title || state.file)) ? (state.title || '') : '';
-	section.find('[data-music-role="now"]').text(now);
-	// The volume row belongs to a peer's Music app; this machine's own level is
-	// the house and device sliders above.
 	var remote = !!jawnosSoundTaskbarMusicTarget();
-	section.find('[data-music-volume]').closest('.taskbar_panel_row').toggle(remote);
-	if (remote && state) {
-		var pct = Math.round((state.muted ? 0 : (parseFloat(state.volume) || 0)) * 100);
-		var slider = section.find('[data-music-volume]');
-		// a slider under the person's finger must not be pulled back by a poll
-		if (document.activeElement !== slider[0]) { slider.val(pct); }
-		section.find('[data-music-volume-value]').text(pct + '%');
+	sections.each(function() {
+		var section = $(this);
+		section.find('[data-music-role="playpause"] img')
+			.attr('src', jawnosSoundTaskbarMusicIcon(playing))
+			.attr('hint', playing ? jawnosT('Pause') : jawnosT('Play'));
+		section.find('[data-music-role="playpause"]').attr('aria-label', playing ? jawnosT('Pause') : jawnosT('Play'));
+		var now = (state && (state.title || state.file)) ? (state.title || '') : '';
+		section.find('[data-music-role="now"]').text(now);
+		// The volume row belongs to a peer's Music app; this machine's own level
+		// is the house and device sliders.
+		section.find('[data-music-volume]').closest('.taskbar_panel_row').toggle(remote);
+		if (remote && state) {
+			var pct = Math.round((state.muted ? 0 : (parseFloat(state.volume) || 0)) * 100);
+			var slider = section.find('[data-music-volume]');
+			// a slider under the person's finger must not be pulled back by a poll
+			if (document.activeElement !== slider[0]) { slider.val(pct); }
+			section.find('[data-music-volume-value]').text(pct + '%');
+		}
+		jawnosSoundTaskbarMusicPickerPaint(section);
+	});
+}
+// A machine that joined after the copy was built belongs in the picker, and one
+// that left should stop showing. Rebuilding only when the roster changes keeps
+// a poll from closing a picker someone has open.
+function jawnosSoundTaskbarMusicPickerPaint(section) {
+	var picker = section.find('[data-music-target]');
+	if (!picker.length) { return; }
+	var machines = jawnosSoundTaskbarMusic.machines || [];
+	var signature = $.map(machines, function(machine) { return (machine && machine.uuid) ? machine.uuid : ''; }).join(',');
+	if (picker.data('roster') !== signature) {
+		picker.empty();
+		picker.append($('<option value=""></option>').text(jawnosT('This machine')));
+		$.each(machines, function(i, machine) {
+			if (!machine || !machine.uuid) { return; }
+			picker.append($('<option></option>').attr('value', machine.uuid).text(machine.label || machine.uuid));
+		});
+		picker.data('roster', signature);
 	}
+	var target = jawnosSoundTaskbarMusicTarget();
+	// a remembered machine that has gone offline still shows as the choice; a
+	// press says it is not reachable instead of silently aiming elsewhere
+	if (target && picker.find('option[value="' + target + '"]').length === 0) {
+		picker.append($('<option></option>').attr('value', target).text(target));
+	}
+	if (document.activeElement !== picker[0]) { picker.val(target); }
 }
 // A drag is a lot of events; one POST per settle keeps the peer's player from
 // being re-tuned on every pixel while still feeling immediate.
@@ -369,9 +400,9 @@ function jawnosSoundTaskbarMusicTransport(action) {
 		error: function() { jawnosSoundTaskbarFail(jawnosT('Could not control that machine.')); }
 	});
 }
-function jawnosSoundTaskbarMusicSection() {
-	var section = $('<div class="taskbar_panel_section"></div>').attr('data-sound-section', 'music');
-	section.append($('<h4></h4>').text(jawnosT('Music')));
+// Everything below the heading: the transport, the machine picker, the peer
+// volume and the now-playing line. Sound's Remote pill mounts the same block.
+function jawnosSoundTaskbarMusicBuild(section) {
 	var transport = $('<div class="taskbar_panel_row taskbar_music_transport"></div>');
 	var maker = function(action, icon, label) {
 		return $('<button type="button"></button>')
@@ -387,23 +418,8 @@ function jawnosSoundTaskbarMusicSection() {
 	transport.append(maker('next', next_icon, 'Next'));
 	section.append(transport);
 	var row = $('<div class="taskbar_panel_row"></div>');
-	var select = $('<select class="taskbar_music_select" data-music-target></select>')
-		.attr('aria-label', jawnosT('The Music app this widget controls'));
-	select.append($('<option value=""></option>').text(jawnosT('This machine')));
-	var target = jawnosSoundTaskbarMusicTarget();
-	var target_listed = false;
-	$.each(jawnosSoundTaskbarMusic.machines || [], function(i, machine) {
-		if (!machine || !machine.uuid) { return; }
-		if (machine.uuid == target) { target_listed = true; }
-		select.append($('<option></option>').attr('value', machine.uuid).text(machine.label || machine.uuid));
-	});
-	// a remembered machine that has gone offline still shows as the choice; the
-	// next press says it is not reachable instead of silently aiming elsewhere
-	if (target && !target_listed) {
-		select.append($('<option></option>').attr('value', target).text(target));
-	}
-	select.val(target);
-	row.append(select);
+	row.append($('<select class="taskbar_music_select" data-music-target></select>')
+		.attr('aria-label', jawnosT('The Music app this widget controls')));
 	section.append(row);
 	var volume = $('<div class="taskbar_panel_row taskbar_music_volume"></div>');
 	volume.append($('<input type="range" class="taskbar_sound_slider" min="0" max="100" step="1">')
@@ -412,8 +428,28 @@ function jawnosSoundTaskbarMusicSection() {
 	volume.append($('<span class="taskbar_panel_value"></span>').attr('data-music-volume-value', ''));
 	section.append(volume);
 	section.append($('<div class="taskbar_music_now" data-music-role="now"></div>'));
+	jawnosSoundTaskbarMusicPickerPaint(section);
+	return section;
+}
+function jawnosSoundTaskbarMusicSection() {
+	var section = $('<div class="taskbar_panel_section"></div>')
+		.attr('data-sound-section', 'music')
+		.attr('data-music-section', '');
+	section.append($('<h4></h4>').text(jawnosT('Music')));
+	jawnosSoundTaskbarMusicBuild(section);
 	jawnosSoundTaskbarMusicRepaint();
 	return section;
+}
+// Sound's Remote pill mounts the same block into its own body once, when the
+// window opens; the shares target, state and handlers make the two copies act
+// as one.
+function jawnosSoundTaskbarMusicMount(target) {
+	var box = $(target);
+	if (!box.length || box.data('music_mounted')) { return; }
+	box.data('music_mounted', 1);
+	jawnosSoundTaskbarMusicBuild(box);
+	jawnosSoundTaskbarMusicLoad();
+	jawnosSoundTaskbarMusicStateLoad();
 }
 
 function jawnosSoundTaskbarPanelFooter() {
@@ -619,17 +655,17 @@ $(document).on('change', '#taskbar_sound_panel [data-sound-level]', function() {
 	});
 });
 
-$(document).on('click', '#taskbar_sound_panel [data-music-action]', function(e) {
+$(document).on('click', '[data-music-section] [data-music-action]', function(e) {
 	e.stopPropagation();
 	jawnosSoundTaskbarMusicTransport($(this).attr('data-music-action'));
 });
-$(document).on('input', '#taskbar_sound_panel [data-music-volume]', function() {
+$(document).on('input', '[data-music-section] [data-music-volume]', function() {
 	var pct = Math.round(parseFloat(this.value) || 0);
 	$(this).closest('.taskbar_panel_row').find('[data-music-volume-value]').text(pct + '%');
 	jawnosSoundTaskbarMusicVolumeSend(pct / 100);
 });
 
-$(document).on('change', '#taskbar_sound_panel [data-music-target]', function() {
+$(document).on('change', '[data-music-section] [data-music-target]', function() {
 	var target = $(this).val() || '';
 	jawnosSoundTaskbarMusic.widget_target = target;
 	jawnosSoundTaskbarMusic.state = null;
@@ -660,7 +696,8 @@ $(function() {
 	setTimeout(jawnosSoundTaskbarMusicLoad, 1900);
 	// Only a panel that is on screen pays for the remote player's state.
 	setInterval(function() {
-		if (typeof jawnosTaskbarPanelIsOpen === 'function' && jawnosTaskbarPanelIsOpen('taskbar_sound_panel')) {
+		if ((typeof jawnosTaskbarPanelIsOpen === 'function' && jawnosTaskbarPanelIsOpen('taskbar_sound_panel'))
+			|| $('#sound_section_remote.is-active').length) {
 			jawnosSoundTaskbarMusicStateLoad();
 		}
 	}, 5000);

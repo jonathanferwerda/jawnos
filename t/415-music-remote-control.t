@@ -48,6 +48,10 @@ like($remote, qr/console_command\('musicVolumeSet'/, 'the volume crosses as a na
 like($remote, qr/value => \$c->param\('value'\)/, 'the route carries the level');
 like($taskbar, qr/data-music-volume/, 'the widget has a remote volume slider');
 like($taskbar, qr/action: 'volume', value: level/, 'the slider rides the transport route');
+like($taskbar, qr/function jawnosSoundTaskbarMusicMount/, 'Sound can mount the same controls');
+like($taskbar, qr/\[data-music-section\] \[data-music-action\]/, 'the transport binds wherever the block is mounted');
+like($taskbar, qr/\[data-music-section\] \[data-music-volume\]/, 'and so does the volume');
+like($taskbar, qr/\[data-music-section\] \[data-music-target\]/, 'and the machine picker');
 like($taskbar, qr/on\('input', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'the house level only binds a slider that names its device');
 like($taskbar, qr/on\('change', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'and so does its save');
 like($taskbar, qr/on\('wheel', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'and its wheel gesture');

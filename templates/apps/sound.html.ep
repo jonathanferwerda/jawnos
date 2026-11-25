@@ -11,7 +11,14 @@
 #sound .sound_columns { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
 #sound .sound_section { flex: 1 1 100%; min-width: 0; padding: 0; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); overflow: hidden; display: none; }
 #sound .sound_section_head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2, var(--panel)); }
-#sound .sound_section_tabs { display: flex; gap: 8px; flex: 0 0 auto; overflow-x: scroll; overflow-y: hidden; padding-bottom: 4px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+#sound .sound_section_tabs { display: flex; gap: 8px; flex: 0 0 auto; overflow-x: scroll; overflow-y: hidden; overscroll-behavior-x: contain; padding-bottom: 4px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+#sound .sound_note:empty { display: none; }
+#sound .sound_remote_music { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+#sound .sound_remote_music .taskbar_music_transport { display: flex; gap: 8px; }
+#sound .sound_remote_music .taskbar_music_transport button { padding: 4px 10px; }
+#sound .sound_remote_music .taskbar_music_transport img { width: 22px; height: 22px; object-fit: contain; }
+#sound .sound_remote_music .taskbar_music_select { max-width: 280px; }
+#sound .sound_remote_music .taskbar_music_now { font-size: 14px; opacity: .72; }
 #sound .sound_section_pill { flex: 0 0 auto; padding: 5px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); white-space: nowrap; opacity: .85; }
 #sound .sound_section_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; opacity: 1; }
 #sound .sound_section.is-active { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
@@ -76,6 +83,7 @@
 	<div class="sound_section_tabs" role="tablist" aria-label="<%= &subs::ui('Sound sections') %>">
 		<button type="button" class="sound_section_pill is-active" role="tab" data-section="patchbay" aria-selected="true" aria-controls="sound_section_patchbay" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Patchbay') %></button>
 		<button type="button" class="sound_section_pill" role="tab" data-section="io" aria-selected="false" aria-controls="sound_section_io" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('IO') %></button>
+		<button type="button" class="sound_section_pill" role="tab" data-section="remote" aria-selected="false" aria-controls="sound_section_remote" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Remote') %></button>
 		<button type="button" class="sound_section_pill" role="tab" data-section="profiles" aria-selected="false" aria-controls="sound_section_profiles" hint="<%= &subs::ui('Show this section') %>"><%= &subs::lang('sound_profiles') %></button>
 		<button type="button" class="sound_section_pill" role="tab" data-section="apps" aria-selected="false" aria-controls="sound_section_apps" hint="<%= &subs::ui('Show this section') %>"><%= &subs::lang('sound_apps') %></button>
 	</div>
@@ -198,6 +206,13 @@
 				</section>
 				<%= include 'apps/sound/media' %>
 			</div>
+		</div>
+	</section>
+	<section id="sound_section_remote" class="sound_section sound_remote_section" data-section="remote" role="tabpanel">
+		<div class="sound_section_head"><h3><%= &subs::ui('Remote') %></h3></div>
+		<div class="sound_section_body">
+			<p class="sound_level_hint"><%= &subs::ui('The Music app of another machine: its play, pause, next and previous, its volume, and the track it is playing. Playback on this machine carries on.') %></p>
+			<div id="sound_remote_music" class="sound_remote_music" data-music-section></div>
 		</div>
 	</section>
 	<section id="sound_section_profiles" class="sound_section sound_profiles_section" data-section="profiles" role="tabpanel">

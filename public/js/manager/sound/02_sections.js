@@ -33,6 +33,12 @@ function soundSectionShow(name, remember) {
 	$('#sound .sound_section').each(function() {
 		$(this).toggleClass('is-active', $(this).attr('data-section') == name);
 	});
+	// The Remote pill shares the Sound widget's machine memory, so its roster is
+	// read again when the section comes into view.
+	if (name == 'remote' && typeof jawnosSoundTaskbarMusicLoad === 'function') {
+		jawnosSoundTaskbarMusicLoad();
+		jawnosSoundTaskbarMusicStateLoad();
+	}
 	if (remember) {
 		try { localStorage.setItem(soundSectionKey, name); } catch (e) {}
 	}

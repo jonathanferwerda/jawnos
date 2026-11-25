@@ -37,6 +37,9 @@ function soundOpener(timestamp) {
 			if (!response) { return; }
 			windowMaker(response.window || response);
 			soundBind();
+			if (typeof jawnosSoundTaskbarMusicMount === 'function') {
+				jawnosSoundTaskbarMusicMount($('#sound_remote_music'));
+			}
 			soundSectionRestore();
 			if (typeof soundAppsPoll == 'function') { soundAppsPoll(); }
 			soundPatchLoad();
