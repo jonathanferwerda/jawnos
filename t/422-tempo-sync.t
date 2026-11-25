@@ -2,7 +2,7 @@
 # covers:    Tempo-synced time controls. The division parser (n/d, whole notes,
 #            dotted, triplet, manual ms, off), the sync control on delay,
 #            flanger, tremolo and stereo_panner, the tremolo effect on both
-#            sides, the browser-only stereo panner, the 8 s delay line and the
+#            sides, the native stereo panner, the 8 s delay line and the
 #            typed text field in the pedal template.
 
 use strict;
@@ -80,14 +80,14 @@ like($trem, qr/1 => 1\.0 - 4\.0 \* \(phase - 0\.5\)\.abs\(\)/, 'shape 1 is a tri
 like($trem, qr/phase < 0\.5/, 'shape 2 is a square');
 like($trem, qr/silence_in_stays_silence/, 'the tremolo keeps silence silent');
 like($flange, qr/MAX_RATE_HZ: f32 = 8\.0/, 'the flanger cap is 8 Hz');
-like($effect, qr/InsertKind::parse\("stereo_panner"\), None/,
-	'a native take refuses the stereo panner');
+like($effect, qr/("stereo_panner", InsertKind::StereoPanner)/,
+	'a native take accepts the stereo panner');
 
 # --- the plan vocabulary ----------------------------------------------------
 like($plan, qr/\btremolo\b/, 'a source plan may name tremolo');
 like($plan, qr/tremolo\s*=>\s*\[qw\(rate depth shape\)\]/, 'the plan keeps the tremolo numeric controls');
 like($plan, qr/tremolo\s*=>\s*\{\s*shape\s*=>\s*1\s*\}/, 'the tremolo shape is a whole index in a plan');
-unlike($plan, qr/^\s*stereo_panner\b/m, 'the plan does not name the browser-only stereo panner');
+like($plan, qr/^\s*stereo_panner\b/m, 'the plan names the native stereo panner');
 unlike($plan, qr/^\s*sync\b/m, 'the plan never lists sync');
 
 # --- the typed pedal control ------------------------------------------------
@@ -198,7 +198,7 @@ JS
 	is($got{'natural_rate_low'}, '0.1', 'the tremolo rate knob starts at 0.1 Hz');
 	is($got{'natural_rate_high'}, '20', 'the tremolo rate knob ends at 20 Hz');
 	is($got{'natural_shape'}, '2', 'a shape above 2 clamps to square');
-	is($got{'browser_only_panner'}, 'true', 'the stereo panner is browser only');
+	is($got{'browser_only_panner'}, 'false', 'the stereo panner is native');
 	is($got{'browser_only_delay'}, 'false', 'the delay is not browser only');
 }
 else {

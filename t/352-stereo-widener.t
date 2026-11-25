@@ -92,7 +92,8 @@ like($fx, qr/\bstereowidener\s*:\s*'stereowidener'/, 'the palette name resolves 
 like($fx, qr/function studioEngineParamPost\(data, key\) \{(.*?)\n\tif \(!studioEngineIsPath/s,
 	'the engine post is the one gate every knob goes through');
 my ($gate) = $fx =~ /function studioEngineParamPost\(data, key\) \{(.*?)\n\tif \(!studioEngineIsPath/s;
-like($gate // '', qr/\(\?:master_\)\?\(\?:stereowidener\|stereo_panner\)/, 'the gate refuses both browser-only panners');
+like($gate // '', qr/stereowidener/, 'the gate refuses the browser-only widener');
+unlike($gate // '', qr/stereo_panner/, 'the native panner is not gated');
 like($gate // '', qr/return;/, 'and posts nothing for them');
 
 # --- the engine documents the omission --------------------------------------

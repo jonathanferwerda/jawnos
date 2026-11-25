@@ -120,12 +120,13 @@ function studioEffectNatural(kind, control, value) {
 	}
 }
 
-// The two browser-only inserts need an L/R pair the engine's mono insert chain
-// does not hold. A native take and a native listen omit them rather than
-// refusing the whole chain (engine/src/effect.rs).
+// The one browser-only insert needs an L/R pair the engine's mono insert chain
+// does not hold. A native take and a native listen omit it rather than
+// refusing the whole chain (engine/src/effect.rs). The stereo panner is native:
+// its insert hands the channel a pan LFO (engine/src/effect/stereo_panner.rs).
 function studioEffectBrowserOnly(name) {
 	var kind = studioEffectKind(name);
-	return kind === 'stereowidener' || kind === 'stereo_panner';
+	return kind === 'stereowidener';
 }
 
 // ---- tempo sync ------------------------------------------------------------
@@ -270,10 +271,10 @@ var studioEngineParamErrorShown = false;
 // One POST per knob per 150 ms, like the patchbay faders: a drag is a handful
 // of engine commands, not one per pixel.
 function studioEngineParamPost(data, key) {
-	// Browser-only inserts need an L/R pair the engine's mono insert chain does
-	// not hold, so a take neither arms nor moves them. The sync string is the
-	// page's too: the engine is sent the resolved time or rate instead.
-	if (data && /^(?:master_)?(?:stereowidener|stereo_panner)\./.test(String(data.name || ''))) { return; }
+	// The browser-only width insert needs an L/R pair the engine's mono insert
+	// chain does not hold, so a take neither arms nor moves it. The sync string
+	// is the page's too: the engine is sent the resolved time or rate instead.
+	if (data && /^(?:master_)?stereowidener\./.test(String(data.name || ''))) { return; }
 	if (data && /\.sync$/.test(String(data.name || ''))) { return; }
 	if (!studioEngineIsPath()) { return; }
 	if (studioEngineParamTimers[key]) { clearTimeout(studioEngineParamTimers[key]); }
