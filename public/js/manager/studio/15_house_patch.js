@@ -13,7 +13,7 @@
 // and the route's index, the same command the Sound matrix sends. Mute and the
 // effect chain are plan facts, so they are saved through POST
 // /manager/sound/plan and the engine applies the plan.
-var studioHouseInsertNames = ['tone', 'distortion', 'delay', 'compressor', 'reverb', 'flanger', 'fuzz', 'amp', 'limiter', 'autotune', 'equalizer', 'maximizer', 'tremolo', 'stereo_panner', 'phaser'];
+var studioHouseInsertNames = ['tone', 'distortion', 'delay', 'compressor', 'reverb', 'flanger', 'fuzz', 'amp', 'limiter', 'autotune', 'equalizer', 'maximizer', 'tremolo', 'stereo_panner', 'phaser', 'harmonizer', 'de_esser', 'modulator', 'pitch_shift', 'gate', 'slider', 'overdrive', 'wah', 'chorus', 'vibrato'];
 var studioHouse = {
 	audio: null,
 	plan: { sources: [], buses: [], sinks: [], routes: [] },

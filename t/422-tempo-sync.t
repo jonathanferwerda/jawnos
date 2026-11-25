@@ -34,14 +34,14 @@ like($js, qr/function studioTempoDivision\(text\)/, 'the division parser has one
 like($js, qr/function studioTempoManualMs\(text\)/, 'a manual millisecond value has its own reader');
 like($js, qr/function studioTempoResolveValue\(kind, sync, bpm\)/, 'one resolver turns a division into seconds or hertz');
 like($js, qr/function studioTempoSyncAll\(\)/, 'every synced insert is re-applied in one pass');
-like($js, qr/var studioTempoControls = \{[\s\S]*?delay: 'time'[\s\S]*?flanger: 'rate'[\s\S]*?phaser: 'rate'[\s\S]*?tremolo: 'rate'[\s\S]*?stereo_panner: 'rate'/,
-	'the five synced controls are the delay time and four LFO rates');
+like($js, qr/var studioTempoControls = \{[\s\S]*?delay: 'time'[\s\S]*?flanger: 'rate'[\s\S]*?phaser: 'rate'[\s\S]*?tremolo: 'rate'[\s\S]*?stereo_panner: 'rate'[\s\S]*?modulator: 'rate'[\s\S]*?slider: 'rate'[\s\S]*?wah: 'rate'[\s\S]*?chorus: 'rate'[\s\S]*?vibrato: 'rate'[\s\S]*?\}/,
+	'the synced controls are the delay time and nine LFO rates');
 like($js, qr/function studioEffectTyped\(kind, control\)/, 'a typed control is stored as text, not a number');
 like($js, qr/\\\.sync\$\/\.test/,
 	'the engine never receives the sync string');
 
 # --- the sync control on each effect ---------------------------------------
-for my $kind (qw(delay flanger phaser tremolo stereo_panner)) {
+for my $kind (qw(delay flanger phaser tremolo stereo_panner modulator slider wah chorus vibrato)) {
 	like($studio, qr/\b\Q$kind\E\s*=>\s*\{[\s\S]{0,600}?control\s*=>\s*'sync'/,
 		"$kind carries a sync control in the contract table");
 	like($studio, qr/control\s*=>\s*'sync',[^}]*?typed\s*=>\s*1/s,
@@ -75,6 +75,10 @@ like($js, qr/studioPanLfoAll\(\)/, 'the panner asks the channel pan stage to re-
 like($js, qr/createDelay\(8\)/, 'the browser delay line is 8 seconds');
 like($js, qr/studioEffectClamp\(hz, 0\.05, 8\)/, 'a synced flanger rate is clamped to 8 Hz');
 like($js, qr/studioEffectClamp\(hz, 0\.1, 20\)/, 'a synced tremolo rate is clamped to 20 Hz');
+like($js, qr/studioTempoLimits = \{[\s\S]*?chorus: \{ min: 0\.05, max: 5 \}[\s\S]*?vibrato: \{ min: 0\.1, max: 20 \}/,
+	'every synced LFO keeps the effect\'s own rate limits');
+like($js, qr/'modulator\.sync': 1[\s\S]*?'slider\.sync': 1[\s\S]*?'wah\.sync': 1[\s\S]*?'chorus\.sync': 1[\s\S]*?'vibrato\.sync': 1/,
+	'the five new sync fields are typed controls');
 
 # --- the engine -------------------------------------------------------------
 like($effect, qr/MAX_SECONDS: f32 = 8\.5/, 'the engine delay line is 8.5 s');

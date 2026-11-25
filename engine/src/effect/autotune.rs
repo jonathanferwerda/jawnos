@@ -49,15 +49,16 @@ use super::{one_pole, one_pole_block, Effect};
 const ANALYSIS_SECONDS: f32 = 0.0213;
 /// Analyse every 512 samples at 48 kHz: fast enough for a new note, slow enough
 /// that the autocorrelation is not the pedal's whole cost.
-const HOP_SECONDS: f32 = 0.0107;
-/// The crossfaded delay window. Its half is the effect's latency.
-const SHIFT_SECONDS: f32 = 0.03;
+pub(crate) const HOP_SECONDS: f32 = 0.0107;
+/// The crossfaded delay window. Its half is the effect's latency. The
+/// harmonizer and the pitch shifter reuse this window.
+pub(crate) const SHIFT_SECONDS: f32 = 0.03;
 const MIN_HZ: f32 = 70.0;
 const MAX_HZ: f32 = 1_000.0;
 const MIN_RETUNE_SECONDS: f32 = 0.005;
 const MAX_RETUNE_SECONDS: f32 = 0.200;
-const RING_SECONDS: f32 = 0.25;
-const MIN_RING: usize = 4_096;
+pub(crate) const RING_SECONDS: f32 = 0.25;
+pub(crate) const MIN_RING: usize = 4_096;
 const MIN_PREPARED_RING: usize = 64;
 
 /// C major, the intervals 0..11 from the key.
@@ -73,7 +74,7 @@ const PENTATONIC: [bool; 12] = [
     true, false, false, true, false, true, false, true, false, false, true, false,
 ];
 
-fn in_scale(key: u8, scale: u8, note: i32) -> bool {
+pub(crate) fn in_scale(key: u8, scale: u8, note: i32) -> bool {
     let interval = (note.rem_euclid(12) - i32::from(key)).rem_euclid(12) as usize;
     match scale {
         0 => MAJOR[interval],
@@ -86,7 +87,7 @@ fn in_scale(key: u8, scale: u8, note: i32) -> bool {
 /// The nearest whole MIDI note that belongs to the key and scale. A tie goes to
 /// the higher note, which keeps a scale with a gap (the minor third, for
 /// instance) from pulling every ambiguous note down.
-fn nearest_in_scale(midi: f32, key: u8, scale: u8) -> f32 {
+pub(crate) fn nearest_in_scale(midi: f32, key: u8, scale: u8) -> f32 {
     let centre = midi.round() as i32;
     let mut best = centre;
     let mut best_distance = f32::INFINITY;
@@ -108,85 +109,101 @@ fn nearest_in_scale(midi: f32, key: u8, scale: u8) -> f32 {
     best as f32
 }
 
+/// One linearly interpolated read `delay` samples behind `write` in a ring.
+///
+/// Shared with the harmonizer and the pitch shifter, whose grains read the same
+/// kind of history. Unlike [`Autotune::tap`]'s legacy fractional read, this one
+/// interpolates between `floor(delay)` and `floor(delay) + 1`, so a sweeping
+/// delay is monotonic and a full-interval shift does not jump two samples at
+/// every integer boundary.
+#[inline]
+pub(crate) fn grain_tap(ring: &[f32], write: usize, delay: f32) -> f32 {
+    let length = ring.len();
+    if length < 2 {
+        return 0.0;
+    }
+    let reach = (length - 2) as f32;
+    let back = delay.clamp(0.0, reach);
+    let base = back.floor();
+    let fraction = back - base;
+    // `base` is the older sample, `base + 1` the newer one; interpolating
+    // toward the newer sample keeps the read monotonic as the grain sweeps.
+    let first = (write as isize - base as isize).rem_euclid(length as isize) as usize;
+    let second = (first + length - 1) % length;
+    ring[first] * (1.0 - fraction) + ring[second] * fraction
+}
+
+/// The two crossfaded grain taps at `phase` (turns): each tap's fraction of the
+/// shift window and its linear gain. The gains sum to one, so the weighted
+/// delay is constant and the pair never dips in level.
+#[inline]
+pub(crate) fn grain_taps(phase: f32) -> (f32, f32, f32, f32) {
+    let other = (phase + 0.5).fract();
+    let gain_a = 1.0 - (2.0 * phase - 1.0).abs();
+    let gain_b = 1.0 - (2.0 * other - 1.0).abs();
+    (phase, gain_a, other, gain_b)
+}
+
+/// The monophonic period detector the corrector, harmonizer and pitch shifter
+/// share: a normalised autocorrelation over a short history ring, taking the
+/// first strong peak so an octave does not read as the note below it.
+///
+/// It owns only its analysis and correlation scratch buffers. The caller keeps
+/// the history ring and the write position, because a shifter reads that same
+/// ring for its grains. `detect` runs on the caller's analysis hop, not every
+/// sample.
 #[derive(Debug)]
-pub struct Autotune {
+pub(crate) struct PitchDetector {
     rate: u32,
-    target_speed: f32,
-    speed: f32,
-    target_amount: f32,
-    amount: f32,
-    key: u8,
-    scale: u8,
-    ring: Vec<f32>,
-    write: usize,
-    shift_window: usize,
     analysis_len: usize,
     analysis: Vec<f32>,
     corr: Vec<f32>,
-    hop: usize,
-    since_analysis: usize,
-    ratio: f32,
-    current_ratio: f32,
-    phase: f32,
-    smooth: f32,
-    prepared: bool,
 }
 
-impl Autotune {
-    pub const SCALES: [&'static str; 4] = ["Major", "Minor", "Chromatic", "Pentatonic"];
-    pub const MAX_KEY: u8 = 11;
-
-    pub fn new(speed: f32, amount: f32, key: u8, scale: u8) -> Self {
-        Autotune {
+impl PitchDetector {
+    pub(crate) fn new() -> Self {
+        PitchDetector {
             rate: 48_000,
-            target_speed: speed.clamp(0.0, 1.0),
-            speed: speed.clamp(0.0, 1.0),
-            target_amount: amount.clamp(0.0, 1.0),
-            amount: amount.clamp(0.0, 1.0),
-            key: key.min(Self::MAX_KEY),
-            scale: scale.min(Self::SCALES.len() as u8 - 1),
-            ring: Vec::new(),
-            write: 0,
-            shift_window: 0,
             analysis_len: 0,
             analysis: Vec::new(),
             corr: Vec::new(),
-            hop: 0,
-            since_analysis: 0,
-            ratio: 1.0,
-            current_ratio: 1.0,
-            phase: 0.0,
-            smooth: 0.0,
-            prepared: false,
         }
     }
 
-    /// One interpolated read `delay` samples behind the write pointer.
-    #[inline]
-    fn tap(&self, delay: f32) -> f32 {
-        let length = self.ring.len();
-        let reach = (length - 2) as f32;
-        let back = delay.clamp(0.0, reach);
-        let base = back.floor();
-        let fraction = back - base;
-        let first = (self.write as isize - base as isize).rem_euclid(length as isize) as usize;
-        let second = (first + 1) % length;
-        self.ring[first] * (1.0 - fraction) + self.ring[second] * fraction
+    /// Size the scratch buffers for `rate` and the caller's history ring.
+    pub(crate) fn prepare(&mut self, rate: u32, ring_len: usize) {
+        self.rate = rate.max(1);
+        let analysis_len = ((self.rate as f32 * ANALYSIS_SECONDS) as usize)
+            .max(256)
+            .min(ring_len / 2);
+        self.analysis_len = analysis_len;
+        let max_lag = ((self.rate as f32 / MIN_HZ) as usize).min(analysis_len.saturating_sub(2));
+        self.analysis = vec![0.0; analysis_len + 2];
+        self.corr = vec![0.0; max_lag + 2];
     }
 
-    /// Estimate the input period, in Hz, from the last [`analysis_len`] samples.
-    /// Zero means "not a usable pitched note", never "pitch 0".
-    fn detect_hz(&mut self) -> f32 {
+    pub(crate) fn analysis_len(&self) -> usize {
+        self.analysis_len
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.analysis.fill(0.0);
+        self.corr.fill(0.0);
+    }
+
+    /// Estimate the period, in Hz, from the newest [`analysis_len`] samples of
+    /// `ring`. Zero means "not a usable pitched note", never "pitch 0".
+    pub(crate) fn detect(&mut self, ring: &[f32], write: usize) -> f32 {
         let n = self.analysis_len;
-        if n < 64 || self.ring.len() < n + 2 {
+        if n < 64 || ring.len() < n + 2 {
             return 0.0;
         }
-        let length = self.ring.len();
-        // The caller advances `write` after storing the sample, so the newest
+        let length = ring.len();
+        // The caller advanced `write` after storing the sample, so the newest
         // sample at analysis time is the slot before it.
-        let newest = (self.write + length - 1) % length;
+        let newest = (write + length - 1) % length;
         for (index, slot) in self.analysis[..n].iter_mut().enumerate() {
-            *slot = self.ring[(newest + length - (n - 1 - index)) % length];
+            *slot = ring[(newest + length - (n - 1 - index)) % length];
         }
 
         let window = &self.analysis[..n];
@@ -251,6 +268,75 @@ impl Autotune {
             0.0
         }
     }
+}
+
+#[derive(Debug)]
+pub struct Autotune {
+    rate: u32,
+    target_speed: f32,
+    speed: f32,
+    target_amount: f32,
+    amount: f32,
+    key: u8,
+    scale: u8,
+    ring: Vec<f32>,
+    write: usize,
+    shift_window: usize,
+    hop: usize,
+    detector: PitchDetector,
+    since_analysis: usize,
+    ratio: f32,
+    current_ratio: f32,
+    phase: f32,
+    smooth: f32,
+    prepared: bool,
+}
+
+impl Autotune {
+    pub const SCALES: [&'static str; 4] = ["Major", "Minor", "Chromatic", "Pentatonic"];
+    pub const MAX_KEY: u8 = 11;
+
+    pub fn new(speed: f32, amount: f32, key: u8, scale: u8) -> Self {
+        Autotune {
+            rate: 48_000,
+            target_speed: speed.clamp(0.0, 1.0),
+            speed: speed.clamp(0.0, 1.0),
+            target_amount: amount.clamp(0.0, 1.0),
+            amount: amount.clamp(0.0, 1.0),
+            key: key.min(Self::MAX_KEY),
+            scale: scale.min(Self::SCALES.len() as u8 - 1),
+            ring: Vec::new(),
+            write: 0,
+            shift_window: 0,
+            hop: 0,
+            detector: PitchDetector::new(),
+            since_analysis: 0,
+            ratio: 1.0,
+            current_ratio: 1.0,
+            phase: 0.0,
+            smooth: 0.0,
+            prepared: false,
+        }
+    }
+
+    /// One interpolated read `delay` samples behind the write pointer.
+    #[inline]
+    fn tap(&self, delay: f32) -> f32 {
+        let length = self.ring.len();
+        let reach = (length - 2) as f32;
+        let back = delay.clamp(0.0, reach);
+        let base = back.floor();
+        let fraction = back - base;
+        let first = (self.write as isize - base as isize).rem_euclid(length as isize) as usize;
+        let second = (first + 1) % length;
+        self.ring[first] * (1.0 - fraction) + self.ring[second] * fraction
+    }
+
+    /// Estimate the input period, in Hz, from the last analysis window. Zero
+    /// means "not a usable pitched note", never "pitch 0".
+    fn detect_hz(&mut self) -> f32 {
+        self.detector.detect(&self.ring, self.write)
+    }
 
     fn apply_detection(&mut self, hz: f32) {
         if hz <= 0.0 {
@@ -272,13 +358,9 @@ impl Effect for Autotune {
         self.rate = rate.max(1);
         let ring_len = ((self.rate as f32 * RING_SECONDS) as usize).max(MIN_RING);
         self.shift_window = ((self.rate as f32 * SHIFT_SECONDS) as usize).clamp(64, ring_len / 4);
-        self.analysis_len = ((self.rate as f32 * ANALYSIS_SECONDS) as usize).max(256);
-        self.analysis_len = self.analysis_len.min(ring_len / 2);
         self.hop = ((self.rate as f32 * HOP_SECONDS) as usize).max(64);
-        let max_lag = ((self.rate as f32 / MIN_HZ) as usize).min(self.analysis_len.saturating_sub(2));
         self.ring = vec![0.0; ring_len];
-        self.analysis = vec![0.0; self.analysis_len + 2];
-        self.corr = vec![0.0; max_lag + 2];
+        self.detector.prepare(self.rate, ring_len);
         self.write = 0;
         self.since_analysis = 0;
         self.speed = self.target_speed;
@@ -294,7 +376,7 @@ impl Effect for Autotune {
         if !self.prepared
             || self.ring.len() < MIN_PREPARED_RING
             || self.shift_window < 8
-            || self.analysis_len < 64
+            || self.detector.analysis_len() < 64
         {
             return;
         }
@@ -313,11 +395,8 @@ impl Effect for Autotune {
             self.amount += (self.target_amount - self.amount) * self.smooth;
             self.current_ratio += (self.ratio - self.current_ratio) * retune;
 
-            let phase = self.phase;
-            let other = (phase + 0.5).fract();
-            let gain_a = 1.0 - (2.0 * phase - 1.0).abs();
-            let gain_b = 1.0 - (2.0 * other - 1.0).abs();
-            let wet = self.tap(phase * window) * gain_a + self.tap(other * window) * gain_b;
+            let (tap_a, gain_a, tap_b, gain_b) = grain_taps(self.phase);
+            let wet = self.tap(tap_a * window) * gain_a + self.tap(tap_b * window) * gain_b;
             // The two taps' weighted delay is exactly half the window, so the
             // dry leg can be aligned to it and `amount` does not comb.
             let dry = self.tap(window * 0.5);
@@ -345,8 +424,7 @@ impl Effect for Autotune {
 
     fn reset(&mut self) {
         self.ring.fill(0.0);
-        self.analysis.fill(0.0);
-        self.corr.fill(0.0);
+        self.detector.reset();
         self.write = 0;
         self.since_analysis = 0;
         self.speed = self.target_speed;

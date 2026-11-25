@@ -2258,6 +2258,7 @@ sub studio_take_path {
 our %studio_take_inserts = map { $_ => 1 } qw(
 	tone distortion delay compressor reverb flanger fuzz amp limiter
 	autotune equalizer maximizer tremolo stereo_panner phaser
+	harmonizer de_esser modulator pitch_shift gate slider overdrive wah chorus vibrato
 );
 # The five effects the native master rack can build, in the contract's order.
 # A take names the ones it wants; the engine builds them in this order whatever

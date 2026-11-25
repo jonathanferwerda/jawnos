@@ -28,6 +28,16 @@
 | `autotune` (JawnPitch) | Not an analogue pedal: a monophonic pitch corrector. | `speed`, `amount`, `key`, `scale` | `engine/src/effect/autotune.rs`: autocorrelation period, nearest scale tone, two crossfaded delay taps. Deliberately not polyphonic. | The browser has its own detector and grain shifter. |
 | `stereowidener` | A mid/side width control, not a pedal. | `width`, `mix` | Browser only; the native insert chain is mono. | `studioEffectStereoWidener`. |
 | `stereo_panner` | An LFO on the channel's pan; not a pedal. | `rate`, `depth`, `shape` | `engine/src/effect/stereo_panner.rs`: a pass-through insert whose `rate`, `depth` and `shape` configure the channel's pan LFO. The channel applies `pan + depth * lfo` per sample at its pan stage, where the L/R pair exists; depth 0 is the plain pan exactly, and the last panner in chain order wins. | `studioEffectStereoPanner`, a `StereoPannerNode` with an LFO on its `pan`; a tempo-synced rate is resolved to Hz before it is sent. |
+| `harmonizer` | **Eventide H3000-style diatonic harmonizer**, monophonic. | `key`, `scale`, `degree`, `mix` | `engine/src/effect/harmonizer.rs`: the autocorrelation period from `autotune.rs` finds the one note, moves it `degree - 3` scale steps in `key`/`scale`, shifts the copy through two crossfaded grains and mixes it with the dry. Not polyphonic. | `studioEffectHarmonizer`: its own detector and grain shifter over the same interval table. |
+| `de_esser` | **dbx 902 / Drawmer split-band de-esser**. | `thresh`, `freq`, `amount` | `engine/src/effect/de_esser.rs`: splits the band at `freq`, peak-follows only the high band, starts reduction at `thresh` and scales its maximum (0..~24 dB) with `amount`; the low band passes untouched. | Two filters split the band and a peak-follower script processor rides the high band; without one the split is left uncrossed, never a silent pedal. |
+| `modulator` | **EHX Frequency Analyzer**-style ring modulator. | `rate`, `depth`, `mix` | `engine/src/effect/modulator.rs`: `wet = in * ((1 - depth) + depth * sin)`, phase advanced at `rate`, blended as `dry*(1-mix) + wet*mix`. | An `OscillatorNode` multiplied into the dry/wet pair. |
+| `pitch_shift` | **EHX Pitch Fork / DigiTech Whammy**-style granular shifter. | `semitones`, `mix` | `engine/src/effect/pitch_shift.rs`: ratio `2^(semitones/12)`, two crossfaded grains (the autotune taps) and `mix` with the dry. One grain of latency; monophonic. | The browser's grain shifter over the same ratio. |
+| `gate` | **Boss NS-2 / Drawmer DS201** noise gate. | `thresh`, `attack`, `hold`, `release`, `range` | `engine/src/effect/gate.rs`: detector envelope, below `thresh` hold for `hold` ms then close toward `10^(range/20)`; open over `attack`, close over `release`, and `range` 0 dB is transparent. | A detector-driven gain envelope; the real VCA needs an AudioWorklet. |
+| `slider` | **Boss SL-20 Slicer**-style hard chopper (square tremolo). | `rate`, `depth`, `duty` | `engine/src/effect/slider.rs`: square LFO open (`gain 1`) while `phase < duty`, closed (`gain 1 - depth`) otherwise; the edge is hard on purpose and only knob moves are smoothed. | A script-processed square gate, with a square `OscillatorNode` into a gain as the fallback (duty is a script-path control). |
+| `overdrive` | **Ibanez Tube Screamer TS808**. | `drive`, `tone`, `level` | `engine/src/effect/overdrive.rs`: input highpass (~720 Hz), a soft asymmetric clip (input gain 1..~50 from `drive`), a `tone` lowpass (~600 Hz .. ~6 kHz) and `level`. Softer and more mid-focused than `distortion`. | `WaveShaper` plus the two filters, the same rough curve. |
+| `wah` | **Dunlop Cry Baby**-style LFO auto-wah. | `rate`, `depth`, `mix` | `engine/src/effect/wah.rs`: an LFO-swept resonant bandpass (centre ~300..2500 Hz, Q ~4), `depth` as the sweep span and `mix` blending the swept signal with the dry. | A `BiquadFilterNode` bandpass swept by an LFO, mixed with the dry. |
+| `chorus` | **Boss CE-1 / EHX Small Clone**-style chorus. | `rate`, `depth`, `mix` | `engine/src/effect/chorus.rs`: one modulated short delay (5..30 ms), LFO at `rate`, `depth` scaling the swing and `mix` blending with the dry. Mono: one voice. | A `DelayNode` with an LFO on its time, mixed with the dry. |
+| `vibrato` | **Boss VB-2** vibrato. | `rate`, `depth` | `engine/src/effect/vibrato.rs`: a modulated short delay (2..12 ms) with **no dry path**; `depth` scales the delay swing (the pitch vibrato) and `rate` is the LFO. | The same modulated delay with no dry path. |
 | `tuner` (Jtune) | Listen-only chromatic tuner. | — | No audio path, no `InsertKind`. | The browser taps its input for the display. |
 
 ## What the audit changes, in one paragraph
@@ -61,6 +71,17 @@ FMV tone stack, Baxandall, Electric Mistress, Phase 90, 6G15/EMT 140, 1176.
   its LFO moves the channel's existing pan rather than a separate stereo
   position. A centred channel therefore sweeps both speakers and a hard-left
   one only reaches the middle, because the result is clamped to `-1..1`.
+- The **harmonizer and pitch shifter are monophonic**. They follow one detected
+  note at a time, so a chord confuses them, and both move it through two
+  crossfaded grains: the shifted copy arrives about one grain late and smears
+  transients, and there is no formant preservation.
+- The **gate and chopper keep their edge**. The gate's attack and release are
+  one-pole ramps on a detector envelope, not a real VCA, and the slider's square
+  is deliberately hard (only knob moves are smoothed), so it clicks like a
+  switch and has no shape control.
+- The **de-esser is a split-band approximation**: one fixed split at `freq` with
+  a peak follower on the high band that only scales its maximum reduction with
+  `amount`; the low band is untouched, unlike the dynamic filter of a real unit.
 
 ## Verification
 

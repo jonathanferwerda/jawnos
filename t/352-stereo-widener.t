@@ -43,8 +43,9 @@ like($sw // '', qr/\{\s*control\s*=>\s*'mix',\s*label\s*=>\s*'Mix'\s*\}/,
 my ($palette) = $studio =~ /palette\s*=>\s*\[\s*qw\(([^)]*)\)\s*\]/s;
 my @palette = split ' ', ($palette // '');
 my $contract = [ qw(reverb flanger phaser fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor) ];
-is_deeply(\@palette, [ @$contract, 'stereowidener' ],
-	'the palette keeps every existing effect and appends the widener');
+is_deeply(\@palette,
+	[ @$contract, 'stereowidener', qw(harmonizer de_esser modulator pitch_shift gate slider overdrive wah chorus vibrato) ],
+	'the palette keeps every existing effect, appends the widener, then the ten newer pedals');
 unlike($studio, qr/palette_art\s*=>\s*\{[^}]*stereowidener/s,
 	'the widener takes the default drawn body rather than invented artwork');
 

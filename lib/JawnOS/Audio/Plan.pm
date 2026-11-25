@@ -104,6 +104,7 @@ our $audio_plan_max_player_buffer = 2_000;
 our @audio_plan_insert_names = qw(
 	tone distortion delay compressor reverb flanger
 	fuzz amp limiter autotune equalizer maximizer tremolo stereo_panner phaser
+	harmonizer de_esser modulator pitch_shift gate slider overdrive wah chorus vibrato
 );
 
 our %audio_plan_insert_controls = (
@@ -122,6 +123,16 @@ our %audio_plan_insert_controls = (
 	tremolo    => [qw(rate depth shape)],
 	stereo_panner => [qw(rate depth shape)],
 	phaser     => [qw(rate depth feedback mix)],
+	harmonizer => [qw(key scale degree mix)],
+	de_esser   => [qw(thresh freq amount)],
+	modulator  => [qw(rate depth mix)],
+	pitch_shift => [qw(semitones mix)],
+	gate       => [qw(thresh attack hold release range)],
+	slider     => [qw(rate depth duty)],
+	overdrive  => [qw(drive tone level)],
+	wah        => [qw(rate depth mix)],
+	chorus     => [qw(rate depth mix)],
+	vibrato    => [qw(rate depth)],
 );
 
 # These controls are an index, not a level: a fractional reverb model, amp
@@ -133,6 +144,7 @@ our %audio_plan_insert_whole = (
 	autotune => { key     => 1, scale => 1 },
 	tremolo  => { shape   => 1 },
 	stereo_panner => { shape => 1 },
+	harmonizer => { key => 1, scale => 1, degree => 1 },
 );
 
 # A source's board is a chain, not a rack: enough pedals for a treated voice

@@ -351,11 +351,70 @@ our $studio = {
 		stereowidener => { label => 'Stereo Widener', controls => [
 			{ control => 'width', label => 'Width' },
 			{ control => 'mix', label => 'Mix' }
+		] },
+		# Monophonic diatonic harmony: key and scale name the move, degree is the
+		# interval index below, mix blends the shifted copy with the dry.
+		harmonizer => { label => 'Harmonizer', controls => [
+			{ control => 'key', label => 'Key', hint => 'Choose the key', options => [ qw(C C# D D# E F F# G G# A A# B) ] },
+			# 0 Major, 1 Minor, 2 Chromatic, 3 Pentatonic (same order as autotune)
+			{ control => 'scale', label => 'Scale', hint => 'Choose the scale', options => [ qw(Major Minor Chromatic Pentatonic) ] },
+			{ control => 'degree', label => 'Degree', hint => 'Choose the interval', options => [ '4th Below', '3rd Below', '2nd Below', 'Unison', '2nd Above', '3rd Above', '4th Above' ] },
+			{ control => 'mix', label => 'Mix' }
+		] },
+		de_esser => { label => 'De-esser', controls => [
+			{ control => 'thresh', label => 'Threshold' },
+			{ control => 'freq', label => 'Frequency' },
+			{ control => 'amount', label => 'Amount' }
+		] },
+		modulator => { label => 'Modulator', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'mix', label => 'Mix' },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
+		] },
+		pitch_shift => { label => 'Pitch Shift', controls => [
+			{ control => 'semitones', label => 'Semitones' },
+			{ control => 'mix', label => 'Mix' }
+		] },
+		gate => { label => 'Gate', controls => [
+			{ control => 'thresh', label => 'Threshold' },
+			{ control => 'attack', label => 'Attack' },
+			{ control => 'hold', label => 'Hold' },
+			{ control => 'release', label => 'Release' },
+			{ control => 'range', label => 'Range' }
+		] },
+		slider => { label => 'Slider', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'duty', label => 'Duty' },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
+		] },
+		overdrive => { label => 'Overdrive', controls => [
+			{ control => 'drive', label => 'Drive' },
+			{ control => 'tone', label => 'Tone' },
+			{ control => 'level', label => 'Level' }
+		] },
+		wah => { label => 'Wah', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'mix', label => 'Mix' },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
+		] },
+		chorus => { label => 'Chorus', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'mix', label => 'Mix' },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
+		] },
+		vibrato => { label => 'Vibrato', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
 		] }
 	},
 	# The order the Add list offers them. The entries are wire names; the Add
 	# list shows each effect's label (autotune appears as JawnPitch).
-	palette => [ qw(reverb flanger phaser fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor stereowidener) ],
+	palette => [ qw(reverb flanger phaser fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor stereowidener harmonizer de_esser modulator pitch_shift gate slider overdrive wah chorus vibrato) ],
 	# A palette effect with no hand-drawn artwork is drawn from the theme instead:
 	# the template gives it the same body, one knob per slider (the colours below,
 	# in control order) and a dropdown per choice, so its tile matches the artwork
@@ -372,6 +431,16 @@ our $studio = {
 		autotune  => [ qw(cyan pink) ],
 		equalizer => [ qw(red green yellow) ],
 		tone      => [ qw(red green yellow cyan) ],
+		harmonizer  => [ qw(pink) ],
+		de_esser    => [ qw(blue cyan red) ],
+		modulator   => [ qw(pink cyan blue) ],
+		pitch_shift => [ qw(orange cyan) ],
+		gate        => [ qw(red yellow green cyan blue) ],
+		slider      => [ qw(cyan pink blue) ],
+		overdrive   => [ qw(orange red yellow) ],
+		wah         => [ qw(yellow orange pink) ],
+		chorus      => [ qw(blue cyan pink) ],
+		vibrato     => [ qw(pink blue) ],
 	},
 	palette_knob_colours => [ qw(red yellow green blue orange pink cyan navy) ],
 	# The order of the reverb model dropdown; both implementations agree.

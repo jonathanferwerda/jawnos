@@ -29,8 +29,10 @@
 //! `docs/studio-effects.md`; these are the same pedals, controls and natural
 //! units, not sample-identical copies. The pedals added for the Studio effects
 //! contract — flanger, fuzz, amp, limiter, autotune, equalizer, the maximizer
-//! the master rack borrows and the tremolo — live in the `effect/` submodules;
-//! each one documents its own approximation and its own natural units.
+//! the master rack borrows, the tremolo, and the ten latest pedals (harmonizer,
+//! de-esser, modulator, pitch shift, gate, slider, overdrive, wah, chorus and
+//! vibrato) — live in the `effect/` submodules; each one documents its own
+//! approximation and its own natural units.
 
 use std::f64::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
@@ -39,27 +41,47 @@ use crate::reverb::Reverb;
 
 mod amp;
 mod autotune;
+mod chorus;
+mod de_esser;
 mod equalizer;
 mod flanger;
 mod fuzz;
+mod gate;
 mod graphic_eq;
+mod harmonizer;
 mod limiter;
 mod maximizer;
+mod modulator;
+mod overdrive;
 mod phaser;
+mod pitch_shift;
+mod slider;
 mod stereo_panner;
 mod tremolo;
+mod vibrato;
+mod wah;
 
 pub use amp::Amp;
 pub use autotune::Autotune;
+pub use chorus::Chorus;
+pub use de_esser::DeEsser;
 pub use equalizer::Equalizer;
 pub use flanger::Flanger;
 pub use fuzz::Fuzz;
+pub use gate::Gate;
 pub use graphic_eq::GraphicEq;
+pub use harmonizer::Harmonizer;
 pub use limiter::Limiter;
 pub use maximizer::Maximizer;
+pub use modulator::Modulator;
+pub use overdrive::Overdrive;
 pub use phaser::Phaser;
+pub use pitch_shift::PitchShift;
+pub use slider::Slider;
 pub use stereo_panner::{PanLfo, StereoPanner};
 pub use tremolo::Tremolo;
+pub use vibrato::Vibrato;
+pub use wah::Wah;
 
 /// How long a control takes to travel most of the way to a new value.
 const SMOOTH_SECONDS: f32 = 0.02;
@@ -1274,6 +1296,16 @@ pub enum InsertKind {
     Tremolo,
     StereoPanner,
     Phaser,
+    Harmonizer,
+    DeEsser,
+    Modulator,
+    PitchShift,
+    Gate,
+    Slider,
+    Overdrive,
+    Wah,
+    Chorus,
+    Vibrato,
 }
 
 impl InsertKind {
@@ -1295,6 +1327,16 @@ impl InsertKind {
             "tremolo" => Some(InsertKind::Tremolo),
             "stereo_panner" => Some(InsertKind::StereoPanner),
             "phaser" => Some(InsertKind::Phaser),
+            "harmonizer" => Some(InsertKind::Harmonizer),
+            "de_esser" => Some(InsertKind::DeEsser),
+            "modulator" => Some(InsertKind::Modulator),
+            "pitch_shift" => Some(InsertKind::PitchShift),
+            "gate" => Some(InsertKind::Gate),
+            "slider" => Some(InsertKind::Slider),
+            "overdrive" => Some(InsertKind::Overdrive),
+            "wah" => Some(InsertKind::Wah),
+            "chorus" => Some(InsertKind::Chorus),
+            "vibrato" => Some(InsertKind::Vibrato),
             _ => None,
         }
     }
@@ -1317,6 +1359,16 @@ impl InsertKind {
             InsertKind::Tremolo => "tremolo",
             InsertKind::StereoPanner => "stereo_panner",
             InsertKind::Phaser => "phaser",
+            InsertKind::Harmonizer => "harmonizer",
+            InsertKind::DeEsser => "de_esser",
+            InsertKind::Modulator => "modulator",
+            InsertKind::PitchShift => "pitch_shift",
+            InsertKind::Gate => "gate",
+            InsertKind::Slider => "slider",
+            InsertKind::Overdrive => "overdrive",
+            InsertKind::Wah => "wah",
+            InsertKind::Chorus => "chorus",
+            InsertKind::Vibrato => "vibrato",
         }
     }
 
@@ -1348,6 +1400,16 @@ impl InsertKind {
             // The same three controls; the channel's pan stage applies them.
             InsertKind::StereoPanner => &["rate", "depth", "shape"],
             InsertKind::Phaser => &["rate", "depth", "feedback", "mix"],
+            InsertKind::Harmonizer => &["key", "scale", "degree", "mix"],
+            InsertKind::DeEsser => &["thresh", "freq", "amount"],
+            InsertKind::Modulator => &["rate", "depth", "mix"],
+            InsertKind::PitchShift => &["semitones", "mix"],
+            InsertKind::Gate => &["thresh", "attack", "hold", "release", "range"],
+            InsertKind::Slider => &["rate", "depth", "duty"],
+            InsertKind::Overdrive => &["drive", "tone", "level"],
+            InsertKind::Wah => &["rate", "depth", "mix"],
+            InsertKind::Chorus => &["rate", "depth", "mix"],
+            InsertKind::Vibrato => &["rate", "depth"],
         }
     }
 
@@ -1396,7 +1458,8 @@ impl InsertKind {
     pub fn native_value(self, control: &str, value: f32) -> f32 {
         match (self, control) {
             (InsertKind::Compressor, "attack" | "release")
-            | (InsertKind::Limiter, "release") => value / 1000.0,
+            | (InsertKind::Limiter, "release")
+            | (InsertKind::Gate, "attack" | "hold" | "release") => value / 1000.0,
             _ => value,
         }
     }
@@ -1421,6 +1484,16 @@ impl InsertKind {
             InsertKind::Tremolo => 14,
             InsertKind::StereoPanner => 15,
             InsertKind::Phaser => 16,
+            InsertKind::Harmonizer => 17,
+            InsertKind::DeEsser => 18,
+            InsertKind::Modulator => 19,
+            InsertKind::PitchShift => 20,
+            InsertKind::Gate => 21,
+            InsertKind::Slider => 22,
+            InsertKind::Overdrive => 23,
+            InsertKind::Wah => 24,
+            InsertKind::Chorus => 25,
+            InsertKind::Vibrato => 26,
         }
     }
 
@@ -1442,6 +1515,16 @@ impl InsertKind {
             14 => InsertKind::Tremolo,
             15 => InsertKind::StereoPanner,
             16 => InsertKind::Phaser,
+            17 => InsertKind::Harmonizer,
+            18 => InsertKind::DeEsser,
+            19 => InsertKind::Modulator,
+            20 => InsertKind::PitchShift,
+            21 => InsertKind::Gate,
+            22 => InsertKind::Slider,
+            23 => InsertKind::Overdrive,
+            24 => InsertKind::Wah,
+            25 => InsertKind::Chorus,
+            26 => InsertKind::Vibrato,
             _ => return None,
         })
     }
@@ -1460,6 +1543,15 @@ impl InsertKind {
     /// 0.5 depth / 0.25 feedback / 0.5 mix (the browser's slider 20 at its own
     /// `0.05 + amount · 4.95` rate mapping, which is the Phase 90's default
     /// speed once `depth`, `feedback` and `mix` are the documented mods).
+    ///
+    /// The ten latest pedals start where the contract's natural-unit table says
+    /// (`docs/studio-effects.md`): harmonizer C major / a third above / 0.35
+    /// mix, de-esser −28 dB / 6.5 kHz / 0.6, modulator 5 Hz / 0.7 depth / 0.5
+    /// mix, pitch shift +7 semitones / full mix, gate −45 dB / 1 ms attack /
+    /// 50 ms hold / 150 ms release / −60 dB range, slider 6 Hz / 0.8 depth /
+    /// 0.5 duty, overdrive 0.5 drive / 0.5 tone / 0.6 level, wah 2 Hz /
+    /// 0.7 depth / full mix, chorus 0.8 Hz / 0.5 depth / 0.5 mix, and vibrato
+    /// 5 Hz / 0.4 depth.
     pub fn build(self) -> Box<dyn Effect> {
         match self {
             InsertKind::Tone => Box::new(ToneStack::new(0.0, 0.0, 0.0)),
@@ -1480,6 +1572,18 @@ impl InsertKind {
             InsertKind::Tremolo => Box::new(Tremolo::new(5.0, 0.5, 0)),
             InsertKind::StereoPanner => Box::new(StereoPanner::new(5.0, 0.5, 0)),
             InsertKind::Phaser => Box::new(Phaser::new(1.04, 0.5, 0.25, 0.5)),
+            InsertKind::Harmonizer => {
+                Box::new(Harmonizer::new(0, 0, Harmonizer::DEFAULT_DEGREE, 0.35))
+            }
+            InsertKind::DeEsser => Box::new(DeEsser::new(-28.0, 6_500.0, 0.6)),
+            InsertKind::Modulator => Box::new(Modulator::new(5.0, 0.7, 0.5)),
+            InsertKind::PitchShift => Box::new(PitchShift::new(7.0, 1.0)),
+            InsertKind::Gate => Box::new(Gate::new(-45.0, 0.001, 0.05, 0.15, -60.0)),
+            InsertKind::Slider => Box::new(Slider::new(6.0, 0.8, 0.5)),
+            InsertKind::Overdrive => Box::new(Overdrive::new(0.5, 0.5, 0.6)),
+            InsertKind::Wah => Box::new(Wah::new(2.0, 0.7, 1.0)),
+            InsertKind::Chorus => Box::new(Chorus::new(0.8, 0.5, 0.5)),
+            InsertKind::Vibrato => Box::new(Vibrato::new(5.0, 0.4)),
         }
     }
 }
@@ -1995,6 +2099,16 @@ mod tests {
             Box::new(Tremolo::new(8.0, 1.0, 2)),
             Box::new(StereoPanner::new(8.0, 1.0, 2)),
             Box::new(Phaser::new(5.0, 1.0, 0.9, 1.0)),
+            Box::new(Harmonizer::new(0, 0, 5, 1.0)),
+            Box::new(DeEsser::new(-40.0, 6_500.0, 1.0)),
+            Box::new(Modulator::new(5.0, 1.0, 1.0)),
+            Box::new(PitchShift::new(7.0, 1.0)),
+            Box::new(Gate::new(-45.0, 0.001, 0.05, 0.15, -60.0)),
+            Box::new(Slider::new(6.0, 1.0, 0.5)),
+            Box::new(Overdrive::new(1.0, 0.5, 1.0)),
+            Box::new(Wah::new(5.0, 1.0, 1.0)),
+            Box::new(Chorus::new(1.0, 1.0, 1.0)),
+            Box::new(Vibrato::new(5.0, 1.0)),
             Box::new(graphic),
         ];
         for effect in &mut effects {
@@ -2030,6 +2144,16 @@ mod tests {
             Box::new(Tremolo::new(20.0, 1.0, 2)),
             Box::new(StereoPanner::new(20.0, 1.0, 2)),
             Box::new(Phaser::new(5.0, 1.0, 0.9, 1.0)),
+            Box::new(Harmonizer::new(11, 3, 6, 1.0)),
+            Box::new(DeEsser::new(0.0, 12_000.0, 1.0)),
+            Box::new(Modulator::new(20.0, 1.0, 1.0)),
+            Box::new(PitchShift::new(24.0, 1.0)),
+            Box::new(Gate::new(0.0, 0.000_1, 0.5, 1.0, -80.0)),
+            Box::new(Slider::new(20.0, 1.0, 0.05)),
+            Box::new(Overdrive::new(1.0, 1.0, 1.0)),
+            Box::new(Wah::new(20.0, 1.0, 1.0)),
+            Box::new(Chorus::new(5.0, 1.0, 1.0)),
+            Box::new(Vibrato::new(20.0, 1.0)),
             Box::new(graphic),
         ];
         for effect in &mut effects {
@@ -2760,6 +2884,16 @@ mod tests {
             ("tremolo", InsertKind::Tremolo),
             ("stereo_panner", InsertKind::StereoPanner),
             ("phaser", InsertKind::Phaser),
+            ("harmonizer", InsertKind::Harmonizer),
+            ("de_esser", InsertKind::DeEsser),
+            ("modulator", InsertKind::Modulator),
+            ("pitch_shift", InsertKind::PitchShift),
+            ("gate", InsertKind::Gate),
+            ("slider", InsertKind::Slider),
+            ("overdrive", InsertKind::Overdrive),
+            ("wah", InsertKind::Wah),
+            ("chorus", InsertKind::Chorus),
+            ("vibrato", InsertKind::Vibrato),
         ] {
             assert_eq!(InsertKind::parse(word), Some(kind));
             assert_eq!(kind.name(), word);
@@ -2819,6 +2953,36 @@ mod tests {
         // `sync` is the page's tempo string, never an engine control.
         assert_eq!(InsertKind::StereoPanner.control_index("sync"), None);
         assert_eq!(InsertKind::StereoPanner.build().name(), "stereo_panner");
+        // The ten latest pedals: their codes follow the phaser, their controls
+        // are the contract's wire order, and the time-based ones carry no
+        // `sync` (the page resolves it into `rate` first).
+        for (kind, code, controls) in [
+            (InsertKind::Harmonizer, 17, &["key", "scale", "degree", "mix"][..]),
+            (InsertKind::DeEsser, 18, &["thresh", "freq", "amount"][..]),
+            (InsertKind::Modulator, 19, &["rate", "depth", "mix"][..]),
+            (InsertKind::PitchShift, 20, &["semitones", "mix"][..]),
+            (
+                InsertKind::Gate,
+                21,
+                &["thresh", "attack", "hold", "release", "range"][..],
+            ),
+            (InsertKind::Slider, 22, &["rate", "depth", "duty"][..]),
+            (InsertKind::Overdrive, 23, &["drive", "tone", "level"][..]),
+            (InsertKind::Wah, 24, &["rate", "depth", "mix"][..]),
+            (InsertKind::Chorus, 25, &["rate", "depth", "mix"][..]),
+            (InsertKind::Vibrato, 26, &["rate", "depth"][..]),
+        ] {
+            assert_eq!(kind.controls(), controls, "{} controls", kind.name());
+            assert_eq!(kind.code(), code, "{} code", kind.name());
+            assert_eq!(InsertKind::from_code(code), Some(kind));
+            assert_eq!(kind.control_index("sync"), None, "{} has sync", kind.name());
+            assert_eq!(kind.build().name(), kind.name());
+        }
+        assert_eq!(
+            InsertKind::Gate.native_value("attack", 1.0),
+            0.001,
+            "the gate's wire milliseconds are seconds internally"
+        );
         // Stereo Widener is still browser only: the insert chain is mono, so
         // there is no kind to build and a native take omits the pedal (see
         // `InsertKind`). Both the track and the rack spelling are refused.

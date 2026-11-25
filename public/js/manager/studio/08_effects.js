@@ -41,7 +41,10 @@ var studioEffectIndices = {
 	'autotune.key': 11,
 	'autotune.scale': 3,
 	'tremolo.shape': 2,
-	'stereo_panner.shape': 2
+	'stereo_panner.shape': 2,
+	'harmonizer.key': 11,
+	'harmonizer.scale': 3,
+	'harmonizer.degree': 6
 };
 
 function studioEffectNatural(kind, control, value) {
@@ -117,6 +120,35 @@ function studioEffectNatural(kind, control, value) {
 		// image, 0 folds it to mono and 100 doubles the side.
 		case 'stereowidener.width':
 			return amount * 2;
+		// ---- the ten pedals in .shots/PEDAL-SPEC.md --------------------------
+		// Both de-essers share the compressor's threshold band, the gate floor is
+		// the closed level and 0 dB is transparent.
+		case 'de_esser.thresh':
+		case 'gate.thresh':
+			return -60 + amount * 60;
+		case 'gate.range':
+			return -80 + amount * 80;
+		case 'de_esser.freq':
+			return 4000 + amount * 8000;
+		// The five LFOs: chorus is the slow one, the rest share 0.1..20 Hz.
+		case 'modulator.rate':
+		case 'slider.rate':
+		case 'wah.rate':
+		case 'vibrato.rate':
+			return 0.1 + amount * 19.9;
+		case 'chorus.rate':
+			return 0.05 + amount * 4.95;
+		// A whole semitone: the shifter's ratio is 2^(semitones/12).
+		case 'pitch_shift.semitones':
+			return Math.round(-24 + amount * 48);
+		case 'gate.attack':
+			return 0.1 + amount * 49.9;
+		case 'gate.hold':
+			return amount * 500;
+		case 'gate.release':
+			return 20 + amount * 980;
+		case 'slider.duty':
+			return 0.05 + amount * 0.9;
 		default:
 			return amount;
 	}
@@ -144,7 +176,12 @@ var studioTempoControls = {
 	flanger: 'rate',
 	phaser: 'rate',
 	tremolo: 'rate',
-	stereo_panner: 'rate'
+	stereo_panner: 'rate',
+	modulator: 'rate',
+	slider: 'rate',
+	wah: 'rate',
+	chorus: 'rate',
+	vibrato: 'rate'
 };
 
 // The natural range each synced control clamps to. Delay time is seconds; the
@@ -155,7 +192,12 @@ var studioTempoLimits = {
 	flanger: { min: 0.05, max: 8 },
 	phaser: { min: 0.05, max: 5 },
 	tremolo: { min: 0.1, max: 20 },
-	stereo_panner: { min: 0.1, max: 20 }
+	stereo_panner: { min: 0.1, max: 20 },
+	modulator: { min: 0.1, max: 20 },
+	slider: { min: 0.1, max: 20 },
+	wah: { min: 0.1, max: 20 },
+	chorus: { min: 0.05, max: 5 },
+	vibrato: { min: 0.1, max: 20 }
 };
 
 function studioTempoBpm() {
@@ -405,7 +447,12 @@ var studioEffectTypedControls = {
 	'flanger.sync': 1,
 	'phaser.sync': 1,
 	'tremolo.sync': 1,
-	'stereo_panner.sync': 1
+	'stereo_panner.sync': 1,
+	'modulator.sync': 1,
+	'slider.sync': 1,
+	'wah.sync': 1,
+	'chorus.sync': 1,
+	'vibrato.sync': 1
 };
 
 function studioEffectTyped(kind, control) {
@@ -1805,12 +1852,16 @@ function studioAutotuneBlock(state, event, settings) {
 
 	// one pitch decision per block, from channel one's history
 	var hz = 0;
-	if (settings.amount > 0) {
+	if (settings.amount > 0 && !(settings.ratio > 0)) {
 		var window = studioAutotuneWindow(state);
 		if (window) { hz = studioAutotunePitch(window, rate / 2, state.corr); }
 	}
 	var inputPeriod = (hz > 0) ? rate / hz : state.period;
-	var target = studioAutotuneTarget(hz, settings.key, settings.scale);
+	// A fixed target (the harmonizer's diatonic interval) overrides the
+	// corrector's nearest-scale-tone choice; autotune leaves it undefined.
+	var target = (typeof settings.target === 'function')
+		? settings.target(hz)
+		: studioAutotuneTarget(hz, settings.key, settings.scale);
 	var targetPeriod = (hz > 0 && target > 0) ? rate / target : inputPeriod;
 
 	if (!state.started) {
@@ -1833,6 +1884,19 @@ function studioAutotuneBlock(state, event, settings) {
 	var synth = state.target > 0 ? state.target : period;
 	synth = Math.max(16, Math.min(rate / 40, synth));
 
+	// A fixed ratio (pitch_shift) is a granular shifter rather than a corrector:
+	// the read head advances one analysis period per grain while the grain is
+	// laid an output hop later, so the ratio is period/hop. A downward shift
+	// needs a longer grain to keep the overlap-add grains crossing, and the
+	// analysis step stays at `period` so the read position follows it exactly.
+	var step = synth, hop = synth, grainFactor = 2;
+	if (settings.ratio > 0) {
+		period = Math.max(32, Math.min(rate / 40, Math.round(rate * 0.008)));
+		hop = Math.max(16, Math.min(rate / 40, period / settings.ratio));
+		step = period;
+		grainFactor = Math.max(2, 2 / settings.ratio);
+	}
+
 	var blockStart = state.sample, blockEnd = state.sample + n;
 	// Lay a grain every target period. The tracking position advances with real
 	// time (so it never runs behind the write head), and each grain's analysis
@@ -1847,10 +1911,10 @@ function studioAutotuneBlock(state, event, settings) {
 		state.grains.push({
 			start: state.nextGrain,
 			analysis: state.mark,
-			length: Math.max(32, Math.round(2 * period))
+			length: Math.max(32, Math.round(grainFactor * period))
 		});
-		state.analysis += synth;
-		state.nextGrain += synth;
+		state.analysis += step;
+		state.nextGrain += hop;
 	}
 	state.grains = state.grains.filter(function (grain) { return grain.start + grain.length > blockStart; });
 
@@ -1884,7 +1948,7 @@ function studioAutotuneBlock(state, event, settings) {
 // No script processor? The correction is the same; only the scheduling moves
 // to a timer, which sweeps two delay heads a grain at a time.
 function studioAutotuneRamp(ctx, fx, settings) {
-	var grain = 0.08, base = 0.16;
+	var grain = settings.grain || 0.08, base = settings.base || 0.16;
 	var da = ctx.createDelay(1), db = ctx.createDelay(1);
 	var ga = ctx.createGain(), gb = ctx.createGain();
 	fx.input.connect(da).connect(ga).connect(fx.wet);
@@ -1898,12 +1962,21 @@ function studioAutotuneRamp(ctx, fx, settings) {
 	var corr = new Float32Array(2048);
 	var ratio = 1, next = ctx.currentTime + 0.05, flip = 0;
 	var timer = setInterval(function () {
-		analyser.getFloatTimeDomainData(data);
-		var hz = studioAutotunePitch(data, ctx.sampleRate, corr);
-		var target = studioAutotuneTarget(hz, settings.key, settings.scale);
-		var desired = (hz > 0 && target > 0) ? target / hz : 1;
-		desired = 1 + (desired - 1) * settings.amount;
-		desired = Math.max(0.5, Math.min(2, desired));
+		var desired;
+		if (settings.ratio > 0) {
+			// pitch_shift: a fixed ratio, no detector and no 0.5..2 cap.
+			desired = settings.ratio;
+		}
+		else {
+			analyser.getFloatTimeDomainData(data);
+			var hz = studioAutotunePitch(data, ctx.sampleRate, corr);
+			var target = (typeof settings.target === 'function')
+				? settings.target(hz)
+				: studioAutotuneTarget(hz, settings.key, settings.scale);
+			desired = (hz > 0 && target > 0) ? target / hz : 1;
+			desired = 1 + (desired - 1) * settings.amount;
+			desired = Math.max(0.5, Math.min(2, desired));
+		}
 		ratio += (desired - ratio) * (0.1 + settings.speed * 0.8);
 		while (next < ctx.currentTime + 0.3) {
 			var to = flip ? db : da;
@@ -1955,6 +2028,527 @@ function studioEffectAutotune(ctx, name) {
 	fx.set('amount', 100);
 	fx.set('key', 0);
 	fx.set('scale', 0);
+	return fx;
+}
+
+// ---- the ten pedals in .shots/PEDAL-SPEC.md -------------------------------
+// The browser side of the new pedals. The engine has its own files; both sides
+// share the wire names, control order and natural units, not samples. Each
+// builder ends by setting the contract's defaults through fx.set (a default
+// whose natural value lands between slider steps is given as that fraction).
+
+// The harmonizer's diatonic interval: the nearest scale tone to `hz`, moved
+// `degree - 3` scale steps (0..6 is 4th below .. 4th above). A chord gives the
+// detector one pitch only - this and the autotune above are monophonic.
+function studioHarmonizerTarget(hz, key, scale, degree) {
+	if (!(hz > 0)) { return 0; }
+	var steps = Math.round(studioEffectClamp(degree, 0, 6)) - 3;
+	if (steps === 0) { return hz; }
+	var tones = studioAutotuneScales[scale] || studioAutotuneScales[0];
+	var midi = 69 + 12 * Math.log(hz / 440) / Math.LN2;
+	var base = Math.round(midi);
+	var best = base, bestIndex = -1, bestDistance = 1e9;
+	for (var n = base - 1; n <= base + 1; n++) {
+		var pc = ((n % 12) + 12) % 12;
+		for (var i = 0; i < tones.length; i++) {
+			if ((((tones[i] + key) % 12) + 12) % 12 === pc) {
+				var distance = Math.abs(n - midi);
+				if (distance < bestDistance) { bestDistance = distance; best = n; bestIndex = i; }
+				break;
+			}
+		}
+	}
+	if (bestIndex < 0) { return hz; }
+	var raw = bestIndex + steps;
+	var octave = Math.floor(raw / tones.length);
+	var index = ((raw % tones.length) + tones.length) % tones.length;
+	var targetMidi = best + (tones[index] - tones[bestIndex]) + 12 * octave;
+	return 440 * Math.pow(2, (targetMidi - 69) / 12);
+}
+
+// The two grain pedals share this: a 1024-sample ScriptProcessor running the
+// autotune grain block, or the two-head delay ramp when the browser has none.
+// Returns the teardown the shell stores as fx.destroy.
+function studioEffectGrain(ctx, input, wet, settings) {
+	var maker = ctx.createScriptProcessor || ctx.createJavaScriptNode;
+	if (maker) {
+		var node = maker.call(ctx, 1024, 2, 2);
+		var state = studioAutotuneState(ctx.sampleRate);
+		node.onaudioprocess = function (event) { studioAutotuneBlock(state, event, settings); };
+		input.connect(node).connect(wet);
+		return function () {
+			try { input.disconnect(node); } catch (e) {}
+			try { node.disconnect(); } catch (e) {}
+		};
+	}
+	return studioAutotuneRamp(ctx, { input: input, wet: wet }, settings);
+}
+
+// Harmonizer: a monophonic diatonic harmony. It tracks one pitch from the
+// input (channel one of the detector) and re-synthesises the same signal a
+// fixed number of scale steps away, then mixes the copy with dry at `mix`.
+// The grain path carries about 80 ms of look-back plus one 1024-sample block
+// of latency; a chord confuses the detector, the same limit the autotune above
+// documents, so this is not a polyphonic harmoniser.
+function studioEffectHarmonizer(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'harmonizer');
+	var wet = ctx.createGain();
+	var dry = ctx.createGain();
+	var settings = { amount: 1, speed: 0.5, key: 0, scale: 0, degree: 5 };
+	settings.target = function (hz) {
+		return studioHarmonizerTarget(hz, settings.key, settings.scale, settings.degree);
+	};
+	var mix = 0.35;
+	var applyMix = function () {
+		wet.gain.value = mix;
+		dry.gain.value = 1 - mix;
+	};
+	fx.setters['key'] = function (v) { settings.key = studioEffectNatural(fx.name, 'key', v); };
+	fx.setters['scale'] = function (v) { settings.scale = studioEffectNatural(fx.name, 'scale', v); };
+	fx.setters['degree'] = function (v) { settings.degree = studioEffectNatural(fx.name, 'degree', v); };
+	fx.setters['mix'] = function (v) { mix = studioEffectNatural(fx.name, 'mix', v); applyMix(); };
+	wet.connect(fx.wet);
+	fx.input.connect(dry).connect(fx.wet);
+	fx.destroy = studioEffectGrain(ctx, fx.input, wet, settings);
+	fx.set('key', 0);
+	fx.set('scale', 0);
+	fx.set('degree', 5);
+	fx.set('mix', 35);
+	return fx;
+}
+
+// Pitch shift: a fixed-interval granular shifter, ratio 2^(semitones/12). It
+// does not detect pitch; it re-synthesises the input at the ratio with two
+// crossfaded grains, so any material shifts (a chord included). The latency is
+// the grain look-back (about 80 ms) plus one 1024-sample block.
+function studioEffectPitchShift(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'pitch_shift');
+	var wet = ctx.createGain();
+	var dry = ctx.createGain();
+	var settings = {
+		amount: 0, speed: 0.5, key: 0, scale: 0,
+		ratio: Math.pow(2, 7 / 12),
+		base: 0.16, grain: 0.04
+	};
+	var mix = 1;
+	var applyMix = function () {
+		wet.gain.value = mix;
+		dry.gain.value = 1 - mix;
+	};
+	fx.setters['semitones'] = function (v) {
+		var semitones = studioEffectNatural(fx.name, 'semitones', v);
+		settings.ratio = Math.pow(2, semitones / 12);
+	};
+	fx.setters['mix'] = function (v) { mix = studioEffectNatural(fx.name, 'mix', v); applyMix(); };
+	wet.connect(fx.wet);
+	fx.input.connect(dry).connect(fx.wet);
+	fx.destroy = studioEffectGrain(ctx, fx.input, wet, settings);
+	fx.set('semitones', 64.583);
+	fx.set('mix', 100);
+	return fx;
+}
+
+// De-esser: a lowpass/highpass split at `freq`; only the high band runs through
+// a peak follower that reduces it once the band passes `thresh`. `amount`
+// scales the maximum reduction from 0 to 24 dB, so 0 leaves the band alone.
+// The low band is delayed by one script block so the halves line up; the split
+// is a 2nd-order pair, not a linear-phase crossover.
+function studioDeEsserBlock(state, event, settings) {
+	var input = event.inputBuffer;
+	var output = event.outputBuffer;
+	var n = input.length;
+	var rate = input.sampleRate;
+	var src = input.getChannelData(0);
+	if (!state.gains || state.gains.length < n) { state.gains = new Float32Array(n); }
+	var gains = state.gains;
+	var thresh = Math.pow(10, settings.thresh / 20);
+	var attack = Math.exp(-1 / (rate * 0.001));
+	var release = Math.exp(-1 / (rate * 0.05));
+	var detRelease = Math.exp(-1 / (rate * 0.02));
+	var env = state.env, gain = state.gain;
+	for (var i = 0; i < n; i++) {
+		var x = Math.abs(src[i]);
+		env = (x > env) ? x : env + (x - env) * detRelease;
+		var target = 1;
+		if (env > thresh && thresh > 0) {
+			var overDb = 20 * Math.log(env / thresh) / Math.LN10;
+			target = Math.pow(10, -Math.min(24, overDb) * settings.amount / 20);
+		}
+		var coef = (target < gain) ? attack : release;
+		gain = target + (gain - target) * coef;
+		gains[i] = gain;
+	}
+	state.env = env;
+	state.gain = gain;
+	var channels = Math.min(input.numberOfChannels, output.numberOfChannels);
+	for (var c = 0; c < channels; c++) {
+		var inData = input.getChannelData(c);
+		var out = output.getChannelData(c);
+		for (var s = 0; s < n; s++) { out[s] = inData[s] * gains[s]; }
+	}
+}
+
+function studioEffectDeEsser(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'de_esser');
+	var low = ctx.createBiquadFilter();
+	low.type = 'lowpass';
+	low.frequency.value = 6500;
+	low.Q.value = 0.707;
+	var high = ctx.createBiquadFilter();
+	high.type = 'highpass';
+	high.frequency.value = 6500;
+	high.Q.value = 0.707;
+	var settings = { thresh: -28, freq: 6500, amount: 0.6 };
+	var maker = ctx.createScriptProcessor || ctx.createJavaScriptNode;
+	if (maker) {
+		var node = maker.call(ctx, 1024, 2, 2);
+		var state = { env: 0, gain: 1, gains: null };
+		node.onaudioprocess = function (event) { studioDeEsserBlock(state, event, settings); };
+		var align = ctx.createDelay(0.25);
+		align.delayTime.value = node.bufferSize / ctx.sampleRate;
+		fx.input.connect(low).connect(align).connect(fx.wet);
+		fx.input.connect(high).connect(node).connect(fx.wet);
+		fx.destroy = function () {
+			try { high.disconnect(node); } catch (e) {}
+			try { node.disconnect(); } catch (e) {}
+		};
+	}
+	else {
+		// No script processor: keep the split and skip the reduction. The knobs
+		// still save and travel.
+		fx.input.connect(low).connect(fx.wet);
+		fx.input.connect(high).connect(fx.wet);
+	}
+	fx.setters['thresh'] = function (v) { settings.thresh = studioEffectNatural(fx.name, 'thresh', v); };
+	fx.setters['freq'] = function (v) {
+		settings.freq = studioEffectNatural(fx.name, 'freq', v);
+		low.frequency.value = settings.freq;
+		high.frequency.value = settings.freq;
+	};
+	fx.setters['amount'] = function (v) { settings.amount = studioEffectNatural(fx.name, 'amount', v); };
+	fx.set('thresh', 53.333);
+	fx.set('freq', 31.25);
+	fx.set('amount', 60);
+	return fx;
+}
+
+// Gate: a noise gate with a peak detector. Below `thresh` the gain holds for
+// `hold` ms and then closes toward `range` dB over `release`; it opens over
+// `attack`. `range` 0 dB is the transparent setting. The detector runs on
+// channel one and the same gain is applied to every channel (a mono insert).
+function studioGateBlock(state, event, settings) {
+	var input = event.inputBuffer;
+	var output = event.outputBuffer;
+	var n = input.length;
+	var rate = input.sampleRate;
+	var src = input.getChannelData(0);
+	if (!state.gains || state.gains.length < n) { state.gains = new Float32Array(n); }
+	var gains = state.gains;
+	var thresh = Math.pow(10, settings.thresh / 20);
+	var floor = Math.pow(10, settings.range / 20);
+	var attack = Math.exp(-1 / (rate * Math.max(0.0001, settings.attack / 1000)));
+	var release = Math.exp(-1 / (rate * Math.max(0.001, settings.release / 1000)));
+	var detRelease = Math.exp(-1 / (rate * 0.01));
+	var holdSamples = Math.max(0, Math.round(settings.hold / 1000 * rate));
+	var env = state.env, gain = state.gain, hold = state.hold;
+	for (var i = 0; i < n; i++) {
+		var x = Math.abs(src[i]);
+		env = (x > env) ? x : env + (x - env) * detRelease;
+		var target;
+		if (env > thresh) { hold = holdSamples; target = 1; }
+		else if (hold > 0) { hold--; target = 1; }
+		else { target = floor; }
+		var coef = (target > gain) ? attack : release;
+		gain = target + (gain - target) * coef;
+		gains[i] = gain;
+	}
+	state.env = env;
+	state.gain = gain;
+	state.hold = hold;
+	var channels = Math.min(input.numberOfChannels, output.numberOfChannels);
+	for (var c = 0; c < channels; c++) {
+		var inData = input.getChannelData(c);
+		var out = output.getChannelData(c);
+		for (var s = 0; s < n; s++) { out[s] = inData[s] * gains[s]; }
+	}
+}
+
+function studioEffectGate(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'gate');
+	var settings = { thresh: -45, attack: 1, hold: 50, release: 150, range: -60 };
+	var maker = ctx.createScriptProcessor || ctx.createJavaScriptNode;
+	if (maker) {
+		var node = maker.call(ctx, 1024, 2, 2);
+		var state = { env: 0, gain: 1, hold: 0, gains: null };
+		node.onaudioprocess = function (event) { studioGateBlock(state, event, settings); };
+		fx.input.connect(node).connect(fx.wet);
+		fx.destroy = function () {
+			try { fx.input.disconnect(node); } catch (e) {}
+			try { node.disconnect(); } catch (e) {}
+		};
+	}
+	else {
+		// No script processor: a transparent pass-through, never a stuck gate.
+		fx.input.connect(fx.wet);
+	}
+	fx.setters['thresh'] = function (v) { settings.thresh = studioEffectNatural(fx.name, 'thresh', v); };
+	fx.setters['attack'] = function (v) { settings.attack = studioEffectNatural(fx.name, 'attack', v); };
+	fx.setters['hold'] = function (v) { settings.hold = studioEffectNatural(fx.name, 'hold', v); };
+	fx.setters['release'] = function (v) { settings.release = studioEffectNatural(fx.name, 'release', v); };
+	fx.setters['range'] = function (v) { settings.range = studioEffectNatural(fx.name, 'range', v); };
+	fx.set('thresh', 25);
+	fx.set('attack', 1.804);
+	fx.set('hold', 10);
+	fx.set('release', 13.265);
+	fx.set('range', 25);
+	return fx;
+}
+
+// Slider: a hard-cutting tremolo. A square LFO opens the gain while the phase
+// is below `duty` and cuts it to 1 - depth for the rest of the cycle; the
+// edges are hard on purpose, like the tremolo's square. Only knob moves are
+// smoothed, and the phase stays continuous across a rate change.
+function studioSliderBlock(state, event, settings) {
+	var input = event.inputBuffer;
+	var output = event.outputBuffer;
+	var n = input.length;
+	var step = settings.rate / input.sampleRate;
+	var depth = settings.depth;
+	var duty = settings.duty;
+	if (!state.gains || state.gains.length < n) { state.gains = new Float32Array(n); }
+	var gains = state.gains;
+	var phase = state.phase;
+	for (var i = 0; i < n; i++) {
+		gains[i] = (phase < duty) ? 1 : (1 - depth);
+		phase += step;
+		if (phase >= 1) { phase -= Math.floor(phase); }
+	}
+	state.phase = phase;
+	var channels = Math.min(input.numberOfChannels, output.numberOfChannels);
+	for (var c = 0; c < channels; c++) {
+		var inData = input.getChannelData(c);
+		var out = output.getChannelData(c);
+		for (var s = 0; s < n; s++) { out[s] = inData[s] * gains[s]; }
+	}
+}
+
+function studioEffectSlider(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'slider');
+	var settings = { rate: 6, depth: 0.8, duty: 0.5 };
+	var lfo = null, amp = null, depthGain = null;
+	var maker = ctx.createScriptProcessor || ctx.createJavaScriptNode;
+	if (maker) {
+		var node = maker.call(ctx, 1024, 2, 2);
+		var state = { phase: 0, gains: null };
+		node.onaudioprocess = function (event) { studioSliderBlock(state, event, settings); };
+		fx.input.connect(node).connect(fx.wet);
+		fx.destroy = function () {
+			try { fx.input.disconnect(node); } catch (e) {}
+			try { node.disconnect(); } catch (e) {}
+		};
+	}
+	else {
+		// No script processor: a 50% square LFO into a gain. Duty cannot be
+		// honoured on this path, which is the documented fallback.
+		amp = ctx.createGain();
+		depthGain = ctx.createGain();
+		lfo = ctx.createOscillator();
+		lfo.type = 'square';
+		lfo.connect(depthGain).connect(amp.gain);
+		fx.input.connect(amp).connect(fx.wet);
+		try { lfo.start(0); } catch (e) {}
+	}
+	fx.setters['rate'] = function (v) {
+		settings.rate = studioEffectNatural(fx.name, 'rate', v);
+		if (lfo) { lfo.frequency.value = settings.rate; }
+	};
+	fx.setters['depth'] = function (v) {
+		settings.depth = studioEffectNatural(fx.name, 'depth', v);
+		if (lfo) {
+			amp.gain.value = 1 - settings.depth * 0.5;
+			depthGain.gain.value = settings.depth * 0.5;
+		}
+	};
+	fx.setters['duty'] = function (v) { settings.duty = studioEffectNatural(fx.name, 'duty', v); };
+	fx.set('rate', 29.648);
+	fx.set('depth', 80);
+	fx.set('duty', 50);
+	studioEffectTempo(fx, function (hz) {
+		settings.rate = studioEffectClamp(hz, 0.1, 20);
+		if (lfo) { lfo.frequency.value = settings.rate; }
+	});
+	return fx;
+}
+
+// Overdrive: a highpass into a soft asymmetric clip, a tone lowpass and a
+// level. The curve leans one way like a valve stage; the WaveShaper clamps
+// beyond -1..1, which is where the pre-gain's hardest drive lands (the same
+// node-graph limit studioTanhCurve documents).
+function studioOverdriveCurve() {
+	var n = 2048;
+	var curve = new Float32Array(n);
+	var bias = 0.09;
+	var zero = Math.tanh(bias * 2);
+	for (var i = 0; i < n; i++) {
+		var x = (i * 2) / (n - 1) - 1;
+		curve[i] = Math.tanh((x + bias) * 2) - zero;
+	}
+	return curve;
+}
+
+function studioEffectOverdrive(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'overdrive');
+	var highpass = ctx.createBiquadFilter();
+	highpass.type = 'highpass';
+	highpass.frequency.value = 720;
+	highpass.Q.value = 0.707;
+	var preGain = ctx.createGain();
+	var shaper = ctx.createWaveShaper();
+	shaper.curve = studioOverdriveCurve();
+	shaper.oversample = '4x';
+	var tone = ctx.createBiquadFilter();
+	tone.type = 'lowpass';
+	tone.frequency.value = 1900;
+	tone.Q.value = 0.707;
+	var level = ctx.createGain();
+	fx.input.connect(highpass).connect(preGain).connect(shaper).connect(tone).connect(level).connect(fx.wet);
+	fx.setters['drive'] = function (v) {
+		var d = studioEffectNatural(fx.name, 'drive', v);
+		preGain.gain.value = 1 + d * 49;
+	};
+	fx.setters['tone'] = function (v) {
+		var t = studioEffectNatural(fx.name, 'tone', v);
+		tone.frequency.value = 600 * Math.pow(10, t);
+	};
+	fx.setters['level'] = function (v) {
+		level.gain.value = studioEffectNatural(fx.name, 'level', v) * 1.2;
+	};
+	fx.set('drive', 50);
+	fx.set('tone', 50);
+	fx.set('level', 60);
+	return fx;
+}
+
+// Wah: an LFO-swept resonant bandpass. The centre sits at 1400 Hz and `depth`
+// is the sweep span, so full depth covers about 300..2500 Hz at Q 4; `mix`
+// blends the swept signal with dry. A synced rate is resolved to Hz.
+function studioEffectWah(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'wah');
+	var filter = ctx.createBiquadFilter();
+	filter.type = 'bandpass';
+	filter.frequency.value = 1400;
+	filter.Q.value = 4;
+	var wet = ctx.createGain();
+	var dry = ctx.createGain();
+	var lfo = ctx.createOscillator();
+	var depthGain = ctx.createGain();
+	lfo.type = 'sine';
+	lfo.connect(depthGain).connect(filter.frequency);
+	fx.input.connect(filter).connect(wet).connect(fx.wet);
+	fx.input.connect(dry).connect(fx.wet);
+	try { lfo.start(0); } catch (e) {}
+	var depth = 0.7, mix = 1;
+	var applyDepth = function () { depthGain.gain.value = studioEffectClamp(depth, 0, 1) * 1100; };
+	var applyMix = function () { wet.gain.value = mix; dry.gain.value = 1 - mix; };
+	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.1, 20); };
+	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
+	fx.setters['depth'] = function (v) { depth = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
+	fx.setters['mix'] = function (v) { mix = studioEffectNatural(fx.name, 'mix', v); applyMix(); };
+	fx.set('rate', 9.548);
+	fx.set('depth', 70);
+	fx.set('mix', 100);
+	studioEffectTempo(fx, applyRate);
+	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
+	return fx;
+}
+
+// Modulator: a ring modulator. The gain is (1 - depth) + depth * sin, so
+// depth 0 is unity and depth 1 swings through zero and inverts; `mix` blends
+// the product with dry. A synced rate is resolved to Hz.
+function studioEffectModulator(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'modulator');
+	var ring = ctx.createGain();
+	var wet = ctx.createGain();
+	var dry = ctx.createGain();
+	var lfo = ctx.createOscillator();
+	var depthGain = ctx.createGain();
+	lfo.type = 'sine';
+	lfo.connect(depthGain).connect(ring.gain);
+	fx.input.connect(ring).connect(wet).connect(fx.wet);
+	fx.input.connect(dry).connect(fx.wet);
+	try { lfo.start(0); } catch (e) {}
+	var depth = 0.7, mix = 0.5;
+	var applyDepth = function () {
+		var d = studioEffectClamp(depth, 0, 1);
+		ring.gain.value = 1 - d;
+		depthGain.gain.value = d;
+	};
+	var applyMix = function () { wet.gain.value = mix; dry.gain.value = 1 - mix; };
+	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.1, 20); };
+	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
+	fx.setters['depth'] = function (v) { depth = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
+	fx.setters['mix'] = function (v) { mix = studioEffectNatural(fx.name, 'mix', v); applyMix(); };
+	fx.set('rate', 24.623);
+	fx.set('depth', 70);
+	fx.set('mix', 50);
+	studioEffectTempo(fx, applyRate);
+	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
+	return fx;
+}
+
+// Chorus: one modulated short delay (5..30 ms) with a sine LFO. `depth`
+// scales the 12.5 ms swing around the 17.5 ms centre and `mix` blends with
+// dry; mono, one voice, as the contract says.
+function studioEffectChorus(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'chorus');
+	var delay = ctx.createDelay(0.05);
+	delay.delayTime.value = 0.0175;
+	var wet = ctx.createGain();
+	var dry = ctx.createGain();
+	var lfo = ctx.createOscillator();
+	var depthGain = ctx.createGain();
+	lfo.type = 'sine';
+	lfo.connect(depthGain).connect(delay.delayTime);
+	fx.input.connect(delay).connect(wet).connect(fx.wet);
+	fx.input.connect(dry).connect(fx.wet);
+	try { lfo.start(0); } catch (e) {}
+	var depth = 0.5, mix = 0.5;
+	var applyDepth = function () { depthGain.gain.value = studioEffectClamp(depth, 0, 1) * 0.0125; };
+	var applyMix = function () { wet.gain.value = mix; dry.gain.value = 1 - mix; };
+	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.05, 5); };
+	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
+	fx.setters['depth'] = function (v) { depth = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
+	fx.setters['mix'] = function (v) { mix = studioEffectNatural(fx.name, 'mix', v); applyMix(); };
+	fx.set('rate', 15.152);
+	fx.set('depth', 50);
+	fx.set('mix', 50);
+	studioEffectTempo(fx, applyRate);
+	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
+	return fx;
+}
+
+// Vibrato: the same short delay with no dry path. `depth` scales the swing
+// around a 7 ms centre (2..12 ms), which is the pitch vibrato; a synced rate
+// is resolved to Hz.
+function studioEffectVibrato(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'vibrato');
+	var delay = ctx.createDelay(0.05);
+	delay.delayTime.value = 0.007;
+	var lfo = ctx.createOscillator();
+	var depthGain = ctx.createGain();
+	lfo.type = 'sine';
+	lfo.connect(depthGain).connect(delay.delayTime);
+	fx.input.connect(delay).connect(fx.wet);
+	try { lfo.start(0); } catch (e) {}
+	var depth = 0.4;
+	var applyDepth = function () { depthGain.gain.value = studioEffectClamp(depth, 0, 1) * 0.005; };
+	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.1, 20); };
+	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
+	fx.setters['depth'] = function (v) { depth = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
+	fx.set('rate', 24.623);
+	fx.set('depth', 40);
+	studioEffectTempo(fx, applyRate);
+	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
 	return fx;
 }
 
@@ -2071,6 +2665,18 @@ var studioEffectAliases = {
 	// Native as a pass-through: the browser's alias shares the name, and its
 	// insert carries the pan LFO the channel applies after the chain.
 	stereo_panner: 'stereo_panner',
+	// The ten pedals in .shots/PEDAL-SPEC.md. Identity aliases: the wire name is
+	// already the canonical kind, and each builder is registered under it below.
+	harmonizer: 'harmonizer',
+	de_esser: 'de_esser',
+	modulator: 'modulator',
+	pitch_shift: 'pitch_shift',
+	gate: 'gate',
+	slider: 'slider',
+	overdrive: 'overdrive',
+	wah: 'wah',
+	chorus: 'chorus',
+	vibrato: 'vibrato',
 	JawnSynth: 'synth',
 	master_comp: 'compressor',
 	master_eq: 'equalizer',
@@ -2097,6 +2703,17 @@ var studioEffectBuilders = {
 	stereowidener: studioEffectStereoWidener,
 	tremolo: studioEffectTremolo,
 	stereo_panner: studioEffectStereoPanner,
+	// The ten pedals in .shots/PEDAL-SPEC.md, under their exact wire names.
+	harmonizer: studioEffectHarmonizer,
+	de_esser: studioEffectDeEsser,
+	modulator: studioEffectModulator,
+	pitch_shift: studioEffectPitchShift,
+	gate: studioEffectGate,
+	slider: studioEffectSlider,
+	overdrive: studioEffectOverdrive,
+	wah: studioEffectWah,
+	chorus: studioEffectChorus,
+	vibrato: studioEffectVibrato,
 	synth: studioEffectSynth,
 	// The master rack's ten-band graphic EQ is its own builder, under its exact
 	// wire name; the alias table still maps it to the track equalizer's kind for

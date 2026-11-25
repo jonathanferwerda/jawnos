@@ -38,11 +38,27 @@ bypasses it like any pedal, and the song keeps it in the chain.
 | `compressor` | existing | `thresh`, `attack`, `ratio`, `release`, `knee`, `mix` |
 | `tremolo` | amplitude modulation, three LFO shapes | `rate`, `depth`, `shape` |
 | `stereo_panner` | channel pan modulation, three LFO shapes | `rate`, `depth`, `shape` |
+| `harmonizer` | monophonic diatonic harmony, one detected note | `key`, `scale`, `degree`, `mix` |
+| `de_esser` | split-band high-frequency de-esser | `thresh`, `freq`, `amount` |
+| `modulator` | ring modulator | `rate`, `depth`, `mix` |
+| `pitch_shift` | fixed-interval granular pitch shifter | `semitones`, `mix` |
+| `gate` | noise gate | `thresh`, `attack`, `hold`, `release`, `range` |
+| `slider` | hard-cutting tremolo (chopper) | `rate`, `depth`, `duty` |
+| `overdrive` | valve-like overdrive | `drive`, `tone`, `level` |
+| `wah` | LFO-swept resonant bandpass | `rate`, `depth`, `mix` |
+| `chorus` | one modulated short delay | `rate`, `depth`, `mix` |
+| `vibrato` | modulated short delay, no dry path | `rate`, `depth` |
 
 The names and controls above are the contract. **What each pedal models** —
 the real circuit, the control mapping and the honest approximation — is in
 `docs/pedal-audit.md`. Read it before changing a pedal's sound: the two sides
 share the control names, not a claim of a sample-identical circuit.
+
+`harmonizer` and `pitch_shift` are **monophonic** and add latency. Both detect or
+shift one note at a time through crossfaded grains, so the shifted copy arrives
+about one grain behind the dry signal; a chord confuses them. `harmonizer` moves
+the one detected note a scale step in the chosen key and scale, while
+`pitch_shift` moves the whole signal by a fixed interval.
 
 `stereowidener` is a **browser-only** insert. A mid/side matrix needs an L/R
 pair, and the engine's insert chain is mono, so `InsertKind::parse` answers
@@ -61,8 +77,9 @@ controls and the shape indexes.
 
 ## Tempo-synced time controls
 
-`delay.time`, `flanger.rate`, `phaser.rate`, `tremolo.rate` and `stereo_panner.rate` accept a
-`sync` field. It is a **UI-only string**: it is stored in the insert's
+`delay.time`, `flanger.rate`, `phaser.rate`, `tremolo.rate`, `stereo_panner.rate`,
+`modulator.rate`, `slider.rate`, `wah.rate`, `chorus.rate` and `vibrato.rate`
+accept a `sync` field. It is a **UI-only string**: it is stored in the insert's
 `values.sync`, saved with the song, and resolved by the page into the effect's
 natural `time` or `rate` before anything is sent. It is **not** an engine
 control and **not** in `InsertKind::controls` or `Plan.pm`'s control lists.
@@ -92,7 +109,9 @@ flanger's Rate knob still maps to `0.05..5 Hz`, but the effect accepts up to
 `8 Hz` (a 1/16 at 120 BPM) and clamps a faster resolved rate to that cap. The
 phaser's Rate knob shares that `0.05..5 Hz` mapping and both sides cap the
 resolved rate at `5 Hz`. The new LFO knobs map to `0.1..20 Hz`; a resolved rate
-past 20 Hz is clamped there.
+past 20 Hz is clamped there. The five newer LFOs sync the same way on their
+`rate`: `modulator`, `slider`, `wah` and `vibrato` accept a resolved rate up to
+`20 Hz`, while `chorus` maps `0.05..5 Hz` and clamps a resolved rate at `5 Hz`.
 
 ## Tremolo and stereo panner
 
@@ -148,6 +167,9 @@ drift apart.
 | `amp.cabinet` | 0 Combo 1x12, 1 Open 2x12, 2 Closed 4x12, 3 Tweed 4x10 |
 | `autotune.scale` | 0 Major, 1 Minor, 2 Chromatic, 3 Pentatonic |
 | `autotune.key` | 0..11 = C, C#, D, … B |
+| `harmonizer.key` | 0..11 = C, C#, D, … B |
+| `harmonizer.scale` | 0 Major, 1 Minor, 2 Chromatic, 3 Pentatonic |
+| `harmonizer.degree` | 0..6 = 4th Below, 3rd Below, 2nd Below, Unison, 2nd Above, 3rd Above, 4th Above |
 | `reverb.model` | 0..4 as above, default 2 |
 | `tremolo.shape`, `stereo_panner.shape` | 0 Sine, 1 Triangle, 2 Square |
 
@@ -167,6 +189,20 @@ controls that are amounts (gains, mixes, depths) the mapping is the slider over
 | `compressor.release` | 50 .. 1000 ms |
 | `compressor.knee` | 0 .. 24 dB |
 | `maximizer.loudness` | 0 .. 1 (the slider over 100) |
+| `de_esser.thresh` | -60 .. 0 dB |
+| `de_esser.freq` | 4000 .. 12000 Hz |
+| `modulator.rate` | 0.1 .. 20 Hz |
+| `pitch_shift.semitones` | -24 .. +24, rounded to a whole semitone |
+| `gate.thresh` | -60 .. 0 dB |
+| `gate.attack` | 0.1 .. 50 ms |
+| `gate.hold` | 0 .. 500 ms |
+| `gate.release` | 20 .. 1000 ms |
+| `gate.range` | -80 .. 0 dB |
+| `slider.rate` | 0.1 .. 20 Hz |
+| `slider.duty` | 0.05 .. 0.95 (the open fraction) |
+| `wah.rate` | 0.1 .. 20 Hz |
+| `chorus.rate` | 0.05 .. 5 Hz |
+| `vibrato.rate` | 0.1 .. 20 Hz |
 
 ## Master rack
 

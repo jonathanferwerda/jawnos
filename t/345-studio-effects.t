@@ -29,7 +29,7 @@ my $studio = read_file("$root/perl/gb/05_abilities_and_studio.pl");
 my $help   = read_file("$root/perl/help/topics_apps.pl");
 
 # The contract's channel insert names (docs/studio-effects.md, "Insert kinds").
-my @contract = qw(reverb flanger fuzz amp limiter tremolo autotune equalizer tone distortion delay compressor stereowidener stereo_panner);
+my @contract = qw(reverb flanger fuzz amp limiter tremolo autotune equalizer tone distortion delay compressor stereowidener stereo_panner harmonizer de_esser modulator pitch_shift gate slider overdrive wah chorus vibrato);
 
 # --- the labels and the wire names -----------------------------------------
 # autotune is the wire name; people read JawnPitch. Jtune is a tuner, not an
@@ -63,7 +63,11 @@ like($js, qr/input\.connect\(output\);/, 'an unknown name is a pass-through, not
 # Every builder returns the shape the rest of the window calls.
 for my $builder (qw(studioEffectReverb studioEffectFlanger studioEffectFuzz studioEffectAmp
                     studioEffectLimiter studioEffectAutotune studioEffectEqualizer
-                    studioEffectCompressor studioEffectDistortion studioEffectDelay)) {
+                    studioEffectCompressor studioEffectDistortion studioEffectDelay
+                    studioEffectHarmonizer studioEffectDeEsser studioEffectModulator
+                    studioEffectPitchShift studioEffectGate studioEffectSlider
+                    studioEffectOverdrive studioEffectWah studioEffectChorus
+                    studioEffectVibrato)) {
 	like($fx, qr/^function \Q$builder\E\(ctx, name\)/m, "$builder takes a context and a name");
 }
 like($fx, qr/fx\.set = function \(control, value\)/, 'the shell defines set(control, value)');
@@ -227,7 +231,7 @@ like($markup, qr/class="studio_pedal_led"/, 'a pedal tile carries the lamp');
 unlike($markup, qr/id="studio_pedalboard_pedals"/, 'the old shelf is gone');
 like($markup, qr/id="studio_pedalboard_tiles"[\s\S]*class="pedal pedal_graphic"/,
 	'the drawn palette tiles live in the hidden library, not on the board');
-for my $name (qw(flanger fuzz amp limiter autotune equalizer tone)) {
+for my $name (qw(flanger fuzz amp limiter autotune equalizer tone harmonizer de_esser modulator pitch_shift gate slider overdrive wah chorus vibrato)) {
 	like($studio, qr/\b\Q$name\E\s*=>\s*\[ qw\(/, "the palette art names $name's knob colours");
 }
 like($studio, qr/palette_knob_colours\s*=>\s*\[ qw\(/, 'there is a fallback knob-colour rotation');
