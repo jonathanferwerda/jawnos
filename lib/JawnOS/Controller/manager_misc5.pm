@@ -592,7 +592,12 @@ sub action_15715 {
 # POST /manager/reset
 sub action_15836 {
 	my $c = shift;
-	unless (&peer_action_gate($c, &subs::peer_movement_action($c->param('type')))) {
+	# pre_usual is the usual button pressed at the start of a session. The peer
+	# gate knows the usual as an appointment start, so ask it about `usual` while
+	# the press keeps its own name for the branch and the log below.
+	my $raw_type = $c->param('type') // '';
+	my $gate_type = ($raw_type eq 'pre_usual') ? 'usual' : $raw_type;
+	unless (&peer_action_gate($c, &subs::peer_movement_action($gate_type))) {
 		return $c->rendered(403);
 	}
 	my $peer = &peer_row_for_request($c);
@@ -816,6 +821,28 @@ sub action_18252 {
 	my $settings = &subs::settings_grabber({ app => $app });
 	my $returner = &inventory_details($c, $settings);
 	$c->render(json => $returner);
+}
+
+# GET /manager/usual
+# The line under the Extra group's buttons: what this app's usual press would
+# write, and the kinds it could choose between. A read - it writes nothing.
+sub action_18253 {
+	my $c = shift;
+	my $app = &subs::unformat_name($c->param('app'));
+	my $profile = &subs::usual_profile($app, now => &subs::rightNow());
+	my $ask = &subs::usual_ask_payload($profile, $c);
+	# An ambiguous profile has no single line: the panel shows the count and the
+	# choices instead of pretending the first candidate is the usual.
+	my $line = $profile->{'ambiguous'} ? &subs::ui('Several usuals') : ($profile->{'line'} // '');
+	$c->render(json => {
+		app => ($profile->{'app'} // $app),
+		line => $line,
+		chosen => $profile->{'chosen'},
+		ambiguous => $profile->{'ambiguous'} ? 1 : 0,
+		candidates => ($ask->{'candidates'} || []),
+		duration => ($profile->{'duration'} // 0),
+		tasks => ($profile->{'tasks'} || []),
+	});
 }
 
 1;

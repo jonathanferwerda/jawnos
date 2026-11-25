@@ -313,6 +313,13 @@ function managerReset(caller,e,press) {
 	var timeshift = (captured && captured.timeshift !== undefined) ? captured.timeshift : (localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope'));
 	var warranty = (captured && captured.warranty !== undefined) ? captured.warranty : container.find('.warranty').val();
 	var navigation = container.attr('navigation');
+	// A usual press that came back as a question is re-sent with the kind the
+	// person chose; an ordinary press carries neither.
+	var usual_kind = (replay && replay.usual_kind) ? String(replay.usual_kind) : '';
+	var usual_remember = (replay && replay.usual_remember) ? String(replay.usual_remember) : '';
+	// The dialog's OK is the confirmation for a kind that sends something; the
+	// server refuses a message until it sees this flag.
+	var usual_confirm = (replay && replay.usual_confirm) ? String(replay.usual_confirm) : '';
 	var measure_is_open = false;
 
 	if (container.find('.re_measures').is(':visible')) {
@@ -351,7 +358,42 @@ function managerReset(caller,e,press) {
 		quantity: quantity,
 		lockingStatus: lockingStatus
 	};
+	if (usual_kind) { data.usual_kind = usual_kind; }
+	if (usual_remember) { data.usual_remember = usual_remember; }
+	if (usual_confirm) { data.usual_confirm = usual_confirm; }
 	appointmentResetSend(app, type, data, function(response) {
+				// A usual press may answer with a question, a capture or an error
+				// instead of a write. These are read before the clear and the place
+				// record: an ask wrote nothing, and a capture is the press's next
+				// half, filed on the row the server just named.
+				if (response && response['usual_ask']) {
+					if (usual_kind) {
+						// a kind was already chosen; asking again would loop
+						jawnosAlertText(jawnosDialogT('The usual could not be chosen.'));
+						return;
+					}
+					var ask = response['usual_ask'];
+					jawnosUsualChoice(ask['candidates'] || [], ask['chosen'] || '', function(signature, remember) {
+						var retry = { at: now, usual_kind: signature, usual_confirm: 'on' };
+						if (remember) { retry.usual_remember = 'on'; }
+						if (replay && replay.values) { retry.values = replay.values; }
+						managerReset(details, e, retry);
+					}, function() { /* cancel writes nothing */ });
+					return;
+				}
+				if (response && response['usual_capture']) {
+					// the header is the press's own; apply it once more here so the
+					// capture opens against the row it named
+					if (response['header'] && typeof jawnosHeaderApply === 'function') {
+						jawnosHeaderApply(app, response['header'], response['server_time']);
+					}
+					usualCaptureOpen(response['usual_capture']);
+					return;
+				}
+				if (response && response['usual_error']) {
+					jawnosAlertText(response['usual_error']);
+					return;
+				}
 				appClearer(app)
 				// The start/stop frame is also pushed over the websocket, but the
 				// press that caused it must not depend on a live socket to show
@@ -374,9 +416,109 @@ function managerReset(caller,e,press) {
 					continent_record({'uuid':response['uuid'], 'app':response['app'],'purpose':'app','timestamp':response['timestamp'],'navigation':navigation});
 			//	}
 				calculator();
+			// the line under the Extra group's buttons follows the press that
+			// just wrote one
+			if (type == 'usual' || type == 'pre_usual') { usualSummaryRefresh(app); }
 		//	}
 		},
 		function(error) { console.log(error) });
+}
+
+// A usual press may ask for a capture of the extras: a photo, a scan or a
+// video. The header has already landed in appointmentResetSend; this dispatches
+// on the kind the server named, the same way the wrapper's own buttons do, so
+// the result is filed onto the row the server just installed.
+function usualCaptureOpen(capture) {
+	capture = capture || {};
+	var app = capture['app'] || '';
+	var uuid = capture['uuid'] || '';
+	var machine = capture['machine'] || '';
+	var feed = capture['feed'] || '';
+	var kind = capture['kind'] || 'image';
+	var camera = (capture['camera'] === undefined || capture['camera'] === null) ? '0' : String(capture['camera']);
+	var timestamp = capture['timestamp'] || Date.now();
+	if (kind === 'scan') {
+		// a flatbed or feeder scan is not a picture: the route takes the feed
+		$.ajax({
+			url: '/manager/scan_document',
+			type: 'POST',
+			data: { app: app, uuid: uuid, feed: feed, timestamp: timestamp, usual: 1 },
+			error: function() {
+				jawnosAlertText(jawnosDialogT('The scanner could not take the document.'));
+			}
+		});
+		return;
+	}
+	if (kind === 'video') {
+		if (window.JawnCamera && typeof window.JawnCamera.video === 'function') {
+			window.__jawnCameraPending = { app: app, uuid: uuid, camera: camera, timestamp: timestamp, usual: true };
+			window.JawnCamera.video();
+			return;
+		}
+		// a page without the video bridge: the route records it
+		$.ajax({
+			url: '/manager/take_picture',
+			type: 'POST',
+			data: { app: app, uuid: uuid, camera: camera, remote_uuid: machine, timestamp: timestamp, native_kind: 'video', usual: 1 },
+			error: function() {
+				jawnosAlertText(jawnosDialogT('The camera could not record the video.'));
+			}
+		});
+		return;
+	}
+	// image (or no kind): the native photo bridge when it answers, else the route
+	if (typeof jawnCameraAvailable == 'function' && jawnCameraAvailable() && (camera === '0' || camera === '1')) {
+		window.__jawnCameraPending = { app: app, uuid: uuid, camera: camera, timestamp: timestamp, usual: true };
+		window.JawnCamera.photo(camera);
+		return;
+	}
+	$.ajax({
+		url: '/manager/take_picture',
+		type: 'POST',
+		data: { app: app, uuid: uuid, camera: camera, remote_uuid: machine, timestamp: timestamp, usual: 1 },
+		error: function() {
+			jawnosAlertText(jawnosDialogT('The camera could not take the picture.'));
+		}
+	});
+}
+
+// The line under the Extra group's buttons: what the house thinks "the usual"
+// fills for this app. It is asked when the group opens, and asked again after a
+// press wrote one, so the words follow the press without a reload. A missing
+// endpoint (or a failed read) leaves the line empty and the next open asks
+// again.
+function usualSummaryFill(app, force) {
+	if (!app) { return; }
+	var spans = $('.appointment[app="' + app + '"] .usual_summary[app="' + app + '"]');
+	if (!spans.length) { return; }
+	if (!force && spans.attr('filled') == 'yes' && spans.attr('stale') != 'yes') { return; }
+	if (spans.attr('loading') == 'yes') { return; }
+	var t = (typeof jawnosT === 'function') ? jawnosT : function (s) { return s; };
+	spans.attr('loading', 'yes');
+	$.ajax({
+		url: '/manager/usual',
+		type: 'GET',
+		data: { app: app },
+		dataType: 'json',
+		timeout: 10000,
+		success: function(response) {
+			spans.removeAttr('loading');
+			var line = (response && response['line'] !== undefined && response['line'] !== null) ? String(response['line']) : '';
+			if (!line.length) {
+				spans.removeAttr('filled').removeAttr('stale').text('');
+				return;
+			}
+			spans.attr('filled', 'yes').removeAttr('stale').text(t('Usual: ') + t(line));
+		},
+		error: function() {
+			spans.removeAttr('loading');
+		}
+	});
+}
+
+function usualSummaryRefresh(app) {
+	$('.appointment[app="' + app + '"] .usual_summary[app="' + app + '"]').attr('stale', 'yes');
+	usualSummaryFill(app, true);
 }
 
 function appClearer(app) {

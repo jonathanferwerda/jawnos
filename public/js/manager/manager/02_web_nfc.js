@@ -132,6 +132,9 @@ function jawnCameraUpload(result) {
 			native_name: result.name || '',
 			native_mime: result.mime || ''
 		};
+		// a usual press opens the camera to fill the extras; the capture
+		// route files the picture under that same press
+		if (pending.usual) { data.usual = 1; }
 		// The bridge's result carries no attitude of its own; the Camera app put
 		// the page's own reading on the pending capture before opening the camera.
 		if (pending.orientation) { $.extend(data, pending.orientation); }

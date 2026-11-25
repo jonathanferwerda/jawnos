@@ -303,7 +303,7 @@ sub task_writer {
 	my $data = shift;
 	my $papp = &subs::unformat_name($data->{'papp'});
 	my $app = &subs::unformat_name($data->{'app'});
-	my $server_time = $c->param('server_time') || &subs::rightNow();
+	my $server_time = $data->{'server_time'} || $c->param('server_time') || &subs::rightNow();
 	my $timestamp = $data->{'timestamp'};
 	my $uuid = $data->{'uuid'};
 	my $name = $data->{'name'};
@@ -357,12 +357,26 @@ sub task_writer {
 				name => $name,
 				value => $value,
 				colour => $pt->{'colour'},
+				server_time => $server_time,
+				completed_at => $data->{'completed_at'},
+				parent_uuid => $data->{'parent_uuid'},
+				quiet_child => $data->{'quiet_child'},
 			});
 		}
 		if ($name eq 'completed' && $value eq 'on') {
 
-			my $running_appt = &subs::db_query('select * from appointments where app = ? and (type = ? or type = ?) and timestamp <= ? order by timestamp', $papp, 'start', 'record', $timestamp)->hashes->[0];
-			$task->{'last_completed'} = &subs::rightNow();
+			# A replayed task belongs to the usual row that produced it, so an
+			# explicit parent wins; only a live checkbox falls back to the open
+			# session on this machine.
+			my $parent_uuid = $data->{'parent_uuid'};
+			my $source_uuid = (defined $parent_uuid && length "$parent_uuid")
+				? $parent_uuid
+				: &subs::db_query('select * from appointments where app = ? and (type = ? or type = ?) and timestamp <= ? order by timestamp', $papp, 'start', 'record', $timestamp)->hashes->[0]{'uuid'};
+			# A pre-usual press marks the checklist at the moment it was pressed
+			# while the row itself sits at its usual future time.
+			$task->{'last_completed'} = (defined $data->{'completed_at'} && length "$data->{'completed_at'}")
+				? $data->{'completed_at'}
+				: &subs::rightNow();
 			if ($task->{'appt'} eq 'on') {
 				my $settings = &subs::settings_grabber({ app => $task->{'task'} });
 				my $duration;
@@ -378,9 +392,9 @@ sub task_writer {
 				}
 
 				# keyed on the request alone (the timestamp is already in the uuid's prefix),
-				# never on $running_appt: that is the earliest open session on THIS machine, so
-				# hashing it in gave the same completion a different uuid on every machine and
-				# the mesh kept each machine's copy as its own row
+				# never on the open session it may point at: that is the earliest open session
+				# on THIS machine, so hashing it in gave the same completion a different uuid
+				# on every machine and the mesh kept each machine's copy as its own row
 				my $md5_uuid = md5_sum $papp . '-' . $timestamp . '-' . $task->{'task'} . $data->{'project'} . $data->{'account'} . $data->{'movement'};
 				my $data = {
 					app => $task->{'task'},
@@ -388,12 +402,22 @@ sub task_writer {
 					type => 'usual',
 					quantity => $task->{'occurences'},
 					duration => (abs $duration),
-					source_uuid => $running_appt->{'uuid'},
+					source_uuid => $source_uuid,
 					# a task's checkbox is not a step the person picked on the rail
 					source => 'task',
 					project => $data->{'project'},
 					account => $data->{'account'},
 					movement => $data->{'movement'},
+					# The exact association a future profile reads: which checklist
+					# (papp) and which entry completed, not just the task app's name.
+					data => encode_json({
+						task_list => $papp,
+						task => $task->{'task'},
+						task_uuid => $task->{'uuid'},
+					}),
+					# A child write: the press that started the usual already drew
+					# the window, so this row must not fork its own render.
+					quiet_child => $data->{'quiet_child'},
 					uuid => $timestamp . '-' . $md5_uuid,
 					server_time => $server_time
 				};

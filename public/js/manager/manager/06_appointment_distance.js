@@ -616,6 +616,11 @@ $(document).on('click', '.group_toggle', function() {
 		if (group == 'media' && typeof jpScreenSourceFill === 'function') {
 			jpScreenSourceFill(appointment.attr('app'));
 		}
+		// The Extra group's line says what the usual is; it is asked when the
+		// group opens, never on every window render.
+		if (group == 'extra' && typeof usualSummaryFill === 'function') {
+			usualSummaryFill(appointment.attr('app'));
+		}
 	}
 });
 

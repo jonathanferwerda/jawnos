@@ -50,7 +50,7 @@
 							    white glyphs on yellow until the cache is rebuilt %>
 							<% my $plate = $p->{'colour'} || ''; %>
 							<% $plate = '' if lc($plate) eq '#ffec1f'; %>
-							<img class="<%= $p->{'classmates'} %>"<% if (length $plate) { %> style="background-color:<%= $plate %>;"<% } %> onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"
+							<img class="<%= $p->{'classmates'} %>"<% if (length $plate) { %> style="background-color:<%= $plate %>;"<% } %> onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= $p->{'hint'} || &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"
 							>
 						<% } %>
 
@@ -82,7 +82,7 @@
 					<span class="media_row">
 						<% foreach my $p ( @{$pseudonyms} ) { %>
 							<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'media') { %>
-								<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" <% if ($p->{'name'} =~ /^(?:video|audio|screen)$/) { %>media_group="record" <% } %>app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+								<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= $p->{'hint'} || &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" <% if ($p->{'name'} =~ /^(?:video|audio|screen)$/) { %>media_group="record" <% } %>app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 							<% } %>
 						<% } %>
 						<%# video / audio / screen: which machine records (it runs jp there) %>
@@ -129,7 +129,7 @@
 				<div class="group_contents extra_group_contents" app="<%= $a %>" style="display:none;">
 					<% foreach my $p ( @{$pseudonyms} ) { %>
 						<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'extra') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= $p->{'hint'} || &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 						<% } %>
 					<% } %>
 					<% if ($appts->{$a}->{'setting'}->{'command'}) { %>
@@ -138,6 +138,10 @@
 					<% if ($appts->{$a}->{'setting'}->{'kill'}) { %>
 						<img app="<%= $a %>" type="kill" class="little_thumb app_act kill save_appointment shell" src="<%= &subs::icon_path('scraper', '/images/make believe/Scarapy.png') %>" hint="Kill" />
 					<% } %>
+					<%# the line under the Extra group's buttons: what "the usual" fills in.
+					    It is asked when the group opens, and asked again after a press
+					    wrote one, so the words follow the press without a reload. %>
+					<span class="usual_summary" app="<%= $a %>"></span>
 				</div>
 				<div class="group_contents connect_group_contents" app="<%= $a %>" style="display:none;">
 					<img app="<%= $a %>" web="<%= $appts->{$a}->{'setting'}->{'wiki'} %>" class="little_thumb app_act web" src="<%= &subs::icon_path('wiki', '/images/make believe/wiki.png') %>" hint="Wiki" />
@@ -145,7 +149,7 @@
 						style="<% if (!$appts->{$a}->{'setting'}->{'web'}) { %>display:none;<% } %>"/>
 					<% foreach my $p ( @{$pseudonyms} ) { %>
 						<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'connect') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= $p->{'hint'} || &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 						<% } %>
 					<% } %>
 					<% if ($appts->{$a}->{'setting'}->{'phone'} || $ticket_uuid_by_name{lc($a)}) { %>
@@ -286,6 +290,14 @@
 	.media_group_contents .media_machine { max-width: 100%; min-height: 0; height: 30px; padding: 2px 7px;
 		border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
 		color: var(--ink); font: inherit; font-size: 13px; }
+	/* The line under the Extra group's buttons says what "the usual" is. It is
+	   empty until the group opens, and the empty rule keeps it from taking space
+	   before the fetch lands. */
+	.extra_group_contents .usual_summary { display: block; clear: both; box-sizing: border-box;
+		width: 100%; margin-top: 6px; padding: 3px 6px;
+		border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2, var(--panel));
+		color: var(--ink); font-size: 12px; text-align: left; opacity: .85; }
+	.extra_group_contents .usual_summary:empty { display: none; }
 	/* The bottom line's headers share one row: six equal columns that never wrap,
 	   each keeping its own word (the panel below is the room for detail). */
 	.appointment_stats { margin-top: 6px; width: 100%; text-align: left; }

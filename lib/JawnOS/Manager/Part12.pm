@@ -61,7 +61,10 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 
 sub pseudonym_maker($context,$app) {
 	my $icon_set = &subs::icon_set();
-	my $set_key = $context . '.' . $icon_set;
+	# A new entry in the list must appear on an install that already cached one:
+	# the version below retires the older list once, and the migration loops under
+	# the hit still run on whatever this key names.
+	my $set_key = $context . '.' . $icon_set . '.usual2';
 	if (my $ps = &subs::cache_get({ app => 'me', context => 'pseudonyms', subcontext => $set_key })) {
 		# the console panel is now called sessions - migrate older cached lists
 		my $renamed = 0;
@@ -139,7 +142,8 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'button', name => 'video', icon => 'camera', classmates => "little_thumb multimedia save_appointment", click => "", colour => '#bdd6c5', place => 'mid', group => 'media' },
 		{ status => 'button', name => 'audio', icon => 'microphone', classmates => "little_thumb save_appointment", click => "", colour => '#bdd6c5', place => 'mid', group => 'media' },
 		{ status => 'button', name => 'screen', icon => 'monitor', classmates => "little_thumb multimedia save_appointment", click => "", colour => '#bdd6c5', place => 'mid', group => 'media' },
-		{ status => 'button', name => 'usual', icon => 'usual_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'usual', icon => 'usual_button', hint => &subs::ui('Usual: fill in the usual extras'), classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
+		{ status => 'button', name => 'pre_usual', icon => 'pre_usual_button', hint => &subs::ui('Pre-usual: fill in the usual extras from now'), classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
 		{ status => 'button', name => 'cancel', icon => 'cancel_button', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
 		{ status => 'button', name => 'resume', icon => 'detour', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },
 		{ status => 'button', name => 'renew', icon => 'renew', classmates => "little_thumb save_appointment", colour => '#bdd6c5', place => 'mid', group => 'extra' },

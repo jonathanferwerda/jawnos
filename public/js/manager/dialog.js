@@ -107,6 +107,10 @@ function jawnosAlertText(message, options) {
 // Escape. The message is text, not markup - it may name a record or a network.
 var jawnos_confirm_yes = null;
 var jawnos_confirm_no = null;
+// A usual choice keeps its own answer, never the confirm's: OK must not be able
+// to fire a question it did not ask, and Cancel must not answer a second one.
+var jawnos_usual_choice_ok = null;
+var jawnos_usual_choice_open = false;
 
 function jawnosConfirm(message, on_yes, options) {
 	options = options || {};
@@ -163,12 +167,98 @@ function jawnosPasswordPrompt(message, on_yes, options) {
 	jawnosPrompt(message, '', on_yes, options);
 }
 
+// A usual press can match more than one kind. The server answers with the
+// candidates instead of writing; this asks which one, in the Alert's shell, so
+// the phone and the desktop ask the same way. The signature is what the
+// retried press carries; the candidates' labels are already human words.
+// on_ok(signature, remember) runs only on OK; Cancel, the X and Escape call
+// on_cancel, and nothing was written either way.
+function jawnosUsualChoice(candidates, chosen, on_ok, on_cancel) {
+	candidates = candidates || [];
+	on_cancel = (typeof on_cancel === 'function') ? on_cancel : null;
+	if (!candidates.length) {
+		if (on_cancel) { on_cancel(); }
+		return;
+	}
+	var dialog = $('#alert_dialog');
+	if (!dialog.length) {
+		// a page without the shell (an older template): nothing was written, so a
+		// cancel is the honest answer; a browser prompt is not the house dialog
+		if (on_cancel) { on_cancel(); }
+		return;
+	}
+	jawnosConfirmClear();
+	jawnos_confirm_yes = null;
+	jawnos_confirm_no = on_cancel;
+	jawnos_usual_choice_ok = (typeof on_ok === 'function') ? on_ok : null;
+	jawnos_usual_choice_open = true;
+	var content = $('#alert');
+	content.removeClass('jawnos_dialog_text').empty();
+	content.append($('<p class="usual_choice_lead"></p>').text(jawnosDialogT('Which usual is this?')));
+	var list = $('<div class="usual_choice_list" role="radiogroup"></div>');
+	$.each(candidates, function(i, candidate) {
+		candidate = candidate || {};
+		var row = $('<label class="usual_choice"></label>');
+		var radio = $('<input type="radio" name="usual_kind">').val(String(candidate.signature || ''));
+		if ((chosen && candidate.signature === chosen) || (!chosen && i === 0)) {
+			radio.prop('checked', true);
+		}
+		var words = $('<span class="usual_choice_words"></span>');
+		words.append($('<span class="usual_choice_label"></span>').text(candidate.label || candidate.signature || ''));
+		if (candidate.summary) {
+			words.append($('<span class="usual_choice_summary"></span>').text(candidate.summary));
+		}
+		row.append(radio).append(words);
+		list.append(row);
+	});
+	content.append(list);
+	var remember = $('<label class="usual_remember_label"></label>');
+	remember.append($('<input type="checkbox" id="usual_remember">'))
+		.append(document.createTextNode(' ' + jawnosDialogT('This is the usual')));
+	content.append(remember);
+	$('#alert_message').text('');
+	$('#alert_input').attr('type', 'text').attr('autocomplete', 'off').hide().val('');
+	$('#alert_buttons').html(
+		'<button type="button" class="cancel" id="alert_usual_cancel">' + jawnosDialogT('Cancel') + '</button>' +
+		'<button type="button" class="ok" id="alert_usual_ok">' + jawnosDialogT('OK') + '</button>'
+	).removeAttr('hidden').show();
+	dialog.find('.jawnos_dialog_title').text(jawnosDialogT('Which usual?'));
+	content.removeAttr('hidden');
+	dialog.removeAttr('hidden').show();
+	jawnosDialogRaise(dialog);
+}
+
+$(document).on('click', '#alert_usual_ok', function() {
+	var yes = jawnos_usual_choice_ok;
+	var signature = $('#alert').find('input[name="usual_kind"]:checked').val() || '';
+	var remember = $('#usual_remember').is(':checked');
+	if (!signature) { return; }
+	jawnosAlertClose();
+	if (typeof yes === 'function') { yes(signature, remember); }
+});
+
+$(document).on('click', '#alert_usual_cancel', function() {
+	jawnosAlertClose(true);
+});
+
+// Escape dismisses the choice as Cancel does; the listener is quiet unless a
+// usual choice is the dialog on screen.
+$(document).on('keydown', function(e) {
+	if (!jawnos_usual_choice_open) { return; }
+	if (e.key === 'Escape' || e.keyCode === 27) {
+		e.preventDefault();
+		jawnosAlertClose(true);
+	}
+});
+
 // Drop a pending question. `run_cancel` is true only when the person dismissed
 // it (Cancel, the X, Escape); an Alert replacing it does not answer it.
 function jawnosConfirmClear(run_cancel) {
 	var no = jawnos_confirm_no;
 	jawnos_confirm_yes = null;
 	jawnos_confirm_no = null;
+	jawnos_usual_choice_ok = null;
+	jawnos_usual_choice_open = false;
 	$('#alert_buttons').hide().empty();
 	$('#alert_input').attr('type', 'text').attr('autocomplete', 'off').hide().val('');
 	$('#alert').removeClass('jawnos_dialog_text');

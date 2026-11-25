@@ -22,6 +22,7 @@ sub routes {
 	[17947, 'get', '/manager/inventory/information', 'action_17947'],
 	[17984, 'get', '/manager/inventory/summary', 'action_17984'],
 	[18252, 'get', '/manager/inventory/details', 'action_18252'],
+	[18253, 'get', '/manager/usual', 'action_18253'],
 	);
 }
 

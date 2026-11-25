@@ -218,7 +218,7 @@ sub manager_reset($c) {
 	# stop/cancel/resume/pause/delay has no session to act on and must not mint one -
 	# on a peer that had not yet synced this app, coercing a stop to "add" wrote a
 	# spurious appointment that then rode the mesh back as a duplicate.
-	if (scalar @{$appointments} == 0 && $type !~ /^(?:stop|cancel|resume|pause|delay)$/) { $type = "add" };
+	if (scalar @{$appointments} == 0 && $type !~ /^(?:stop|cancel|resume|pause|delay|usual|pre_usual)$/) { $type = "add" };
 	my $pos = &subs::setting_grabber({ app => $app, setting => 'pos' } ) || 'idea';
 	$notes = &subs::note_encrypter(&subs::session_suds($c),$notes) if $notes;
 
@@ -669,7 +669,7 @@ sub manager_reset($c) {
 		&subs::source_header_printer([ keys %child_apps ], $timestamp);
 	}
 
-	elsif ($type =~ 'reset' || $type =~ 'usual') {
+	elsif ($type eq 'reset') {
 		unless ($c->param('duration')) {
 			my $udur = &subs::db_query('select duration from appointments where app=? and type=? order by timestamp DESC LIMIT 20',$app,'stop')->hashes;
 			my $ucount = scalar @{$udur};
@@ -740,6 +740,78 @@ sub manager_reset($c) {
 			$manufacturer = $init->{'manufacturer'};
 		}
 		&subs::db_update('appointments', { server_time => &subs::rightNow(), model => $jmodel, options => $joptions, unit => $unit, quantity => $quantity, manufacturer => $manufacturer }, { uuid => $uuid, app => $app });
+	}
+	elsif ($type eq 'usual' || $type eq 'pre_usual') {
+		# The usual and the pre-usual replay the app's learned kind instead of
+		# writing one generic row. The profile settles the kind (or asks); the
+		# writer in UsualWrite.pm stamps the parent at the press, anchors the
+		# tasks to it and dispatches the row to the writer its kind names.
+		my $profile = &subs::usual_profile($app, now => $timestamp);
+		# A length the person typed on this press is the anchor; otherwise the
+		# profile's weighted median; otherwise the app's own usual length. A
+		# typed value the reader could not parse is not a typed length.
+		my $duration_typed = (($c->param('duration_typed') // '') eq 'yes' && $duration_readable) ? 1 : 0;
+		my $D;
+		if ($duration_typed) {
+			$D = abs($duration);
+		}
+		elsif (($profile->{'duration'} // 0) > 0) {
+			$D = abs($profile->{'duration'});
+		}
+		else {
+			my $fallback = $usual_duration;
+			$fallback = &subs::setting_grabber({ app => $app, setting => 'duration' })
+				unless defined $fallback && length "$fallback";
+			my $read = &duration_read($fallback);
+			$D = defined $read ? abs($read) : 0;
+		}
+		my $result = &subs::usual_apply($c,
+			app => $app,
+			kind => $type,
+			signature => ($c->param('usual_kind') // ''),
+			remember => (($c->param('usual_remember') // '') eq 'on') ? 1 : 0,
+			confirm => (($c->param('usual_confirm') // '') eq 'on') ? 1 : 0,
+			timestamp => $timestamp,
+			server_time => $server_time,
+			uuid => $uuid,
+			profile => $profile,
+			duration => $D,
+			project => $project,
+			quantity => $quantity,
+			unit => $unit,
+			manufacturer => $manufacturer,
+			notes => $notes,
+			file => $file,
+			pos => $pos,
+			warranty => $warranty,
+			source => $source,
+			seen => $seen,
+			browser_tab_id => $browser_tab_id,
+			capture_machine => $capture_machine,
+			capture_here => $capture_here,
+		);
+		if (!$result) {
+			$returner->{'usual_error'} = &subs::ui('The usual could not be repeated.');
+			return $returner;
+		}
+		if ($result->{'usual_ask'}) {
+			# Nothing was written: the UI asks which kind and re-posts with it.
+			$returner->{'usual_ask'} = $result->{'usual_ask'};
+			return $returner;
+		}
+		if ($result->{'no_usual'} || $result->{'usual_error'}) {
+			$returner->{'usual_error'} = $result->{'usual_error'} // $result->{'error'}
+				// &subs::ui('The usual could not be repeated.');
+			return $returner;
+		}
+		$uuid = $result->{'uuid'} if defined $result->{'uuid'} && length "$result->{'uuid'}";
+		$c->param('uuid' => $uuid);
+		$returner->{'uuid'} = $uuid;
+		$returner->{'usual_kind'} = $result->{'signature'}
+			if defined $result->{'signature'} && length "$result->{'signature'}";
+		$appt_header = $result->{'appt_header'};
+		$header_appts = $result->{'header_appts'};
+		$returner->{'usual_capture'} = $result->{'capture'} if $result->{'capture'};
 	}
 	elsif ($type =~ 'sms' && $device eq 'mobile') {
 		my $data = {};
