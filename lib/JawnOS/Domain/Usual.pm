@@ -100,24 +100,43 @@ my $sessions_for = sub {
 		$app, 'stop', $limit
 	)->hashes || [];
 	my $rows = $stop_rows;
+	my $fallback = 0;
 	if (scalar(@{$stop_rows}) < $min_sessions) {
 		$rows = &subs::db_query(
-			q{select * from appointments where app = ? and type = ? and coalesce(source, '') != ? order by cast(timestamp as integer) desc limit ?},
-			$app, 'usual', 'task', $limit
+			q{select * from appointments where app = ? and type = ? and coalesce(source, '') not in ('task','default','guide') and coalesce(source_uuid, '') = '' order by cast(timestamp as integer) desc limit ?},
+			$app, 'usual', $limit
 		)->hashes || [];
+		$fallback = 1;
 	}
 
 	my @sessions;
 	my $index = 0;
 	foreach my $row ( @{$rows} ) {
-		my $start = 0 + ($row->{'timestamp'} // 0);
-		next unless $start > 0;
-		my $end;
+		# A fallback usual row from a task/default/guide child is not a session
+		# the person ran; the SQL already drops it, and this keeps a stubbed
+		# reader honest.
+		next if $fallback && ((($row->{'source'} // '') =~ /^(?:task|default|guide)$/)
+			|| (($row->{'source_uuid'} // '') ne ''));
+		my $stamp = 0 + ($row->{'timestamp'} // 0);
+		next unless $stamp > 0;
+		my ($start, $end);
 		if (defined $row->{'stop_timestamp'} && length "$row->{'stop_timestamp'}") {
+			# A real stop names both ends: timestamp is the start.
+			$start = $stamp;
 			$end = 0 + $row->{'stop_timestamp'};
 		}
 		else {
-			$end = $start + abs(0 + ($row->{'duration'} // 0));
+			# A usual row keeps the press it was written at and a signed
+			# length: positive means the press was the end, negative the start.
+			my $signed = 0 + ($row->{'duration'} // 0);
+			if ($signed < 0) {
+				$start = $stamp;
+				$end = $stamp + abs($signed);
+			}
+			else {
+				$end = $stamp;
+				$start = $stamp - abs($signed);
+			}
 		}
 		my $length = $end - $start;
 		next unless $length > 0 && $length <= $CAP;

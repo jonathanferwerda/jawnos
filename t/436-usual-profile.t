@@ -122,10 +122,23 @@ my (%stops, %usual, %candidates, %task_rows, %settings);
 		{ app => 'tea', type => 'usual', timestamp => 3_000_000, duration => '600000', data => '' },
 		{ app => 'tea', type => 'usual', timestamp => 2_000_000, duration => '600000', data => '' },
 		{ app => 'tea', type => 'usual', timestamp => 1_000_000, duration => '600000', data => '' },
+		# A default child is not a session the person ran; the fallback must not
+		# count it even when the reader hands it back.
+		{ app => 'tea', type => 'usual', timestamp => 500_000, duration => '600000', source => 'default', data => '' },
 	];
 	my $fallback = &subs::usual_task_profile('tea');
 	is($fallback->{'sessions'}, 3, 'an app with fewer than three stops measures its usual rows instead');
 	is($fallback->{'duration'}, 600_000, 'and learns the usual row length');
+
+	# A stop row written by the usual button keeps the press as its end and a
+	# positive length; the learner reads the sign and puts the start before it.
+	$stops{'ended'} = [
+		{ app => 'ended', type => 'stop', timestamp => 4_000_000, duration => '600000', data => '' },
+		{ app => 'ended', type => 'stop', timestamp => 3_000_000, duration => '600000', data => '' },
+		{ app => 'ended', type => 'stop', timestamp => 2_000_000, duration => '600000', data => '' },
+	];
+	my $ended = &subs::usual_task_profile('ended');
+	is($ended->{'duration'}, 600_000, 'a positive stop length is read as an end-anchored span');
 
 	# -------------------------------------------------------------------- tasks
 	# Four ten-minute shower sessions, newest first. The task rows sit at the

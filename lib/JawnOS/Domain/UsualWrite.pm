@@ -221,9 +221,14 @@ sub usual_stock_stop {
 	my %row = (
 		app => $app,
 		timestamp => $press,
-		type => 'usual',
+		# The usual is a stop: the sign of the duration still says which end
+		# the press was, so an end-anchored usual keeps a positive length and a
+		# start-anchored pre-usual a negative one.
+		type => 'stop',
 		status => 'usual',
 		duration => $at->{'signed'},
+		stop_seen => 'yes',
+		seen => 'yes',
 		server_time => $server_time,
 		uuid => $uuid,
 	);

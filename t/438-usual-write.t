@@ -142,8 +142,9 @@ sub candidate {
 	my $row = $inserted[0];
 	is($row->{'timestamp'}, $press, 'the parent is stamped at the press');
 	is($row->{'duration'}, $D, 'a usual end carries a positive length');
-	is($row->{'type'}, 'usual', 'the parent is a usual row');
+	is($row->{'type'}, 'stop', 'the parent is a stop row');
 	is($row->{'status'}, 'usual', 'and says a usual wrote it');
+	is($row->{'stop_seen'}, 'yes', 'and is already closed');
 	ok(!exists $row->{'stop_timestamp'}, 'a usual row carries no stop_timestamp');
 	is(scalar @replays, 1, 'the checklist is replayed once');
 	is($replays[0]{'start'}, $press - $D, 'a usual task base is one length before the press');
@@ -160,6 +161,8 @@ sub candidate {
 	is($pre->{'uuid'}, 'uuid-pre', 'the pre-usual keeps the press uuid');
 	$row = $inserted[0];
 	is($row->{'timestamp'}, $press, 'a pre-usual parent is stamped at the press');
+	is($row->{'type'}, 'stop', 'a pre-usual is a stop too');
+	is($row->{'stop_seen'}, 'yes', 'and is already closed');
 	is($row->{'duration'}, -$D, 'a pre-usual carries a negative length');
 	is($replays[0]{'start'}, $press, 'a pre-usual task base is the press');
 	is($replays[0]{'duration'}, $D, 'its tasks run forward over the learned length');
@@ -461,6 +464,8 @@ like($usualwrite, qr/backup_now/, 'the backup usual uses the backup rail');
 like($usualwrite, qr/\$result->\{'usual_ask'\}/, 'the remember gate reads the result');
 like($usualwrite, qr/\$mode eq 'message' && !\$opt\{'confirm'\}/,
 	'a message asks before it sends even when the kind is remembered');
+like($usualwrite, qr/type => 'stop',/, 'the usual parent is a stop');
+like($usualwrite, qr/stop_seen => 'yes',/, 'and is closed');
 
 my $part14 = read_file("$root/lib/JawnOS/Manager/Part14.pm");
 like($part14, qr/usual_confirm/, 'the reset press carries the dialog confirmation');
