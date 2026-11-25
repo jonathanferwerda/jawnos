@@ -271,6 +271,9 @@ $(document).on('change', '#studio_bpm', function() {
 		$(this).val(bpm);
 	}
 	mixer['time']['bpm'] = bpm;
+	// Every tempo-synced time control resolves against the new BPM; the engine
+	// is sent the resolved seconds or hertz, never the division string.
+	if (typeof studioTempoSyncAll === 'function') { studioTempoSyncAll(); }
 });
 
 $(document).on('click', '#studio_bpm', function() {
@@ -284,6 +287,38 @@ $(document).on('click', '#studio_bpm', function() {
 	if (bpm > 30 && bpm < 240) {
 
 		$('#studio_bpm').val(bpm).trigger('change');
+	}
+});
+
+// A typed pedal control (the tempo sync field) forwards its change/input to the
+// same rack path a knob or a select uses. It is not a .knob_control, so the
+// shelf macro in studioApplyPedals leaves it alone; its row names the insert.
+// While typing, only a complete division or manual value is applied: `1/` is not
+// a division yet and must not jump the effect to a whole note.
+$(document).on('input change', '.studio_pedal_text', function (event) {
+	var input = $(this);
+	var row = input.closest('.studio_rack_tile');
+	if (!row.length || typeof studioInsertControl !== 'function') { return; }
+	if (event.type === 'input') {
+		var value = String(input.val() || '').trim();
+		var complete = value === '' || value.toLowerCase() === 'off'
+			|| (typeof studioTempoDivision === 'function' && studioTempoDivision(value) !== null)
+			|| (typeof studioTempoManualMs === 'function' && studioTempoManualMs(value) !== null);
+		if (!complete) { return; }
+	}
+	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val());
+});
+
+// A rack knob that names a synced time control is applied through the shelf
+// macro in studioApplyPedals. Resolve the tempo again after that handler, so a
+// manual turn while sync is on cannot leave the synced value behind. The
+// handler runs after 04_knobs' own (parts load in number order).
+$(document).on('change input', '.knob_control', function () {
+	var input = $(this);
+	var control = input.attr('control');
+	var kind = (typeof studioEffectKind === 'function') ? studioEffectKind(input.attr('channel')) : '';
+	if (control === 'sync' || (typeof studioTempoControls !== 'undefined' && studioTempoControls[kind] === control)) {
+		if (typeof studioTempoSyncAll === 'function') { studioTempoSyncAll(); }
 	}
 });
 
@@ -1095,10 +1130,10 @@ function studioListenInserts(ch) {
 	var c = studioAudio.channels[ch];
 	if (!c || !c.inserts) { return ''; }
 	return c.inserts.filter(function (ins) {
-		// the native engine has no stereo widener: an insert list it cannot
-		// build must omit the name rather than refuse the whole take
+		// the native engine has no stereo widener or stereo panner: an insert
+		// list it cannot build must omit the name rather than refuse the whole take
 		return ins && !ins.bypassed && studioEffectBuilder(ins.name)
-			&& studioEffectKind(ins.name) !== 'stereowidener';
+			&& !(typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener');
 	}).map(function (ins) { return studioEffectKind(ins.name); }).join(',');
 }
 

@@ -1277,9 +1277,9 @@ function studioEngineTrackPlan() {
 		if (channel && channel.inserts) {
 			channel.inserts.forEach(function (ins) {
 				if (!ins || ins.bypassed) { return; }
-				// The Stereo Widener is a browser-only insert: the native engine has
-				// no such effect, so sending its name refuses the whole take.
-				if (studioEffectKind(ins.name) === 'stereowidener') { return; }
+				// A browser-only insert (Stereo Widener, Stereo Panner) has no native
+				// implementation, so sending its name refuses the whole take.
+				if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
 				inserts.push(studioEffectKind(ins.name));
 			});
 		}

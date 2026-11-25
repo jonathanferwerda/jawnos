@@ -74,6 +74,21 @@
 					<% } %>
 				</select>
 			<% } %>
+			<%# The Delay shelf pedal keeps its artwork's knobs, so its tempo sync is
+			   the one readable control row above the footswitch. The text field
+			   accepts any note division, a manual millisecond value, or off; the
+			   datalist only offers the common ones. %>
+			<% if ($p->{'name'} eq 'Delayed') { %>
+				<label class="pedal_select_row pedal_sync_row">
+					<span class="pedal_knob_label"><%= &subs::ui('Sync') %></span>
+					<input type="text" class="studio_pedal_text pedal_text" channel="<%= $ch %>" control="sync" list="studio_tempo_<%= &subs::html_name($ch) %>_sync" hint="<%= &subs::ui('A note division, milliseconds, or off') %>" value="off">
+					<datalist id="studio_tempo_<%= &subs::html_name($ch) %>_sync">
+						<% foreach my $division ( @{$gb::studio->{'tempo_divisions'}} ) { %>
+							<option value="<%= $division %>"></option>
+						<% } %>
+					</datalist>
+				</label>
+			<% } %>
 			<button class="studio_pedal_foot hover" effect="<%= $p->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
 		</span>
 	<% } %>
@@ -98,7 +113,7 @@
 						<% $ki++; %>
 					<% } %>
 					</span>
-					<% foreach my $k ( @{$effect->{'controls'} || []} ) { next unless $k->{'options'}; %>
+					<% foreach my $k ( @{$effect->{'controls'} || []} ) { next unless $k->{'options'}; next if $k->{'typed'}; %>
 						<label class="pedal_select_row">
 							<span class="pedal_knob_label"><%= &subs::ui($k->{'label'} || $k->{'control'}) %></span>
 							<select class="studio_pedal_model pedal_select" channel="<%= $name %>" control="<%= $k->{'control'} %>" hint="<%= &subs::ui($k->{'hint'} || 'Choose the option') %>">
@@ -110,7 +125,22 @@
 							</select>
 						</label>
 					<% } %>
-				</span>
+					<%# A typed control is a visible text field with a datalist of the
+					   common values, not a closed dropdown: the parser accepts any n/d
+					   fraction, dotted and triplet suffixes, whole notes, and a manual
+					   millisecond value. studioRackTile() gives every clone its own
+					   datalist id. %>
+					<% foreach my $k ( @{$effect->{'controls'} || []} ) { next unless $k->{'typed'}; %>
+						<label class="pedal_select_row">
+							<span class="pedal_knob_label"><%= &subs::ui($k->{'label'} || $k->{'control'}) %></span>
+							<input type="text" class="studio_pedal_text pedal_text" channel="<%= $name %>" control="<%= $k->{'control'} %>" list="studio_tempo_<%= &subs::html_name($name) %>_<%= &subs::html_name($k->{'control'}) %>" hint="<%= &subs::ui($k->{'hint'} || 'Choose the option') %>" value="off">
+							<datalist id="studio_tempo_<%= &subs::html_name($name) %>_<%= &subs::html_name($k->{'control'}) %>">
+								<% foreach my $option ( @{$k->{'options'} || []} ) { %>
+									<option value="<%= $option %>"></option>
+								<% } %>
+							</datalist>
+						</label>
+					<% } %></span>
 				<button class="studio_pedal_foot hover" effect="<%= $name %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
 			</span>
 		<% } %>

@@ -107,7 +107,14 @@ our $embedded_components = {
 	'servo' => { 'direction' => 'output', 'state' => 'numeric' }
 };
 
+# The tempo divisions the sync text field offers. These are datalist choices,
+# not a closed set: the page's parser accepts any `n/d` fraction and the `d`
+# (dotted) and `t` (triplet) suffixes, a bare whole-note count, and a manual
+# `250ms`. `off` returns the effect to its manual knob.
+my @tempo_divisions = qw(off 1/16 1/8 1/4 1/2 3/4 1 2 3 4 1/8d 1/8t 250ms);
+
 our $studio = {
+	tempo_divisions => [ @tempo_divisions ],
 	knobs => [
 		{ control => 'gain', colour => 'cyan', flip => 180, placement => 'channel' },
 		{ control => 'treble', colour => 'yellow', flip => 180, placement => 'channel' },
@@ -211,9 +218,12 @@ our $studio = {
 	# The shared effect contract (docs/studio-effects.md) and the circuit map (docs/pedal-audit.md). `effects` is what the
 	# rack palette offers and what the browser's studioInsert() builds; `master`
 	# is the fixed chain after the mix. A control with `options` is a dropdown,
-	# the rest are 0..100 sliders. Keep these names and their order in step with
-	# engine/src/effect.rs, or the palette offers a pedal the engine ignores;
-	# stereowidener is the one deliberate exception (browser only, see below).
+	# a control with `typed` is a visible text field plus a datalist (the tempo
+	# sync divisions), and the rest are 0..100 sliders. Keep these names and
+	# their order in step with engine/src/effect.rs, or the palette offers a
+	# pedal the engine ignores. stereowidener and stereo_panner are the two
+	# deliberate exceptions: both need the L/R pair the engine's mono insert
+	# chain does not hold, so the browser owns them.
 	effects => {
 		reverb => { label => 'Reverb', controls => [
 			{ control => 'mix', label => 'Mix' },
@@ -224,7 +234,8 @@ our $studio = {
 			{ control => 'rate', label => 'Rate' },
 			{ control => 'depth', label => 'Depth' },
 			{ control => 'feedback', label => 'Feedback' },
-			{ control => 'mix', label => 'Mix' }
+			{ control => 'mix', label => 'Mix' },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
 		] },
 		fuzz => { label => 'Fuzz', controls => [
 			{ control => 'gain', label => 'Gain' },
@@ -269,7 +280,8 @@ our $studio = {
 		delay => { label => 'Delay', controls => [
 			{ control => 'time', label => 'Time' },
 			{ control => 'feedback', label => 'Feedback' },
-			{ control => 'vol', label => 'Volume' }
+			{ control => 'vol', label => 'Volume' },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
 		] },
 		compressor => { label => 'Compressor', controls => [
 			{ control => 'thresh', label => 'Threshold' },
@@ -278,6 +290,21 @@ our $studio = {
 			{ control => 'release', label => 'Release' },
 			{ control => 'knee', label => 'Knee' },
 			{ control => 'mix', label => 'Mix' }
+		] },
+		tremolo => { label => 'Tremolo', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'shape', label => 'Shape', hint => 'Choose the shape', options => [ qw(Sine Triangle Square) ] },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
+		] },
+		# Browser only: a true panner needs the L/R pair the engine's mono insert
+		# chain does not hold, so `InsertKind::parse` refuses the name and a native
+		# take omits the pedal (engine/src/effect.rs).
+		stereo_panner => { label => 'Stereo Panner', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'shape', label => 'Shape', hint => 'Choose the shape', options => [ qw(Sine Triangle Square) ] },
+			{ control => 'sync', label => 'Sync', typed => 1, options => [ @tempo_divisions ], hint => 'A note division, milliseconds, or off' }
 		] },
 		# Browser only: the native insert chain is mono, so there is no L/R pair
 		# to take a mid/side matrix from and engine/src/effect.rs has no kind for
@@ -289,7 +316,7 @@ our $studio = {
 	},
 	# The order the Add list offers them. The entries are wire names; the Add
 	# list shows each effect's label (autotune appears as JawnPitch).
-	palette => [ qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor stereowidener) ],
+	palette => [ qw(reverb flanger fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor stereowidener) ],
 	# A palette effect with no hand-drawn artwork is drawn from the theme instead:
 	# the template gives it the same body, one knob per slider (the colours below,
 	# in control order) and a dropdown per choice, so its tile matches the artwork
@@ -300,6 +327,8 @@ our $studio = {
 		fuzz      => [ qw(cyan yellow red) ],
 		amp       => [ qw(cyan red green yellow) ],
 		limiter   => [ qw(red_numbered blue) ],
+		tremolo   => [ qw(cyan pink blue) ],
+		stereo_panner => [ qw(blue cyan pink) ],
 		autotune  => [ qw(cyan pink) ],
 		equalizer => [ qw(red green yellow) ],
 		tone      => [ qw(red green yellow cyan) ],

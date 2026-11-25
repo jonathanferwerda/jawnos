@@ -35,11 +35,67 @@ bypasses it like any pedal, and the song keeps it in the chain.
 | `distortion` | existing | `drive` |
 | `delay` | existing | `time`, `feedback`, `vol` |
 | `compressor` | existing | `thresh`, `attack`, `ratio`, `release`, `knee`, `mix` |
+| `tremolo` | amplitude modulation, three LFO shapes | `rate`, `depth`, `shape` |
 
 The names and controls above are the contract. **What each pedal models** —
 the real circuit, the control mapping and the honest approximation — is in
 `docs/pedal-audit.md`. Read it before changing a pedal's sound: the two sides
 share the control names, not a claim of a sample-identical circuit.
+
+`stereowidener` and `stereo_panner` are **browser-only** inserts. The engine's
+insert chain is mono and its pan is one static value applied after the chain, so
+neither a mid/side matrix nor a true panner can live there. `InsertKind::parse`
+answers `None` for both names; a native take or listen omits the pedal instead
+of faking a mono version (engine/src/effect.rs). The browser builds them with
+`studioEffectStereoWidener` and `studioEffectStereoPanner`.
+
+## Tempo-synced time controls
+
+`delay.time`, `flanger.rate`, `tremolo.rate` and `stereo_panner.rate` accept a
+`sync` field. It is a **UI-only string**: it is stored in the insert's
+`values.sync`, saved with the song, and resolved by the page into the effect's
+natural `time` or `rate` before anything is sent. It is **not** an engine
+control and **not** in `InsertKind::controls` or `Plan.pm`'s control lists.
+
+The pedal renders it as a visible text field with a `<datalist>` of the common
+divisions, not a closed dropdown, because the parser accepts more than the list:
+
+| input | meaning |
+| --- | --- |
+| `1/16`, `1/8`, `1/4`, `1/2`, `3/4` | `4n/d` beats; a `1/4` is one beat |
+| `1`, `2`, `3`, `4` | whole notes: `N` means `4N` beats |
+| `1/8d` | dotted: the division times 1.5 |
+| `1/8t` | triplet: the division times 2/3 |
+| `250ms`, `250.0` | a manual millisecond value; sync is off |
+| `off`, blank | sync is off; the manual knob is authoritative |
+
+A delay time is `60 / bpm * beats` seconds. An LFO rate is `bpm / 60 / beats`
+Hz. A manual value is milliseconds: seconds for `delay.time`, a period for an
+LFO (`1000 / ms` Hz). `studioTempoSyncAll()` re-applies every synced insert on a
+BPM change and after a sync or manual change; `01_transport.js` resolves the
+same values before an engine plan is sent.
+
+Both sides keep the manual ranges they had. The delay's Time knob still maps to
+`0..1.5 s`, but the line accepts up to `8.0 s` and is `8.5 s` long, because four
+bars at 120 BPM is 8 seconds. The browser's `DelayNode` is likewise 8 s. The
+flanger's Rate knob still maps to `0.05..5 Hz`, but the effect accepts up to
+`8 Hz` (a 1/16 at 120 BPM) and clamps a faster resolved rate to that cap. The
+new LFO knobs map to `0.1..20 Hz`; a resolved rate past 20 Hz is clamped there.
+
+## Tremolo and stereo panner
+
+`tremolo` is a mono amplitude modulator. `depth` is the swing and `shape` is the
+shared index below; the gain is `1 - depth/2 + (depth/2) * lfo`, so full depth
+reaches silence at the trough. The engine is `engine/src/effect/tremolo.rs` and
+the browser is `studioEffectTremolo`; both hold the same rate/depth/shape band.
+The square shape keeps its edges (it is the pedal's hard switch), while knob
+moves are one-pole smoothed.
+
+`stereo_panner` modulates a `StereoPannerNode`'s `pan` with the same three-shape
+LFO. It is browser-only for the reason above; there is no mono stand-in.
+
+The `sync` string never reaches either engine: the page sends `delay.time` in
+seconds (up to 8) or an LFO `rate` in Hz, in the effect's own units.
 
 ## Reverb models
 
@@ -70,6 +126,7 @@ drift apart.
 | `autotune.scale` | 0 Major, 1 Minor, 2 Chromatic, 3 Pentatonic |
 | `autotune.key` | 0..11 = C, C#, D, … B |
 | `reverb.model` | 0..4 as above, default 2 |
+| `tremolo.shape`, `stereo_panner.shape` | 0 Sine, 1 Triangle, 2 Square |
 
 The UI slider is `0..100`; each implementation maps it to natural units. For the
 controls that are amounts (gains, mixes, depths) the mapping is the slider over
@@ -142,7 +199,7 @@ stable and is what the engine compiles:
   "id": "voice", "kind": "peer", "machine": "table", "gain": 0.8,
   "inserts": [
     { "name": "reverb", "bypass": 0, "controls": { "mix": 0.35, "model": 2 } },
-    { "name": "delay",  "bypass": 0, "controls": { "time": 250, "feedback": 0.3, "vol": 0.4 } }
+    { "name": "delay",  "bypass": 0, "controls": { "time": 0.25, "feedback": 0.3, "vol": 0.4 } }
   ]
 }
 ```
@@ -152,7 +209,7 @@ stable and is what the engine compiles:
 | `gain` | the source's own trim, before its inserts and every route: the engine's `0..=4` recording gain, default unity |
 | `name` | one canonical `InsertKind::parse` name from the table above; never a `master_` prefix and never `stereowidener`, which the native engine does not build |
 | `bypass` | whole `0` or `1`; `1` keeps the insert in the chain and passes the signal through |
-| `controls` | sparse map of that effect's own control names to **native units** (the dB, millisecond, 0..1 and index scales above), never the UI's 0..100 slider; an absent control is the effect's default |
+| `controls` | sparse map of that effect's own control names to **native units** (the dB, second, millisecond, hertz, 0..1 and index scales above), never the UI's 0..100 slider; an absent control is the effect's default |
 
 Rules:
 

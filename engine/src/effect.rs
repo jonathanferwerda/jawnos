@@ -28,9 +28,9 @@
 //! The browser remains the WebAudio reference for the *contract* in
 //! `docs/studio-effects.md`; these are the same pedals, controls and natural
 //! units, not sample-identical copies. The pedals added for the Studio effects
-//! contract — flanger, fuzz, amp, limiter, autotune, equalizer and the maximizer
-//! the master rack borrows — live in the `effect/` submodules; each one
-//! documents its own approximation and its own natural units.
+//! contract — flanger, fuzz, amp, limiter, autotune, equalizer, the maximizer
+//! the master rack borrows and the tremolo — live in the `effect/` submodules;
+//! each one documents its own approximation and its own natural units.
 
 use std::f64::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
@@ -45,6 +45,7 @@ mod fuzz;
 mod graphic_eq;
 mod limiter;
 mod maximizer;
+mod tremolo;
 
 pub use amp::Amp;
 pub use autotune::Autotune;
@@ -54,6 +55,7 @@ pub use fuzz::Fuzz;
 pub use graphic_eq::GraphicEq;
 pub use limiter::Limiter;
 pub use maximizer::Maximizer;
+pub use tremolo::Tremolo;
 
 /// How long a control takes to travel most of the way to a new value.
 const SMOOTH_SECONDS: f32 = 0.02;
@@ -816,9 +818,13 @@ pub struct Delay {
 
 impl Delay {
     pub const DRY: f32 = 0.7;
-    pub const MAX_SECONDS: f32 = 2.0;
-    /// The `time` knob stops at 1.5 s; the line itself is 2 s long.
-    pub const MAX_TIME: f32 = 1.5;
+    /// The line is long enough for four bars of 4/4 at 120 BPM: sixteen beats
+    /// is 8.0 s, and the extra half second is the interpolator's headroom.
+    pub const MAX_SECONDS: f32 = 8.5;
+    /// The manual `time` knob still maps to 0..1.5 s (the browser's contract).
+    /// A tempo-synced value may run to four bars, so the line accepts up to 8 s
+    /// even though no slider reaches it.
+    pub const MAX_TIME: f32 = 8.0;
     /// The `feedback` knob stops short of unity, so the line cannot run away.
     pub const MAX_FEEDBACK: f32 = 0.9;
 
@@ -1233,6 +1239,11 @@ impl Effect for Compressor {
 /// changes the sound without widening anything, [`parse`](InsertKind::parse)
 /// answers `None`: a take omits the pedal, and the help topic says the native
 /// take does not process it yet.
+///
+/// `stereo_panner` is browser-only for the same reason: a true panner places a
+/// mono source across an L/R pair, and this chain hands the pair only to the
+/// channel's own static pan after the inserts. A mono pass-through would not
+/// pan anything, so `parse` refuses the name and a native take omits it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InsertKind {
     Tone,
@@ -1248,6 +1259,7 @@ pub enum InsertKind {
     Equalizer,
     MasterEq,
     Maximizer,
+    Tremolo,
 }
 
 impl InsertKind {
@@ -1266,6 +1278,7 @@ impl InsertKind {
             "equalizer" => Some(InsertKind::Equalizer),
             "master_eq" => Some(InsertKind::MasterEq),
             "maximizer" | "master_maximizer" => Some(InsertKind::Maximizer),
+            "tremolo" => Some(InsertKind::Tremolo),
             _ => None,
         }
     }
@@ -1285,6 +1298,7 @@ impl InsertKind {
             InsertKind::Equalizer => "equalizer",
             InsertKind::MasterEq => "master_eq",
             InsertKind::Maximizer => "maximizer",
+            InsertKind::Tremolo => "tremolo",
         }
     }
 
@@ -1311,6 +1325,8 @@ impl InsertKind {
             InsertKind::Equalizer => &["low", "mid", "high"],
             InsertKind::MasterEq => GraphicEq::CONTROLS,
             InsertKind::Maximizer => &["ceiling", "loudness"],
+            // `sync` is a tempo division held by the page, not an engine knob.
+            InsertKind::Tremolo => &["rate", "depth", "shape"],
         }
     }
 
@@ -1381,6 +1397,7 @@ impl InsertKind {
             InsertKind::Equalizer => 11,
             InsertKind::Maximizer => 12,
             InsertKind::MasterEq => 13,
+            InsertKind::Tremolo => 14,
         }
     }
 
@@ -1399,6 +1416,7 @@ impl InsertKind {
             11 => InsertKind::Equalizer,
             12 => InsertKind::Maximizer,
             13 => InsertKind::MasterEq,
+            14 => InsertKind::Tremolo,
             _ => return None,
         })
     }
@@ -1411,8 +1429,9 @@ impl InsertKind {
     /// start: flanger 1.05 Hz / 0.6 depth / 0.225 feedback / 0.5 mix, fuzz
     /// 0.65 gain / 0.45 tone / 0.6 level, amp 0.5 gain (0 dB) / flat tone /
     /// Combo 1x12, limiter −3 dBFS / 0.2 s, autotune 0.4 speed / full amount /
-    /// C major, equalizer flat, maximizer −0.8 dBFS / 0.2 loudness, and the
-    /// master rack's graphic EQ flat on all ten bands.
+    /// C major, equalizer flat, maximizer −0.8 dBFS / 0.2 loudness, the master
+    /// rack's graphic EQ flat on all ten bands, and tremolo 5 Hz / 0.5 depth /
+    /// sine.
     pub fn build(self) -> Box<dyn Effect> {
         match self {
             InsertKind::Tone => Box::new(ToneStack::new(0.0, 0.0, 0.0)),
@@ -1430,6 +1449,7 @@ impl InsertKind {
             InsertKind::Equalizer => Box::new(Equalizer::new(0.0, 0.0, 0.0)),
             InsertKind::Maximizer => Box::new(Maximizer::new(-0.8, 0.2)),
             InsertKind::MasterEq => Box::new(GraphicEq::new()),
+            InsertKind::Tremolo => Box::new(Tremolo::new(5.0, 0.5, 0)),
         }
     }
 }
@@ -1858,6 +1878,7 @@ mod tests {
             Box::new(Autotune::new(1.0, 1.0, 0, 0)),
             Box::new(Equalizer::new(6.0, -6.0, 3.0)),
             Box::new(Maximizer::new(-3.0, 0.5)),
+            Box::new(Tremolo::new(8.0, 1.0, 2)),
             Box::new(graphic),
         ];
         for effect in &mut effects {
@@ -1890,6 +1911,7 @@ mod tests {
             Box::new(Autotune::new(1.0, 1.0, 0, 0)),
             Box::new(Equalizer::new(15.0, 15.0, 15.0)),
             Box::new(Maximizer::new(-12.0, 1.0)),
+            Box::new(Tremolo::new(20.0, 1.0, 2)),
             Box::new(graphic),
         ];
         for effect in &mut effects {
@@ -2611,6 +2633,7 @@ mod tests {
             ("autotune", InsertKind::Autotune),
             ("equalizer", InsertKind::Equalizer),
             ("maximizer", InsertKind::Maximizer),
+            ("tremolo", InsertKind::Tremolo),
         ] {
             assert_eq!(InsertKind::parse(word), Some(kind));
             assert_eq!(kind.name(), word);
@@ -2652,12 +2675,29 @@ mod tests {
         assert_eq!(InsertKind::MasterEq.code(), 13);
         assert_eq!(InsertKind::from_code(13), Some(InsertKind::MasterEq));
         assert_eq!(InsertKind::MasterEq.build().name(), "master_eq");
+        assert_eq!(InsertKind::Tremolo.code(), 14);
+        assert_eq!(InsertKind::from_code(14), Some(InsertKind::Tremolo));
         // Stereo Widener is browser only: the insert chain is mono, so there
         // is no kind to build and a native take omits the pedal (see
         // `InsertKind`). Both the track and the rack spelling are refused.
         assert_eq!(InsertKind::parse("stereowidener"), None);
         assert_eq!(InsertKind::parse("master_stereowidener"), None);
+        // Stereo Panner is browser only for the same reason.
+        assert_eq!(InsertKind::parse("stereo_panner"), None);
         assert_eq!(InsertKind::parse("banana"), None);
+    }
+
+    #[test]
+    fn the_delay_line_reaches_four_bars() {
+        // Four bars of 4/4 at 120 BPM is 16 beats, 8.0 s. The line is 8.5 s so
+        // the interpolator's top tap is never the write head itself.
+        let mut delay = Delay::new(0.0, 0.0, 1.0);
+        delay.prepare(RATE, 1);
+        assert!(delay.buffer.len() >= (RATE as f32 * 8.5) as usize);
+        assert!(delay.set("time", 8.0));
+        assert_eq!(delay.target_time, 8.0);
+        assert!(delay.set("time", 9.0));
+        assert_eq!(delay.target_time, Delay::MAX_TIME);
     }
 
     #[test]

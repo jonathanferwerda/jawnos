@@ -39,7 +39,9 @@ var studioEffectIndices = {
 	'reverb.model': 4,
 	'amp.cabinet': 3,
 	'autotune.key': 11,
-	'autotune.scale': 3
+	'autotune.scale': 3,
+	'tremolo.shape': 2,
+	'stereo_panner.shape': 2
 };
 
 function studioEffectNatural(kind, control, value) {
@@ -99,6 +101,9 @@ function studioEffectNatural(kind, control, value) {
 			return amount * 24;
 		case 'flanger.rate':
 			return 0.05 + amount * 4.95;
+		case 'tremolo.rate':
+		case 'stereo_panner.rate':
+			return 0.1 + amount * 19.9;
 		case 'flanger.feedback':
 		case 'delay.feedback':
 			return amount * 0.9;
@@ -113,6 +118,141 @@ function studioEffectNatural(kind, control, value) {
 		default:
 			return amount;
 	}
+}
+
+// The two browser-only inserts need an L/R pair the engine's mono insert chain
+// does not hold. A native take and a native listen omit them rather than
+// refusing the whole chain (engine/src/effect.rs).
+function studioEffectBrowserOnly(name) {
+	var kind = studioEffectKind(name);
+	return kind === 'stereowidener' || kind === 'stereo_panner';
+}
+
+// ---- tempo sync ------------------------------------------------------------
+// A synced time control stores a division string in `values.sync` and resolves
+// it against the song's BPM. The string is the page's, not the engine's: the
+// engine is sent the resolved `delay.time` seconds or the LFO `rate` Hz. The
+// parser is deliberately generous - any `n/d` fraction, `d` (dotted) and `t`
+// (triplet) suffixes, a bare whole-note count, and a manual `250ms` or decimal
+// number - because a person types into the field instead of only choosing from
+// the datalist.
+var studioTempoControls = {
+	delay: 'time',
+	flanger: 'rate',
+	tremolo: 'rate',
+	stereo_panner: 'rate'
+};
+
+// The natural range each synced control clamps to. Delay time is seconds; the
+// LFOs are hertz. A division can resolve beyond a manual knob's range, so these
+// are the effect's own limits, not the slider's.
+var studioTempoLimits = {
+	delay: { min: 0.001, max: 8 },
+	flanger: { min: 0.05, max: 8 },
+	tremolo: { min: 0.1, max: 20 },
+	stereo_panner: { min: 0.1, max: 20 }
+};
+
+function studioTempoBpm() {
+	var time = (typeof mixer !== 'undefined' && mixer && mixer['time']) ? mixer['time'] : {};
+	var bpm = parseFloat(time['bpm']);
+	return (isFinite(bpm) && bpm > 0) ? bpm : 120;
+}
+
+// The beats a division names, in 4/4 quarter notes. `n/d` is 4n/d beats, a bare
+// integer N is N whole notes (4N beats), `d` multiplies by 1.5 and `t` by 2/3.
+// `off`, a blank string and anything else are not a division: null.
+function studioTempoDivision(text) {
+	var s = String(text === undefined || text === null ? '' : text).trim().toLowerCase();
+	if (!s || s === 'off') { return null; }
+	var fraction = /^(\d+)\s*\/\s*(\d+)\s*([dt])?$/.exec(s);
+	if (fraction) {
+		var n = parseInt(fraction[1], 10);
+		var d = parseInt(fraction[2], 10);
+		if (!(n > 0) || !(d > 0)) { return null; }
+		var beats = (4 * n) / d;
+		if (fraction[3] === 'd') { beats *= 1.5; }
+		else if (fraction[3] === 't') { beats *= 2 / 3; }
+		return beats;
+	}
+	if (/^\d+$/.test(s)) {
+		var whole = parseInt(s, 10);
+		return whole > 0 ? whole * 4 : null;
+	}
+	return null;
+}
+
+// A manual value, in milliseconds: `250ms` or any decimal number. A bare
+// integer is a whole-note count above, not a millisecond value.
+function studioTempoManualMs(text) {
+	var s = String(text === undefined || text === null ? '' : text).trim().toLowerCase();
+	var ms = /^(\d+(?:\.\d+)?|\.\d+)\s*ms$/.exec(s);
+	if (ms) { return parseFloat(ms[1]); }
+	if (/^(\d+\.\d+|\.\d+)$/.test(s)) { return parseFloat(s); }
+	return null;
+}
+
+// Resolve a sync string for a kind into the control's natural value. A division
+// is beats against the BPM; a manual value is milliseconds (seconds for a delay
+// time, a period for an LFO rate). `off`, blank and junk return null, which is
+// the manual knob's turn.
+function studioTempoResolveValue(kind, sync, bpm) {
+	kind = studioEffectKind(kind);
+	var control = studioTempoControls[kind];
+	if (!control) { return null; }
+	var limits = studioTempoLimits[kind] || { min: 0.001, max: 1000 };
+	bpm = (isFinite(bpm) && bpm > 0) ? bpm : 120;
+	var clamp = function (value) { return Math.max(limits.min, Math.min(limits.max, value)); };
+	var beats = studioTempoDivision(sync);
+	if (beats !== null) {
+		return (control === 'time') ? clamp((60 / bpm) * beats) : clamp(bpm / 60 / beats);
+	}
+	var ms = studioTempoManualMs(sync);
+	if (ms !== null && ms > 0) {
+		return (control === 'time') ? clamp(ms / 1000) : clamp(1000 / ms);
+	}
+	return null;
+}
+
+function studioTempoSyncText(ins) {
+	return (ins && ins.values && ins.values.sync !== undefined) ? String(ins.values.sync) : 'off';
+}
+
+// Apply one insert's sync string to its browser node and, while the engine is
+// the path that is playing, to the engine. The engine never sees the string.
+// `send` false keeps an output-chain insert off the engine: only the input
+// chain is armed by a take.
+function studioTempoSyncApply(ins, ch, send) {
+	if (!ins) { return; }
+	var kind = studioEffectKind(ins.name);
+	var control = studioTempoControls[kind];
+	if (!control || typeof ins.setNatural !== 'function') { return; }
+	var sync = studioTempoSyncText(ins);
+	var value = studioTempoResolveValue(kind, sync, studioTempoBpm());
+	if (value === null) {
+		var manual = ins.values ? ins.values[control] : undefined;
+		if (manual !== undefined) { value = studioEffectNatural(kind, control, manual); }
+	}
+	if (value === null) { return; }
+	ins.setNatural(control, value);
+	if (send !== false && ch !== undefined && !studioEffectBrowserOnly(kind)) {
+		studioEngineInsertParamNatural(ch, ins.name, control, value);
+	}
+}
+
+function studioTempoSyncInsert(ins, ch, send) {
+	studioTempoSyncApply(ins, ch, send);
+}
+
+// Re-apply every synced insert: on a BPM change, after a sync or manual knob
+// change, and after a song's racks are restored. An Out insert is browser
+// playback only, so it resolves locally and is never posted to a take.
+function studioTempoSyncAll() {
+	if (typeof studioAudio === 'undefined' || !studioAudio || !studioAudio.channels) { return; }
+	$.each(studioAudio.channels, function (ch, c) {
+		(c.inserts || []).forEach(function (ins) { studioTempoSyncApply(ins, ch, true); });
+		(c.outInserts || []).forEach(function (ins) { studioTempoSyncApply(ins, ch, false); });
+	});
 }
 
 // ---- the engine's control path ---------------------------------------------
@@ -130,10 +270,11 @@ var studioEngineParamErrorShown = false;
 // One POST per knob per 150 ms, like the patchbay faders: a drag is a handful
 // of engine commands, not one per pixel.
 function studioEngineParamPost(data, key) {
-	// Stereo Widener is browser only: the engine's insert chain is mono and has
-	// no mid/side matrix, so a take neither arms nor moves it. The browser graph
-	// is the only place it runs (engine/src/effect.rs).
-	if (data && /^(?:master_)?stereowidener\./.test(String(data.name || ''))) { return; }
+	// Browser-only inserts need an L/R pair the engine's mono insert chain does
+	// not hold, so a take neither arms nor moves them. The sync string is the
+	// page's too: the engine is sent the resolved time or rate instead.
+	if (data && /^(?:master_)?(?:stereowidener|stereo_panner)\./.test(String(data.name || ''))) { return; }
+	if (data && /\.sync$/.test(String(data.name || ''))) { return; }
 	if (!studioEngineIsPath()) { return; }
 	if (studioEngineParamTimers[key]) { clearTimeout(studioEngineParamTimers[key]); }
 	studioEngineParamTimers[key] = setTimeout(function () {
@@ -172,6 +313,20 @@ function studioEngineInsertParam(ch, insertName, control, value) {
 	);
 }
 
+// A value already in the effect's own units, for a tempo-synced time or rate
+// that a 0..100 slider cannot express (a four-bar delay is past the knob's
+// 1.5 s). It is the same address as studioEngineInsertParam, without the
+// mapping step.
+function studioEngineInsertParamNatural(ch, insertName, control, value) {
+	var track = Math.max(0, (parseInt(ch, 10) || 1) - 1);
+	var kind = studioEffectKind(insertName);
+	var name = kind + '.' + control;
+	studioEngineParamPost(
+		{ action: 'param', track: track, name: name, value: value },
+		'take:' + track + ':' + name
+	);
+}
+
 // The master rack is its own address: `master_comp` is the wire prefix the
 // contract names, and the effect is the same implementation a track uses.
 function studioEngineMasterParam(insertName, control, value) {
@@ -204,6 +359,7 @@ function studioEffectShell(ctx, name) {
 		wet: ctx.createGain(),
 		bypassed: false,
 		setters: {},
+		natural: {},
 		values: {}
 	};
 	fx.input.connect(fx.dry).connect(fx.output);
@@ -211,10 +367,24 @@ function studioEffectShell(ctx, name) {
 	fx.dry.gain.value = 0;
 	fx.wet.gain.value = 1;
 	fx.set = function (control, value) {
+		// A typed control (the tempo sync field) stores its string and hands the
+		// setter that same string. Numeric controls keep the 0..100 path.
+		if (studioEffectTyped(fx.name, control)) {
+			fx.values[control] = String(value);
+			if (fx.setters[control]) { fx.setters[control](String(value)); }
+			return;
+		}
 		var n = studioEffectNumber(value);
 		if (n === null) { return; }
 		fx.values[control] = value;
 		if (fx.setters[control]) { fx.setters[control](n); }
+	};
+	// A natural value (already seconds, Hz or a whole index) goes straight to
+	// the node. Tempo sync uses this; the manual knobs keep fx.set's mapping.
+	fx.setNatural = function (control, value) {
+		var n = studioEffectNumber(value);
+		if (n === null) { return; }
+		if (fx.natural[control]) { fx.natural[control](n); }
 	};
 	fx.setBypass = function (on) {
 		fx.bypassed = !!on;
@@ -222,6 +392,29 @@ function studioEffectShell(ctx, name) {
 		fx.wet.gain.value = fx.bypassed ? 0 : 1;
 	};
 	return fx;
+}
+
+// The typed controls the page keeps as text. Only the tempo sync field today.
+var studioEffectTypedControls = {
+	'delay.sync': 1,
+	'flanger.sync': 1,
+	'tremolo.sync': 1,
+	'stereo_panner.sync': 1
+};
+
+function studioEffectTyped(kind, control) {
+	return !!studioEffectTypedControls[studioEffectKind(kind) + '.' + control];
+}
+
+// Wire a tempo-synced control's natural setter and give the insert its starting
+// `sync` string. Call it after the builder has set the manual knob defaults, so
+// an `off` sync resolves back to the value the knob already holds.
+function studioEffectTempo(fx, natural) {
+	var kind = studioEffectKind(fx.name);
+	var control = studioTempoControls[kind];
+	if (!control) { return; }
+	fx.natural[control] = natural;
+	fx.set('sync', 'off');
 }
 
 // A tanh soft-clip curve for the pedals whose output stage is the op-amp's
@@ -518,7 +711,11 @@ function studioEffectFlanger(ctx, name) {
 		delay.delayTime.value = studioFlangerMinDelay + span * 0.5;
 		sweep.gain.value = span * 0.5;
 	};
-	fx.setters['rate'] = function (v) { lfo.frequency.value = studioEffectNatural(fx.name, 'rate', v); };
+	// The manual knob maps to 0.05..5 Hz; a tempo-synced 1/16 at 120 BPM is
+	// 8 Hz, the engine's cap (engine/src/effect/flanger.rs).
+	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.05, 8); };
+	fx.natural['rate'] = applyRate;
+	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
 	fx.setters['depth'] = function (v) { depthValue = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
 	fx.setters['feedback'] = function (v) { feedback.gain.value = studioEffectNatural(fx.name, 'feedback', v); };
 	fx.setters['mix'] = function (v) {
@@ -531,6 +728,7 @@ function studioEffectFlanger(ctx, name) {
 	fx.set('depth', 60);
 	fx.set('feedback', 25);
 	fx.set('mix', 50);
+	studioEffectTempo(fx, applyRate);
 	return fx;
 }
 
@@ -1128,12 +1326,13 @@ function studioEffectCompressor(ctx, name) {
 
 // The Boss DM-2: a BBD line with an NE570-style compander and clock-dependent
 // bandwidth. The engine's encoder/expander and its clock feedthrough need an
-// AudioWorklet; the node graph keeps the input compressor, the 1.5 s DelayNode
-// and the feedback lowpass whose corner follows the delay time, which is the
-// DM-2's darkening repeat. The wet path's first sample lands at `time` (the
-// DelayNode's own delay); WebAudio's compressor has a few milliseconds of
-// look-ahead the engine's feed-forward encoder does not, and that is the
-// documented difference.
+// AudioWorklet; the node graph keeps the input compressor, the DelayNode and
+// the feedback lowpass whose corner follows the delay time, which is the DM-2's
+// darkening repeat. The manual Time knob still maps to 0..1.5 s; the DelayNode
+// is 8 s long so a tempo-synced four-bar delay (8 s at 120 BPM) fits. The wet
+// path's first sample lands at `time` (the DelayNode's own delay); WebAudio's
+// compressor has a few milliseconds of look-ahead the engine's feed-forward
+// encoder does not, and that is the documented difference.
 function studioDm2Bandwidth(seconds) {
 	var time = Math.max(0.001, seconds);
 	return Math.max(700, Math.min(8000, 8000 * Math.sqrt(0.02 / time)));
@@ -1151,7 +1350,8 @@ function studioEffectDelay(ctx, name) {
 	comp.ratio.value = 2;
 	comp.attack.value = 0.005;
 	comp.release.value = 0.08;
-	var delay = ctx.createDelay(1.5);
+	// The engine's line is 8.5 s for the same four-bar ceiling.
+	var delay = ctx.createDelay(8);
 	var feedbackLP = ctx.createBiquadFilter();
 	feedbackLP.type = 'lowpass';
 	feedbackLP.frequency.value = 8000;
@@ -1164,17 +1364,108 @@ function studioEffectDelay(ctx, name) {
 	delay.connect(feedbackLP).connect(feedback).connect(delay);
 	fx.input.connect(dry).connect(fx.wet);
 	dry.gain.value = 0.7;
-	var timeValue = 0.35;
-	var applyTime = function () {
-		delay.delayTime.value = timeValue;
-		feedbackLP.frequency.value = studioDm2Bandwidth(timeValue);
+	// The effect's own time: a tempo division may be longer than the knob's
+	// 1.5 s travel, so both the manual and the synced path land here.
+	var applyTime = function (seconds) {
+		var time = studioEffectClamp(seconds, 0.001, 8);
+		delay.delayTime.value = time;
+		feedbackLP.frequency.value = studioDm2Bandwidth(time);
 	};
-	fx.setters['time'] = function (v) { timeValue = studioEffectNatural(fx.name, 'time', v); applyTime(); };
+	fx.natural['time'] = applyTime;
+	fx.setters['time'] = function (v) { applyTime(studioEffectNatural(fx.name, 'time', v)); };
 	fx.setters['feedback'] = function (v) { feedback.gain.value = studioEffectNatural(fx.name, 'feedback', v); };
 	fx.setters['vol'] = function (v) { wet.gain.value = studioEffectNatural(fx.name, 'vol', v); };
 	fx.set('time', 35);
 	fx.set('feedback', 30);
 	fx.set('vol', 40);
+	studioEffectTempo(fx, applyTime);
+	return fx;
+}
+
+// ---- tremolo / stereo panner -----------------------------------------------
+// The Tremolo is a mono amplitude modulator: a `depth`-scaled LFO rides on the
+// gain between `1 - depth` and unity, with the shape index the engine shares
+// (0 sine, 1 triangle, 2 square). The engine is `engine/src/effect/tremolo.rs`;
+// the two sides agree on the number bands and may differ only in the square's
+// edge smoothing. A tempo-synced `rate` is resolved to Hz before it arrives.
+function studioEffectTremolo(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'tremolo');
+	var amp = ctx.createGain();
+	var lfo = ctx.createOscillator();
+	var depthGain = ctx.createGain();
+	lfo.type = 'sine';
+	amp.gain.value = 1;
+	depthGain.gain.value = 0;
+	lfo.connect(depthGain).connect(amp.gain);
+	fx.input.connect(amp).connect(fx.wet);
+	try { lfo.start(0); } catch (e) {}
+	var depthValue = 0.5;
+	var applyDepth = function () {
+		var d = studioEffectClamp(depthValue, 0, 1);
+		amp.gain.value = 1 - d * 0.5;
+		depthGain.gain.value = d * 0.5;
+	};
+	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.1, 20); };
+	fx.natural['rate'] = applyRate;
+	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
+	fx.setters['depth'] = function (v) { depthValue = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
+	fx.setters['shape'] = function (v) {
+		var shape = Math.round(studioEffectNatural(fx.name, 'shape', v));
+		lfo.type = (shape === 1) ? 'triangle' : ((shape === 2) ? 'square' : 'sine');
+	};
+	fx.set('rate', 25);
+	fx.set('depth', 50);
+	fx.set('shape', 0);
+	studioEffectTempo(fx, applyRate);
+	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
+	return fx;
+}
+
+// A true stereo panner, browser only. The engine's insert chain is mono and its
+// static pan runs after the chain, so `InsertKind::parse` refuses the name and a
+// native take omits this pedal (engine/src/effect.rs). The browser uses a
+// StereoPannerNode with an LFO on its `pan`: depth is the swing in the -1..1
+// field, shape chooses the LFO, and a tempo-synced rate is resolved to Hz.
+function studioEffectStereoPanner(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'stereo_panner');
+	if (typeof ctx.createStereoPanner !== 'function') {
+		// No panner in this browser: pass the signal through rather than pretending
+		// a mono gain change is a pan. The controls still save and travel.
+		fx.input.connect(fx.wet);
+		fx.natural['rate'] = function () {};
+		fx.setters['rate'] = function () {};
+		fx.setters['depth'] = function () {};
+		fx.setters['shape'] = function () {};
+		fx.set('rate', 25);
+		fx.set('depth', 50);
+		fx.set('shape', 0);
+		studioEffectTempo(fx, function () {});
+		return fx;
+	}
+	var panner = ctx.createStereoPanner();
+	var lfo = ctx.createOscillator();
+	var depthGain = ctx.createGain();
+	lfo.type = 'sine';
+	panner.pan.value = 0;
+	depthGain.gain.value = 0;
+	lfo.connect(depthGain).connect(panner.pan);
+	fx.input.connect(panner).connect(fx.wet);
+	try { lfo.start(0); } catch (e) {}
+	var depthValue = 0.5;
+	var applyDepth = function () { depthGain.gain.value = studioEffectClamp(depthValue, 0, 1); };
+	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.1, 20); };
+	fx.natural['rate'] = applyRate;
+	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
+	fx.setters['depth'] = function (v) { depthValue = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
+	fx.setters['shape'] = function (v) {
+		var shape = Math.round(studioEffectNatural(fx.name, 'shape', v));
+		lfo.type = (shape === 1) ? 'triangle' : ((shape === 2) ? 'square' : 'sine');
+	};
+	fx.set('rate', 25);
+	fx.set('depth', 50);
+	fx.set('shape', 0);
+	studioEffectTempo(fx, applyRate);
+	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
 	return fx;
 }
 
@@ -1689,6 +1980,10 @@ var studioEffectAliases = {
 	// Browser only: the engine's inserts are mono and have no mid/side
 	// matrix (engine/src/effect.rs), so only this side ever builds it.
 	stereowidener: 'stereowidener',
+	tremolo: 'tremolo',
+	// Browser only: a true panner needs the L/R pair the engine's mono insert
+	// chain does not hold, so `InsertKind::parse` refuses the name.
+	stereo_panner: 'stereo_panner',
 	JawnSynth: 'synth',
 	master_comp: 'compressor',
 	master_eq: 'equalizer',
@@ -1712,6 +2007,8 @@ var studioEffectBuilders = {
 	equalizer: studioEffectEqualizer,
 	tone: studioEffectTone,
 	stereowidener: studioEffectStereoWidener,
+	tremolo: studioEffectTremolo,
+	stereo_panner: studioEffectStereoPanner,
 	synth: studioEffectSynth,
 	// The master rack's ten-band graphic EQ is its own builder, under its exact
 	// wire name; the alias table still maps it to the track equalizer's kind for

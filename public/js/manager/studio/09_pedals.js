@@ -42,7 +42,20 @@ function studioRackFallbackTile(ins) {
 		$('<span class="pedal_knob_label"></span>')
 			.text(studioLayoutText(control['label'] || control['control'])).appendTo(label);
 		var input;
-		if (control['options']) {
+		if (control['typed']) {
+			// A typed control is the tempo sync field: a visible text entry over a
+			// datalist of the common divisions, so a division the list omits can
+			// still be typed. The id is per insert; this tile is not cloned.
+			var safe = String(ins.name).replace(/[^A-Za-z0-9_-]/g, '_') + '_' + String(control['control']).replace(/[^A-Za-z0-9_-]/g, '_');
+			var listId = 'studio_tempo_fb_' + safe;
+			input = $('<input type="text" class="studio_pedal_text pedal_text">').attr('list', listId);
+			var datalist = $('<datalist></datalist>').attr('id', listId);
+			$.each(control['options'] || [], function (index, option) {
+				$('<option></option>').attr('value', option).appendTo(datalist);
+			});
+			datalist.appendTo(label);
+		}
+		else if (control['options']) {
 			input = $('<select class="studio_pedal_model pedal_select"></select>');
 			$.each(control['options'], function (index, option) {
 				$('<option></option>').attr('value', index).text(studioLayoutText(option)).appendTo(input);
@@ -70,6 +83,19 @@ function studioRackTile(ch, ins, chain) {
 	}).first();
 	var tile = source.length ? source.clone() : studioRackFallbackTile(ins);
 	tile.removeAttr('id').find('[id]').removeAttr('id');
+	// A cloned typed control lost its datalist id with the clone's other ids.
+	// Give each tile its own, named after the insert, so two synced pedals on one
+	// board cannot point at the same list.
+	var listSeq = 0;
+	tile.find('.studio_pedal_text').each(function () {
+		var input = $(this);
+		var list = input.closest('label').find('datalist').first();
+		if (!list.length) { return; }
+		var safe = String(ins.name).replace(/[^A-Za-z0-9_-]/g, '_');
+		var id = 'studio_tempo_tile_' + ch + '_' + safe + '_' + (listSeq++);
+		list.attr('id', id);
+		input.attr('list', id);
+	});
 	tile.addClass('studio_rack_tile')
 		.attr('channel', ch).attr('insert', ins.name).attr('chain', chain || 'in')
 		.attr('data-effect', ins.name);
@@ -78,7 +104,7 @@ function studioRackTile(ch, ins, chain) {
 	tile.find('[effect]').attr('effect', ins.name);
 	// The insert's own values are the ones the knobs and dropdowns show. A fresh
 	// insert takes the tile's defaults, exactly as the old shelf did on entry.
-	tile.find('.knob_control, .studio_pedal_model').each(function () {
+	tile.find('.knob_control, .studio_pedal_model, .studio_pedal_text').each(function () {
 		var control = $(this).attr('control');
 		var value = (ins.values && ins.values[control] !== undefined) ? ins.values[control] : $(this).val();
 		$(this).val(value);
@@ -92,6 +118,10 @@ function studioRackTile(ch, ins, chain) {
 		}
 	});
 	if (ins.bypassed) { tile.addClass('studio_rack_off'); }
+	// A synced time control is resolved against the song's BPM as the tile is
+	// drawn, so a restored song and a new insert sound the same before a knob
+	// moves. An Out insert is browser playback only and is not posted.
+	if (typeof studioTempoSyncApply === 'function') { studioTempoSyncApply(ins, ch, chain !== 'out'); }
 	// Small tools on the frame: touch order and removal without leaving the board.
 	var tools = $('#studio_board_tool_template').first().clone();
 	tools.removeAttr('id').removeAttr('style').removeAttr('aria-hidden');
@@ -192,6 +222,9 @@ function studioRackRenderAll() {
 	studioRackRender(studioPaletteChannel());
 	studioPaletteLabel();
 	studioUpdatePedalLamps();
+	// A song restore sets each insert's `sync` string before this draw; resolve
+	// every synced insert now, not on the next knob move.
+	if (typeof studioTempoSyncAll === 'function') { studioTempoSyncAll(); }
 }
 
 // Move one insert from one channel's chain to another, keeping the order the
@@ -384,11 +417,15 @@ function studioInsertControl(ch, name, control, value) {
 	var ins = studioRackFind(ch, name, chain);
 	if (!ins) { return; }
 	ins.set(control, value);
-	// The engine hears the same knob in the contract's units, but only for the
-	// input chain and only while it is the path that is playing (see
-	// studioEngineInsertParam). An output insert is browser-only, so it never
-	// reaches the engine.
-	if (chain !== 'out') { studioEngineInsertParam(ch, name, control, value); }
+	// A synced time or rate is resolved from the BPM before the engine hears it,
+	// and the sync string itself never travels. A manual move of the same control
+	// goes through the same resolver, which falls back to the knob when sync is
+	// off. An output insert is browser-only, so it never reaches the engine.
+	var kind = studioEffectKind(name);
+	if (control === 'sync' || studioTempoControls[kind] === control) {
+		if (typeof studioTempoSyncApply === 'function') { studioTempoSyncApply(ins, ch, chain !== 'out'); }
+	}
+	else if (chain !== 'out') { studioEngineInsertParam(ch, name, control, value); }
 	studioSaver();
 }
 

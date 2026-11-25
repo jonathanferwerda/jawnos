@@ -253,6 +253,31 @@
 		min-width: 0;
 		width: auto;
 	}
+	/* A tempo-sync field is a free-text entry with a datalist of the common
+	   divisions, not a closed dropdown: the person can type any n/d value. */
+	.pedal_text {
+		box-sizing: border-box;
+		flex: 1 1 auto;
+		min-width: 0;
+		width: auto;
+		height: 18px;
+		min-height: 18px;
+		padding: 0 4px;
+		font-size: 10px;
+		line-height: 16px;
+		border-width: 1px;
+		border-radius: 4px;
+	}
+	/* The Delay shelf tile has no .pedal_controls column, so its sync row
+	   sits directly above the footswitch like the reverb's model select. */
+	.pedal .pedal_sync_row {
+		position: absolute;
+		left: 7%;
+		right: 7%;
+		bottom: 30px;
+		width: auto;
+		z-index: 6;
+	}
 	/* The shelf's reverb model sits in its own row above the footswitch, clear
 	   of the knobs; the old top-percentage position left it over Mix. */
 	.pedal .pedal_model {

@@ -431,6 +431,10 @@ function studioEngineTransportLoop() {
 // is counted as `blocked`: the caller then keeps the whole mix in the browser
 // rather than losing it.
 function studioEngineClipPlan() {
+	// Resolve every tempo-synced insert against the song's BPM before the plan is
+	// built. The engine is sent the resolved time or rate, never the division
+	// string, and this is the one place a take starts from the current tempo.
+	if (typeof studioTempoSyncAll === 'function') { studioTempoSyncAll(); }
 	var clips = [];
 	var blocked = 0;
 	var anySolo = studioAnySolo();
@@ -451,7 +455,7 @@ function studioEngineClipPlan() {
 		if (strip && strip.outInserts) {
 			strip.outInserts.forEach(function (ins) {
 				if (!ins || ins.bypassed || !ins.name) { return; }
-				if (studioEffectKind(ins.name) === 'stereowidener') { return; }
+				if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
 				inserts.push(studioEffectKind(ins.name));
 			});
 		}
@@ -513,7 +517,7 @@ function studioEngineAppRouting(app) {
 		if (strip && strip.outInserts) {
 			strip.outInserts.forEach(function (ins) {
 				if (!ins || ins.bypassed || !ins.name) { return; }
-				if (studioEffectKind(ins.name) === 'stereowidener') { return; }
+				if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
 				inserts.push(studioEffectKind(ins.name));
 			});
 		}

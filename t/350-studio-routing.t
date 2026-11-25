@@ -231,8 +231,8 @@ like($rack, qr/if \(chain !== 'out'\) \{ studioEngineInsertParam\(ch, name, cont
 my $plan = body($js, 'studioEngineTrackPlan');
 like($plan, qr/channel\.inserts\.forEach/, 'the engine take plan reads only the input chain');
 unlike($plan, qr/outInserts/, 'and never the output chain');
-like($plan, qr/if \(studioEffectKind\(ins\.name\) === 'stereowidener'\) \{ return; \}/,
-	'an enabled Stereo Widener is left out of the engine track plan');
+like($plan, qr/if \(typeof studioEffectBrowserOnly === 'function' \? studioEffectBrowserOnly\(ins\.name\) : studioEffectKind\(ins\.name\) === 'stereowidener'\) \{ return; \}/,
+	'an enabled browser-only insert is left out of the engine track plan');
 like($plan, qr/inserts\.push\(studioEffectKind\(ins\.name\)\);/, 'every other insert still reaches the take');
 like($plan, qr/var from = studioEngineTrackSend\(index \+ 1\);/, 'the take plan asks whether the channel has a send');
 like($plan, qr/entry\.from = from;/, 'a send travels as `from` instead of an interface input');

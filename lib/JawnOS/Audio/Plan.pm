@@ -93,9 +93,15 @@ our $audio_plan_max_player_buffer = 2_000;
 # means the effect's own default, and the engine clamps a value it receives.
 # The read path keeps only a known name and its known controls, while the write
 # path refuses either mistake instead of dropping it.
+#
+# `stereowidener` and `stereo_panner` are deliberately absent: both need an L/R
+# pair the engine's mono insert chain does not hold, so the browser owns them and
+# the engine's `InsertKind::parse` refuses them (engine/src/effect.rs).
+# `sync` is absent everywhere: a tempo division is a page string resolved into
+# the effect's own `time` or `rate` before the engine sees it.
 our @audio_plan_insert_names = qw(
 	tone distortion delay compressor reverb flanger
-	fuzz amp limiter autotune equalizer maximizer
+	fuzz amp limiter autotune equalizer maximizer tremolo
 );
 
 our %audio_plan_insert_controls = (
@@ -111,14 +117,17 @@ our %audio_plan_insert_controls = (
 	autotune   => [qw(speed amount key scale)],
 	equalizer  => [qw(low mid high)],
 	maximizer  => [qw(ceiling loudness)],
+	tremolo    => [qw(rate depth shape)],
 );
 
-# These controls are an index, not a level: a fractional reverb model or amp
-# cabinet has no meaning. The read path truncates one, the write path refuses it.
+# These controls are an index, not a level: a fractional reverb model, amp
+# cabinet or tremolo shape has no meaning. The read path truncates one, the write
+# path refuses it.
 our %audio_plan_insert_whole = (
 	reverb   => { model   => 1 },
 	amp      => { cabinet => 1 },
 	autotune => { key     => 1, scale => 1 },
+	tremolo  => { shape   => 1 },
 );
 
 # A source's board is a chain, not a rack: enough pedals for a treated voice

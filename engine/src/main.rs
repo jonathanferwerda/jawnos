@@ -3109,6 +3109,7 @@ fn run_monitor(
     tracks: Vec<PlayTrack>,
     start_at: u64,
     stop: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
     system_device: Option<String>,
     target: Option<String>,
 ) -> Result<(u64, usize), String> {
@@ -3140,6 +3141,8 @@ fn run_monitor(
     match backend {
         BackendKind::Null => {
             playback.prepare(rate, period)?;
+            // The strip is sized and the files are read; the record may start.
+            ready.store(true, Ordering::SeqCst);
             let mut out = vec![0.0f32; period * 2];
             while playback.remaining() > 0 && !stop.load(Ordering::SeqCst) {
                 let frames = playback.remaining().min(period as u64) as usize;
@@ -3148,6 +3151,7 @@ fn run_monitor(
             Ok((playback.position(), 0))
         }
         BackendKind::Alsa | BackendKind::PipeWire => {
+            ready.store(true, Ordering::SeqCst);
             monitor_hardware(device, rate, period, buffer, &mut playback, &stop, guard.as_ref())
         }
         BackendKind::Jack => Err(play_support_message()),
@@ -3565,11 +3569,16 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
     // monitored sound reaches the capture at the stamp it was played for; with
     // no measurement the start is the stamp itself.
     let monitor_stop = Arc::new(AtomicBool::new(false));
+    // The monitor prepares on its own thread; a very short take must not finish
+    // before that thread has read its files and sized its inserts (a large delay
+    // line makes that setup longer). The record waits for this flag below.
+    let monitor_ready = Arc::new(AtomicBool::new(false));
     let monitor = if monitor_tracks.is_empty() {
         None
     } else {
         let spawned = {
             let stop = Arc::clone(&monitor_stop);
+            let ready = Arc::clone(&monitor_ready);
             let device = device.to_string();
             let backend = options.backend;
             let rate = options.rate;
@@ -3596,6 +3605,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
                         monitor_tracks,
                         start_at,
                         stop,
+                        ready,
                         system_device,
                         target,
                     )
@@ -3616,6 +3626,17 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
             }
         }
     };
+
+    // Do not finish a take before the monitor has prepared its first block: the
+    // null backend runs faster than real time, and a short take can end while
+    // the monitor is still sizing an insert. A failed or absent monitor is not
+    // waited for beyond this grace; its own error is reported beside the take.
+    if monitor.is_some() {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        while !monitor_ready.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+    }
 
     let outcome = match options.backend {
         BackendKind::Null => record_null(options, seconds, &mut disks, &mut mixer),

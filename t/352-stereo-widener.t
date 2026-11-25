@@ -42,7 +42,7 @@ like($sw // '', qr/\{\s*control\s*=>\s*'mix',\s*label\s*=>\s*'Mix'\s*\}/,
 # --- the palette ------------------------------------------------------------
 my ($palette) = $studio =~ /palette\s*=>\s*\[\s*qw\(([^)]*)\)\s*\]/s;
 my @palette = split ' ', ($palette // '');
-my $contract = [ qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor) ];
+my $contract = [ qw(reverb flanger fuzz amp limiter tremolo stereo_panner autotune equalizer tone distortion delay compressor) ];
 is_deeply(\@palette, [ @$contract, 'stereowidener' ],
 	'the palette keeps every existing effect and appends the widener');
 unlike($studio, qr/palette_art\s*=>\s*\{[^}]*stereowidener/s,
@@ -92,7 +92,7 @@ like($fx, qr/\bstereowidener\s*:\s*'stereowidener'/, 'the palette name resolves 
 like($fx, qr/function studioEngineParamPost\(data, key\) \{(.*?)\n\tif \(!studioEngineIsPath/s,
 	'the engine post is the one gate every knob goes through');
 my ($gate) = $fx =~ /function studioEngineParamPost\(data, key\) \{(.*?)\n\tif \(!studioEngineIsPath/s;
-like($gate // '', qr/\^\(\?:master_\)\?stereowidener/, 'the gate refuses both widener spellings');
+like($gate // '', qr/\(\?:master_\)\?\(\?:stereowidener\|stereo_panner\)/, 'the gate refuses both browser-only panners');
 like($gate // '', qr/return;/, 'and posts nothing for them');
 
 # --- the engine documents the omission --------------------------------------
@@ -105,7 +105,7 @@ like($engine, qr/InsertKind::parse\("master_stereowidener"\), None/, 'parsing th
 # --- every existing effect is still named the same way ----------------------
 for my $name (@$contract) {
 	like($effects // '', qr/\b\Q$name\E\s*=>\s*\{\s*label\s*=>\s*'/, "the contract still names $name");
-	like($fx, qr/^\t\Q$name\E\s*:\s*'[a-z]+',$/m, "the alias table still maps $name");
+	like($fx, qr/^\t\Q$name\E\s*:\s*'[a-z_]+',$/m, "the alias table still maps $name");
 }
 
 # --- the maths, under node --------------------------------------------------

@@ -70,9 +70,11 @@
 //!   unity and holds loud material back, which is the audible job.
 //!
 //! `rate` is Hz, `depth`, `feedback` and `mix` are the normalised 0..1 knobs the
-//! control path sends. Feedback stops at [`MAX_FEEDBACK`], short of unity, so a
-//! swept comb cannot build into a runaway, and the BBD's input clip bounds the
-//! line's charge either way.
+//! control path sends. The manual Rate knob still maps to 0.05..5 Hz; a
+//! tempo-synced rate may reach 8 Hz (a 1/16 at 120 BPM is 8 Hz), which is the
+//! cap below. Feedback stops at [`MAX_FEEDBACK`], short of unity, so a swept
+//! comb cannot build into a runaway, and the BBD's input clip bounds the line's
+//! charge either way.
 
 use super::{highpass, lowpass, one_pole, Biquad, Effect, SMOOTH_SECONDS};
 
@@ -119,7 +121,10 @@ pub struct Flanger {
 
 impl Flanger {
     pub const MIN_RATE_HZ: f32 = 0.05;
-    pub const MAX_RATE_HZ: f32 = 5.0;
+    /// The manual knob stops at 5 Hz, but a tempo-synced rate may arrive faster:
+    /// 1/16 at 120 BPM is 8 Hz, so the effect accepts up to there and clamps
+    /// anything above it.
+    pub const MAX_RATE_HZ: f32 = 8.0;
     /// A SAD1024 has 1024 stages, so `delay = stages / (2 * clock)`.
     const BBD_STAGES: f32 = 1_024.0;
     /// The shortest delay, which is what makes a flanger a comb rather than a

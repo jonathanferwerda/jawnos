@@ -28,7 +28,7 @@ my $studio = read_file("$root/perl/gb/05_abilities_and_studio.pl");
 my $help   = read_file("$root/perl/help/topics_apps.pl");
 
 # The contract's channel insert names (docs/studio-effects.md, "Insert kinds").
-my @contract = qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor stereowidener);
+my @contract = qw(reverb flanger fuzz amp limiter tremolo autotune equalizer tone distortion delay compressor stereowidener stereo_panner);
 
 # --- the labels and the wire names -----------------------------------------
 # autotune is the wire name; people read JawnPitch. Jtune is a tuner, not an

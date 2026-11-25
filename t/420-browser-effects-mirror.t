@@ -68,14 +68,14 @@ like($fx, qr/trim\.gain\.value = 0\.7;/, 'the output is trimmed like the engine'
 like($fx, qr/^function studioDm2Bandwidth\(seconds\)/m,
 	'the BBD bandwidth follows the delay time');
 like($fx, qr/Math\.sqrt\(0\.02 \/ time\)/, 'it uses the engine square-root clock law');
-like($fx, qr/var delay = ctx\.createDelay\(1\.5\);/, 'the line is a 1.5 s DelayNode');
+like($fx, qr/var delay = ctx\.createDelay\(8\);/, 'the line is an 8 s DelayNode, enough for four bars at 120 BPM');
 like($fx, qr/fx\.input\.connect\(inputHP\)\.connect\(comp\)\.connect\(delay\);/,
 	'the input compressor sits before the line');
 like($fx, qr/delay\.connect\(feedbackLP\)\.connect\(feedback\)\.connect\(delay\);/,
 	'the feedback runs through the lowpass');
-like($fx, qr/delay\.delayTime\.value = timeValue;/,
-	'the wet path is exactly the knob time, so the first echo lands there');
-like($fx, qr/feedbackLP\.frequency\.value = studioDm2Bandwidth\(timeValue\);/,
+like($fx, qr/delay\.delayTime\.value = time;/,
+	'the wet path is exactly the resolved time, so the first echo lands there');
+like($fx, qr/feedbackLP\.frequency\.value = studioDm2Bandwidth\(time\);/,
 	'the feedback corner follows the delay time');
 
 # --- the MXR Dyna Comp -------------------------------------------------------
