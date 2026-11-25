@@ -1,4 +1,5 @@
-//! The channel strip's effects, ported from Studio's WebAudio pedals.
+//! The channel strip's effects: four real pedals, modelled from their circuits,
+//! and the pedals added for the Studio effects contract.
 //!
 //! Every effect is built and [`prepare`](Effect::prepare)d before the first
 //! block; from then on `process` only reads and writes memory it already owns.
@@ -8,13 +9,28 @@
 //! smoothing so a knob turned between blocks cannot step a filter or a delay
 //! line into a click.
 //!
-//! The shapes follow `public/js/manager/studio.js`. Only the distortion curve
-//! is the web formula verbatim; everything else is the same role and controls,
-//! not a claim of a sample-identical copy (see each type's docs). The pedals
-//! added for the Studio effects contract — flanger, fuzz, amp, limiter,
-//! autotune, equalizer and the maximizer the master rack borrows — live in the
-//! `effect/` submodules; each one documents its own approximation and its own
-//! natural units.
+//! The four pedals the core strip has always carried are no longer generic
+//! shapers. Each is a circuit model, documented on its type:
+//!
+//! * [`Distortion`] is a ProCo RAT: an LM308 gain stage with its gain-dependent
+//!   bandwidth and slew limit, silicon diodes clipping to ground, and the RAT's
+//!   post-clip low-pass.
+//! * [`Delay`] is a Boss DM-2-style bucket-brigade delay: input companding, a
+//!   bandwidth that narrows with the clock, an output expander, and a low-pass
+//!   in the feedback path so repeats darken.
+//! * [`Compressor`] is an MXR Dyna Comp-style OTA compressor: a soft-knee
+//!   detector, the OTA's level-dependent squash, and the unit's fast-attack /
+//!   slow-release character, with the contract's six knobs mapped onto it.
+//! * [`ToneStack`] is a Fender/Marshall passive tone stack (Marshall JMP50
+//!   values), solved as a small linear network rather than three independent
+//!   shelves, so bass, mid and treble interact.
+//!
+//! The browser remains the WebAudio reference for the *contract* in
+//! `docs/studio-effects.md`; these are the same pedals, controls and natural
+//! units, not sample-identical copies. The pedals added for the Studio effects
+//! contract — flanger, fuzz, amp, limiter, autotune, equalizer and the maximizer
+//! the master rack borrows — live in the `effect/` submodules; each one
+//! documents its own approximation and its own natural units.
 
 use std::f64::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
@@ -229,8 +245,37 @@ fn highpass(rate: f64, hz: f64, q: f64) -> (f64, f64, f64, f64, f64, f64) {
     (b0, b1, b2, a0, a1, a2)
 }
 
-/// The channel's bass / mid / treble, at the frequencies and Qs Studio sets:
-/// a 220 Hz low shelf, a 1 kHz peaking mid, a 3.5 kHz high shelf.
+/// The channel's bass / mid / treble as a Fender/Marshall passive tone stack.
+///
+/// # The circuit
+///
+/// This is the classic FMV (Fender/Marshall/Vox) network, using the Marshall
+/// JMP50 "Plexi" values: a 470 pF treble cap, a 33 kΩ slope resistor, 22 nF bass
+/// and mid caps, a 250 kΩ treble pot, a 1 MΩ bass pot, a 25 kΩ mid pot and the
+/// 1 MΩ load the next stage presents. The input drives the treble cap and the
+/// slope resistor; the slope resistor feeds the bass and mid branches; the
+/// treble pot blends the top (treble) and bottom (bass/mid) terminals; its wiper
+/// is the output. The bass branch is `C2 + bass pot` to the mid node, the mid
+/// branch is `C3` to the same node, and the mid pot returns that node to ground.
+/// Every branch shares the mid pot, which is why the controls interact.
+///
+/// # The approximation
+///
+/// A passive stack cannot boost; it only removes, and its insertion loss is part
+/// of the sound. Rather than pretend otherwise, the network is solved exactly
+/// (trapezoidal companion models for the three capacitors, a 5×5 nodal solve at
+/// the block edge) and followed by the fixed makeup gain a following stage would
+/// supply, `MAKEUP`, calibrated so the noon setting is unity at
+/// [`MID_HZ`]. The `gain` control remains an independent output trim.
+///
+/// The contract's knobs are dB positions, but the real pots are not calibrated
+/// dB shelves: `-12..+12` maps linearly across each pot's travel (noon is 0 dB),
+/// then the circuit decides what that position does. The low end of a real stack
+/// is broad and the bass control is deliberately gentle around [`BASS_HZ`]; the
+/// treble and mid controls also load one another, which the tests exercise. The
+/// constants [`BASS_HZ`], [`MID_HZ`] and [`TREBLE_HZ`] are the contract's
+/// reference frequencies (and the old biquads' corners); they are no longer
+/// three independent filter designs.
 #[derive(Debug)]
 pub struct ToneStack {
     rate: u32,
@@ -240,8 +285,71 @@ pub struct ToneStack {
     /// knob, and the contract lists it with the three bands. Unity is 1.0.
     target_gain: f32,
     gain: f32,
-    bands: [Biquad; 3],
+    /// The solved 5×5 network, rows and columns T, out, B, M, BP.
+    inverse: [[f64; 5]; 5],
+    /// Capacitor history currents J1 (C1), J2 (C2), J3 (C3).
+    history: [f64; 3],
+    g1: f64,
+    g2: f64,
+    g3: f64,
+    slope: f64,
     designed: bool,
+}
+
+/// Invert a 5×5 real matrix by Gauss-Jordan with partial pivoting.
+///
+/// The tone network is passive, so the matrix is positive definite and this
+/// always succeeds with the clamped pot values; `None` is only the numerical
+/// guard that keeps a bad design from reaching the audio thread.
+fn invert_5(matrix: [[f64; 5]; 5]) -> Option<[[f64; 5]; 5]> {
+    let mut augmented = [[0.0f64; 10]; 5];
+    for row in 0..5 {
+        for column in 0..5 {
+            augmented[row][column] = matrix[row][column];
+        }
+        augmented[row][5 + row] = 1.0;
+    }
+    for column in 0..5 {
+        let mut pivot = column;
+        for row in (column + 1)..5 {
+            if augmented[row][column].abs() > augmented[pivot][column].abs() {
+                pivot = row;
+            }
+        }
+        let value = augmented[pivot][column];
+        if !value.is_finite() || value.abs() < 1e-18 {
+            return None;
+        }
+        if pivot != column {
+            augmented.swap(pivot, column);
+        }
+        let divisor = augmented[column][column];
+        for entry in 0..10 {
+            augmented[column][entry] /= divisor;
+        }
+        for row in 0..5 {
+            if row == column {
+                continue;
+            }
+            let factor = augmented[row][column];
+            if factor != 0.0 {
+                for entry in 0..10 {
+                    augmented[row][entry] -= factor * augmented[column][entry];
+                }
+            }
+        }
+    }
+    let mut inverse = [[0.0f64; 5]; 5];
+    for row in 0..5 {
+        for column in 0..5 {
+            let value = augmented[row][5 + column];
+            if !value.is_finite() {
+                return None;
+            }
+            inverse[row][column] = value;
+        }
+    }
+    Some(inverse)
 }
 
 impl ToneStack {
@@ -251,6 +359,23 @@ impl ToneStack {
     /// The knobs stop at ±12 dB, Studio's range.
     pub const MAX_DB: f32 = 12.0;
 
+    // Marshall JMP50 tone-stack values. The Fender 5F6-A/Bassman uses 250 pF,
+    // 100 kΩ, 100 nF and 47 nF; the JMP50's lower slope resistor and larger
+    // treble cap give the contract's ±12 dB knobs a little more range and less
+    // insertion loss while keeping the same FMV topology.
+    const C1: f64 = 470e-12;
+    const R1: f64 = 33_000.0;
+    const C2: f64 = 22e-9;
+    const C3: f64 = 22e-9;
+    const R_TREBLE: f64 = 250_000.0;
+    const R_BASS: f64 = 1_000_000.0;
+    const R_MID: f64 = 25_000.0;
+    const R_LOAD: f64 = 1_000_000.0;
+    /// The fixed gain of the stage that follows the passive network. It makes
+    /// the noon setting unity at `MID_HZ`; the stack itself still has the
+    /// circuit's insertion loss and mid scoop.
+    const MAKEUP: f64 = 2.676;
+
     /// Gains in dB, the same ±12 dB range Studio's three knobs cover.
     pub fn new(bass_db: f32, mid_db: f32, treble_db: f32) -> Self {
         ToneStack {
@@ -259,7 +384,12 @@ impl ToneStack {
             current_db: [bass_db, mid_db, treble_db],
             target_gain: 1.0,
             gain: 1.0,
-            bands: [Biquad::identity(); 3],
+            inverse: [[0.0; 5]; 5],
+            history: [0.0; 3],
+            g1: 0.0,
+            g2: 0.0,
+            g3: 0.0,
+            slope: 0.0,
             designed: false,
         }
     }
@@ -271,30 +401,76 @@ impl ToneStack {
         self.target_db = [bass_db, mid_db, treble_db];
     }
 
+    /// A `-12..+12` dB knob position across a pot's travel: `-12` is the bottom
+    /// stop, `0` is noon, `+12` is the top stop. The circuit, not this mapping,
+    /// decides what a position sounds like.
+    fn position(db: f32) -> f64 {
+        let db = f64::from(db.clamp(-Self::MAX_DB, Self::MAX_DB));
+        0.5 + 0.5 * db / f64::from(Self::MAX_DB)
+    }
+
     fn design(&mut self) {
         let rate = f64::from(self.rate.max(1));
-        self.bands[0].set(low_shelf(rate, f64::from(Self::BASS_HZ), f64::from(self.current_db[0])));
-        self.bands[1].set(peaking(
-            rate,
-            f64::from(Self::MID_HZ),
-            1.0,
-            f64::from(self.current_db[1]),
-        ));
-        self.bands[2].set(high_shelf(
-            rate,
-            f64::from(Self::TREBLE_HZ),
-            f64::from(self.current_db[2]),
-        ));
-        self.designed = true;
+        let treble = Self::position(self.current_db[2]);
+        let bass = Self::position(self.current_db[0]);
+        let mid = Self::position(self.current_db[1]);
+
+        let upper_treble = ((1.0 - treble) * Self::R_TREBLE).max(1.0);
+        let lower_treble = (treble * Self::R_TREBLE).max(1.0);
+        let bass_pot = (bass * Self::R_BASS).max(1.0);
+        let mid_pot = (mid * Self::R_MID).max(10.0);
+
+        // Trapezoidal companion conductances for C1, C2 and C3. They do not
+        // depend on the pots, so the history currents survive a redesign.
+        let g1 = 2.0 * Self::C1 * rate;
+        let g2 = 2.0 * Self::C2 * rate;
+        let g3 = 2.0 * Self::C3 * rate;
+        let slope = 1.0 / Self::R1;
+        let g_upper = 1.0 / upper_treble;
+        let g_lower = 1.0 / lower_treble;
+        let g_load = 1.0 / Self::R_LOAD;
+        let g_bass = 1.0 / bass_pot;
+        let g_mid = 1.0 / mid_pot;
+
+        let mut network = [[0.0f64; 5]; 5];
+        // T: (C1 to the source) and the upper treble leg.
+        network[0][0] = g1 + g_upper;
+        network[0][1] = -g_upper;
+        // out: the two treble legs and the 1 MΩ load.
+        network[1][0] = -g_upper;
+        network[1][1] = g_upper + g_lower + g_load;
+        network[1][2] = -g_lower;
+        // B: slope resistor, lower treble leg, and C2/C3 toward the mid node.
+        network[2][1] = -g_lower;
+        network[2][2] = slope + g_lower + g2 + g3;
+        network[2][3] = -g3;
+        network[2][4] = -g2;
+        // M: C3, the bass pot and the mid pot to ground.
+        network[3][2] = -g3;
+        network[3][3] = g3 + g_bass + g_mid;
+        network[3][4] = -g_bass;
+        // BP: the node between the bass cap and the bass pot.
+        network[4][2] = -g2;
+        network[4][3] = -g_bass;
+        network[4][4] = g2 + g_bass;
+
+        match invert_5(network) {
+            Some(inverse) => {
+                self.inverse = inverse;
+                self.g1 = g1;
+                self.g2 = g2;
+                self.g3 = g3;
+                self.slope = slope;
+                self.designed = true;
+            }
+            None => self.designed = false,
+        }
     }
 }
 
 impl Effect for ToneStack {
     fn prepare(&mut self, rate: u32, _max_frames: usize) {
         self.rate = rate.max(1);
-        self.current_db = self.target_db;
-        self.gain = self.target_gain;
-        self.design();
         self.reset();
     }
 
@@ -302,13 +478,12 @@ impl Effect for ToneStack {
         if !self.designed {
             return;
         }
-        let gain_alpha = one_pole_block(SMOOTH_SECONDS, self.rate, block.len());
-        self.gain = (f64::from(self.gain)
-            + f64::from(self.target_gain - self.gain) * gain_alpha) as f32;
-        let level = self.gain;
-        // One control step per block: coefficients are nonlinear in gain, so
-        // moving the control in bounded steps is what keeps the filter stable.
         let alpha = one_pole_block(SMOOTH_SECONDS, self.rate, block.len());
+        self.gain = (f64::from(self.gain)
+            + f64::from(self.target_gain - self.gain) * alpha) as f32;
+        let level = f64::from(self.gain);
+        // One control step per block: the pot positions are nonlinear in dB,
+        // so moving them in bounded steps keeps the network stable.
         let mut changed = false;
         for band in 0..3 {
             let target = self.target_db[band];
@@ -325,20 +500,55 @@ impl Effect for ToneStack {
         }
         if changed {
             self.design();
-        }
-        for sample in block.iter_mut() {
-            for band in &mut self.bands {
-                *sample = band.process(*sample);
+            if !self.designed {
+                return;
             }
-            *sample *= level;
+        }
+
+        let inverse = self.inverse;
+        let (g1, g2, g3) = (self.g1, self.g2, self.g3);
+        let slope = self.slope;
+        for sample in block.iter_mut() {
+            let input = f64::from(*sample);
+            let (j1, j2, j3) = (self.history[0], self.history[1], self.history[2]);
+            // The output node's right-hand side is zero (no source there), so
+            // its inverse column is not needed in the per-sample product.
+            let r0 = g1 * input - j1;
+            let r2 = slope * input + j2 + j3;
+            let r3 = -j3;
+            let r4 = -j2;
+            let v_t = inverse[0][0] * r0
+                + inverse[0][2] * r2
+                + inverse[0][3] * r3
+                + inverse[0][4] * r4;
+            let v_out = inverse[1][0] * r0
+                + inverse[1][2] * r2
+                + inverse[1][3] * r3
+                + inverse[1][4] * r4;
+            let v_b = inverse[2][0] * r0
+                + inverse[2][2] * r2
+                + inverse[2][3] * r3
+                + inverse[2][4] * r4;
+            let v_m = inverse[3][0] * r0
+                + inverse[3][2] * r2
+                + inverse[3][3] * r3
+                + inverse[3][4] * r4;
+            let v_bp = inverse[4][0] * r0
+                + inverse[4][2] * r2
+                + inverse[4][3] * r3
+                + inverse[4][4] * r4;
+            self.history[0] = 2.0 * g1 * (input - v_t) - j1;
+            self.history[1] = 2.0 * g2 * (v_b - v_bp) - j2;
+            self.history[2] = 2.0 * g3 * (v_b - v_m) - j3;
+            *sample = (v_out * Self::MAKEUP * level) as f32;
         }
     }
 
     fn reset(&mut self) {
-        for band in &mut self.bands {
-            band.reset();
-        }
+        self.current_db = self.target_db;
         self.gain = self.target_gain;
+        self.history = [0.0; 3];
+        self.design();
     }
 
     fn set(&mut self, name: &str, value: f32) -> bool {
@@ -365,25 +575,65 @@ impl Effect for ToneStack {
     }
 }
 
-/// Studio's `Distorjawn`: the `studioDistortionCurve` shaper, 4x oversampled,
-/// into a 4.5 kHz lowpass.
+/// The ProCo RAT, built around the LM308 gain stage and its silicon diodes.
 ///
-/// The curve is the web formula, evaluated per sample instead of read from a
-/// 44,100-entry table: `((3 + amount) * x * 20 * π/180) / (π + amount * |x|)`.
-/// The browser's `oversample = '4x'` filters are implementation-defined; here
-/// the input is linearly interpolated to 4x, shaped, lowpassed at 4x with an
-/// RBJ Butterworth, then decimated. Same shape and role, not a sample-identical
-/// copy.
+/// # The circuit
+///
+/// The RAT's `Distortion` pot is the feedback resistor of an LM308 non-inverting
+/// stage, so the drive knob sets the stage's gain. The op-amp's 1 MHz gain-
+/// bandwidth product then sets the closed-loop corner: at low drive the stage is
+/// wide open, and at high drive its corner falls into the low kilohertz, which is
+/// the RAT's slew-limited, mid-focused character. A pair of 1N914 silicon
+/// diodes clip the stage to ground at about 0.7 V, hard enough to produce the
+/// RAT's square-ish edge. After the clipper, the pedal's Filter control is a
+/// first-order low-pass (a 4.7 kΩ pot into 0.022 µF), here fixed at a musical
+/// mid setting because the contract's single control is `drive`.
+///
+/// # The approximation
+///
+/// The gain range (2..200), the op-amp's exact pole, and the diode knee are
+/// chosen to reproduce the circuit's behaviour rather than its SPICE model;
+/// the diode clip is a hard linear region with a short exponential shoulder, not
+/// a full Shockley solve. The filter is two one-pole sections at 4 kHz instead
+/// of one, both to approximate the RAT's dark top end and to keep the 4×
+/// oversampler's decimation clean. The output is trimmed by `OUTPUT_LEVEL` so
+/// the pedal sits at a usable level in the strip; the contract has no volume
+/// knob.
 #[derive(Debug)]
 pub struct Distortion {
     rate: u32,
     target_amount: f32,
     amount: f32,
+    /// The last high-passed input, for the 4× linear interpolation.
     previous: f32,
-    lowpass: Biquad,
+    /// The input coupling high-pass (one pole at `INPUT_HIGHPASS_HZ`).
+    highpass: f32,
+    highpass_alpha: f32,
+    /// The LM308's output after its bandwidth pole and slew limit.
+    op_amp: f32,
+    slew: f32,
+    slew_step: f32,
+    /// The two post-clip low-pass sections.
+    post: [f32; 2],
+    post_alpha: f32,
 }
 
 impl Distortion {
+    /// The LM308 stage's gain at drive 0 and at drive 100.
+    const GAIN_MIN: f32 = 2.0;
+    const GAIN_MAX: f32 = 200.0;
+    /// The LM308's gain-bandwidth product, and its datasheet slew rate.
+    const OPAMP_GBW_HZ: f32 = 1_000_000.0;
+    const OPAMP_SLEW_V_PER_S: f32 = 0.3e6;
+    /// The silicon diode's forward voltage and the short exponential shoulder.
+    const DIODE_VF: f32 = 0.7;
+    const DIODE_KNEE: f32 = 0.04;
+    /// The RAT's Filter knob, fixed at a musical mid setting.
+    const POST_HZ: f32 = 4_000.0;
+    /// The strip's level trim; the contract has no RAT volume knob.
+    const OUTPUT_LEVEL: f32 = 0.7;
+    const INPUT_HIGHPASS_HZ: f32 = 10.0;
+
     /// `drive` is the web knob's 0..100 amount.
     pub fn new(drive: f32) -> Self {
         let amount = drive.clamp(0.0, 100.0);
@@ -392,7 +642,13 @@ impl Distortion {
             target_amount: amount,
             amount,
             previous: 0.0,
-            lowpass: Biquad::identity(),
+            highpass: 0.0,
+            highpass_alpha: 0.0,
+            op_amp: 0.0,
+            slew: 0.0,
+            slew_step: 0.0,
+            post: [0.0; 2],
+            post_alpha: 0.0,
         }
     }
 
@@ -403,10 +659,27 @@ impl Distortion {
         }
     }
 
+    /// The RAT's distortion pot is a variable feedback resistor, so the gain
+    /// rises faster than the knob. The squared travel is a useful fit to the
+    /// reverse-log pot and keeps the low half of the knob usable.
+    fn gain(drive: f32) -> f32 {
+        let travel = drive.clamp(0.0, 100.0) / 100.0;
+        Self::GAIN_MIN + travel * travel * (Self::GAIN_MAX - Self::GAIN_MIN)
+    }
+
+    /// A silicon diode to ground: linear below its forward voltage, then a short
+    /// exponential shoulder that clamps the stage instead of letting it grow.
     #[inline]
-    fn shape(x: f32, amount: f32) -> f32 {
-        const DEG: f32 = PI as f32 / 180.0;
-        ((3.0 + amount) * x * 20.0 * DEG) / (PI as f32 + amount * x.abs())
+    fn diode_clip(x: f32) -> f32 {
+        let magnitude = x.abs();
+        if magnitude <= Self::DIODE_VF {
+            x
+        } else {
+            x.signum()
+                * (Self::DIODE_VF
+                    + Self::DIODE_KNEE
+                        * (1.0 - (-(magnitude - Self::DIODE_VF) / Self::DIODE_KNEE).exp()))
+        }
     }
 }
 
@@ -415,32 +688,63 @@ impl Effect for Distortion {
         self.rate = rate.max(1);
         self.amount = self.target_amount;
         self.previous = 0.0;
-        self.lowpass.set(lowpass(f64::from(self.rate) * 4.0, 4_500.0));
-        self.lowpass.reset();
+        self.highpass = 0.0;
+        self.op_amp = 0.0;
+        self.slew = 0.0;
+        self.post = [0.0; 2];
+        let rate = self.rate as f32;
+        let oversampled = 4.0 * rate;
+        let two_pi = 2.0 * PI as f32;
+        self.highpass_alpha = 1.0 - (-two_pi * Self::INPUT_HIGHPASS_HZ / rate).exp();
+        self.post_alpha = 1.0 - (-two_pi * Self::POST_HZ / oversampled).exp();
+        self.slew_step = Self::OPAMP_SLEW_V_PER_S / oversampled;
     }
 
     fn process(&mut self, block: &mut [f32]) {
         const OVERSAMPLE: usize = 4;
-        let alpha = one_pole_block(0.01, self.rate, block.len()) as f32;
-        self.amount += (self.target_amount - self.amount) * alpha;
+        let blend = one_pole_block(0.01, self.rate, block.len()) as f32;
+        self.amount += (self.target_amount - self.amount) * blend;
+        let gain = Self::gain(self.amount);
+        let rate = self.rate as f32;
+        let oversampled = 4.0 * rate;
+        // The LM308's closed-loop corner is its gain-bandwidth product divided
+        // by the stage gain; above the oversampled Nyquist it is effectively
+        // bypassed.
+        let cutoff = (Self::OPAMP_GBW_HZ / gain).clamp(20.0, oversampled * 0.45);
+        let op_alpha = 1.0 - (-2.0 * PI as f32 * cutoff / oversampled).exp();
 
         for sample in block.iter_mut() {
-            let x = *sample;
-            let mut shaped = x;
+            let input = *sample;
+            // The RAT's input coupling cap, and a little DC blocking.
+            self.highpass += (input - self.highpass) * self.highpass_alpha;
+            let highpassed = input - self.highpass;
+            let mut shaped = highpassed;
             for step in 1..=OVERSAMPLE {
                 let t = step as f32 / OVERSAMPLE as f32;
-                let sub = self.previous + (x - self.previous) * t;
-                shaped = self.lowpass.process(Self::shape(sub, self.amount));
+                let sub = self.previous + (highpassed - self.previous) * t;
+                // LM308 stage: gain, slew limit, then its closed-loop pole.
+                let amplified = sub * gain;
+                let delta = (amplified - self.slew).clamp(-self.slew_step, self.slew_step);
+                self.slew += delta;
+                self.op_amp += (self.slew - self.op_amp) * op_alpha;
+                // Diodes to ground, then the RAT's post-clip filter.
+                let clipped = Self::diode_clip(self.op_amp);
+                self.post[0] += (clipped - self.post[0]) * self.post_alpha;
+                self.post[1] += (self.post[0] - self.post[1]) * self.post_alpha;
+                shaped = self.post[1];
             }
-            self.previous = x;
-            *sample = shaped;
+            self.previous = highpassed;
+            *sample = shaped * Self::OUTPUT_LEVEL;
         }
     }
 
     fn reset(&mut self) {
         self.previous = 0.0;
         self.amount = self.target_amount;
-        self.lowpass.reset();
+        self.highpass = 0.0;
+        self.op_amp = 0.0;
+        self.slew = 0.0;
+        self.post = [0.0; 2];
     }
 
     fn set(&mut self, name: &str, value: f32) -> bool {
@@ -456,11 +760,31 @@ impl Effect for Distortion {
     }
 }
 
-/// Studio's `Delayed`: a 2 s line, feedback, a fixed 0.7 dry and a wet control.
+/// A Boss DM-2-style analog delay: a bucket-brigade line with companding.
 ///
-/// The controls are the same three knobs: `time` 0..1.5 s, `feedback` 0..0.9,
-/// and `vol` as the wet gain. Time is smoothed per sample and read with linear
-/// interpolation, so moving it bends the echo instead of clicking.
+/// # The circuit
+///
+/// The DM-2 uses a bucket-brigade device (BBD) clocked at a variable rate, with
+/// an NE570-style compandor around it: the input is compressed about 2:1 above a
+/// threshold before the BBD, and expanded back after it, which keeps the noise
+/// of the bucket line below the signal. The BBD also band-limits: its clock and
+/// its sample-and-hold response make the repeats progressively darker, and a
+/// low-pass in the feedback path turns each pass through the line into another
+/// generation of that roll-off. The DM-2's actual time range is about 20–300 ms;
+/// the contract keeps the existing 0..1.5 s range, so the model stretches the
+/// clock and narrows the bandwidth as if it were a slower, longer BBD.
+///
+/// # The approximation
+///
+/// The compandor is a feed-forward envelope encoder (`sqrt(threshold / level)`
+/// above the threshold) and a complementary expander on the delayed signal, both
+/// with a 5 ms attack and an 80 ms release. The BBD is a delay line with an
+/// anti-alias one-pole before it and a reconstruction one-pole after it; the same
+/// output filter feeds the feedback path, so repeats darken. A tiny deterministic
+/// clock-feedthrough noise is added in proportion to the signal, so a silent
+/// input stays silent (the contract's tests require that) while a live line has
+/// the BBD's texture. The dry path is immediate: the only latency is the delay
+/// time itself, and the compander has no look-ahead.
 #[derive(Debug)]
 pub struct Delay {
     rate: u32,
@@ -473,6 +797,19 @@ pub struct Delay {
     target_wet: f32,
     wet: f32,
     smooth: f32,
+    /// Input coupling high-pass (the compandor's input cap).
+    input_highpass: f32,
+    input_highpass_alpha: f32,
+    /// Compandor detectors, on the input and on the delayed signal.
+    input_env: f32,
+    output_env: f32,
+    attack: f32,
+    release: f32,
+    /// BBD anti-alias and reconstruction one-poles.
+    input_lp: f32,
+    output_lp: f32,
+    /// A deterministic clock-feedthrough dither.
+    noise: u32,
 }
 
 impl Delay {
@@ -482,6 +819,23 @@ impl Delay {
     pub const MAX_TIME: f32 = 1.5;
     /// The `feedback` knob stops short of unity, so the line cannot run away.
     pub const MAX_FEEDBACK: f32 = 0.9;
+
+    /// The compandor's threshold, attack and release. The NE570's external
+    /// capacitor sets these; the values sit in the DM-2's audible range.
+    const COMP_THRESHOLD: f32 = 0.03;
+    const COMP_ATTACK_S: f32 = 0.005;
+    const COMP_RELEASE_S: f32 = 0.080;
+    const MAX_EXPANDER: f32 = 12.0;
+    const MIN_ENCODER: f32 = 0.02;
+    /// The BBD's widest bandwidth (at the shortest delay) and the reference
+    /// delay that reaches it. The clock's bandwidth falls as the square root of
+    /// the delay time, as a BBD's does when it is clocked more slowly.
+    const BBD_BW_HZ: f32 = 8_000.0;
+    const BBD_REF_SECONDS: f32 = 0.02;
+    const BBD_MIN_HZ: f32 = 700.0;
+    const INPUT_HIGHPASS_HZ: f32 = 20.0;
+    const CLOCK_NOISE: f32 = 1e-4;
+    const NOISE_SEED: u32 = 0x9E37_79B9;
 
     pub fn new(time_seconds: f32, feedback: f32, wet: f32) -> Self {
         let time = time_seconds.clamp(0.0, Self::MAX_TIME);
@@ -498,6 +852,15 @@ impl Delay {
             target_wet: wet,
             wet,
             smooth: 0.0,
+            input_highpass: 0.0,
+            input_highpass_alpha: 0.0,
+            input_env: 0.0,
+            output_env: 0.0,
+            attack: 0.0,
+            release: 0.0,
+            input_lp: 0.0,
+            output_lp: 0.0,
+            noise: Self::NOISE_SEED,
         }
     }
 
@@ -508,6 +871,15 @@ impl Delay {
         self.target_time = time_seconds.clamp(0.0, Self::MAX_TIME);
         self.target_feedback = feedback.clamp(0.0, Self::MAX_FEEDBACK);
         self.target_wet = wet.clamp(0.0, 1.0);
+    }
+
+    /// The BBD's bandwidth at the current clock. The DM-2's clock runs faster at
+    /// short delays; the square-root law is the band-limiting that makes long
+    /// repeats dark and short ones brighter.
+    fn bandwidth_hz(time_seconds: f32) -> f32 {
+        let time = time_seconds.max(0.001);
+        (Self::BBD_BW_HZ * (Self::BBD_REF_SECONDS / time).sqrt())
+            .clamp(Self::BBD_MIN_HZ, Self::BBD_BW_HZ)
     }
 }
 
@@ -521,6 +893,11 @@ impl Effect for Delay {
         self.feedback = self.target_feedback;
         self.wet = self.target_wet;
         self.smooth = one_pole(0.01, self.rate) as f32;
+        self.attack = one_pole(Self::COMP_ATTACK_S, self.rate) as f32;
+        self.release = one_pole(Self::COMP_RELEASE_S, self.rate) as f32;
+        self.input_highpass_alpha = 1.0
+            - (-2.0 * PI as f32 * Self::INPUT_HIGHPASS_HZ / self.rate as f32).exp();
+        self.reset();
     }
 
     fn process(&mut self, block: &mut [f32]) {
@@ -530,10 +907,42 @@ impl Effect for Delay {
         }
         let rate = self.rate.max(1) as f32;
         let reach = (length - 2) as f32;
+        // The BBD bandwidth follows the smoothed delay time. A block-rate
+        // coefficient is enough: the time moves through a 10 ms one-pole, so
+        // the corner cannot step audibly at a block edge.
+        let bbd = 1.0
+            - (-2.0 * PI as f32 * Self::bandwidth_hz(self.time) / rate).exp();
+
         for sample in block.iter_mut() {
             self.time += (self.target_time - self.time) * self.smooth;
             self.feedback += (self.target_feedback - self.feedback) * self.smooth;
             self.wet += (self.target_wet - self.wet) * self.smooth;
+
+            let input = *sample;
+            let dry = input * Self::DRY;
+
+            // The compandor's input coupling cap, then its 2:1 compressor.
+            self.input_highpass += (input - self.input_highpass) * self.input_highpass_alpha;
+            let highpassed = input - self.input_highpass;
+            let rectified = highpassed.abs();
+            let detector = if rectified > self.input_env {
+                self.attack
+            } else {
+                self.release
+            };
+            self.input_env += (rectified - self.input_env) * detector;
+            let encoder = if self.input_env > Self::COMP_THRESHOLD {
+                (Self::COMP_THRESHOLD / self.input_env)
+                    .sqrt()
+                    .max(Self::MIN_ENCODER)
+            } else {
+                1.0
+            };
+            let compressed = highpassed * encoder;
+
+            // The BBD's input anti-alias filter; this is what is stored.
+            self.input_lp += (compressed - self.input_lp) * bbd;
+            let line_input = self.input_lp;
 
             let delay_samples = (self.time * rate).clamp(1.0, reach);
             let back = self.write as f32 - delay_samples;
@@ -543,9 +952,35 @@ impl Effect for Delay {
             let second = (first + 1) % length;
             let delayed = self.buffer[first] * (1.0 - fraction) + self.buffer[second] * fraction;
 
-            let input = *sample;
-            *sample = input * Self::DRY + delayed * self.wet;
-            self.buffer[self.write] = input + delayed * self.feedback;
+            // The reconstruction filter is also the feedback low-pass: every
+            // pass through the line darkens the next repeat.
+            self.output_lp += (delayed - self.output_lp) * bbd;
+            let bandlimited = self.output_lp;
+
+            // The complementary expander, on the delayed compressed signal.
+            let rectified = bandlimited.abs();
+            let detector = if rectified > self.output_env {
+                self.attack
+            } else {
+                self.release
+            };
+            self.output_env += (rectified - self.output_env) * detector;
+            let expander = if self.output_env > Self::COMP_THRESHOLD {
+                (self.output_env / Self::COMP_THRESHOLD).min(Self::MAX_EXPANDER)
+            } else {
+                1.0
+            };
+            let wet = bandlimited * expander;
+
+            // Clock feedthrough, gated by the signal so silence stays silent.
+            self.noise ^= self.noise << 13;
+            self.noise ^= self.noise >> 17;
+            self.noise ^= self.noise << 5;
+            let white = (self.noise as f32 / u32::MAX as f32) * 2.0 - 1.0;
+            let clock = white * Self::CLOCK_NOISE * (self.input_env + bandlimited.abs());
+
+            *sample = dry + wet * self.wet;
+            self.buffer[self.write] = line_input + clock + bandlimited * self.feedback;
             self.write += 1;
             if self.write == length {
                 self.write = 0;
@@ -556,6 +991,15 @@ impl Effect for Delay {
     fn reset(&mut self) {
         self.buffer.fill(0.0);
         self.write = 0;
+        self.time = self.target_time;
+        self.feedback = self.target_feedback;
+        self.wet = self.target_wet;
+        self.input_highpass = 0.0;
+        self.input_env = 0.0;
+        self.output_env = 0.0;
+        self.input_lp = 0.0;
+        self.output_lp = 0.0;
+        self.noise = Self::NOISE_SEED;
     }
 
     fn set(&mut self, name: &str, value: f32) -> bool {
@@ -588,16 +1032,29 @@ impl Effect for Delay {
     }
 }
 
-/// A soft-knee compressor with the controls Studio's `CompressionX` exposes:
-/// threshold, attack and mix. Ratio, release and knee stay at the browser's
-/// defaults (12, 0.25 s, 30 dB).
+/// The MXR Dyna Comp: an OTA compressor with the pedal's level-dependent squash.
 ///
-/// Chromium's `DynamicsCompressor` is not a published algorithm, so this is a
-/// standard feed-forward, peak-detecting compressor with the same controls and
-/// the same job in the chain — not the same sound. There is deliberately **no
-/// lookahead**: lookahead is latency, and this plan must not add latency
-/// silently. The gain reduction is smoothed by attack and release, which is
-/// also where the mix control is smoothed.
+/// # The circuit
+///
+/// The Dyna Comp is a CA3080 operational transconductance amplifier whose gain is
+/// set by a full-wave detector, followed by a fixed output stage. Its attack is
+/// fast and its release is slow (roughly 5 ms and 150 ms around the unit's
+/// capacitor values). The OTA's control current is linear in the detector's
+/// output, so the gain reduction grows faster at high levels than a fixed-ratio
+/// compressor's — that level-dependent extra slope is the Dyna Comp's "squash",
+/// and it is why the pedal breathes and pumps rather than limiting cleanly. The
+/// real pedal has only Output and Sensitivity; it has no ratio, knee or mix.
+///
+/// # The approximation
+///
+/// The contract exposes six controls, so the circuit's fixed values are mapped
+/// onto them rather than ignored: `thresh` is the detector threshold, `attack`
+/// and `release` move the detector around the unit's ~5 ms / ~150 ms values,
+/// `ratio` sets the OTA's base slope, `knee` its soft turn-on, and `mix` is a
+/// parallel blend. The squash adds up to 0.25 dB of reduction per dB over the
+/// chosen ratio at 24 dB over threshold, capped at 60 dB. The output stage is a
+/// `tanh`, the OTA's finite output swing. The detector is a full-wave rectifier
+/// with the attack/release one-pole, not the exact NE570 RC.
 #[derive(Debug)]
 pub struct Compressor {
     rate: u32,
@@ -613,6 +1070,13 @@ pub struct Compressor {
 }
 
 impl Compressor {
+    /// The OTA's extra slope, in dB of reduction per dB over threshold at
+    /// `SQUASH_REFERENCE_DB` past the knee. This is the circuit's squash.
+    const SQUASH: f32 = 0.25;
+    const SQUASH_REFERENCE_DB: f32 = 24.0;
+    /// The OTA can only turn off so far; beyond this the output would vanish.
+    const MAX_REDUCTION_DB: f32 = 60.0;
+
     pub fn new(
         threshold_db: f32,
         ratio: f32,
@@ -650,21 +1114,27 @@ impl Effect for Compressor {
         let ratio = self.ratio.max(1.0);
         let knee = self.knee_db.max(0.0);
         let half_knee = knee * 0.5;
-        let slope = 1.0 - 1.0 / ratio;
+        let base_slope = 1.0 - 1.0 / ratio;
 
         for sample in block.iter_mut() {
             self.mix += (self.target_mix - self.mix) * self.smooth;
             let x = *sample;
+            // Full-wave rectifier: the detector sees |x|, and the attack and
+            // release smooth its gain reduction.
             let level_db = 20.0 * x.abs().max(1e-9).log10();
             let over = level_db - self.threshold_db;
+            // The OTA's control is linear in the detector current, so the slope
+            // itself grows with the overdrive. That is the Dyna Comp's squash.
+            let slope = base_slope
+                + Self::SQUASH * (over.max(0.0) / Self::SQUASH_REFERENCE_DB);
             let target = if over <= -half_knee {
                 0.0
             } else if over >= half_knee {
-                over * slope
+                (over * slope).min(Self::MAX_REDUCTION_DB)
             } else {
                 // Quadratic knee: continuous with both linear regions.
                 let t = over + half_knee;
-                slope * t * t / (2.0 * knee.max(1e-9))
+                (slope * t * t / (2.0 * knee.max(1e-9))).min(Self::MAX_REDUCTION_DB)
             };
             let coefficient = if target > self.reduction_db {
                 attack
@@ -673,7 +1143,10 @@ impl Effect for Compressor {
             };
             self.reduction_db += (target - self.reduction_db) * coefficient;
             let gain = 10f32.powf(-self.reduction_db / 20.0);
-            *sample = x * ((1.0 - self.mix) + self.mix * gain);
+            // The OTA's finite output swing; the dry side of a parallel mix is
+            // not saturated.
+            let wet = (x * gain).tanh();
+            *sample = x * (1.0 - self.mix) + wet * self.mix;
         }
     }
 
@@ -912,10 +1385,11 @@ impl InsertKind {
         })
     }
 
-    /// Build the pedal at its web defaults: a flat tone stack (the knobs at
-    /// 50), Distorjawn at drive 50, Delayed at 0.525 s / 0.27 / 0.4,
-    /// CompressionX at −25 dB / 0.1 s attack / 0.5 mix, and `reverb2` at
-    /// mix 35 / volume 35. The new pedals start where the browser's pedals
+    /// Build the pedal at its defaults: the tone stack at noon (0 dB on each
+    /// knob, which is the passive stack's scooped centre, not a wire), the RAT
+    /// at drive 50, the DM-2 at 0.525 s / 0.27 / 0.4, the Dyna Comp at −25 dB /
+    /// 6:1 / 5 ms attack / 150 ms release / 6 dB knee / 0.5 mix, and `reverb2`
+    /// at mix 35 / volume 35. The new pedals start where the browser's pedals
     /// start: flanger 1.05 Hz / 0.6 depth / 0.225 feedback / 0.5 mix, fuzz
     /// 0.65 gain / 0.45 tone / 0.6 level, amp 0.5 gain (0 dB) / flat tone /
     /// Combo 1x12, limiter −3 dBFS / 0.2 s, autotune 0.4 speed / full amount /
@@ -925,7 +1399,9 @@ impl InsertKind {
             InsertKind::Tone => Box::new(ToneStack::new(0.0, 0.0, 0.0)),
             InsertKind::Distortion => Box::new(Distortion::new(50.0)),
             InsertKind::Delay => Box::new(Delay::new(0.525, 0.27, 0.4)),
-            InsertKind::Compressor => Box::new(Compressor::new(-25.0, 12.0, 0.1, 0.25, 30.0, 0.5)),
+            InsertKind::Compressor => {
+                Box::new(Compressor::new(-25.0, 6.0, 0.005, 0.15, 6.0, 0.5))
+            }
             InsertKind::Reverb => Box::new(Reverb::new()),
             InsertKind::Flanger => Box::new(Flanger::new(1.05, 0.6, 0.225, 0.5)),
             InsertKind::Fuzz => Box::new(Fuzz::new(0.65, 0.45, 0.6)),
@@ -1290,6 +1766,60 @@ mod tests {
         (block.iter().map(|sample| sample * sample).sum::<f32>() / block.len() as f32).sqrt()
     }
 
+    /// The steady-state gain a tone stack gives a quiet sine at `hz`, including
+    /// the fixed makeup gain and the output trim.
+    fn tone_gain(tone: &mut ToneStack, hz: f32, frames: usize) -> f32 {
+        tone.prepare(RATE, frames);
+        let input = sine(hz, 0.05, frames);
+        let mut output = input.clone();
+        tone.process(&mut output);
+        rms(&output[frames / 2..]) / rms(&input[frames / 2..])
+    }
+
+    /// The total harmonic distortion of the RAT for a 220 Hz, 0.1 sine. The
+    /// final 4800 samples are exactly 22 cycles, so a single-bin DFT recovers
+    /// the fundamental without a window.
+    fn rat_thd(drive: f32) -> f32 {
+        const FRAMES: usize = 16_384;
+        const MEASURE: usize = 4_800;
+        let mut rat = Distortion::new(drive);
+        rat.prepare(RATE, FRAMES);
+        let mut output = sine(220.0, 0.1, FRAMES);
+        rat.process(&mut output);
+        let start = FRAMES - MEASURE;
+        let segment = &output[start..];
+        let mean = segment.iter().sum::<f32>() / MEASURE as f32;
+        let mut sin_sum = 0.0f64;
+        let mut cos_sum = 0.0f64;
+        let mut total = 0.0f64;
+        for (offset, sample) in segment.iter().enumerate() {
+            let value = f64::from(sample - mean);
+            let phase = 2.0 * std::f64::consts::PI * 220.0 * (start + offset) as f64
+                / f64::from(RATE);
+            sin_sum += value * phase.sin();
+            cos_sum += value * phase.cos();
+            total += value * value;
+        }
+        let fundamental = 2.0 * (sin_sum * sin_sum + cos_sum * cos_sum).sqrt() / MEASURE as f64;
+        let total_power = total / MEASURE as f64;
+        let residual = (total_power - fundamental * fundamental / 2.0).max(0.0);
+        (residual.sqrt() / (fundamental / std::f64::consts::SQRT_2)) as f32
+    }
+
+    /// One DFT bin of `hz` over a window that is an integer number of cycles.
+    fn dft_amplitude(block: &[f32], hz: f32, start: usize, len: usize) -> f32 {
+        let mut sin_sum = 0.0f64;
+        let mut cos_sum = 0.0f64;
+        for offset in 0..len {
+            let sample = f64::from(block[start + offset]);
+            let phase = 2.0 * std::f64::consts::PI * f64::from(hz) * (start + offset) as f64
+                / f64::from(RATE);
+            sin_sum += sample * phase.sin();
+            cos_sum += sample * phase.cos();
+        }
+        (2.0 * (sin_sum * sin_sum + cos_sum * cos_sum).sqrt() / len as f64) as f32
+    }
+
     #[test]
     fn every_effect_turns_silence_into_silence() {
         let mut effects: Vec<Box<dyn Effect>> = vec![
@@ -1355,24 +1885,59 @@ mod tests {
     }
 
     #[test]
-    fn the_tone_stack_boosts_lows_and_cuts_highs() {
-        let mut tone = ToneStack::new(12.0, 0.0, -12.0);
-        tone.prepare(RATE, 8192);
+    fn the_tone_stack_moves_its_three_bands() {
+        // The passive network is not a set of calibrated shelves; the knob's
+        // travel is the pot's travel. These are the circuit's real extremes.
+        let bass_boost = tone_gain(&mut ToneStack::new(12.0, 0.0, 0.0), 100.0, 16_384);
+        let bass_cut = tone_gain(&mut ToneStack::new(-12.0, 0.0, 0.0), 100.0, 16_384);
+        assert!(
+            bass_boost > bass_cut * 1.2,
+            "the bass pot did not move 100 Hz: {bass_boost} against {bass_cut}"
+        );
 
-        let low_input = sine(100.0, 0.1, 8192);
-        let mut low = low_input.clone();
-        tone.process(&mut low);
-        let low_ratio = rms(&low[4096..]) / rms(&low_input[4096..]);
+        let treble_boost = tone_gain(&mut ToneStack::new(0.0, 0.0, 12.0), 8_000.0, 16_384);
+        let treble_cut = tone_gain(&mut ToneStack::new(0.0, 0.0, -12.0), 8_000.0, 16_384);
+        assert!(
+            treble_boost > treble_cut * 2.5,
+            "the treble pot did not move 8 kHz: {treble_boost} against {treble_cut}"
+        );
 
-        tone.reset();
-        let high_input = sine(8_000.0, 0.1, 8192);
-        let mut high = high_input.clone();
-        tone.process(&mut high);
-        let high_ratio = rms(&high[4096..]) / rms(&high_input[4096..]);
+        let mid_boost = tone_gain(&mut ToneStack::new(0.0, 12.0, 0.0), 1_000.0, 16_384);
+        let mid_cut = tone_gain(&mut ToneStack::new(0.0, -12.0, 0.0), 1_000.0, 16_384);
+        assert!(
+            mid_boost > mid_cut * 2.0,
+            "the mid pot did not move 1 kHz: {mid_boost} against {mid_cut}"
+        );
 
-        assert!(low_ratio > 1.5, "100 Hz was not boosted: {low_ratio}");
-        assert!(high_ratio < 0.5, "8 kHz was not cut: {high_ratio}");
-        assert!(low_ratio > high_ratio * 3.0, "the shelves were too close");
+        // Noon is the passive stack's scooped centre, made unity at 1 kHz by
+        // the fixed makeup gain, not a wire.
+        let noon = tone_gain(&mut ToneStack::new(0.0, 0.0, 0.0), 1_000.0, 16_384);
+        assert!(
+            (0.9..=1.1).contains(&noon),
+            "the noon mid band was not unity: {noon}"
+        );
+    }
+
+    #[test]
+    fn the_tone_stack_controls_interact() {
+        // In the FMV network the treble pot returns through the bass/mid
+        // branches. Changing treble therefore changes the mid band, which no
+        // independent three-shelf cascade can do.
+        let treble_up = tone_gain(&mut ToneStack::new(0.0, 0.0, 12.0), 1_000.0, 16_384);
+        let treble_down = tone_gain(&mut ToneStack::new(0.0, 0.0, -12.0), 1_000.0, 16_384);
+        assert!(
+            treble_up > treble_down * 1.3,
+            "treble did not load the mid band: {treble_up} against {treble_down}"
+        );
+
+        // The mid pot is the ground return of the treble branch, so it moves
+        // the top end as well as the middle.
+        let mid_up = tone_gain(&mut ToneStack::new(0.0, 12.0, 0.0), 8_000.0, 16_384);
+        let mid_down = tone_gain(&mut ToneStack::new(0.0, -12.0, 0.0), 8_000.0, 16_384);
+        assert!(
+            mid_up > mid_down * 1.3,
+            "mid did not load the top band: {mid_up} against {mid_down}"
+        );
     }
 
     #[test]
@@ -1391,8 +1956,62 @@ mod tests {
     }
 
     #[test]
+    fn the_rat_hard_clips_and_filters() {
+        // A hot sine at full drive is bounded and flat-topped: the diodes clamp
+        // it, so its crest factor falls below a sine's 1.414.
+        let mut rat = Distortion::new(100.0);
+        rat.prepare(RATE, 16_384);
+        let mut output = sine(220.0, 0.5, 16_384);
+        rat.process(&mut output);
+        let segment = &output[8192..];
+        let peak = segment.iter().cloned().fold(0.0f32, f32::max);
+        let crest = peak / rms(segment);
+        assert!(peak < 0.8, "the RAT did not clamp the output: peak {peak}");
+        assert!(
+            crest < 1.35,
+            "the clipped wave still looked like a sine: crest {crest}"
+        );
+
+        // At low drive the stage is clean, so the fixed post-clip filter is
+        // visible: 6 kHz is well above the RAT's corner, 500 Hz is not.
+        let low = {
+            let mut rat = Distortion::new(0.0);
+            rat.prepare(RATE, 16_384);
+            let input = sine(500.0, 0.02, 16_384);
+            let mut output = input.clone();
+            rat.process(&mut output);
+            rms(&output[8192..]) / rms(&input[8192..])
+        };
+        let high = {
+            let mut rat = Distortion::new(0.0);
+            rat.prepare(RATE, 16_384);
+            let input = sine(6_000.0, 0.02, 16_384);
+            let mut output = input.clone();
+            rat.process(&mut output);
+            rms(&output[8192..]) / rms(&input[8192..])
+        };
+        assert!(
+            high < low * 0.5,
+            "the RAT filter did not darken the top: 500 Hz {low}, 6 kHz {high}"
+        );
+    }
+
+    #[test]
+    fn the_rat_hard_clip_adds_harmonics() {
+        let clean = rat_thd(5.0);
+        let clipped = rat_thd(95.0);
+        assert!(clean < 0.05, "low drive was already distorted: {clean}");
+        assert!(
+            clipped > 0.25,
+            "high drive did not add harmonics: {clipped}"
+        );
+    }
+
+    #[test]
     fn the_delay_echoes_at_its_time_and_not_before() {
-        // 0.01 s at 48 kHz is exactly 480 samples.
+        // 0.01 s at 48 kHz is exactly 480 samples. The DM-2's companding and
+        // band-limiting shape the first echo, but they add no latency: the dry
+        // sample is immediate and the wet path begins exactly at 480.
         let mut delay = Delay::new(0.01, 0.0, 1.0);
         delay.prepare(RATE, 2048);
         let mut block = vec![0.0f32; 2048];
@@ -1412,9 +2031,86 @@ mod tests {
             );
         }
         assert!(
-            (block[480] - 1.0).abs() < 1e-4,
-            "the echo at 480 was {}",
+            block[480].abs() > 0.1,
+            "the echo at 480 was only {}",
             block[480]
+        );
+    }
+
+    fn delay_wet_ratio(amplitude: f32) -> f32 {
+        // The dry path is identical with vol 0 and vol 1, so subtracting the
+        // output powers isolates the wet path. 997 Hz over 0.0523 s is not an
+        // integer number of cycles, so the dry/wet cross term averages away.
+        let input = sine(997.0, amplitude, 48_000);
+        let input_rms = rms(&input[24_000..]);
+
+        let mut dry_only = Delay::new(0.0523, 0.0, 0.0);
+        dry_only.prepare(RATE, 48_000);
+        let mut dry_block = input.clone();
+        dry_only.process(&mut dry_block);
+        let dry_power = rms(&dry_block[24_000..]).powi(2);
+
+        let mut wet = Delay::new(0.0523, 0.0, 1.0);
+        wet.prepare(RATE, 48_000);
+        let mut wet_block = input;
+        wet.process(&mut wet_block);
+        let wet_power = rms(&wet_block[24_000..]).powi(2);
+
+        (wet_power - dry_power).max(0.0).sqrt() / input_rms
+    }
+
+    #[test]
+    fn the_dm2_compander_keeps_the_wet_level() {
+        // The NE570 compressor attenuates a loud input before the line and the
+        // expander restores it after; a quiet and a loud sine should therefore
+        // come back at about the same wet level, not 26 dB apart.
+        let quiet = delay_wet_ratio(0.02);
+        let loud = delay_wet_ratio(0.4);
+        assert!(
+            (0.5..=1.5).contains(&quiet),
+            "the quiet wet level was {quiet}"
+        );
+        assert!(
+            (0.5..=1.5).contains(&loud),
+            "the loud wet level was {loud}"
+        );
+        assert!(
+            (quiet - loud).abs() < 0.35,
+            "companding did not track the level: quiet {quiet}, loud {loud}"
+        );
+    }
+
+    #[test]
+    fn the_dm2_repeats_darken() {
+        const FRAMES: usize = 48_000;
+        const BURST: usize = 1_920; // 40 ms
+        const WINDOW: usize = 1_920; // 40 ms: 20 cycles at 500 Hz, 240 at 6 kHz
+        let mut delay = Delay::new(0.05, 0.8, 1.0);
+        delay.prepare(RATE, FRAMES);
+        let mut block = vec![0.0f32; FRAMES];
+        for (index, sample) in block.iter_mut().take(BURST).enumerate() {
+            let t = index as f32 / RATE as f32;
+            *sample = 0.05 * (std::f32::consts::TAU * 500.0 * t).sin()
+                + 0.05 * (std::f32::consts::TAU * 6_000.0 * t).sin();
+        }
+        delay.process(&mut block);
+
+        let first = (0.05 * RATE as f32) as usize + 100;
+        let second = (0.10 * RATE as f32) as usize + 100;
+        let low_first = dft_amplitude(&block, 500.0, first, WINDOW);
+        let high_first = dft_amplitude(&block, 6_000.0, first, WINDOW);
+        let low_second = dft_amplitude(&block, 500.0, second, WINDOW);
+        let high_second = dft_amplitude(&block, 6_000.0, second, WINDOW);
+
+        let first_ratio = high_first / low_first.max(1e-9);
+        let second_ratio = high_second / low_second.max(1e-9);
+        assert!(
+            second_ratio < first_ratio * 0.8,
+            "the second repeat did not darken: {first_ratio} then {second_ratio}"
+        );
+        assert!(
+            low_second < low_first * 0.9,
+            "feedback did not decay the second repeat: {low_first} then {low_second}"
         );
     }
 
@@ -1522,6 +2218,41 @@ mod tests {
         assert_eq!(compressor.release_s, 0.25, "NaN moved the release");
         assert!(compressor.set("knee", f32::NAN));
         assert_eq!(compressor.knee_db, 6.0, "NaN moved the knee");
+    }
+
+    #[test]
+    fn the_dyna_comp_squashes_with_level() {
+        // The OTA's gain control is linear in the detector, so the reduction
+        // grows faster than a fixed ratio. A 6 dB louder sine should not come
+        // out 6 dB louder; at this setting it is actually quieter (the squash).
+        let mut gentle = Compressor::new(-30.0, 12.0, 0.005, 0.15, 6.0, 1.0);
+        gentle.prepare(RATE, 16_384);
+        let mut quiet = sine(220.0, 0.4, 16_384);
+        gentle.process(&mut quiet);
+        let quiet_rms = rms(&quiet[8192..]);
+
+        let mut squash = Compressor::new(-30.0, 12.0, 0.005, 0.15, 6.0, 1.0);
+        squash.prepare(RATE, 16_384);
+        let mut loud = sine(220.0, 0.8, 16_384);
+        squash.process(&mut loud);
+        let loud_rms = rms(&loud[8192..]);
+
+        assert!(
+            loud_rms < quiet_rms * 1.05,
+            "the Dyna Comp did not squash: 0.4 -> {quiet_rms}, 0.8 -> {loud_rms}"
+        );
+
+        // Below threshold the detector is off and the output passes untouched.
+        let mut clean = Compressor::new(-30.0, 12.0, 0.005, 0.15, 6.0, 1.0);
+        clean.prepare(RATE, 16_384);
+        let input = sine(220.0, 0.02, 16_384);
+        let mut passed = input.clone();
+        clean.process(&mut passed);
+        let ratio = rms(&passed[8192..]) / rms(&input[8192..]);
+        assert!(
+            (ratio - 1.0).abs() < 0.02,
+            "a below-threshold sine was changed: {ratio}"
+        );
     }
 
     fn reset_matches_the_first_run(mut effect: Box<dyn Effect>) {
