@@ -390,6 +390,14 @@ sub authentication_passer($c) {
 		# kept a request in flight every few seconds returned here forever and
 		# was never gated ("I locked it and still have full access").
 		$c->session('server_time' => $server_time);
+		# A session in use earns a fresh warranty: the span it was minted with
+		# moves the deadline forward on every request, so an active tab never
+		# lapses under the person. A session minted before spans were stored has
+		# none and keeps the deadline it already had.
+		my $warranty_now = $c->session('warranty');
+		my $warranty_next = &subs::session_warranty_slide($warranty_now, $c->session('warranty_span'), $server_time);
+		$c->session('warranty' => $warranty_next)
+			if defined $warranty_next && (!defined $warranty_now || $warranty_next != $warranty_now);
 		return $authentication;
 	}
 
@@ -569,6 +577,15 @@ sub authentication_passer($c) {
 		elsif ($c->session('warranty') < $server_time) {
 			$authentication = 'revoked';
 			$gate_reason ||= 'warranty-expired';
+		}
+		elsif ($authentication eq 'approved') {
+			# Still inside the warranty: earn a fresh span, so a session in use
+			# does not lapse at a fixed deadline. The expired case above was
+			# caught and is never revived here.
+			my $warranty_now = $c->session('warranty');
+			my $warranty_next = &subs::session_warranty_slide($warranty_now, $c->session('warranty_span'), $server_time);
+			$c->session('warranty' => $warranty_next)
+				if defined $warranty_next && (!defined $warranty_now || $warranty_next != $warranty_now);
 		}
 	}
 	# An unreadable vault keeps the session, so it never reaches the lapse log

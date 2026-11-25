@@ -842,6 +842,18 @@ sub warranty_renewal_ok {
 	return ($warranty + 0) > (($now || &rightNow()) + 0) ? 1 : 0;
 }
 
+# A login session's warranty is a deadline, but a session in use must not lapse
+# under the person. Given the deadline, the span it was minted with, and now,
+# return the deadline a fresh request earns. An already-expired warranty is
+# never revived, and a session minted before spans were stored has no span and
+# keeps the deadline it already had.
+sub session_warranty_slide {
+	my ($warranty, $span, $now) = @_;
+	return $warranty unless defined $warranty && defined $span && $span > 0;
+	return $warranty if $warranty < $now;
+	return $now + $span;
+}
+
 # The voices say_it can speak with. A friendly name carries the engine and what
 # that engine needs; the Speech setting in Configure picks one by name, so the
 # list here is the single source of truth for both the taker and the picker.

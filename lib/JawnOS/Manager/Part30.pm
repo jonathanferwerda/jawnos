@@ -210,7 +210,12 @@ sub device_session_mint($c, $device_uuid) {
 	my ($db,$database) = &subs::database_grabber();
 	return unless $db;
 	my $now = &subs::rightNow();
-	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'login_warranty' }) || '-3h', $now);
+	# A paired device proves itself with a non-extractable key on every login;
+	# its roster row is the revocation, checked on every request. The session
+	# this key mints is therefore as durable as the app's forever ticket: the
+	# password/passkey login span must not turn a paired device into a
+	# five-minute session when the gate logs it back in.
+	my $warranty = &subs::forever_warranty();
 	my $person = &subs::person_for_device($device_uuid);
 	# A device nobody has claimed is not a citizen: the person is the identity.
 	# The owner backfill attaches the devices that predate this rule; a device

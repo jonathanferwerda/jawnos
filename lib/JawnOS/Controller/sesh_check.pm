@@ -181,9 +181,13 @@ sub action_7519 {
 			# back in when this machine's key file is gone.
 			my $app_warranty = &subs::setting_grabber({ app => $c->param('app'), setting => 'warranty' });
 			my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ 'app' => 'me', 'setting' => 'login_warranty' } ) || '-3h',$server_time);
+			# The span, not just the deadline, so a request can tell how far to
+			# move the warranty forward while the session is in use.
+			my $warranty_span = $warranty - $server_time;
 			$c->session('database' => $database);
 			$c->session('suds_id' => &subs::suds_id($suds_key));
 			$c->session('warranty' => $warranty);
+			$c->session('warranty_span' => ($warranty_span > 0 ? $warranty_span : undef));
 			$c->session('string' => &subs::random_string_creator());
 			$c->session('name') => &subs::setting_grabber({ app => 'me', setting => 'name' });
 			$c->session('privilege' => ($peer_proved ? 'resident' : 'guest'));

@@ -951,6 +951,7 @@ sub action_9190 {
 	my $now = &subs::rightNow();
 	my ($db, $database) = &subs::database_grabber();
 	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'login_warranty' }) || '-12h', $now);
+	my $warranty_span = $warranty - $now;
 	$c->session(authentication => 'approved');
 	$c->session(webauthn => 1);
 	$c->session(source => 'webauthn');
@@ -959,6 +960,7 @@ sub action_9190 {
 	$c->session(name => ($p ? $p->{'name'} : $cred->{'person_name'}));
 	$c->session(privilege => ($p && $p->{'privilege'}) ? $p->{'privilege'} : 'guest');
 	$c->session(warranty => $warranty);
+	$c->session(warranty_span => ($warranty_span > 0 ? $warranty_span : undef));
 	$c->session(server_time => $now);
 	$c->session(string => &subs::random_string_creator());
 	$c->session(database => $database) if $database;
