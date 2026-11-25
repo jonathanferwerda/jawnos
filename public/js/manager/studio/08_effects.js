@@ -52,6 +52,29 @@ function studioEffectNatural(kind, control, value) {
 		case 'equalizer.low':
 		case 'equalizer.mid':
 		case 'equalizer.high':
+		case 'master_eq.low':
+		case 'master_eq.mid':
+		case 'master_eq.high':
+		case 'equalizer.b32':
+		case 'equalizer.b64':
+		case 'equalizer.b125':
+		case 'equalizer.b250':
+		case 'equalizer.b500':
+		case 'equalizer.b1k':
+		case 'equalizer.b2k':
+		case 'equalizer.b4k':
+		case 'equalizer.b8k':
+		case 'equalizer.b16k':
+		case 'master_eq.b32':
+		case 'master_eq.b64':
+		case 'master_eq.b125':
+		case 'master_eq.b250':
+		case 'master_eq.b500':
+		case 'master_eq.b1k':
+		case 'master_eq.b2k':
+		case 'master_eq.b4k':
+		case 'master_eq.b8k':
+		case 'master_eq.b16k':
 		case 'amp.bass':
 		case 'amp.mid':
 		case 'amp.treble':
@@ -1585,10 +1608,10 @@ function studioEffectSynth(ctx, name) {
 // ---- master graphic equalizer ----------------------------------------------
 // The master rack's graphic EQ: ten peaking bands on the octave centres, Q 1.4,
 // each knob -12..+12 dB. `master_eq` keeps the track equalizer's kind in the
-// alias table, so the contract's natural-unit mapping (dB) still applies to the
-// three old names; those are now shortcuts onto 125 Hz, 1 kHz and 8 kHz so an
-// old song lands on the right bands. The builder is registered under its exact
-// name in studioEffectBuilders (not its alias kind), so studioInsert(ctx,
+// alias table, so the contract's natural-unit mapping (dB) applies to all ten
+// band names and to the three old names; those are shortcuts onto 125 Hz,
+// 1 kHz and 8 kHz so an old song lands on the right bands. The builder is
+// registered under its exact name in studioEffectBuilders (not its alias kind), so studioInsert(ctx,
 // 'master_eq') returns this one rather than the track's Baxandall equalizer.
 var studioMasterEqBands = [
 	{ control: 'b32',  hz: 32 },

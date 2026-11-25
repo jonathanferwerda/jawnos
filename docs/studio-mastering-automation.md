@@ -16,9 +16,11 @@ reasons are specific:
   runs (`engine/src/socket.rs:3896-3901`).
 - The patchbay has no master rack at all. `SourceRoute` is only `Bus` or `Sink`
   (`engine/src/patchbay.rs:77-84`).
-- The master rack's EQ is **three bands**, not ten: `master_eq` is the
-  `equalizer`, 200 Hz / 1 kHz / 4 kHz, ±12 dB
-  (`engine/src/effect/equalizer.rs:82-90`; `docs/studio-effects.md:96-107`).
+- The master rack's EQ is now **ten bands**: `master_eq` is the `GraphicEq`
+  (32 / 64 / 125 / 250 / 500 Hz and 1 / 2 / 4 / 8 / 16 kHz, ±12 dB,
+  `engine/src/effect/graphic_eq.rs`; the browser mirrors it in
+  `public/js/manager/studio/08_effects.js`). The first slice writes those ten
+  bands; it does not need a second EQ just for automation.
 
 The first useful slice is therefore the browser, where the master chain
 (`public/js/manager/studio/10_master.js:25-39`) and `getUserMedia`
@@ -32,7 +34,7 @@ engine change is needed.
 | The brief says | The tree has | What the design does |
 | --- | --- | --- |
 | A local mic is a `device` source | `device` is the machine's **system mix** (`engine/src/patchbay.rs:122`); a local capture channel is `input` (`:69`; `lib/JawnOS/Audio/Plan.pm:26`) | A local measurement mic is an `input` source with a `node` (a PipeWire source name). `device` is not a microphone. |
-| The master EQ has ten bands | `master_eq` is the three-band `Equalizer`: 200 / 1k / 4k, ±12 dB (`engine/src/effect/equalizer.rs:82-90`) | The ten-band bank is new. Call it `master_auto_eq` (or `mastering.bands`); do not pretend `master_eq` already has ten bands. |
+| The master EQ has ten bands | `master_eq` is the ten-band `GraphicEq` (`engine/src/effect/graphic_eq.rs`), with the same ten controls in the browser (`public/js/manager/studio/08_effects.js`) | The automation writes those ten bands; no new EQ row is needed. The new part is the analyzer stage. |
 | The mic is routed to an analyzer | `SourceRoute` is only `Bus` or `Sink` (`engine/src/patchbay.rs:77-84`); an unrouted source is skipped (`:1556`) | Add an analyzer tap: a source marked for measurement, with no bus or sink edge. |
 | The loop runs during master playback | The transport has no capture; only a take's live ring can be attached (`engine/src/playback.rs:1559-1569`) | The measurement path belongs in the transport, not the patchbay. This is the main new plumbing. |
 | A `mastering` plan section | `audio_plan_normalize` returns only `sources`, `buses`, `sinks`, `routes` (`lib/JawnOS/Audio/Plan.pm:404-494`) | Put `mastering` in the **transport plan** and the song, not the house audio plan. The audio plan carries only the mic **source**. |
@@ -96,7 +98,7 @@ loop wrap or a song change breaks that; the design resets or freezes on each.
 
 | Need | Where it would live | Today |
 | --- | --- | --- |
-| A ten-band correction EQ | A new `Mastering` stage, or a new `InsertKind` | Missing. `master_eq` is three bands (`engine/src/effect/equalizer.rs:82-90`) and the rack is a fixed five-insert array (`engine/src/mixer.rs:342-348`). |
+| A ten-band correction EQ | Reuse the ten-band `master_eq` (`GraphicEq`) as the correction target; the new part is the analyzer stage, not an EQ. The rack is the fixed master order in `engine/src/mixer.rs`. |
 | An analyzer route | `SourceRoute` in `engine/src/patchbay.rs:77-84` | Missing: only `Bus` and `Sink` exist. |
 | An analyzer source flag | `Source` (`engine/src/patchbay.rs:99-150`) and `_audio_plan_node` (`lib/JawnOS/Audio/Plan.pm:263-346`) | Missing. An unrouted source costs no ring and is skipped (`engine/src/patchbay.rs:1556`). |
 | A mic ring on the transport | `TransportSource` (`engine/src/playback.rs:1371-1395`), `run_transport` (`engine/src/socket.rs:6625-6650`) | Missing. The transport can only take a **take's** live ring. |
@@ -204,12 +206,13 @@ the reference, `M_b - R_b` becomes the acoustic transfer alone, and the update
 is `E_b' = E_b + g * (T_b - (M_b - R_b))`. Both forms are correct; do not mix
 them.
 
-The manual `master_eq` is a separate three-band stage. If it is on, it is inside
-the measured path but outside the auto EQ's own `E_b`, so the loop will treat
-the manual curve as part of the room and correct it away. The default is
-therefore: **the auto EQ is the ten-band master EQ; the manual `master_eq` is
-bypassed while the auto EQ is armed.** The UI says so, and the song stores both
-so the person can compare them.
+The manual `master_eq` is the same ten-band stage the automation writes. If a
+person turns a band while the automation is armed, the loop treats that change
+as a manual target offset unless the page hands the band back to the loop; the
+UI therefore marks the automated bands and offers **Take** and **Release**. The
+default is: **the auto EQ owns the ten `master_eq` bands while it is armed; the
+person's manual curve is stored beside them and restored on Reset.** The song
+stores both so the person can compare them.
 
 ### 3.4 The target curve
 
@@ -433,7 +436,7 @@ fixes it.
 | One mic corrects a stereo image | The mic is mono and the correction is stereo-linked: the same `E_b` on left and right. Never derive a per-channel correction from one microphone. |
 | A phone is not a measurement mic | No calibration, AGC/NS/AEC off (`public/js/manager/studio/05_inputs.js:714-718`), the phone held still and away from the speakers. The result is labelled as the phone's curve, not a calibrated measurement. |
 | The measurement is stale | Freeze at 2 s, fade to 0 dB at 30 s, `state: "stale"`. The manual rack and the person's saved curve are untouched. |
-| The loop fights the manual EQ | The auto EQ is the ten-band master EQ; the manual three-band `master_eq` is bypassed by default while it is armed. The page says when both are on. |
+| The loop fights the manual EQ | The auto EQ writes the ten `master_eq` bands; while it is armed the page marks them automated, and **Release** hands them back to the person's stored curve. The page says when both are on. |
 | A take is recording | Do not run Active while a take records on the same machine. Learn may run beside a take only if the backend grants a second capture; otherwise refuse by name. |
 | The song changes under the curve | The learned curve is saved with the song. A new song loads its own `bands` (or 0) and resets the loop. A seek or a clip change resets the integrator. |
 
@@ -458,10 +461,12 @@ The browser already owns the master chain and the microphone permission:
    `AnalyserNode`. Neither node reaches `destination`.
 3. Run for 10 s. Average the power in each of the ten octave bands (sum the FFT
    bins, not one bin per band). Gate each band as §3.2.
-4. `D_b = (M_b - R_b) - T_b`; `E_b = clamp(-D_b, -6, +6)`. Set ten
-   `BiquadFilterNode`s (peaking, Q 1.41) in a new browser-only
-   `master_auto_eq` row, and save `bands` in the song's master record
-   (`10_master.js:185-193`).
+4. `D_b = (M_b - R_b) - T_b`; `E_b = clamp(-D_b, -6, +6)`. Write the ten
+   `master_eq` band controls (`b32`…`b16k`) through the existing
+   `studioEffectMasterEq` builder and save the learned `bands` in the song's
+   master record (`10_master.js:185-193`). If the page wants to keep the
+   learned curve separate from the person's manual curve, it stores the
+   manual values first and restores them on Reset.
 5. Show the mic picker, Learn/Reset, the ten before/after bars and the target
    line. Learn is one-shot; Active is not in this slice.
 
@@ -471,17 +476,17 @@ bank, the transport's capture, the peer, or a continuous loop. The browser's
 `AnalyserNode` is an FFT and the engine's production path is a filter bank; the
 two will agree in broad shape, not sample for sample.
 
-If even the new row is too much for the first slice, the control experiment is
-to fit the **existing three-band** `master_eq` from the same ten-band
-measurement: `low` = 32–250 Hz, `mid` = 500–2k, `high` = 4k–16k
-(`public/js/manager/studio/08_effects.js:597-618`). That is genuinely no new UI,
-but it is a coarse result and should be labelled as such.
+If even writing the ten bands is too much for the first slice, the control
+experiment is to fit the **existing `master_eq`** from the same ten-band
+measurement by grouping 32–250 Hz into `b125`, 500–2k into `b1k` and 4k–16k into
+`b8k`. That is genuinely no new UI, but it is a coarse result and should be
+labelled as such.
 
 ### 7.2 Phases
 
 | Phase | What is built | What it proves | What it does not prove |
 | --- | --- | --- | --- |
-| 0. Browser Learn | The slice above: `getUserMedia`, `AnalyserNode`, ten bands, a browser `master_auto_eq`, the song save | A person can hear a learned curve, the gate and the target work, and the UI is readable | The engine, the transport, the peer, Active |
+| 0. Browser Learn | The slice above: `getUserMedia`, `AnalyserNode`, ten bands written to the browser `master_eq`, the song save | A person can hear a learned curve, the gate and the target work, and the UI is readable | The engine, the transport, the peer, Active |
 | 1. Engine, local mic | `mastering` in `TransportPlan`; an `analyzer` source; `SystemCapture` attached to the transport; a native ten-band stage before `run_master`; `mastering` in `status` | The loop closes on `table` while the transport plays, at low level, with a local mic | A phone, a long Active run, a room with people |
 | 2. Phone peer | A `peer` mic source, `Uplink` started for the transport, the mic lease | The phone is a usable magnitude sensor; its latency does not matter | That the phone's response is trustworthy |
 | 3. Active and safety | The 0.15 loop, the stale fade, the positive budget, the manual-EQ rule | A slow loop is stable over a song and fails safe | A calibrated room measurement |
