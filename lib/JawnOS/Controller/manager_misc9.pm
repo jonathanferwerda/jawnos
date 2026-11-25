@@ -3041,4 +3041,274 @@ sub studio_export_append {
 	return $files;
 }
 
+# --- Remote Studio control ---------------------------------------------------
+#
+# A phone or tablet picks another machine and drives that machine's Studio.
+# The target's browser owns the live state: it publishes a compact snapshot to
+# remote_publish and is the only thing that executes a command. The server
+# stores the snapshot and relays signed peer requests; it never invents state
+# and never runs a Studio action itself.
+#
+# The snapshot the target's browser publishes is:
+#   { ok, at,
+#     song      => { name, id, bpm, signature, loop },
+#     transport => { playing, position, metronome, bpm, loop },
+#     tracks    => [ { index, name, armed, selected, gain, pan, mute, solo, input } ],
+#     clips     => [ { id, track, start, length, name } ],
+#     master    => [ { name, on, controls } ] }
+#
+# A command names one of the whitelisted areas below and carries a JSON object:
+#   transport { action: play|stop|seek|bpm|metronome|loop, value }
+#   record    { action: start|stop|arm, track }
+#   track     { action: select|add, index }
+#   mixer     { track, control: gain|pan|mute|solo, value }
+#   master    { name, control, value|on }
+#   song      { action: open|save|new, id|name }
+#   select    { track }
+#
+# The command crosses as a named console instruction, exactly like a remote
+# Music command: the target browser keeps the only table of instructions it
+# will run, so a relayed string can never become source on the far side.
+
+# The peers a person may control: every active machine but this one and the
+# server, deduped by uuid. The same rule the Music picker uses; a server has no
+# browser, so it has no Studio to drive.
+sub studio_remote_machines {
+	my $rows = &subs::remote_machine_lister({ self => 'no' }) || [];
+	my $me = &subs::signatorial_designer();
+	my (@out, %seen);
+	foreach my $rm ( @{$rows} ) {
+		next if (($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1');
+		next if $me && (($rm->{'signatorial'} || '') eq $me);
+		next if (($rm->{'device'} || '') eq 'server');
+		next unless (($rm->{'connection'} || '') eq 'active');
+		my $uuid = $rm->{'uuid'} || '';
+		next unless length $uuid && !$seen{$uuid}++;
+		push @out, {
+			uuid => $uuid,
+			label => &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $uuid,
+			hostname => ($rm->{'hostname'} || ''),
+			device => ($rm->{'device'} || '')
+		};
+	}
+	return \@out;
+}
+
+# One active peer the picker would show. A saved target that went offline is
+# not a target any more: relaying to it would be a silent loss. The lister
+# already drops this machine's own row, and the server has no browser to act.
+sub studio_remote_peer($uuid) {
+	return unless defined $uuid && length $uuid && $uuid ne 'local';
+	my $rows = &subs::remote_machine_lister({ self => 'no', connection => 'active', uuid => $uuid }) || [];
+	my ($peer) = grep {
+		($_->{'uuid'} || '') eq $uuid
+			&& ($_->{'connection'} || '') eq 'active'
+			&& ($_->{'device'} || '') ne 'server'
+	} @{$rows};
+	return $peer;
+}
+
+# A request value may arrive as a form/query parameter (the route the relay
+# copies) or in a JSON body (what the Studio window sends). Read both without
+# letting a repeated field become an array.
+sub studio_remote_body {
+	my ($c) = @_;
+	my $body = eval { $c->req->json };
+	return $body if ref $body eq 'HASH';
+	my $raw = $c->req->body;
+	return {} unless defined $raw && length $raw && length($raw) <= 65_536;
+	$body = eval { decode_json($raw) };
+	return ref $body eq 'HASH' ? $body : {};
+}
+
+sub studio_remote_value {
+	my ($c, $body, $name) = @_;
+	my $value = $c->param($name);
+	return $value if defined $value && !ref $value;
+	return $body->{$name} if ref $body eq 'HASH' && exists $body->{$name};
+	return $value;
+}
+
+# A command payload is a JSON object and nothing else. A form parameter carries
+# it as text; a JSON body may already have decoded it. Either is re-bound here
+# so a controller cannot hand the target browser a bare scalar or a wall.
+sub studio_remote_payload {
+	my ($value) = @_;
+	if (ref $value eq 'HASH') {
+		my $encoded = eval { encode_json($value) };
+		return (undef, 'the Studio command payload is too large')
+			unless defined $encoded && length($encoded) <= 16_384;
+		return ($value, undef);
+	}
+	return (undef, 'a Studio command needs a JSON "payload" object')
+		unless defined $value && !ref $value && length $value;
+	return (undef, 'the Studio command payload is too large') if length($value) > 16_384;
+	my $payload = eval { decode_json($value) };
+	return (undef, 'a Studio command payload must be a JSON object')
+		unless ref $payload eq 'HASH';
+	return ($payload, undef);
+}
+
+# The cached snapshot has one meaning on a machine whose Studio never opened:
+# an empty song, a stopped transport, no tracks or clips. The target's browser
+# overwrites it on its next publish.
+sub studio_remote_state_read {
+	my $data = &subs::cache_get({ app => 'studio', context => 'remote_state' }) || {};
+	$data = {} unless ref $data eq 'HASH';
+	my %state = (
+		ok => 1,
+		at => 0,
+		song => {},
+		transport => {},
+		tracks => [],
+		clips => [],
+		master => []
+	);
+	foreach my $key ( keys %state ) {
+		$state{$key} = $data->{$key} if exists $data->{$key};
+	}
+	$state{'ok'} = 1;
+	return \%state;
+}
+
+# A command handed to a peer. remote_relay_request signs the request with this
+# machine's key and returns the peer's body; a dead route is an answer of its
+# own, never this machine's result.
+sub studio_remote_relay {
+	my ($c) = @_;
+	my $result = &Manager::remote_relay_request($c);
+	my $reply = eval { decode_json($result || '') };
+	return ref $reply eq 'HASH' ? $reply : { ok => 0, error => 'that machine did not answer' };
+}
+
+# The command names the target browser's console table will accept. A name not
+# on this list never reaches the peer and never reaches this machine.
+my %studio_remote_command = map { $_ => 1 } qw(transport record track mixer master song select);
+
+# GET /manager/studio/remote_machines
+# The machines a Studio window may control, and the one it last chose. The
+# server is absent because it has no browser to drive.
+sub action_44037 {
+	my $c = shift;
+	$c->render(json => {
+		ok => 1,
+		machines => &studio_remote_machines(),
+		target => (&subs::setting_grabber({ app => 'studio', setting => 'remote_target' }) || '')
+	});
+}
+
+# POST /manager/studio/remote_target
+# Remember which machine a Studio window is controlling. An empty target or
+# `local` clears it; any other value has to name a peer that is active now.
+sub action_44038 {
+	my $c = shift;
+	my $body = &studio_remote_body($c);
+	my $target = &studio_remote_value($c, $body, 'target');
+	$target = '' unless defined $target && !ref $target;
+	$target =~ s/\A\s+|\s+\z//g;
+	$target = '' if $target eq 'local';
+	if (length $target && !&studio_remote_peer($target)) {
+		$c->render(json => { ok => 0, error => 'that machine is not reachable' }, status => 409);
+		return;
+	}
+	&subs::setting_setter({ app => 'studio', setting => 'remote_target', value => $target });
+	$c->render(json => { ok => 1, target => $target });
+}
+
+# POST /manager/studio/remote_publish
+# The target's browser writes its own compact snapshot. A relayed request may
+# never publish: the state belongs to the machine whose browser owns it, not to
+# a controller asking through the peer rail.
+sub action_44039 {
+	my $c = shift;
+	if (($c->param('remoted') || '') eq 'yes') {
+		$c->render(json => { ok => 0, error => 'a relayed request cannot publish Studio state' }, status => 403);
+		return;
+	}
+	my $raw = $c->req->body;
+	$raw = '' unless defined $raw;
+	if (length($raw) > 65_536) {
+		$c->render(json => { ok => 0, error => 'the Studio state is too large' }, status => 413);
+		return;
+	}
+	my $state = eval { decode_json($raw) };
+	unless (ref $state eq 'HASH') {
+		$c->render(json => { ok => 0, error => 'the Studio state must be a JSON object' }, status => 400);
+		return;
+	}
+	my $at = &subs::rightNow();
+	$state->{'ok'} = 1;
+	$state->{'at'} = $at;
+	&subs::cache_set({ app => 'studio', context => 'remote_state' }, $state);
+	$c->render(json => { ok => 1, at => $at });
+}
+
+# POST /manager/studio/remote_state
+# A controller naming a peer is relayed; a local session (or the relayed target
+# itself) reads this machine's cached snapshot.
+sub action_44040 {
+	my $c = shift;
+	my $body = &studio_remote_body($c);
+	my $target = &studio_remote_value($c, $body, 'target');
+	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+	if (!$remoted && defined $target && !ref $target && length $target && $target ne 'local') {
+		my $peer = &studio_remote_peer($target);
+		unless ($peer) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' }, status => 409);
+			return;
+		}
+		$c->param('remote_uuid' => $peer->{'uuid'});
+		$c->render(json => &studio_remote_relay($c));
+		return;
+	}
+	$c->render(json => &studio_remote_state_read());
+}
+
+# POST /manager/studio/remote_command
+# A controller request relays to the named peer; a target request that arrives
+# with remoted=yes, or a local session, hands the command to this machine's
+# Studio browser. Only a whitelisted name and a JSON-object payload cross.
+sub action_44041 {
+	my $c = shift;
+	my $body = &studio_remote_body($c);
+	my $target = &studio_remote_value($c, $body, 'target');
+	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+
+	my $command = &studio_remote_value($c, $body, 'command');
+	$command = '' unless defined $command && !ref $command;
+	$command = lc $command;
+	unless ($studio_remote_command{$command}) {
+		$c->render(json => { ok => 0, error => 'choose a Studio command: transport, record, track, mixer, master, song or select' }, status => 400);
+		return;
+	}
+
+	my ($payload, $error) = &studio_remote_payload(&studio_remote_value($c, $body, 'payload'));
+	if (defined $error) {
+		$c->render(json => { ok => 0, error => $error }, status => 400);
+		return;
+	}
+
+	if (!$remoted && defined $target && !ref $target && length $target && $target ne 'local') {
+		my $peer = &studio_remote_peer($target);
+		unless ($peer) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' }, status => 409);
+			return;
+		}
+		# remote_relay_request copies body and query parameters, not the values
+		# this route read out of a JSON body. Put those on the query when they
+		# did not already arrive as a form/query field, so the peer sees the same
+		# command and payload the controller sent.
+		$c->req->query_params->append(command => $command) unless defined $c->param('command');
+		$c->req->query_params->append(payload => encode_json($payload)) unless defined $c->param('payload');
+		$c->param('remote_uuid' => $peer->{'uuid'});
+		$c->render(json => &studio_remote_relay($c));
+		return;
+	}
+
+	&Websocket::send('server', {
+		console => &Websocket::console_command('studioRemoteCommand', $command, $payload)
+	});
+	$c->render(json => { ok => 1, command => $command });
+}
+
 1;
