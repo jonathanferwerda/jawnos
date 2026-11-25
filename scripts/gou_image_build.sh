@@ -43,6 +43,12 @@
 # boots, keeps the LAN and the USB cable, and `tailscale up` reports the
 # missing device.
 #
+# The image also names the operating-system time zone (America/New_York by
+# default, --timezone to change it). A board with no /etc/localtime boots in
+# UTC: the server formats the clock it shows in the house's zone, but `date`,
+# the journal and RetroArch read the OS zone, and a wrong-looking clock is what
+# that costs.
+#
 # Wi-Fi, the hostname and the house token are NOT written here: the provision
 # script writes those per board, and an image that carried one house's Wi-Fi
 # would be wrong for every other.
@@ -68,6 +74,10 @@ DISK_ID=0x01e56600
 TAILSCALE_VERSION="${TAILSCALE_VERSION:-1.104.7}"
 TAILSCALE_URL="${TAILSCALE_URL:-https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_arm64.tgz}"
 TAILSCALE_TGZ="${TAILSCALE_TGZ:-}"
+
+# The zone the installed OS boots in. The house's Eastern default matches the
+# server's own fallback (clock_zone_house in lib/JawnOS/Domain/Clock.pm).
+TIMEZONE="${JAWNOS_GOU_TIMEZONE:-America/New_York}"
 
 COMPRESS=release
 DRY_RUN=0
@@ -98,6 +108,8 @@ Options
                        TAILSCALE_TGZ environment variable. Default is the
                        pinned stable download; if it cannot be fetched the
                        step warns and skips.
+  --timezone ZONE      the operating-system time zone the image boots in
+                       (default America/New_York; JAWNOS_GOU_TIMEZONE works too)
   --dry-run            print the plan and change nothing
   -h, --help           this text
 
@@ -367,6 +379,22 @@ FSTAB
 	# 5. tailscale, so the first boot can join the tailnet. Its absence is a
 	# warning, not a failed build; a tarball supplied by hand is checked.
 	install_tailscale "$root"
+
+	# 6. the operating-system zone. The server reads its own `clock_timezone`
+	# setting and falls back to the house's Eastern zone, but `date`, the journal
+	# and anything outside the app read /etc/localtime - and a board with neither
+	# file is in UTC. Write both the link systemd reads and the name file the
+	# server's clock helper reads first. A zone the image's tzdata does not name
+	# is named in the log and left alone rather than failing the whole build.
+	if [[ -e "$root/usr/share/zoneinfo/$TIMEZONE" ]]; then
+		ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$root/etc/localtime"
+		printf '%s\n' "$TIMEZONE" > "$root/etc/timezone"
+		chmod 644 "$root/etc/timezone"
+		chown 0:0 "$root/etc/timezone"
+		log "time zone: $TIMEZONE"
+	else
+		log "time zone: $TIMEZONE is not in $root/usr/share/zoneinfo; leaving the image's clock as it is"
+	fi
 }
 
 # --- the eMMC's way back -----------------------------------------------------
@@ -440,8 +468,9 @@ do_repair() {
 	[[ -n "$OUT" ]]  || die "repair needs --out"
 	[[ -n "$STOCK" ]] || die "repair needs --stock-backup (the eMMC bootloader comes from it)"
 
-	log "plan: write the eMMC bootloader, add the state directory and the gadget link,"
-	log "      rewrite fstab by UUID, blank the machine-id, then compress=$COMPRESS"
+	log "plan: write the eMMC bootloader, add the state directory, the gadget link"
+	log "      and the $TIMEZONE zone, rewrite fstab by UUID, blank the machine-id,"
+	log "      then compress=$COMPRESS"
 	if [[ $DRY_RUN -eq 1 ]]; then log "dry run: nothing written"; return 0; fi
 
 	need_root
@@ -601,11 +630,17 @@ while [[ $# -gt 0 ]]; do
 		--boot-uuid)   BOOT_UUID="$2"; shift 2 ;;
 		--compress)    COMPRESS="$2"; shift 2 ;;
 		--tailscale-tgz) TAILSCALE_TGZ="$2"; shift 2 ;;
+		--timezone)    TIMEZONE="$2"; shift 2 ;;
 		--dry-run)     DRY_RUN=1; shift ;;
 		-h|--help)     usage; exit 0 ;;
 		*) die "unknown option: $1" ;;
 	esac
 done
+
+# A zone is a name in the tz database, not a path: no dots, no traversal.
+case "$TIMEZONE" in
+	''|*..*|*[!A-Za-z0-9_+/-]*) die "invalid time zone: $TIMEZONE" ;;
+esac
 
 case "$MODE" in
 	build)  do_build ;;

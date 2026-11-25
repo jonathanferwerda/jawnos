@@ -3,8 +3,8 @@
 #            inputs, a dry run needs no root and changes nothing, and the three
 #            things a board taught us are in the file - the eMMC bootloader in
 #            the first 16 MiB, the state directory the server unit logs to, and
-#            the USB gadget link - along with the exclusion list and the mmc 0
-#            boot.ini rewrite.
+#            the USB gadget link - along with the exclusion list, the mmc 0
+#            boot.ini rewrite and the operating-system time zone it installs.
 
 use strict;
 use warnings;
@@ -36,6 +36,15 @@ like($source, qr{s/mmc 1:1/mmc 0:1}, 'boot.ini is rewritten to mmc 0');
 like($source, qr/recovery_stanza/, 'the eMMC carries a boot.ini recovery entry');
 like($source, qr/0x1F000000 RECOVERY/, 'which starts the BIOS when the marker is present');
 like($source, qr/apply_recovery_entry/, 'and it is applied by both build and repair');
+
+# The OS clock: a board with no /etc/localtime boots in UTC.
+like($source, qr/--timezone/, 'a zone can be named on the command line');
+like($source, qr/America\/New_York/, 'the house Eastern zone is the default');
+like($source, qr{\bTIMEZONE=}, 'the zone is a named value, not a path');
+like($source, qr{ln -sfn "/usr/share/zoneinfo/\$TIMEZONE" "\$root/etc/localtime"},
+	'the image gets the /etc/localtime link systemd reads');
+like($source, qr{\$root/etc/timezone}, 'and the /etc/timezone name file');
+like($source, qr{apply_fixes "\$MNT_P2"}, 'the fixes, zone included, run on build and repair');
 
 # What the image must not keep.
 foreach my $pattern (qw(/root/kbuild /usr/share/doc /etc/ssh/ssh_host_ /home/jawn/roms /opt/retroarch-stock)) {
@@ -82,5 +91,13 @@ my $dry = `bash "$script" build --from "$dump" --out "$out" --stock-backup "$sto
 is($?, 0, 'build --dry-run exits 0 without root');
 like($dry, qr/plan:/, 'and prints the plan');
 ok(!-e $out, 'and writes no image');
+
+# A zone is a tz-database name, not a path; a typo is refused, not shipped.
+my $bad_zone = `bash "$script" build --from "$dump" --out "$out" --stock-backup "$stock" --timezone 'Etc/../../passwd' --dry-run 2>&1`;
+isnt($?, 0, 'a traversal-shaped time zone is refused');
+like($bad_zone, qr/invalid time zone/, 'and says so');
+
+my $tz_dry = `bash "$script" build --from "$dump" --out "$out" --stock-backup "$stock" --timezone America/Chicago --dry-run 2>&1`;
+is($?, 0, 'a named zone is accepted');
 
 done_testing();
