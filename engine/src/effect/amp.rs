@@ -3,7 +3,7 @@
 //! This is the pedal that makes a DI guitar sound like an amplifier. The order
 //! is the amplifier's: an input coupling cap, two single-ended valve gain
 //! stages with an interstage highpass between them, the three-band tone stack
-//! after the first gain stage, the power stage's sag, and last the speaker.
+//! after the gain stages, the power stage's sag, and last the speaker.
 //!
 //! # The valve stages
 //!

@@ -18,10 +18,12 @@
 //! 1. [`Fuzz::solve`] runs a damped Newton iteration on the four circuit nodes
 //!    (Q1 base, Q1 collector, Q2 emitter, Q2 collector) with Ebers-Moll
 //!    transistors and the schematic's resistors. The result is the quiescent
-//!    collector voltage for a given input voltage and fuzz-pot setting.
-//! 2. `prepare` solves that curve once per fuzz position (nine positions) and
-//!    stores it; `process` interpolates between the two nearest positions. The
-//!    table is the only allocation, and it happens in `prepare`.
+//!    collector voltage for a given input voltage.
+//! 2. `prepare` solves that curve once and stores it; `process` reads it with
+//!    linear interpolation. The table is the only allocation, and it happens in
+//!    `prepare`. The fuzz pot is the AC drive in `process`, not a second curve:
+//!    the DC bias sees the whole 1 kΩ pot through the 22 µF bypass, and only
+//!    the signal sees the bypassed part.
 //! 3. The input highpass is the 2.2 µF coupling cap, the output highpass is the
 //!    0.01 µF cap, and the tone lowpass moves the feedback cap's corner — the
 //!    JH-2 has no tone knob, so `tone` is the feedback-cap mod, from dark to
@@ -59,8 +61,6 @@ const R_FUZZ: f64 = 1_000.0;
 /// The input voltage a full-scale sample represents. A guitar pickup is well
 /// under a volt; 0.6 V leaves the curve saturated at the top of the range.
 const INPUT_VOLTS: f64 = 0.12;
-/// Fuzz-pot positions in the table. Nine is enough to interpolate smoothly.
-const CURVES: usize = 9;
 /// Samples per curve. 2049 is odd so the middle point is exactly 0 V.
 const POINTS: usize = 2_049;
 
@@ -310,37 +310,24 @@ impl Fuzz {
             let value = (raw[point] - baseline) * sign * scale;
             line[point] = value.clamp(-1.0, 1.0) as f32;
         }
-        let mut curves = vec![0.0f32; CURVES * POINTS];
-        for position in 0..CURVES {
-            curves[position * POINTS..(position + 1) * POINTS].copy_from_slice(&line);
-        }
-        self.curves = curves;
+        self.curves = line;
     }
 
     #[inline]
-    fn table(&self, position: usize, point: usize) -> f32 {
-        self.curves[position * POINTS + point]
+    fn table(&self, point: usize) -> f32 {
+        self.curves[point]
     }
 
-    /// Interpolate the two nearest fuzz curves and the two nearest table
-    /// points. The `x` is the input sample, already in −1..1.
-    fn curve_at(&self, fuzz: f32, x: f32) -> f32 {
-        if self.curves.len() < CURVES * POINTS {
+    /// Read the curve at `x`, already in −1..1, with linear interpolation.
+    fn curve_at(&self, x: f32) -> f32 {
+        if self.curves.len() < POINTS {
             return 0.0;
         }
-        let position = fuzz.clamp(0.0, 1.0) * (CURVES - 1) as f32;
-        let low = (position.floor() as usize).min(CURVES - 1);
-        let high = (low + 1).min(CURVES - 1);
-        let blend = position - low as f32;
-
         let point = (x.clamp(-1.0, 1.0) + 1.0) * 0.5 * (POINTS - 1) as f32;
         let left = (point.floor() as usize).min(POINTS - 1);
         let right = (left + 1).min(POINTS - 1);
         let t = point - left as f32;
-
-        let a = self.table(low, left) * (1.0 - t) + self.table(low, right) * t;
-        let b = self.table(high, left) * (1.0 - t) + self.table(high, right) * t;
-        a * (1.0 - blend) + b * blend
+        self.table(left) * (1.0 - t) + self.table(right) * t
     }
 }
 
@@ -395,7 +382,7 @@ impl Effect for Fuzz {
             // clean up when the guitar volume drops, so it is a gain, not a
             // second clipper.
             let drive = 1.0 + self.fuzz * 8.0;
-            let shaped = self.curve_at(self.fuzz, (input * drive).clamp(-1.0, 1.0));
+            let shaped = self.curve_at((input * drive).clamp(-1.0, 1.0));
 
             // The output coupling cap, then the feedback-cap tone control.
             self.output_lp += (shaped - self.output_lp) * self.output_alpha;
@@ -490,24 +477,21 @@ mod tests {
         fuzz.prepare(RATE, 512);
         let mut positive = 0.0f32;
         let mut negative = 0.0f32;
-        for position in 0..CURVES {
-            for point in 1..POINTS {
-                let previous = fuzz.table(position, point - 1);
-                let current = fuzz.table(position, point);
-                assert!(
-                    current >= previous - 1e-3,
-                    "the curve folds at position {position}, point {point}: {previous} then {current}"
-                );
-            }
+        for point in 1..POINTS {
+            let previous = fuzz.table(point - 1);
+            let current = fuzz.table(point);
+            assert!(
+                current >= previous - 1e-3,
+                "the curve folds at point {point}: {previous} then {current}"
+            );
         }
         // The two halves of the JH-2 are not the same size: a germanium stage
-        // with this bias clips one side first. Sample the middle curve.
-        let middle = CURVES / 2;
+        // with this bias clips one side first.
         for point in POINTS / 2 + 1..POINTS {
-            positive = positive.max(fuzz.table(middle, point));
+            positive = positive.max(fuzz.table(point));
         }
         for point in 0..POINTS / 2 {
-            negative = negative.max(-fuzz.table(middle, point));
+            negative = negative.max(-fuzz.table(point));
         }
         assert!(
             (positive - negative).abs() > 0.02,
