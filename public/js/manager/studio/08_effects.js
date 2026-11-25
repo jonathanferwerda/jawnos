@@ -1510,51 +1510,48 @@ function studioEffectTremolo(ctx, name) {
 	return fx;
 }
 
-// A true stereo panner, browser only. The engine's insert chain is mono and its
-// static pan runs after the chain, so `InsertKind::parse` refuses the name and a
-// native take omits this pedal (engine/src/effect.rs). The browser uses a
-// StereoPannerNode with an LFO on its `pan`: depth is the swing in the -1..1
-// field, shape chooses the LFO, and a tempo-synced rate is resolved to Hz.
+// A stereo panner whose modulation lands after the pedalboard, as the engine's
+// does. Neither insert chain holds an L/R pair, so neither side pans inside it:
+// the insert is a pass-through carrying a configuration, and the channel's own
+// pan stage applies `depth * lfo` on top of the channel pan
+// (engine/src/effect/stereo_panner.rs, `Effect::pan_lfo`). The browser's pan
+// stage is still a real `ctx.createStereoPanner()` node, built in
+// `studioChannelEngine`; it is not this insert's. The two sides share the
+// controls (`rate`, `depth`, `shape`) and the shape indexes: 0 sine, 1
+// triangle, 2 square.
+//
+// `fx.panner` is the resolved configuration the pan stage reads: `rate` in Hz
+// (a tempo-synced rate arrives resolved), `depth` the swing in the -1..1 field,
+// `shape` the whole index. Every setter updates it and asks the page to
+// re-read the channel (the insert does not know which channel owns it).
 function studioEffectStereoPanner(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'stereo_panner');
-	if (typeof ctx.createStereoPanner !== 'function') {
-		// No panner in this browser: pass the signal through rather than pretending
-		// a mono gain change is a pan. The controls still save and travel.
-		fx.input.connect(fx.wet);
-		fx.natural['rate'] = function () {};
-		fx.setters['rate'] = function () {};
-		fx.setters['depth'] = function () {};
-		fx.setters['shape'] = function () {};
-		fx.set('rate', 25);
-		fx.set('depth', 50);
-		fx.set('shape', 0);
-		studioEffectTempo(fx, function () {});
-		return fx;
-	}
-	var panner = ctx.createStereoPanner();
-	var lfo = ctx.createOscillator();
-	var depthGain = ctx.createGain();
-	lfo.type = 'sine';
-	panner.pan.value = 0;
-	depthGain.gain.value = 0;
-	lfo.connect(depthGain).connect(panner.pan);
-	fx.input.connect(panner).connect(fx.wet);
-	try { lfo.start(0); } catch (e) {}
-	var depthValue = 0.5;
-	var applyDepth = function () { depthGain.gain.value = studioEffectClamp(depthValue, 0, 1); };
-	var applyRate = function (hz) { lfo.frequency.value = studioEffectClamp(hz, 0.1, 20); };
+	fx.input.connect(fx.wet);
+	fx.panner = { rate: 1, depth: 0, shape: 0 };
+	var apply = function () {
+		if (typeof studioPanLfoAll === 'function') { studioPanLfoAll(); }
+	};
+	var applyRate = function (hz) {
+		fx.panner.rate = studioEffectClamp(hz, 0.1, 20);
+		apply();
+	};
 	fx.natural['rate'] = applyRate;
 	fx.setters['rate'] = function (v) { applyRate(studioEffectNatural(fx.name, 'rate', v)); };
-	fx.setters['depth'] = function (v) { depthValue = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
+	fx.setters['depth'] = function (v) {
+		fx.panner.depth = studioEffectClamp(studioEffectNatural(fx.name, 'depth', v), 0, 1);
+		apply();
+	};
 	fx.setters['shape'] = function (v) {
-		var shape = Math.round(studioEffectNatural(fx.name, 'shape', v));
-		lfo.type = (shape === 1) ? 'triangle' : ((shape === 2) ? 'square' : 'sine');
+		fx.panner.shape = Math.round(studioEffectNatural(fx.name, 'shape', v));
+		apply();
 	};
 	fx.set('rate', 25);
 	fx.set('depth', 50);
 	fx.set('shape', 0);
 	studioEffectTempo(fx, applyRate);
-	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
+	// The footswitch is heard at the pan stage, so it has to reach that stage too.
+	var shellBypass = fx.setBypass;
+	fx.setBypass = function (on) { shellBypass(on); apply(); };
 	return fx;
 }
 
@@ -2071,8 +2068,8 @@ var studioEffectAliases = {
 	// matrix (engine/src/effect.rs), so only this side ever builds it.
 	stereowidener: 'stereowidener',
 	tremolo: 'tremolo',
-	// Browser only: a true panner needs the L/R pair the engine's mono insert
-	// chain does not hold, so `InsertKind::parse` refuses the name.
+	// Native as a pass-through: the browser's alias shares the name, and its
+	// insert carries the pan LFO the channel applies after the chain.
 	stereo_panner: 'stereo_panner',
 	JawnSynth: 'synth',
 	master_comp: 'compressor',

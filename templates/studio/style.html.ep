@@ -47,6 +47,27 @@
 		box-shadow: var(--shadow-2);
 		box-sizing: border-box;
 	}
+	/* Once the board is carried into the Tracks panel it is a row of that panel,
+	   right under the track whose chain it draws: no longer a sheet over the
+	   console. #studio_viewer is position: relative and its selection overlay is
+	   an absolute inset: 0 at z-index 2, so the board sits above it and the rack
+	   keeps its own horizontal scroll. The absolute rules above still cover the
+	   moment between the page loading and the first open. */
+	#studio_viewer > #pedalboard,
+	#pedalboard.studio_board_inline {
+		position: relative;
+		left: auto;
+		top: auto;
+		right: auto;
+		bottom: auto;
+		width: 100%;
+		max-height: 300px;
+		z-index: 3;
+		border-top: 2px solid var(--line);
+		border-bottom: 2px solid var(--line);
+		box-shadow: none;
+		box-sizing: border-box;
+	}
 	/* The board's header (the In/Out switch) and the tiles themselves. */
 	#studio_pedalboard_chain {
 		display: flex;
@@ -127,6 +148,29 @@
 		padding: 0 6px;
 		box-sizing: border-box;
 		flex: 0 0 auto;
+	}
+	/* The saved-board group: a name, Save and the recently-used list, kept in
+	   the bar so a board can be named and recalled without leaving the rack. */
+	.studio_board_presets {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		flex-wrap: wrap;
+	}
+	.studio_board_presets button {
+		font-size: 12px;
+		height: 18px;
+		min-height: 18px;
+		line-height: 16px;
+		padding: 0 4px;
+	}
+	.studio_board_save_name {
+		width: 110px;
+		font-size: 12px;
+	}
+	#studio_board_presets {
+		max-width: 150px;
+		font-size: 12px;
 	}
 	#studio_pedalboard_close {
 		font-size: 12px;

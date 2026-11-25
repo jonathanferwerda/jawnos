@@ -349,7 +349,7 @@ for my $label (
 ) {
 	like($controls // '', qr/\Q$label\E/, "the help topic's controls list names $label");
 }
-like($help, qr/the Add list at the top of the sheet offers every effect/, 'the help explains adding from the pedalboard');
+like($help, qr/the Add list at the top offers every effect/, 'the help explains adding from the pedalboard');
 like($help, qr/Reverb has five models/, 'the help explains the reverb models');
 like($help, qr/footswitch bypasses the insert/, 'the help explains bypassing');
 like($help, qr/Drag a tile to put it somewhere else/, 'the help explains reordering');

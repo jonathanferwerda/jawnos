@@ -532,13 +532,20 @@ function studioPanelToggleMaximized(name, persist) {
 
 // A taskbar entry answers for its panel the way the desk's taskbar answers for
 // a window: a minimized panel comes back, the front panel steps down, and any
-// other panel rises.
+// other panel rises. The Synth is the exception, handled below.
 $(document).on('click', '.studio_panel_task', function () {
 	var name = $(this).attr('data-panel');
 	var state = studioPanelStateFor(name);
 	if (state.minimized) {
 		studioPanelSetMinimized(name, false, true);
 		studioPanelRaise(name);
+		return;
+	}
+	// The Synth entry is a visibility toggle, not a raise: a press hides the
+	// synth even while it is behind another window, so the entry always answers
+	// "show or hide the synth". Ctrl+Alt+5 still only shows it.
+	if (name === 'synth') {
+		studioPanelSetMinimized(name, true, true);
 		return;
 	}
 	if (studioPanelFront() === name) { studioPanelSetMinimized(name, true, true); }
@@ -1170,6 +1177,9 @@ function studioSyncTrackList(song) {
 	});
 	studioLayoutQuiet = wasQuiet;
 	studioUpdateTrackCount();
+	// A loaded song may have dropped the row the board was under: move it under
+	// the track that is selected now, or close it when none is left.
+	if (typeof studioPedalboardFollow === 'function') { studioPedalboardFollow(); }
 }
 
 function studioRemoveTrack(ch, quiet) {
@@ -1206,6 +1216,11 @@ function studioRemoveTrack(ch, quiet) {
 			if (channel[key] && channel[key].disconnect) {
 				try { channel[key].disconnect(); } catch (e) {}
 			}
+		});
+		( channel.panLfo ? [ channel.panLfo ] : [] ).concat(channel.panLfoDepth ? [ channel.panLfoDepth ] : []).forEach(function (node) {
+			if (!node) { return; }
+			if (node.stop) { try { node.stop(); } catch (e) {} }
+			if (node.disconnect) { try { node.disconnect(); } catch (e) {} }
 		});
 		(channel.inserts || []).forEach(function (insert) {
 			if (insert.destroy) { try { insert.destroy(); } catch (e) {} }
@@ -1261,6 +1276,9 @@ $(document).on('click', '.studio_track_delete', function () {
 		return;
 	}
 	studioRemoveTrack(button.attr('channel'));
+	// The board sat under this row; it follows the track that is selected now,
+	// or closes when none is left.
+	if (typeof studioPedalboardFollow === 'function') { studioPedalboardFollow(); }
 });
 
 $(document).on('change', '.studio_track_name', function () {
@@ -1284,8 +1302,13 @@ $(document).on('click', '.studio_track_automation', function () {
 
 $(document).on('click', '.studio_track_fx', function () {
 	var ch = $(this).attr('channel');
-	// FX selects this track and opens the pedalboard, which is the one place a
-	// chain is drawn. The panel keeps its fixed height whatever is in the chain.
+	// FX selects this track and opens the board under its row, which is the one
+	// place a chain is drawn. Pressing the same track's FX again folds the board
+	// away; any other track's FX moves it there.
+	if ($('#pedalboard').is(':visible') && String($('#pedalboard').attr('data-channel')) === String(ch)) {
+		studioPedalboardOpen(false);
+		return;
+	}
 	studioSelectedChannel = ch;
 	$('.channel, .studio_track_panel').removeClass('selected_channel');
 	$('#studio_track_row_' + ch + ' .studio_track_panel').addClass('selected_channel');
@@ -1293,6 +1316,15 @@ $(document).on('click', '.studio_track_fx', function () {
 	studioRackRender(ch);
 	studioPaletteLabel();
 	studioPedalboardOpen(true);
+});
+
+// The board is drawn under the selected track, so a click that changes the
+// selection moves it too. 03_editing's selection handler and 04_knobs' colour
+// handler are bundled and registered before this one, so studioSelectedChannel
+// already names the track that was clicked. The board ignores the click while
+// it is closed.
+$(document).on('click', '.studio_track_panel, .channel, .studio_track_colour', function () {
+	if (typeof studioPedalboardFollow === 'function') { studioPedalboardFollow(); }
 });
 
 // ===========================================================================
@@ -2140,6 +2172,7 @@ function studioRemoteSelectTrack(index) {
 	$('#studio_track_row_' + ch + ' .studio_track_panel').addClass('selected_channel');
 	$('#studio_mixer_strips .channel_' + ch).addClass('selected_channel');
 	studioSelectedChannel = ch;
+	if (typeof studioPedalboardFollow === 'function') { studioPedalboardFollow(); }
 	return true;
 }
 

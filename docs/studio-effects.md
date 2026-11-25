@@ -50,12 +50,14 @@ pair, and the engine's insert chain is mono, so `InsertKind::parse` answers
 mono version (engine/src/effect.rs). The browser builds it with
 `studioEffectStereoWidener`.
 
-`stereo_panner` is **native**, but not as a mono insert. The engine builds it
-as a transparent pass-through that carries an LFO configuration, and the
-channel applies that LFO at its own pan stage, where the L/R pair exists
-(`engine/src/effect/stereo_panner.rs`, `Effect::pan_lfo`). The browser keeps
-`studioEffectStereoPanner` with a `StereoPannerNode`; the two sides share the
-controls and the shape indexes, not the node.
+`stereo_panner` is **native**, and it is not a mono insert on either side. The
+engine builds it as a transparent pass-through that carries an LFO
+configuration, and the channel applies that LFO at its own pan stage, where the
+L/R pair exists (`engine/src/effect/stereo_panner.rs`, `Effect::pan_lfo`). The
+browser mirrors this: `studioEffectStereoPanner` is a pass-through exposing
+`fx.panner`, and `studioPanLfoAll` applies the last enabled panner at the
+channel's pan stage after the chain (`c.playPan.pan`). The two sides share the
+controls and the shape indexes.
 
 ## Tempo-synced time controls
 
@@ -108,8 +110,12 @@ pan stage, which applies `pan + depth * lfo` per sample around the channel's
 own pan (clamped to `-1..1`). `depth` is the swing in the `-1..1` field, so
 depth 0 is exactly the plain pan and is bit-identical to it. When the rack
 holds two panners, the last one in chain order wins; a bypassed panner is not
-run, so it does not modulate. The browser's `StereoPannerNode` is the mirror,
-with the channel pan applied afterwards.
+run, so it does not modulate. The browser mirrors this at the same place: the
+panner insert is a pass-through, and `studioPanLfoAll` rides its LFO on the
+channel's own pan stage after the chain, so the static channel pan and the
+panner add on that one node. Because that stage is a mix stage, the panner is
+heard on playback; it is not printed into a take (the same as the plain channel
+pan).
 
 The `sync` string never reaches either engine: the page sends `delay.time` in
 seconds (up to 8) or an LFO `rate` in Hz, in the effect's own units.

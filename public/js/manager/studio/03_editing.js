@@ -995,14 +995,48 @@ $(document).on('click', '#studio_new', function() {
 	$('#studio_song_select').val('none');
 });
 
+// The board is a row of the Tracks panel, not a sheet over it: it is drawn
+// right under the track whose chain it holds. The row element is the one the
+// selection and the FX button name, so a channel with no row left (a delete)
+// has nothing to sit under.
+function studioPedalboardTrackRow() {
+	var ch = parseInt(studioSelectedChannel, 10);
+	if (!(ch > 0)) { return $(); }
+	return $('#studio_track_row_' + ch).first();
+}
+
+function studioPedalboardPlace() {
+	var row = studioPedalboardTrackRow();
+	if (!row.length) { return false; }
+	$('#pedalboard')
+		.addClass('studio_board_inline')
+		.attr('data-channel', parseInt(studioSelectedChannel, 10))
+		.insertAfter(row);
+	return true;
+}
+
+// The board follows the selection while it is open: a click on another track,
+// FX, a remote select or a delete all end here. If the track it was under is
+// gone, it closes rather than hanging under a row that no longer exists.
+function studioPedalboardFollow() {
+	var board = $('#pedalboard');
+	if (!board.is(':visible')) { return false; }
+	if (!studioPedalboardPlace()) { studioPedalboardOpen(false); return false; }
+	return true;
+}
+
 // One path for the Pedals button, the transport's old burger, the FX button and
-// a channel badge: the sheet's visibility and its button stay in step. The
-// sheet carries the selected track's chain, so it is drawn as it opens.
+// a channel badge: the board's visibility and its button stay in step. The
+// board carries the selected track's chain, so it is drawn as it opens, and it
+// is placed under that track's row in the Tracks panel.
 function studioPedalboardOpen(show) {
 	var board = $('#pedalboard');
 	if (show === undefined) { show = !board.is(':visible'); }
 	show = !!show;
-	if (show) { board.show(); }
+	if (show) {
+		board.show();
+		studioPedalboardPlace();
+	}
 	else { board.hide(); }
 	$('#studio_pedals').attr('aria-pressed', show ? 'true' : 'false');
 	if (show && typeof studioRackRender === 'function') { studioRackRender(studioPaletteChannel()); }

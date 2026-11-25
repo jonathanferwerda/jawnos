@@ -281,6 +281,47 @@ $(document).on('input change', '.studio_master_control', function () {
 	studioMasterSet(block.attr('effect'), input.attr('control'), input.val());
 });
 
+// Where one master control goes back to: the insert's own builder default when
+// it has a record of that control (a model is a list index, so a guessed 50
+// would pick the wrong model), else the first option of a select and the middle
+// of a range. The footswitch is never touched - a reset restores values only.
+function studioMasterDefault(ins, input) {
+	var control = input.attr('control');
+	if (ins && ins.defaults && ins.defaults[control] !== undefined) { return ins.defaults[control]; }
+	return input.is('select') ? 0 : 50;
+}
+
+// Reset every control in one unit. Each value goes through studioMasterSet so
+// the insert, the graph, the node, the song and the engine all move together.
+function studioMasterResetControls(name) {
+	var ins = studioMasterFind(name);
+	if (!ins) { return; }
+	$('.studio_master_effect[effect="' + name + '"]').find('.studio_master_control').each(function () {
+		var input = $(this);
+		studioMasterSet(name, input.attr('control'), studioMasterDefault(ins, input));
+	});
+	studioMasterRender();
+}
+
+$(document).on('click', '.studio_master_defaults', function (e) {
+	e.preventDefault();
+	var block = $(this).closest('.studio_master_effect');
+	studioMasterResetControls(block.attr('effect'));
+});
+
+// A double-click resets the one control under it, the way a double-clicked
+// knob does on the board.
+$(document).on('dblclick', '.studio_master_control', function (e) {
+	var input = $(this);
+	var block = input.closest('.studio_master_effect');
+	var name = block.attr('effect');
+	var ins = studioMasterFind(name);
+	if (!ins) { return; }
+	e.preventDefault();
+	studioMasterSet(name, input.attr('control'), studioMasterDefault(ins, input));
+	studioMasterRender();
+});
+
 // ===========================================================================
 // Mastering automation: a measurement mic on the master
 // ===========================================================================

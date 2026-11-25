@@ -4,7 +4,8 @@
 	   and the master rack build the same controls the palette offers. %>
 	<script>window.jawnos_studio_effects = <%== Mojo::JSON::encode_json($gb::studio->{'effects'}) %>;
 	window.jawnos_studio_master = <%== Mojo::JSON::encode_json($gb::studio->{'master'}) %>;
-	window.jawnos_studio_pedal_art = <%== Mojo::JSON::encode_json({ map { $_->{'name'} => &subs::icon_for('/images/studio/' . $_->{'image'} . '.png') } @{$gb::studio->{'pedals'}} }) %>;</script>
+	window.jawnos_studio_pedal_art = <%== Mojo::JSON::encode_json({ map { $_->{'name'} => &subs::icon_for('/images/studio/' . $_->{'image'} . '.png') } @{$gb::studio->{'pedals'}} }) %>;
+	window.jawnos_studio_pedalboards = <%== Mojo::JSON::encode_json(eval { Mojo::JSON::decode_json($settings->{'pedalboards'} || '[]') } || []) %>;</script>
 	<audio id="metronome" autoplay style="display:none;"></audio>
 	<%# The selector's box (position, stacking, the window cap that lets a long
 	   list scroll) lives in studio/style so channelSelect() can clamp the same
@@ -34,6 +35,16 @@
 					<option value="Jtune"><%= &subs::ui('Jtune') %></option>
 				</select>
 				<button id="studio_palette_add" class="hover" hint="<%= &subs::ui('Add the chosen effect to this chain') %>"><%= &subs::ui('Add') %></button>
+			</span>
+			<%# A saved board is a named copy of this track's chain, kept in the app
+			   settings like the synth loops, so it is one press away on another
+			   track or another song. The list is newest-used first. %>
+			<span class="studio_board_presets" role="group" aria-label="<%= &subs::ui('Saved pedalboards') %>">
+				<input id="studio_board_save_name" class="studio_board_save_name" placeholder="<%= &subs::ui('Pedalboard name') %>" hint="<%= &subs::ui('Name this pedalboard') %>">
+				<button id="studio_board_save" class="hover" hint="<%= &subs::ui('Save this track\'s pedalboard under this name') %>"><%= &subs::ui('Save board') %></button>
+				<select id="studio_board_presets" hint="<%= &subs::ui('Load a saved pedalboard, most recently used first') %>">
+					<option value=""><%= &subs::ui('Saved pedalboards') %></option>
+				</select>
 			</span>
 			<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
 		</div>
@@ -161,7 +172,7 @@
 		   New, Open, Save and the gear are one press away without a sheet. %>
 		<span class="studio_file_buttons" role="group" aria-label="<%= &subs::ui('Song files') %>">
 			<img id="studio_new" hint="New song" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/file.png') %>">
-			<button id="studio_open" class="hover" hint="<%= &subs::ui('Open a saved studio song') %>"><%= &subs::ui('Open') %></button>
+			<img id="studio_open" class="little_thumb hover" hint="<%= &subs::ui('Open a saved studio song') %>" alt="<%= &subs::ui('Open') %>" src="<%= &subs::icon_for('/images/decipherable/folder.png') %>">
 			<img id="studio_save" hint="Save" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>">
 			<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
 		</span>
@@ -412,6 +423,7 @@
 						<span class="studio_master_unit_head">
 							<span class="studio_master_unit_no" aria-hidden="true"><%= sprintf('%02d', $unit) %></span>
 							<button class="studio_master_toggle hover" effect="<%= $m->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Turn this mastering effect on or off') %>"><%= &subs::ui($m->{'label'}) %></button>
+							<button class="studio_master_defaults hover" effect="<%= $m->{'name'} %>" hint="<%= &subs::ui('Put this mastering effect back to its defaults') %>"><%= &subs::ui('Defaults') %></button>
 						</span>
 						<span class="studio_master_controls">
 							<% foreach my $c ( @{$m->{'controls'}} ) { %>

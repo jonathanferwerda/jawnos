@@ -70,7 +70,8 @@ like($js, qr/tremolo:\s*studioEffectTremolo/, 'the tremolo builder is registered
 like($js, qr/stereo_panner:\s*studioEffectStereoPanner/, 'the stereo panner builder is registered');
 like($js, qr/function studioEffectTremolo\(ctx, name\)/, 'the browser has a tremolo');
 like($js, qr/function studioEffectStereoPanner\(ctx, name\)/, 'the browser has a stereo panner');
-like($js, qr/createStereoPanner\(\)/, 'the stereo panner is a real StereoPannerNode');
+like($js, qr/fx\.panner = \{ rate:/, 'the stereo panner insert carries its LFO config');
+like($js, qr/studioPanLfoAll\(\)/, 'the panner asks the channel pan stage to re-read it');
 like($js, qr/createDelay\(8\)/, 'the browser delay line is 8 seconds');
 like($js, qr/studioEffectClamp\(hz, 0\.05, 8\)/, 'a synced flanger rate is clamped to 8 Hz');
 like($js, qr/studioEffectClamp\(hz, 0\.1, 20\)/, 'a synced tremolo rate is clamped to 20 Hz');

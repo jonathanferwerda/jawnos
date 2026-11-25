@@ -92,7 +92,7 @@ unlike($plan_names, qr/\bstereowidener\b/,
 	'stereowidener stays absent from the source vocabulary');
 
 like($doc, qr/`stereo_panner` is \*\*native\*\*/, 'the contract calls the panner native');
-like($doc, qr/transparent pass-through that carries an LFO configuration/,
+like($doc, qr/transparent pass-through that carries an LFO\s+configuration/,
 	'and says the pan stage applies it');
 like($doc, qr/depth 0 is exactly the plain pan and is bit-identical/,
 	'depth 0 is documented as bit-identical');

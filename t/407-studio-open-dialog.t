@@ -30,7 +30,9 @@ my $js     = slurp("$root/public/js/manager/studio/06_controls.js");
 # --- New, Open, Save and Configure share the left edge ----------------------
 like($markup, qr/id="studio_layout_bar"[\s\S]*class="studio_file_buttons"[\s\S]*id="studio_new"[\s\S]*id="studio_open"[\s\S]*id="studio_save"[\s\S]*id="studio_config_toggle"/,
 	'the four file controls sit together in the layout bar, Configure last');
-like($markup, qr/<button id="studio_open"/, 'Open is a button, not a select');
+like($markup, qr/<img id="studio_open" class="little_thumb hover"/, 'Open is an icon like New and Save, not a text button');
+like($markup, qr{id="studio_open"[\s\S]*?src="<%=\s*&subs::icon_for\('/images/decipherable/folder\.png'\)\s*%>"},
+	'Open wears the icon set\'s folder, so every set gives it its own artwork');
 like($markup, qr/id="studio_open"[^>]*hint="<%=\s*&subs::ui\('Open a saved studio song'\)\s*%>"/,
 	'the Open button says what it opens');
 

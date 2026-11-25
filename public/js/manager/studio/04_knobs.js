@@ -232,6 +232,41 @@ $(document).on('pointerup pointercancel', function () {
 	studioKnobDrag = null;
 });
 
+// Where a knob goes back to when it is double-clicked. On a rack tile the live
+// insert knows: its builder's own starting value is the default. A guessed 50
+// is wrong for a model index or a delay time, so the reset uses the insert's
+// own builder value. Outside a rack the knob's own `data-default` is next, and
+// a strip control that has neither is a 0..100 trim/eq/pan that starts mid-way.
+function studioKnobDefault(knob, input) {
+	var tile = knob.closest('.studio_rack_tile');
+	if (tile.length) {
+		var ch = tile.attr('channel');
+		var name = tile.attr('insert');
+		var c = studioAudio.channels[ch];
+		if (c && name) {
+			var ins = (tile.attr('chain') === 'out') ? c.outInsertByName[name] : c.insertByName[name];
+			if (ins && ins.defaults && ins.defaults[input.attr('control')] !== undefined) {
+				return ins.defaults[input.attr('control')];
+			}
+		}
+	}
+	var preset = input.attr('data-default');
+	if (preset !== undefined && preset !== '') { return studioKnobNumber(preset, 50); }
+	return 50;
+}
+
+// A double-click puts a knob back to its default. The press is swallowed so the
+// second half of it cannot also reach the pedal tile under the knob.
+$(document).on('dblclick', '.knob', function (e) {
+	if ($(this).closest('#studio_pedalboard_tiles').length) { return; }
+	var knob = $(this);
+	var input = studioKnobInput(knob);
+	if (!input.length) { return; }
+	e.preventDefault();
+	e.stopPropagation();
+	studioKnobSet(knob, studioKnobDefault(knob, input));
+});
+
 // A wheel event, normalised to the old positive-up wheelDelta scale.
 function studioWheelDelta(event) {
 	var d = ('deltaY' in event) ? event.deltaY : (-event.wheelDelta);

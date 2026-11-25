@@ -658,3 +658,172 @@ $(document).on('change', '.studio_pedal_model', function () {
 	studioRackRenderAll();
 	studioSaver();
 });
+
+// ---- saved pedalboards -----------------------------------------------------
+//
+// A saved board is a named copy of the chain the sheet is showing: the inserts
+// in order, each with the state of its stomp and its knob values. The page
+// publishes the list as an app setting, so a board saved on one track can be
+// recalled on another track or in another song. The list is kept newest-used
+// first, both when it is read and after every save or load, so the dropdown's
+// indices are stable and its order means what it says.
+
+function studioBoardLibrary() {
+	var library = window.jawnos_studio_pedalboards;
+	if (!library || typeof library.length !== 'number') {
+		library = [];
+		window.jawnos_studio_pedalboards = library;
+	}
+	return library;
+}
+
+// Keep the array most-recently-used first. The sort is part of the data, not a
+// view, so a save and a load write the same order the dropdown draws.
+function studioBoardSort(library) {
+	library.sort(function (a, b) {
+		return (Number(b && b.used) || 0) - (Number(a && a.used) || 0);
+	});
+	return library;
+}
+
+function studioBoardPersist() {
+	studioSaveSettings([{ setting: 'pedalboards', value: JSON.stringify(studioBoardLibrary()) }]);
+}
+
+// A controller mirrors another machine and has no pedal command in its
+// vocabulary, so its board is a read-only view. The badge marks the sheet
+// `studio_board_readonly`; that, or an active remote target, refuses a write.
+function studioBoardReadOnly() {
+	if ($('#pedalboard').hasClass('studio_board_readonly')) { return true; }
+	return (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget) ? true : false;
+}
+
+// The inserts of one chain, in signal order, as the plain records a preset
+// keeps. The values are copied so a later knob move cannot rewrite a board that
+// was already saved.
+function studioBoardCapture(ch, chain) {
+	var c = studioAudio.channels[ch];
+	if (!c) { return []; }
+	var list = (chain === 'out') ? c.outInserts : c.inserts;
+	var out = [];
+	list.forEach(function (ins) {
+		var values = $.extend({}, ins.values || {});
+		out.push({ name: ins.name, bypass: !!ins.bypassed, values: values });
+	});
+	return out;
+}
+
+// Rebuild the dropdown from the library: the blank prompt first, then the saved
+// boards in recent-use order. A selection that still exists is kept.
+function studioBoardPresetsRefresh() {
+	var select = $('#studio_board_presets');
+	if (!select.length) { return; }
+	var chosen = select.val();
+	var library = studioBoardLibrary();
+	select.empty();
+	select.append($('<option></option>').attr('value', '').text(studioLayoutText('Saved pedalboards')));
+	library.forEach(function (item, index) {
+		if (!item || !item.name) { return; }
+		select.append($('<option></option>').attr('value', String(index)).text(item.name));
+	});
+	if (chosen !== null && chosen !== undefined && select.find('option[value="' + chosen + '"]').length) {
+		select.val(chosen);
+	}
+}
+
+// Save the chain the sheet shows under the typed name. The same name replaces
+// the old board rather than making a second one, and the save becomes the most
+// recently used entry.
+function studioBoardSave() {
+	if (studioBoardReadOnly()) { return false; }
+	var name = String($('#studio_board_save_name').val() || '').trim();
+	if (!name) { return false; }
+	var ch = studioPaletteChannel();
+	var chain = studioChannelChain(ch);
+	var library = studioBoardLibrary();
+	var preset = null;
+	library.forEach(function (item) {
+		if (!preset && item && String(item.name) === name) { preset = item; }
+	});
+	if (!preset) {
+		preset = { name: name, chain: [], used: 0 };
+		library.push(preset);
+	}
+	preset.chain = studioBoardCapture(ch, chain);
+	preset.used = Date.now();
+	studioBoardSort(library);
+	studioBoardPersist();
+	studioBoardPresetsRefresh();
+	$('#studio_board_presets').val(String(library.indexOf(preset)));
+	$('#studio_board_save_name').val('');
+	return true;
+}
+
+// Replace the shown chain with a saved board: empty it, add the saved inserts
+// back in order, then put each knob value and stomp state where it was saved.
+// A read-only board refuses, so a pedal change never travels to a peer.
+function studioBoardLoad(index) {
+	if (studioBoardReadOnly()) { return false; }
+	var library = studioBoardLibrary();
+	var preset = library[index];
+	if (!preset || !preset.chain) { return false; }
+	var ch = studioPaletteChannel();
+	var chain = studioChannelChain(ch);
+	var c = studioAudio.channels[ch];
+	if (!c) { return false; }
+	var out = (chain === 'out');
+	var list = out ? c.outInserts : c.inserts;
+	list.slice().forEach(function (ins) {
+		studioSetInsert(ch, ins.name, false, chain);
+	});
+	preset.chain.forEach(function (item) {
+		if (!item || !item.name) { return; }
+		studioSetInsert(ch, item.name, true, chain);
+	});
+	var byName = out ? c.outInsertByName : c.insertByName;
+	preset.chain.forEach(function (item) {
+		if (!item || !item.name) { return; }
+		var ins = byName[item.name];
+		if (!ins) { return; }
+		var values = item.values || {};
+		Object.keys(values).forEach(function (control) { ins.set(control, values[control]); });
+		if (ins.setBypass) { ins.setBypass(!!item.bypass); }
+		else { ins.bypassed = !!item.bypass; }
+	});
+	// The bypass state decides which inserts are wired in, so rebuild once after
+	// every saved state is back. The rack is drawn last, after the values are in
+	// place: drawing before the restore would leave the tiles on the builder's
+	// defaults, and applying those back (studioApplyPedals) would overwrite the
+	// board that was just loaded.
+	if (out) { studioRebuildOutputs(ch); } else { studioRebuildInserts(ch); }
+	studioRackRender(ch);
+	studioUpdatePedalLamps();
+	studioSaver();
+	studioListenRearm(ch, chain);
+	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
+	preset.used = Date.now();
+	studioBoardSort(library);
+	studioBoardPersist();
+	studioBoardPresetsRefresh();
+	$('#studio_board_presets').val(String(library.indexOf(preset)));
+	return true;
+}
+
+$(document).on('click', '#studio_board_save', function (e) {
+	e.preventDefault();
+	studioBoardSave();
+});
+
+$(document).on('change', '#studio_board_presets', function () {
+	var index = parseInt($(this).val(), 10);
+	if (!(index >= 0)) { return; }
+	studioBoardLoad(index);
+});
+
+// The board's bar is drawn when the sheet opens, and the list is kept apart from
+// the tiles, so refresh it after any press that may have opened the board.
+$(document).on('click', '#studio_pedals, #pedalboard_hamburger, .studio_track_fx', function () {
+	setTimeout(studioBoardPresetsRefresh, 0);
+});
+
+$(function () { studioBoardPresetsRefresh(); });

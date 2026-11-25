@@ -167,15 +167,31 @@ function studioRebuildWindow(setting, value) {
 // unknown name is a plain pass-through so a stale song still loads.
 function studioInsert(ctx, name) {
 	var build = studioEffectBuilder(name);
-	if (build) { return build(ctx, name); }
-	var input = ctx.createGain();
-	var output = ctx.createGain();
-	input.connect(output);
-	return {
-		name: name, input: input, output: output, bypassed: false, values: {},
-		set: function (control, value) { this.values[control] = value; },
-		setBypass: function (on) { this.bypassed = !!on; }
-	};
+	var ins;
+	if (build) { ins = build(ctx, name); }
+	else {
+		var input = ctx.createGain();
+		var output = ctx.createGain();
+		input.connect(output);
+		ins = {
+			name: name, input: input, output: output, bypassed: false, values: {},
+			set: function (control, value) { this.values[control] = value; },
+			setBypass: function (on) { this.bypassed = !!on; }
+		};
+	}
+	// The builder's own starting values are the control's defaults. A double-click
+	// on a knob and a master unit's Restore defaults both put an effect back
+	// exactly as a fresh insert starts, rather than guessing that 50 is right for
+	// every control (a model is an index, a delay time is milliseconds).
+	if (ins && ins.values) {
+		ins.defaults = {};
+		for (var control in ins.values) {
+			if (Object.prototype.hasOwnProperty.call(ins.values, control)) {
+				ins.defaults[control] = ins.values[control];
+			}
+		}
+	}
+	return ins;
 }
 
 function studioChannelEngine(ch) {
@@ -202,6 +218,11 @@ function studioChannelEngine(ch) {
 		live: ctx.createGain(),
 		outIn: ctx.createGain(),
 		playPan: ctx.createStereoPanner(),
+		// The pan stage after the pedalboard. playPan's intrinsic `pan` stays the
+		// channel's static pan; this LFO adds `depth * lfo` on top of it (the
+		// AudioParam sums connected signals and the node clamps to -1..1).
+		panLfo: ctx.createOscillator(),
+		panLfoDepth: ctx.createGain(),
 		monGain: ctx.createGain(),
 		inserts: [],
 		insertByName: {},
@@ -245,6 +266,13 @@ function studioChannelEngine(ch) {
 	// channel after the chain: straight to the pan. It still moves with the
 	// channel fader and mute (see studioChannelFader), it just skips the pedals.
 	c.printBus.connect(c.playPan);
+	// A stereo_panner is a pass-through in the chain and only hands its LFO to
+	// this stage, exactly as the engine applies it after the whole chain. The
+	// depth gain starts at 0, so with no panner the plain channel pan is heard.
+	c.panLfo.type = 'sine';
+	c.panLfoDepth.gain.value = 0;
+	c.panLfo.connect(c.panLfoDepth).connect(c.playPan.pan);
+	try { c.panLfo.start(0); } catch (e) {}
 	studioAudio.channels[ch] = c;
 	// A new channel's In chain is empty, which is a wire. Wire it now: Monitor
 	// on a patched app hangs off recGain, and without this a clean chain had no
@@ -301,6 +329,7 @@ function studioRebuildInserts(ch) {
 		node = insert.output;
 	});
 	node.connect(c.recGain);
+	studioPanLfoAll();
 }
 
 // The output chain sits after the take, between the playback bus and the pan:
@@ -365,6 +394,34 @@ function studioRebuildOutputs(ch) {
 	var sink = (dest && dest.trim) ? dest.trim : c.playPan;
 	node.connect(sink);
 	if (c.printBus) { c.printBus.connect(sink); }
+	studioPanLfoAll();
+}
+
+// The pan stage is after the pedalboard. A `stereo_panner` insert is a
+// pass-through that hands its LFO here, exactly as the engine's insert hands
+// one to its channel pan (engine/src/effect/stereo_panner.rs, `Effect::pan_lfo`).
+// Precedence: the Out chain is the one heard at this stage, so its last enabled
+// panner wins; a channel with no enabled Out panner falls back to the In chain,
+// where the last enabled one wins the same way. A bypassed panner does not
+// modulate, and no panner at all leaves the depth at 0 - the plain channel pan.
+function studioPanLfoAll() {
+	$.each(studioAudio.channels, function (ch, c) {
+		if (!c || !c.panLfo || !c.panLfoDepth) { return; }
+		var ins = null;
+		[c.outInserts, c.inserts].some(function (chain) {
+			(chain || []).forEach(function (item) {
+				if (item && !item.bypassed && item.panner && studioEffectKind(item.name) === 'stereo_panner') {
+					ins = item;
+				}
+			});
+			return !!ins;
+		});
+		var config = (ins && ins.panner) ? ins.panner : null;
+		var shape = config ? config.shape : 0;
+		c.panLfo.type = (shape === 1) ? 'triangle' : ((shape === 2) ? 'square' : 'sine');
+		c.panLfo.frequency.value = config ? Math.max(0.1, Math.min(20, config.rate)) : 1;
+		c.panLfoDepth.gain.value = config ? Math.max(0, Math.min(1, config.depth)) : 0;
+	});
 }
 
 // The rack shows one chain at a time. Which one is the channel's own view and
