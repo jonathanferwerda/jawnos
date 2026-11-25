@@ -107,6 +107,11 @@ like($rack, qr/if \(ins && next\.indexOf\(ins\) === -1\)/,
 	'a dragged order only keeps inserts the channel still has');
 like($rack, qr/studioSetInsert\(t\.ch, t\.name, false, t\.chain\);/, 'X removes the insert from the tile\'s own chain');
 
+# A brand-new channel has no inserts, and an empty In chain is still a wire,
+# but only when it is connected: Monitor on a patched app hangs off recGain.
+like($js, qr/studioAudio\.channels\[ch\] = c;[\s\S]{0,400}?studioRebuildInserts\(ch\);[\s\S]{0,80}?studioRebuildOutputs\(ch\);/,
+	'a new channel wires its empty In chain to the recorder');
+
 # A bypassed insert leaves the browser graph, exactly as it leaves the engine's
 # chain. The effect's internal dry path is not the bypass flag: relying on it
 # left a monitor silent when its only pedal was off.

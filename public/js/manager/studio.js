@@ -246,6 +246,10 @@ function studioChannelEngine(ch) {
 	// channel fader and mute (see studioChannelFader), it just skips the pedals.
 	c.printBus.connect(c.playPan);
 	studioAudio.channels[ch] = c;
+	// A new channel's In chain is empty, which is a wire. Wire it now: Monitor
+	// on a patched app hangs off recGain, and without this a clean chain had no
+	// path from the tone stack to the recorder until the first pedal was added.
+	studioRebuildInserts(ch);
 	studioRebuildOutputs(ch);
 	c.playPan.connect(studioAudio.master);
 	c.playPan.connect(c.meterAnalyser);
