@@ -48,6 +48,9 @@ like($remote, qr/console_command\('musicVolumeSet'/, 'the volume crosses as a na
 like($remote, qr/value => \$c->param\('value'\)/, 'the route carries the level');
 like($taskbar, qr/data-music-volume/, 'the widget has a remote volume slider');
 like($taskbar, qr/action: 'volume', value: level/, 'the slider rides the transport route');
+like($taskbar, qr/on\('input', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'the house level only binds a slider that names its device');
+like($taskbar, qr/on\('change', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'and so does its save');
+like($taskbar, qr/on\('wheel', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'and its wheel gesture');
 like($router, qr/playerCacheSaver\(undefined, true\)/, 'the peer writes the level back for the widget');
 like($music, qr/volume: musicVolumeLevel\(\)/, 'the player cache records the level the player is using');
 

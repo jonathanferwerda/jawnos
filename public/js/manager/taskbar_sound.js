@@ -565,18 +565,22 @@ $(document).on('click', '.taskbar_widget[widget="sound"]', function() {
 	}
 });
 
-$(document).on('wheel', '.taskbar_sound_slider', function(e) {
+// These three are the house and device levels. They bind a slider that names
+// its device: the Music section's peer volume wears the same slider style but no
+// data-sound-volume, and an unnamed kind used to fall through to this machine's
+// output, so dragging the peer's bar moved the local volume and posted it.
+$(document).on('wheel', '.taskbar_sound_slider[data-sound-volume]', function(e) {
 	return jawnosSoundTaskbarWheelEvent(e, $(this).attr('data-sound-volume'));
 });
 
-$(document).on('input', '.taskbar_sound_slider', function() {
+$(document).on('input', '.taskbar_sound_slider[data-sound-volume]', function() {
 	var kind = $(this).attr('data-sound-volume');
 	var volume = jawnosSoundTaskbarPercent($(this).val());
 	$('#taskbar_sound_panel [data-sound-value="' + kind + '"]').text(volume + '%');
 	jawnosSoundTaskbarOptimistic(kind, volume);
 });
 
-$(document).on('change', '.taskbar_sound_slider', function() {
+$(document).on('change', '.taskbar_sound_slider[data-sound-volume]', function() {
 	var kind = $(this).attr('data-sound-volume');
 	var device = jawnosSoundTaskbarSelected(kind);
 	if (!device) { return; }

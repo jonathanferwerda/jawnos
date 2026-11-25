@@ -108,9 +108,10 @@ like($sound, qr/\.on\('wheel'/, 'a wheel over the sound widget is heard');
 like($sound, qr/function jawnosSoundTaskbarWheelAdjust\(/, 'and adjusts the output volume');
 like($sound, qr/jawnosSoundTaskbarWheelRate = 2\.5/, 'a notch is half the old five-point rate');
 like($sound, qr/class="taskbar_sound_slider"/, 'a panel slider carries the delegated class');
-like($sound, qr/\.on\('wheel', '\.taskbar_sound_slider'/, 'a wheel over a panel slider is heard too');
-like($sound, qr/\.on\('input', '\.taskbar_sound_slider'/, 'and its input');
-like($sound, qr/\.on\('change', '\.taskbar_sound_slider'/, 'and its change');
+like($sound, qr/\.on\('wheel', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'a wheel over a device slider is heard too');
+like($sound, qr/\.on\('input', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'and its input');
+like($sound, qr/\.on\('change', '\.taskbar_sound_slider\[data-sound-volume\]'/, 'and its change');
+like($sound, qr/\.taskbar_sound_slider\[data-sound-volume\]/, 'only a slider that names a device');
 unlike($sound, qr/#taskbar_sound_panel \[data-sound-volume\]', function/,
 	'not through an attribute selector on every event');
 like($sound, qr/\{ kind: kind, id: id, volume: volume \}/, 'the panel writes a device volume by id');
