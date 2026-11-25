@@ -48,6 +48,14 @@ for my $kind (qw(delay flanger phaser tremolo stereo_panner)) {
 		"$kind\'s sync is the typed path");
 }
 like($studio, qr/tempo_divisions\s*=>/, 'the common divisions are one shared list');
+
+# A synced field shows `off` as its placeholder, not its value: a value of
+# `off` filters the datalist down to the one row that matches it, so the field
+# looked like it had no divisions. Empty, every option is offered.
+like($rack, qr/String\(control\) === 'sync'[\s\S]*?String\(value\)\.toLowerCase\(\) === 'off'[\s\S]*?attr\('placeholder', 'off'\)/,
+	'a synced field at off starts empty so its datalist lists every division');
+like($markup, qr/value="" placeholder="off"/,
+	'the source sync fields carry the off placeholder');
 for my $division (qw(1/16 1/8 1/4 1/2 3/4 1 2 3 4 1/8d 1/8t 250ms off)) {
 	like($studio, qr/\b\Q$division\E\b/, "the datalist offers $division");
 }

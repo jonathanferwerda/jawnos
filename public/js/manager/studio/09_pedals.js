@@ -121,6 +121,15 @@ function studioRackTile(ch, ins, chain) {
 	tile.find('.knob_control, .studio_pedal_model, .studio_pedal_text').each(function () {
 		var control = $(this).attr('control');
 		var value = (ins.values && ins.values[control] !== undefined) ? ins.values[control] : $(this).val();
+		// A Sync field shows `off` as its placeholder, not as its value: a field
+		// whose value is `off` filters its datalist down to the one matching row.
+		// Left empty, the field shows every division as soon as it is pressed.
+		if (String(control) === 'sync'
+			&& (value === undefined || value === null || String(value) === ''
+				|| String(value).toLowerCase() === 'off')) {
+			value = '';
+			$(this).attr('placeholder', 'off');
+		}
 		$(this).val(value);
 		if ((!ins.values || ins.values[control] === undefined) && value !== undefined) {
 			ins.set(control, value);
@@ -370,6 +379,11 @@ function studioSetInsertBypass(ch, name, on, chain) {
 	if (!ins) { return false; }
 	if (ins.setBypass) { ins.setBypass(on); }
 	else { ins.bypassed = !!on; }
+	// The graph carries only enabled inserts, so the new bypass state is wired in
+	// or out of the chain here. Bypassing the only pedal leaves a plain wire, which
+	// is what the engine does with the same insert.
+	if (chain === 'out') { studioRebuildOutputs(ch); }
+	else { studioRebuildInserts(ch); }
 	studioUpdateFxBadges();
 	studioRackRender(ch);
 	studioUpdatePedalLamps();
@@ -568,6 +582,66 @@ $(document).on('click', '.studio_rack_remove', function () {
 	if (!t || !t.ins) { return; }
 	studioSetInsert(t.ch, t.name, false, t.chain);
 	studioSaver();
+});
+
+// ---- the pedal menu --------------------------------------------------------
+//
+// The small X is easy to miss on a crowded board, and a touch pad has no hover.
+// A right-click on a tile offers the same two moves in one readable menu: the
+// footswitch's On/Off and Remove. It acts on the tile's own chain, like every
+// other board action, and never on the chain the board happens to show.
+var studioPedalMenuTarget = null;
+
+function studioPedalMenuRow(menu, command, label) {
+	$('<button type="button" class="studio_menu_row"></button>')
+		.attr('data-command', command)
+		.text(label)
+		.appendTo(menu);
+}
+
+function studioPedalMenu(t, px, py) {
+	$('.studio_menu').remove();
+	studioPedalMenuTarget = { ch: t.ch, name: t.name, chain: t.chain };
+	var spec = (typeof studioEffectSpec === 'function') ? studioEffectSpec(t.name) : null;
+	var title = (spec && spec['label']) ? spec['label'] : t.name;
+	var menu = $('<div class="studio_menu studio_pedal_menu"></div>');
+	$('<div class="studio_menu_head"></div>').text(studioLayoutText(title)).appendTo(menu);
+	studioPedalMenuRow(menu, 'bypass', studioLayoutText(t.ins.bypassed ? 'Turn on' : 'Turn off'));
+	studioPedalMenuRow(menu, 'remove', studioLayoutText('Remove'));
+	$('body').append(menu);
+	var margin = 6;
+	var left = Math.min(px, $(window).width() - menu.outerWidth() - margin);
+	var top = Math.min(py, $(window).height() - menu.outerHeight() - margin);
+	menu.css({ left: Math.max(margin, left), top: Math.max(margin, top) });
+}
+
+// A controller's board is read-only (the remote vocabulary has no pedal move),
+// so it leaves the browser's own menu alone rather than offering a dead Remove.
+$(document).on('contextmenu', '#studio_pedalboard_rack .studio_rack_tile', function (e) {
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget) { return; }
+	e.preventDefault();
+	var t = studioTileTarget(this);
+	if (!t || !t.ins) { return; }
+	studioPedalMenu(t, e.clientX, e.clientY);
+});
+
+$(document).on('click', '.studio_pedal_menu .studio_menu_row', function (e) {
+	e.preventDefault();
+	var row = $(this);
+	var t = studioPedalMenuTarget;
+	var command = row.attr('data-command');
+	$('.studio_menu').remove();
+	studioPedalMenuTarget = null;
+	if (!t) { return; }
+	var ins = studioRackFind(t.ch, t.name, t.chain);
+	if (!ins) { return; }
+	if (command === 'remove') {
+		studioSetInsert(t.ch, t.name, false, t.chain);
+		studioSaver();
+	}
+	else if (command === 'bypass') {
+		studioSetInsertBypass(t.ch, t.name, !ins.bypassed, t.chain);
+	}
 });
 
 $(document).on('input change', '.studio_insert_control', function () {

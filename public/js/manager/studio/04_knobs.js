@@ -703,6 +703,12 @@ function studioRetriever() {
 		$.each(item.record.controls || {}, function(control, value) { ins.set(control, value); });
 		if (ins.setBypass) { ins.setBypass(item.record.on === false); }
 	});
+	// A restored footswitch is a graph fact: the audio chain carries only the
+	// enabled inserts, so rewire both chains now that every bypass is known.
+	$.each(studioAudio.channels, function (ch2) {
+		if (typeof studioRebuildInserts === 'function') { studioRebuildInserts(ch2); }
+		if (typeof studioRebuildOutputs === 'function') { studioRebuildOutputs(ch2); }
+	});
 	studioRackRenderAll();
 	var master_records = mixer['admin'] && mixer['admin']['master'];
 	if (master_records && master_records.length) {

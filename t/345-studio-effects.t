@@ -107,6 +107,36 @@ like($rack, qr/if \(ins && next\.indexOf\(ins\) === -1\)/,
 	'a dragged order only keeps inserts the channel still has');
 like($rack, qr/studioSetInsert\(t\.ch, t\.name, false, t\.chain\);/, 'X removes the insert from the tile\'s own chain');
 
+# A bypassed insert leaves the browser graph, exactly as it leaves the engine's
+# chain. The effect's internal dry path is not the bypass flag: relying on it
+# left a monitor silent when its only pedal was off.
+like($js, qr/function studioRebuildInserts[\s\S]*?if \(insert\.bypassed\) \{ return; \}/,
+	'a bypassed In insert is not in the audio graph');
+like($js, qr/function studioRebuildOutputs[\s\S]*?if \(insert\.bypassed\) \{ return; \}/,
+	'a bypassed Out insert is not in the audio graph');
+like($rack, qr/function studioSetInsertBypass[\s\S]*?studioRebuildOutputs\(ch\)[\s\S]*?studioRebuildInserts\(ch\)/,
+	'a footswitch rewires the chain it switches');
+like($knobs, qr/rack_restore\.forEach[\s\S]*?studioRebuildInserts\(ch2\)/,
+	'a restored bypass is wired in after every record is applied');
+
+# The pedal menu: a readable alternative to the small X and the footswitch.
+like($rack, qr/function studioPedalMenu\(t, px, py\)/, 'a pedal menu is placed at the pointer');
+like($rack, qr/'contextmenu', '#studio_pedalboard_rack \.studio_rack_tile'/,
+	'right-click on a tile opens the pedal menu');
+like($rack, qr/studioPedalMenuRow\(menu, 'bypass'/, 'the menu offers On/Off');
+like($rack, qr/studioPedalMenuRow\(menu, 'remove', studioLayoutText\('Remove'\)\)/,
+	'the menu offers Remove');
+like($rack, qr/'\.studio_pedal_menu \.studio_menu_row'/, 'the menu rows are wired');
+like($rack, qr/if \(typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget\) \{ return; \}/,
+	'a controller leaves the pedal menu alone');
+
+# A Sync field starts empty so its datalist lists every division; `off` lives
+# in the placeholder, because a value of `off` filters the list to itself.
+like($rack, qr/String\(control\) === 'sync'[\s\S]*?String\(value\)\.toLowerCase\(\) === 'off'[\s\S]*?attr\('placeholder', 'off'\)/,
+	'a Sync field at off is empty with an off placeholder');
+like($markup, qr/value="" placeholder="off"/,
+	'the source Sync field carries the off placeholder');
+
 like($rack, qr/'\.studio_rack_bypass'/, 'the rack wires the footswitch');
 like($rack, qr/'\.studio_rack_up'/, 'the rack wires Up');
 like($rack, qr/'\.studio_rack_down'/, 'the rack wires Down');

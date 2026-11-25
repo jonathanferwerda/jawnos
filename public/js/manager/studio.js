@@ -288,6 +288,11 @@ function studioRebuildInserts(ch) {
 	c.trim.connect(c.bass);
 	var node = c.treble;
 	c.inserts.forEach(function (insert) {
+		// A bypassed insert leaves the graph, exactly as the engine leaves it out
+		// of the chain. Its settings stay on the insert; switching it back on
+		// rebuilds this wire and it returns. Relying on the effect's internal dry
+		// path made a monitor silent when its only pedal was off.
+		if (insert.bypassed) { return; }
 		node.connect(insert.input);
 		node = insert.output;
 	});
@@ -296,7 +301,8 @@ function studioRebuildInserts(ch) {
 
 // The output chain sits after the take, between the playback bus and the pan:
 // playBus -> outIn -> [inserts in order] -> playPan -> master. An empty chain
-// is a wire, so a clean take plays exactly as recorded. A channel output can
+// is a wire, so a clean take plays exactly as recorded. A bypassed insert is
+// skipped in the graph, exactly as the engine skips it. A channel output can
 // name another channel instead of the master: the last node then feeds that
 // channel's input chain, so Channel 1's output runs through Channel 2's pedals.
 function studioChannelOutputInfo(ch) {
@@ -343,6 +349,7 @@ function studioRebuildOutputs(ch) {
 	});
 	var node = c.outIn;
 	c.outInserts.forEach(function (insert) {
+		if (insert.bypassed) { return; }
 		node.connect(insert.input);
 		node = insert.output;
 	});
