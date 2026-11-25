@@ -1226,10 +1226,11 @@ occurrence is diagnosable without guesswork. The cause is proved (v0.1.3568): th
 pipewire-alsa, `--period 64` pins the server graph to a 64-frame quantum, and a graph
 reconfiguration loses the stream with EIO — which `snd_pcm_recover` cannot repair. Forcing
 `clock.force-quantum 1024` reproduces it on the old binary and leaves 256/1024 running. A PipeWire
-engine now asks for 256/1024 whatever the mode (ALSA duplex keeps 64/256), the playback loop reopens
-the PCM and replays the block inside a two-second window, and the supervisor ends a `failed` patch
-once so it respawns rather than leaving the house silent. Live after the change: `period 256 /
-buffer 1024`, `xruns 0`, patching past three minutes where the old engine never reached 150 s.
+engine now asks for 256/1024 whatever the mode (ALSA duplex runs 96/384, §2b); the playback loop
+reopens the PCM and replays the block inside a two-second window, and the supervisor ends a
+`failed` patch once so it respawns rather than leaving the house silent. Live after the change:
+`period 256 / buffer 1024`, `xruns 0`, patching past three minutes where the old engine never
+reached 150 s.
 
 **Engine device and card profiles (2026-11-23, in the tree).** The picker no longer offers a PCM
 name. Each card on the machine reads `ALSA — <card>`; under it come the PipeWire profiles that card
