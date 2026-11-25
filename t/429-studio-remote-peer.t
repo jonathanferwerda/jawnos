@@ -37,12 +37,14 @@ like($controller, qr/return 1 if \$c->stash\('peer_verified_key'\);/,
 	'it keeps the app gate verdict when the gate ran');
 like($controller, qr/my \$name = \$c->param\('source_signatorial'\) \|\| '';/,
 	'otherwise it reads the caller the relay named');
-like($controller, qr/my \$row = &subs::peer_roster_row\(\$name\);/,
+like($controller, qr/\$row = &subs::peer_roster_row\(\$name\);/,
 	'resolves that name against the roster');
-like($controller, qr/return 0 unless \$row && length\(\$row->\{'pubkey'\} \|\| ''\);/,
+like($controller, qr/elsif \(!length\(\$row->\{'pubkey'\} \|\| ''\)\)/,
 	'and refuses a row with no pinned key');
-like($controller, qr/return &subs::peer_verify\(\$c, \$row\) \? 1 : 0;/,
+like($controller, qr/return 1 if &subs::peer_verify\(\$c, \$row\);/,
 	'before verifying the pinned signature itself');
+like($controller, qr/studio relay: refused /,
+	'and an unexplained refusal leaves one log line');
 
 for my $action (qw(action_44040 action_44041 action_44042 action_44043 action_44044)) {
 	my ($body) = $controller =~ /(sub \Q$action\E \{.*?\n\})/s;

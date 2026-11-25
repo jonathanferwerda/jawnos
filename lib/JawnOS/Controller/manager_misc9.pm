@@ -3108,6 +3108,8 @@ sub studio_remote_peer($uuid) {
 	return $peer;
 }
 
+our %studio_relay_refusal_seen;
+
 # A relayed Studio request has no session on the target. The app gate proves a
 # pinned peer key when it runs; when it passed on a stored session instead (or
 # app access is off), the route proves the same signature here, against the
@@ -3117,10 +3119,29 @@ sub studio_remote_peer_ok($c) {
 	return 1 if $c->stash('peer_verified_key');
 	my $name = $c->param('source_signatorial') || '';
 	$name = '' if ref $name;
-	return 0 unless length $name;
-	my $row = &subs::peer_roster_row($name);
-	return 0 unless $row && length($row->{'pubkey'} || '');
-	return &subs::peer_verify($c, $row) ? 1 : 0;
+	my $why;
+	my $row;
+	if (!length $name) {
+		$why = 'no caller name';
+	}
+	else {
+		$row = &subs::peer_roster_row($name);
+		if (!$row) { $why = 'no roster row for ' . substr($name, 0, 16); }
+		elsif (!length($row->{'pubkey'} || '')) { $why = 'roster row has no pinned key'; }
+		else {
+			return 1 if &subs::peer_verify($c, $row);
+			$why = 'signature did not verify';
+		}
+	}
+	# A refused relay is otherwise silent: the controller only sees "that machine
+	# did not answer". One line per caller and reason per worker explains it
+	# without filling the log on the controller's two-second poll.
+	my $key = $name . "\x1f" . $why;
+	unless ($studio_relay_refusal_seen{$key}++) {
+		eval { &subs::log_writer('studio relay: refused ' . ($c->req->method || '?') . ' '
+			. ($c->req->url->path || '?') . ' from ' . ($name || '?') . ': ' . $why) };
+	}
+	return 0;
 }
 
 # A request value may arrive as a form/query parameter (the route the relay
