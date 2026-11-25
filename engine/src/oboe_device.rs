@@ -63,7 +63,7 @@ const RING_FRAMES: usize = 16_384;
 /// `dropped_ring` zero and `dropped_disk` 6,528, so the writer thread, not the
 /// ring, was behind. Eight blocks was only 16 ms of audio at a 96-frame burst —
 /// shorter than one filesystem stall. 256 blocks is 512 ms at 96 frames
-/// (256 KiB of S16 mono), allocated by the bounded channel before the stream
+/// (48 KiB of S16 mono), allocated by the bounded channel before the stream
 /// starts, so the audio path still allocates nothing and `push` still never
 /// blocks.
 pub const DISK_QUEUE_BLOCKS: usize = 256;

@@ -661,7 +661,7 @@ than one filesystem stall, so every stall cost whole blocks (the 10 s take lost
 `DISK_QUEUE_BLOCKS = 256` in the same file: 24,576 frames / **512 ms** at 96
 frames, preallocated by the bounded channel before the stream starts. The audio
 callback still allocates nothing and `DiskWriter::push` still never blocks; only
-the writer's slack grew. The delta between 128 and 256 blocks is 256 KiB of S16
+the writer's slack grew. The delta between 128 and 256 blocks is 48 KiB of S16
 mono, so 256 is the chosen size rather than a marginal one.
 
 **Expected tolerance.** A 10 s take must report `dropped_disk: 0` with the WAV
