@@ -22,6 +22,7 @@ use File::Slurp;
 use File::Type;
 use IPC::Open2;
 use JSON::PP ();
+use JawnOS::Platform::Paths ();
 use List::Util qw(shuffle);
 use MIME::Base64;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
@@ -628,8 +629,27 @@ sub window_closer {
 }
 
 sub config_reader {
+	my $path = eval { JawnOS::Platform::Paths::config_path(root => $subs::install_dir) } // '';
+	my $thumb = '';
+	if (length $path) {
+		my @st = stat($path);
+		$thumb = $st[9] . ':' . $st[7] if @st;
+	}
 	my $cache = &subs::cache_get({ app => '__president', context => 'config' });
-	if ($cache) {
+	# The cache holds a snapshot and cache_get does not check its warranty, so a
+	# copy written before config.json changed used to shadow the file for the
+	# life of the house. A controller then never saw the archive_dir it had just
+	# been given and held its automatic sync ("no archive card"), and restarting
+	# did not help because the row is in the database, not the process. Key the
+	# cached copy to the file it was built from and rebuild when that key no
+	# longer matches; a cache written before this key existed carries none, so it
+	# is rebuilt once on the next read.
+	if (ref $cache eq 'HASH' && length $thumb) {
+		return $cache if ($cache->{'_config_thumb'} // '') eq $thumb;
+		my $fresh = eval { decode_json(read_file($path)) };
+		$config = $fresh if ref $fresh eq 'HASH';
+	}
+	elsif ($cache) {
 		return $cache;
 	}
 
@@ -662,6 +682,7 @@ sub config_reader {
 		$config->{'environment'} = 'production';
 	}
 
+	$config->{'_config_thumb'} = $thumb if length $thumb;
 	&subs::cache_set({ app => '__president', context => 'config', warranty => '-10m' }, $config);
 	return $config;
 }
