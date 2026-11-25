@@ -282,7 +282,9 @@ function studioChannelEngine(ch) {
 	c.playPan.connect(studioAudio.master);
 	c.playPan.connect(c.meterAnalyser);
 	// live monitoring taps the same post-pedal signal the recorder gets, so you
-	// hear exactly what is being captured; it is muted until the song asks
+	// hear exactly what is being captured; it is muted until the song asks.
+	// It joins the pan stage, not the master directly: the channel pan comes
+	// after the pedals, so Monitor pans the finished In chain too.
 	c.monGain.gain.value = 0;
 	// One input on a stereo bus is played in both ears. Without this an input
 	// captured as two channels with only one carrying signal (the UM2's mono
@@ -291,7 +293,7 @@ function studioChannelEngine(ch) {
 	c.monGain.channelCountMode = 'explicit';
 	c.monGain.channelInterpretation = 'speakers';
 	c.recGain.connect(c.monGain);
-	c.monGain.connect(studioAudio.master);
+	c.monGain.connect(c.playPan);
 	return c;
 }
 
@@ -532,6 +534,11 @@ function studioApplyChannel(ch) {
 	c.bass.gain.value = (raw('bass', 50) - 50) / 50 * 12;
 	c.mid.gain.value = (raw('mid', 50) - 50) / 50 * 12;
 	c.treble.gain.value = (raw('treble', 50) - 50) / 50 * 12;
+	// The channel pan is the last stage, after the pedals: the Out chain and the
+	// printed take reach playPan, and so does the live monitor. Set it here too,
+	// not only in the playback mix, so a pan move is heard while the transport is
+	// stopped and Monitor is open.
+	c.playPan.pan.value = (raw('pan', 50) - 50) / 50;
 }
 
 // Feed a live MediaStream (mic / camera / screen) into a channel and return its

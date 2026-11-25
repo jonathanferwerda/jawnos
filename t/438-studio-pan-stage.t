@@ -1,13 +1,17 @@
 # tests-for: public/js/manager/studio.js public/js/manager/studio/08_effects.js docs/studio-effects.md
-# covers:    The stereo panner acts after the pedalboard, as the native engine
-#            does: the browser insert is a pass-through carrying `fx.panner`
-#            (rate/depth/shape), and the channel's own pan stage - `playPan`,
-#            after the Out chain - sums the channel pan with `depth * lfo`.
-#            Pins that the insert no longer owns a StereoPannerNode, that
-#            studioChannelEngine wires an oscillator and depth gain into
-#            playPan.pan, that studioPanLfoAll is called from both rebuilds,
-#            that the precedence is Out chain then In chain with the last
-#            enabled panner winning, and that the contract says so.
+# covers:    The pan stage after the pedalboard. The stereo panner acts there, as
+#            the native engine does: the browser insert is a pass-through
+#            carrying `fx.panner` (rate/depth/shape), and the channel's own pan
+#            stage - `playPan`, after the Out chain - sums the channel pan with
+#            `depth * lfo`. The channel pan knob itself is the last stage too:
+#            the live monitor joins playPan after the In pedals instead of
+#            going straight to the master, so Monitor is panned after the
+#            pedals, and a pan move is applied while stopped. Pins that the
+#            insert no longer owns a StereoPannerNode, that studioChannelEngine
+#            wires an oscillator and depth gain into playPan.pan, that
+#            studioPanLfoAll is called from both rebuilds, that the precedence
+#            is Out chain then In chain with the last enabled panner winning,
+#            the monitor/pan wiring, and that the contract says so.
 
 use strict;
 use warnings;
@@ -68,6 +72,21 @@ like($engine // '', qr/c\.panLfo\.connect\(c\.panLfoDepth\)\.connect\(c\.playPan
 	'the LFO is summed into playPan.pan, the stage after the pedalboard');
 like($engine // '', qr/try \{ c\.panLfo\.start\(0\); \} catch \(e\) \{\}/,
 	'the oscillator is started');
+
+# The channel pan knob is the last stage: the live monitor (the In chain's
+# post-pedal signal) joins playPan instead of the master, so it is panned after
+# the pedals; the recording stream itself stays before the pan.
+like($engine // '', qr/c\.recGain\.connect\(c\.monGain\);\s*\n\s*c\.monGain\.connect\(c\.playPan\);/,
+	'the live monitor joins the pan stage after the In pedals');
+unlike($engine // '', qr/c\.monGain\.connect\(studioAudio\.master\)/,
+	'the monitor no longer bypasses the channel pan');
+like($engine // '', qr/c\.printBus\.connect\(c\.playPan\);/,
+	'a printed take takes the same pan stage');
+
+my ($apply_channel) = $studio =~ /(function studioApplyChannel\(ch\) \{.*?\n\})/s;
+ok(defined $apply_channel, 'studioApplyChannel is found');
+like($apply_channel // '', qr/c\.playPan\.pan\.value = \(raw\('pan', 50\) - 50\) \/ 50;/,
+	'a pan move reaches playPan even while the transport is stopped');
 
 # studioPanLfoAll: the scan that hands the last enabled panner to the stage.
 like($studio, qr/^function studioPanLfoAll\(\)/m, 'studioPanLfoAll exists');
