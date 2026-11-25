@@ -358,16 +358,37 @@ sub sync_rows_pull {
 			}
 			next;
 		}
-		my ($first, $err, $skip) = &sync_rows_batch($remote, $signatorial, $secret, $table, $cut, '');
-		&subs::sync_trace('read', { trace => $trace_id, table => $table, mode => ($cut ? 'watermark' : 'whole'), cut => $cut });
-		next if $skip;
+		# A whole-table read can outlast a restart. The batch cursor is the rowid
+		# of the last row the peer sent, and the row stream is ordered by rowid, so
+		# the cursor names exactly the rows already merged. Continue after it when
+		# this peer is read again with the same cut; a different cut, a different
+		# peer, or an old marker starts from the top. Without this, the board never
+		# finished its first 122k-row reconciliation: every update restarted it
+		# mid-read and the next pass began at row one (2026-11-25).
+		my $resume = &subs::sync_resume_get($remote_signatorial, $table, $cut);
+		my $resume_after = $resume ? ($resume->{'after'} || '') : '';
+		&subs::sync_resume_clear($remote_signatorial, $table) unless $resume;
+		my ($first, $err, $skip) = &sync_rows_batch($remote, $signatorial, $secret, $table, $cut, $resume_after);
+		&subs::sync_trace('read', { trace => $trace_id, table => $table, mode => ($cut ? 'watermark' : 'whole'), cut => $cut, resume => ($resume_after ne '' ? $resume_after : '-') });
+		if ($skip) {
+			&subs::sync_resume_clear($remote_signatorial, $table);
+			next;
+		}
 		unless ($first) {
 			$failed = $table . ': ' . ($err || 'no answer');
 			last;
 		}
 		$watermark = $first->{'server_time'} || $watermark if !$watermark;
 		$wire += $first->{'wire_bytes'} || 0;
-		my $total = $first->{'total'} || 0;
+		# A resumed read carries no count: the server only counts the first batch
+		# of a whole-table read. Use the count saved with the cursor so the bar and
+		# the `unless $total` guard still work.
+		my $total = $first->{'total'} || ($resume ? ($resume->{'total'} || 0) : 0) || 0;
+		if ($resume) {
+			$watermark = $resume->{'watermark'}
+				if ($resume->{'watermark'} || 0) > $watermark;
+			&subs::log_writer('sync resume ' . $table . ': continuing after rowid ' . $resume_after . ' of ' . $total);
+		}
 		# Settings learn their band map on the first successful pull, even when a
 		# window holds no rows: an install reconciled before this code has no map,
 		# and without one every later divergence would fall back to a blind window.
@@ -389,6 +410,12 @@ sub sync_rows_pull {
 		my $next_row = sub {
 			while (!scalar @queue) {
 				return undef if $done || $fetch_error || $cursor eq '';
+				# Everything up to $cursor is merged, so this is the safe place to
+				# remember the resume point: writing it after the next fetch would
+				# skip the rows that fetch returns if the process died mid-batch.
+				&subs::sync_resume_put($remote_signatorial, $table, {
+					cut => $cut, after => $cursor, total => $total, watermark => $watermark,
+				});
 				my ($batch, $why) = &sync_rows_batch($remote, $signatorial, $secret, $table, $cut, $cursor);
 				unless ($batch) { $fetch_error = $why || 'a batch failed'; return undef; }
 				@queue = @{ $batch->{'rows'} || [] };
@@ -407,9 +434,12 @@ sub sync_rows_pull {
 		# while a streamed read (no snapshot size) is merging.
 		my $short = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total, $total);
 		if ($short || $fetch_error) {
+			# Leave the marker at the last fully merged batch: the next pass picks
+			# the table up there instead of at row one.
 			$failed = $table . ': ' . ($fetch_error || 'short read');
 			last;
 		}
+		&subs::sync_resume_clear($remote_signatorial, $table);
 		# A full read is the moment to learn the peer's band map, so the next
 		# divergence can be repaired band by band instead of read whole again.
 		# Settings reach here when they had only a partial baseline map and the

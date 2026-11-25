@@ -573,6 +573,54 @@ sub sync_backoff_clear {
 	&db_query('delete from cache where context = ? and uuid = ?', 'sync_backoff', $peer);
 }
 
+# A whole-table row read can outlast a restart. The batch cursor is the rowid of
+# the last row the peer sent, and the row stream is ordered by rowid, so the
+# cursor names exactly the rows already merged. Remember it (machine-local: the
+# cache is never exported) and continue after it when the same peer is read again
+# with the same cut. Without this, a board that restarted every few minutes never
+# finished its first 122k-row reconciliation: each pass began at row one and was
+# killed before the end (2026-11-25).
+#
+# A marker older than the window is not trusted: a peer restored or rebuilt under
+# it may hold the same rows at different rowids. The nightly full pull repairs
+# that; the cursor only has to survive the restarts of a working day.
+my $SYNC_RESUME_WINDOW = 6 * 60 * 60 * 1000;
+
+sub sync_resume_get {
+	my ($peer, $table, $cut) = @_;
+	return undef unless defined $peer && length $peer && defined $table && length $table;
+	my $slot = &subs::cache_get({ app => '__president', context => 'sync_resume', subcontext => $peer . '|' . $table });
+	return undef unless ref $slot eq 'HASH';
+	return undef unless defined $slot->{'after'} && $slot->{'after'} =~ /^\d+$/ && $slot->{'after'} > 0;
+	return undef unless (($slot->{'cut'} // -1) + 0) == (($cut // -1) + 0);
+	return undef if (&rightNow() - ($slot->{'updated'} || 0)) > $SYNC_RESUME_WINDOW;
+	return $slot;
+}
+
+sub sync_resume_put {
+	my ($peer, $table, $data) = @_;
+	return 0 unless defined $peer && length $peer && defined $table && length $table;
+	return 0 unless ref $data eq 'HASH';
+	my $after = $data->{'after'} // '';
+	return 0 unless $after =~ /^\d+$/ && $after > 0;
+	return 0 unless (($data->{'total'} || 0) + 0) > 0;
+	&subs::cache_set({ app => '__president', context => 'sync_resume', subcontext => $peer . '|' . $table }, {
+		cut => ($data->{'cut'} || 0) + 0,
+		after => $after,
+		total => ($data->{'total'} || 0) + 0,
+		watermark => ($data->{'watermark'} || 0) + 0,
+		updated => &rightNow(),
+	});
+	return 1;
+}
+
+sub sync_resume_clear {
+	my ($peer, $table) = @_;
+	return 0 unless defined $peer && length $peer && defined $table && length $table;
+	&subs::cache_delete({ app => '__president', context => 'sync_resume', subcontext => $peer . '|' . $table });
+	return 1;
+}
+
 # A controller's automatic sync waits for its card. The card is the archive,
 # and a pull that lands appointments, attachments and files on the eMMC before
 # the card is mounted is on the wrong disk and can fill it. The first boot
