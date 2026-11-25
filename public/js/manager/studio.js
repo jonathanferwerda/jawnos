@@ -188,6 +188,12 @@ function studioChannelEngine(ch) {
 		treble: ctx.createBiquadFilter(),
 		recGain: ctx.createGain(),
 		recAnalyser: ctx.createAnalyser(),
+		// The lane's live stereo waveform reads the same record path through one
+		// splitter: L and R each get their own analyser. A mono input reaches
+		// the left analyser only, and the lane mirrors it.
+		recSplit: ctx.createChannelSplitter(2),
+		recAnalyserL: ctx.createAnalyser(),
+		recAnalyserR: ctx.createAnalyser(),
 		meterAnalyser: ctx.createAnalyser(),
 		recDest: ctx.createMediaStreamDestination(),
 		playBus: ctx.createGain(),
@@ -208,6 +214,10 @@ function studioChannelEngine(ch) {
 	c.treble.type = 'highshelf'; c.treble.frequency.value = 3500;
 	c.recAnalyser.fftSize = 2048;
 	c.recData = new Float32Array(c.recAnalyser.fftSize);
+	c.recAnalyserL.fftSize = 1024;
+	c.recAnalyserR.fftSize = 1024;
+	c.recDataL = new Float32Array(c.recAnalyserL.fftSize);
+	c.recDataR = new Float32Array(c.recAnalyserR.fftSize);
 	c.meterAnalyser.fftSize = 1024;
 	c.meterAnalyser.smoothingTimeConstant = 0.6;
 	c.meterData = new Float32Array(c.meterAnalyser.fftSize);
@@ -215,6 +225,9 @@ function studioChannelEngine(ch) {
 	try { c.recDest.channelCount = studioSettingNumber('audio_channels', 2) || 2; } catch (e) {}
 	c.trim.connect(c.bass).connect(c.mid).connect(c.treble);
 	c.recGain.connect(c.recAnalyser);
+	c.recGain.connect(c.recSplit);
+	c.recSplit.connect(c.recAnalyserL, 0);
+	c.recSplit.connect(c.recAnalyserR, 1);
 	c.recGain.connect(c.recDest);
 	c.recGain.connect(c.meterAnalyser);
 	// takes play through the channel fader, then the output chain (the pedals

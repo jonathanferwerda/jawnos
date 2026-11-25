@@ -45,8 +45,8 @@ like($style, qr/\.studio_menu_row\[disabled\]\s*\{[\s\S]*?opacity:/, 'a disabled
 # --- drawing the ruler ------------------------------------------------------
 like($canvas, qr/function studioDrawRuler\(\)/, 'the ruler has one draw function');
 like($canvas, qr/studioFitCanvas\(canvas\)/, 'the ruler canvas is fitted to its element');
-like($canvas, qr/mixer\['time'\]\['duration'\][\s\S]{0,40}\?\s*duration\s*:\s*60/,
-	'an empty song still has a 60 second scale');
+like($canvas, qr/mixer\['time'\]\['duration'\][\s\S]{0,40}\?\s*duration\s*:\s*STUDIO_NEW_SONG_SECONDS/,
+	'a legacy song with no duration still has a two minute scale');
 like($canvas, qr/function studioDrawTracks\(\)[\s\S]{0,200}studioDrawRuler\(\)/,
 	'every tracks repaint repaints the ruler');
 like($canvas, qr/getComputedStyle\(canvas\)/, 'the ruler takes its colours from the theme');
@@ -115,8 +115,30 @@ like($channel, qr/'rgba\(220,0,0,0\.55\)'/, 'a recording clip stays red');
 like($channel, qr/'rgba\(120,60,190,0\.5\)'/, 'a video clip stays purple');
 like($channel, qr/studioTakeDrag\.over == ch/, 'the lane a cross-track drag would land in is tinted');
 unlike($channel, qr/recAnalyser/, 'the lane no longer paints the live input across the timeline');
-like($channel, qr/take\.waveform && take\.waveform\.length/,
-	'the lane paints the recorded take\'s own peaks');
+like($channel, qr/var wave = studioTakeWaveform\(take\);/, 'the lane paints the stereo waveform pair');
+like($channel, qr/var midL = 3 \+ band \/ 2;/, 'the left channel sits in the upper half');
+like($channel, qr/var midR = 3 \+ band \+ band \/ 2;/, 'the right channel sits in the lower half');
+like($channel, qr/studioCaptureLivePeaks\(ch, take\)/, 'a recording take is sampled live');
+
+# --- the stereo waveform, live and decoded ----------------------------------
+like($transport, qr/function studioWaveformPeaks\(audio, buckets\)/, 'one builder makes both channel views');
+like($transport, qr/audio\.getChannelData\(1\) : left;/, 'a mono buffer feeds both halves');
+like($transport, qr/function studioTakeWaveform\(take\)/, 'the lane asks for the pair, not one array');
+like($transport, qr/function studioCaptureLivePeaks\(ch, take\)/, 'the record path has one live sampler');
+like($transport, qr/co\.recAnalyserL\.getFloatTimeDomainData\(co\.recDataL\);/, 'it reads the left analyser');
+like($transport, qr/co\.recAnalyserR\.getFloatTimeDomainData\(co\.recDataR\);/, 'it reads the right analyser');
+like($transport, qr/right < left \* 0\.01/, 'a mono input is mirrored into the right view');
+like($transport, qr/take\.livePeaks = true;/, 'live peaks are marked so the decoded take can replace them');
+like($transport, qr/studioWaveformPeaks\(take\.buffer\)/, 'a decoded or printed take reuses its own buffer');
+
+# --- two minutes, then growth ----------------------------------------------
+like($knobs, qr/duration: STUDIO_NEW_SONG_SECONDS, status: 'stop'/, 'a new song opens two minutes long');
+like($ctrl, qr/Math\.max\(STUDIO_NEW_SONG_SECONDS, studioKnobNumber\(response\.song/, 'a loaded legacy song also opens two minutes long');
+like($ctrl, qr/take\.duration = Math\.max\(0, mixer\['time'\]\['position'\] - take\.startTime\);/, 'a recording clip grows under the playhead');
+like($ctrl, qr/\/\/ A take stopped by this call has just been given its final duration/, 'stopping a take explains the repaint');
+like($ctrl, qr/studioDrawTracks\(\);\s*\n\}/, 'stopping a take repaints the lane');
+like($inputs, qr/\/\/ The transport may already be stopped when the recorder hands over its/, 'the hand-over explains the repaint');
+like($inputs, qr/if \(typeof studioDrawTracks === 'function'\) \{ studioDrawTracks\(\); \}/, 'the take update repaints the lane');
 
 # --- the clip context menu ---------------------------------------------------
 like($edit, qr/\$\(document\)\.on\('contextmenu', '\.track'/, 'a right-press on a take opens a menu');

@@ -462,6 +462,16 @@ like($inputs_js, qr/function studioInputListenChannel\(/,
 like($inputs_js, qr/if \(direction == 'input' && type == 'usermedia' && av == 'a'\) \{ data\.input = input; \}/,
 	'the device number is stored with the plug when it is chosen');
 
+# The lane's live stereo waveform reads the same record path through one
+# splitter with an analyser per channel; the canvas mirrors a mono input.
+like($studio_js, qr/recSplit: ctx\.createChannelSplitter\(2\)/, 'the record path grows a stereo split');
+like($studio_js, qr/c\.recAnalyserL\.fftSize = 1024;/, 'the left analyser is sized for the lane');
+like($studio_js, qr/c\.recAnalyserR\.fftSize = 1024;/, 'and the right');
+like($studio_js, qr/c\.recSplit\.connect\(c\.recAnalyserL, 0\);/, 'the splitter feeds the left analyser');
+like($studio_js, qr/c\.recSplit\.connect\(c\.recAnalyserR, 1\);/, 'and the right one');
+like($inputs_js, qr/if \(typeof studioDrawTracks === 'function'\) \{ studioDrawTracks\(\); \}/,
+	'a take handed over after the recorder stops repaints the lane');
+
 like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1 && !studioMonitorEngineFailed/,
 	'a device on a native backend is the engine Listen');
 like($studio_js, qr/&& \(typeof studioEngineAvailable === 'undefined' \|\| studioEngineAvailable !== false\)/,

@@ -52,6 +52,9 @@ async function studioStop() {
 	if (mixer['time']['status'] == 'stop') { mixer['time']['position'] = 0; }
 	studioTime('stop');
 	mixer['time']['status'] = 'stop';
+	// A take stopped by this call has just been given its final duration; paint
+	// the lane so its clip and waveform do not wait for the next transport run.
+	studioDrawTracks();
 }
 
 function studioTime(command, fromEngine) {
@@ -204,6 +207,15 @@ function studioTransportTick() {
 			mixer['time']['duration'] = mixer['time']['position'];
 			$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
 		}
+		// A take grows under the playhead while it records, so its clip is drawn
+		// on the lane as it is made instead of only appearing on stop.
+		$.each(mixer, function (ch, m) {
+			if (!/^[0-9]+$/.test(String(ch)) || !m.media || !m.media.out) { return; }
+			m.media.out.forEach(function (take) {
+				if (!take || take.status != 'recording') { return; }
+				take.duration = Math.max(0, mixer['time']['position'] - take.startTime);
+			});
+		});
 		studioLoopPunchOut();
 		studioStartPendingTakes();
 	}
@@ -573,7 +585,7 @@ function studioLoad(uuid) {
 			$('#studio').attr('name', response['app']);
 			$('#studio').attr('uuid', response['uuid']);
 
-			mixer['time']['duration'] = studioKnobNumber(response.song && response.song.duration, 0) || 0;
+			mixer['time']['duration'] = Math.max(STUDIO_NEW_SONG_SECONDS, studioKnobNumber(response.song && response.song.duration, 0) || 0);
 			// a different song opens on its whole timeline, not the old song's zoom
 			studioTimelineReset();
 

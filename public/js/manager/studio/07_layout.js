@@ -1166,7 +1166,7 @@ function studioRemoveTrack(ch, quiet) {
 	var own_dest = (own_out && own_out['type'] === 'channel' && own_out['sid']) ? String(own_out['sid']) : '';
 	var channel = studioAudio.channels[ch];
 	if (channel) {
-		['trim', 'bass', 'mid', 'treble', 'recGain', 'recAnalyser', 'recDest', 'playBus', 'playPan', 'monGain'].forEach(function (key) {
+		['trim', 'bass', 'mid', 'treble', 'recGain', 'recAnalyser', 'recSplit', 'recAnalyserL', 'recAnalyserR', 'recDest', 'playBus', 'playPan', 'monGain'].forEach(function (key) {
 			if (channel[key] && channel[key].disconnect) {
 				try { channel[key].disconnect(); } catch (e) {}
 			}

@@ -162,6 +162,7 @@ function studioDrawChannel(ch) {
 		var xfDraw = studioCrossfade();
 		orderedDraw.forEach(function (take, tIndex) {
 			if (!take) { return; }
+			if (take.status == 'recording') { studioCaptureLivePeaks(ch, take); }
 			studioEnsureWaveform(ch, take);
 			var x = studioTimelineXAt(canvas, take.startTime);
 			var tw = Math.max(2, studioTimelineWidth(canvas, take.duration || 0));
@@ -178,26 +179,46 @@ function studioDrawChannel(ch) {
 				ctx.restore();
 			}
 
-			// waveform peaks
-			if (take.waveform && take.waveform.length) {
-				var peaks = take.waveform;
-				var mid = h / 2;
+			// The two halves are the stereo view: L above the centre line, R below,
+			// so a pan reads at a glance and a mono take is two matching halves.
+			// Live recording peaks arrive from the input analysers each tick; the
+			// decoded take replaces them when the recorder stops.
+			var wave = studioTakeWaveform(take);
+			if (wave) {
+				var band = (h - 6) / 2;
+				var midL = 3 + band / 2;
+				var midR = 3 + band + band / 2;
+				var amp = (band / 2) * 0.9;
 				ctx.save();
 				ctx.beginPath();
 				ctx.rect(x, 3, tw, h - 6);
 				ctx.clip();
 				ctx.strokeStyle = 'rgba(255,255,255,0.85)';
 				ctx.lineWidth = 1;
-				ctx.beginPath();
 				// only the peaks the window can show: a zoomed take is many lanes wide
 				var b0 = Math.max(0, Math.floor(-x));
 				var b1 = Math.min(tw, Math.ceil(w - x));
+				ctx.beginPath();
 				for (var b = b0; b < b1; b++) {
-					var idx = Math.min(peaks.length - 1, Math.floor((b / tw) * peaks.length));
-					var amp = peaks[idx] * (h * 0.42);
-					ctx.moveTo(x + b, mid - amp);
-					ctx.lineTo(x + b, mid + amp);
+					var idx = Math.min(wave.L.length - 1, Math.floor((b / tw) * wave.L.length));
+					var lAmp = wave.L[idx] * amp;
+					ctx.moveTo(x + b, midL - lAmp);
+					ctx.lineTo(x + b, midL + lAmp);
 				}
+				ctx.stroke();
+				ctx.beginPath();
+				for (var br = b0; br < b1; br++) {
+					var idxR = Math.min(wave.R.length - 1, Math.floor((br / tw) * wave.R.length));
+					var rAmp = wave.R[idxR] * amp;
+					ctx.moveTo(x + br, midR - rAmp);
+					ctx.lineTo(x + br, midR + rAmp);
+				}
+				ctx.stroke();
+				// the divide keeps both channels legible when one is near silence
+				ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+				ctx.beginPath();
+				ctx.moveTo(x, h / 2);
+				ctx.lineTo(x + tw, h / 2);
 				ctx.stroke();
 				ctx.restore();
 			}
@@ -313,11 +334,16 @@ function studioDrawMetre(ch) {
 
 // ---- the timeline ruler -----------------------------------------------------
 
-// The ruler (and every lane's time axis) always has a scale, even on an empty
-// song: 60 seconds stands in for a duration the transport has not learned yet.
+// A new song opens as a two minute project. Recording past its end grows the
+// song (see studioTransportTick), so the timeline extends from this floor
+// instead of starting at zero and following the playhead from the first tick.
+var STUDIO_NEW_SONG_SECONDS = 120;
+
+// The ruler (and every lane's time axis) always has a scale: the two minute
+// floor stands in for a duration a legacy song never stored.
 function studioTimelineDuration() {
 	var duration = mixer['time'] && mixer['time']['duration'];
-	return (duration > 0) ? duration : 60;
+	return (duration > 0) ? duration : STUDIO_NEW_SONG_SECONDS;
 }
 
 // ---- the visible window -----------------------------------------------------

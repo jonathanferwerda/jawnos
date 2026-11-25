@@ -103,6 +103,8 @@ like($take, qr/indexOf\('video'\) !== -1[\s\S]{0,120}no pedal chain to print/,
 	'a video take is refused by name');
 like($take, qr/delete take\.engine_file;/, 'the old staged engine file is forgotten');
 like($take, qr/take\.waveform = null;/, 'the old waveform is forgotten');
+like($take, qr/take\.waveformL = null;/, 'the left view is forgotten too');
+like($take, qr/take\.waveformR = null;/, 'and the right view');
 unlike($take, qr/take\.startTime =/, 'the timeline slot is left alone');
 unlike($take, qr/take\.duration =/, 'the take length is left alone');
 like($take, qr/studioReindexTakes\(ch\);[\s\S]{0,80}studioSaver\(\);[\s\S]{0,40}studioTakesChanged\(\)/,

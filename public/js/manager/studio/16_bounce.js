@@ -210,6 +210,8 @@ async function studioBounceTake(ch, take) {
 		delete take.engine_failed;
 		delete take.engine_staging;
 		take.waveform = null;
+		take.waveformL = null;
+		take.waveformR = null;
 		// The hidden element may still hold the old URL; the scheduler uses the
 		// decoded buffer, so dropping the attribute is enough to let it go.
 		if (take.track) { try { take.track.removeAttribute('src'); } catch (e) {} }

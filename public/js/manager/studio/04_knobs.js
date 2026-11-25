@@ -18,7 +18,7 @@ function studioInit(data) {
 			var studio_defaults = response.settings || {};
 			mixer = {
 				time: {
-					duration: 0, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0,
+					duration: STUDIO_NEW_SONG_SECONDS, status: 'stop', position: 0, marks: [], interval: 0, startTime: 0,
 					loop: 'off', metronome: 'no', bpm: 120, sig: '4/4', display: 'time', beat: 0, bar: 0,
 					lastMetronome: null, loop_region: null, punch_in: null, pending_takes: null,
 					// seeded from the app settings, then kept per song

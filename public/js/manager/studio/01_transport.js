@@ -85,10 +85,106 @@ function studioChannelTakes(ch, includeRecording) {
 var studioWaveformCache = {};
 var studioWaveformLoading = {};
 
+// A clip's waveform is two channel views: the lane paints L in its upper half
+// and R in its lower half. A mono buffer feeds both, so a mono take still reads
+// as a stereo track rather than a single mirrored line.
+function studioWaveformPeaks(audio, buckets) {
+	buckets = buckets || 600;
+	var left = audio.getChannelData(0);
+	var right = (audio.numberOfChannels > 1) ? audio.getChannelData(1) : left;
+	var peaksL = new Float32Array(buckets);
+	var peaksR = new Float32Array(buckets);
+	var step = Math.max(1, Math.floor(left.length / buckets));
+	for (var b = 0; b < buckets; b++) {
+		var ml = 0, mr = 0;
+		for (var i = b * step; i < (b + 1) * step && i < left.length; i++) {
+			var l = Math.abs(left[i]);
+			if (l > ml) { ml = l; }
+			var r = Math.abs(right[i]);
+			if (r > mr) { mr = r; }
+		}
+		peaksL[b] = ml;
+		peaksR[b] = mr;
+	}
+	return { L: peaksL, R: peaksR };
+}
+
+function studioApplyWaveform(take, peaks) {
+	if (!take || !peaks) { return; }
+	take.waveformL = peaks.L;
+	take.waveformR = peaks.R;
+	take.livePeaks = false;
+	// `waveform` stays the left view: a drum loop and older code still write
+	// and read that one name, and the lane falls back to it when a clip has no
+	// two-channel pair.
+	take.waveform = peaks.L;
+}
+
+// The pair the lane draws, accepting a legacy single-array waveform too.
+function studioTakeWaveform(take) {
+	if (!take) { return null; }
+	if (take.waveformL && take.waveformL.length) {
+		return { L: take.waveformL, R: (take.waveformR && take.waveformR.length) ? take.waveformR : take.waveformL };
+	}
+	if (take.waveform && take.waveform.length) {
+		return { L: take.waveform, R: take.waveform };
+	}
+	return null;
+}
+
+// Read the channel's two record-path analysers once per transport tick and
+// append a peak to the take being recorded. A mono input reaches only the left
+// analyser, so the right is mirrored; the decoded take replaces these peaks
+// when the recorder stops.
+function studioCaptureLivePeaks(ch, take) {
+	if (!take || take.status != 'recording') { return; }
+	var co = (studioAudio && studioAudio.channels) ? studioAudio.channels[ch] : null;
+	if (!co || !co.recAnalyserL || !co.recAnalyserR) { return; }
+	var pos = (mixer['time'] && mixer['time']['position']) || 0;
+	var last = (take.liveAt === undefined) ? take.startTime : take.liveAt;
+	if (!(pos > last)) { return; }
+	co.recAnalyserL.getFloatTimeDomainData(co.recDataL);
+	co.recAnalyserR.getFloatTimeDomainData(co.recDataR);
+	var peak = function (data) {
+		var m = 0;
+		for (var i = 0; i < data.length; i++) {
+			var v = Math.abs(data[i]);
+			if (v > m) { m = v; }
+		}
+		return m;
+	};
+	var left = peak(co.recDataL);
+	var right = peak(co.recDataR);
+	if (!(left > 0) && right > 0) { left = right; }
+	else if (right < left * 0.01) { right = left; }
+	take.liveAt = pos;
+	if (!take.waveformL) { take.waveformL = []; take.waveformR = []; }
+	take.livePeaks = true;
+	take.waveformL.push(left);
+	take.waveformR.push(right);
+	take.waveform = take.waveformL;
+}
+
 function studioEnsureWaveform(ch, take) {
-	if (!take || !take.src || take.waveform) { return; }
-	if (studioWaveformCache[take.src] === 'failed') { return; }
-	if (studioWaveformCache[take.src]) { take.waveform = studioWaveformCache[take.src]; return; }
+	if (!take) { return; }
+	// A legacy mono array is a drawable view, and live peaks stay until the
+	// decoded take can replace them.
+	if (!take.livePeaks) {
+		if (take.waveformL && take.waveformL.length) { return; }
+		if (take.waveform && take.waveform.length) { return; }
+	}
+	if (take.src && studioWaveformCache[take.src] === 'failed') { return; }
+	if (take.src && studioWaveformCache[take.src]) { studioApplyWaveform(take, studioWaveformCache[take.src]); return; }
+	// The playback scheduler has already decoded this take: reuse that buffer
+	// instead of fetching and decoding the same bytes a second time. A printed
+	// take has no URL, so its buffer is the only source it will ever have.
+	if (take.buffer) {
+		var fromBuffer = studioWaveformPeaks(take.buffer);
+		studioApplyWaveform(take, fromBuffer);
+		if (take.src) { studioWaveformCache[take.src] = fromBuffer; }
+		return;
+	}
+	if (!take.src) { return; }
 	if (studioWaveformLoading[take.src]) { return; }
 	var ctx = studioContext();
 	if (!ctx) { return; }
@@ -96,21 +192,10 @@ function studioEnsureWaveform(ch, take) {
 	fetch(take.src).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
 		return ctx.decodeAudioData(buf);
 	}).then(function (audio) {
-		var buckets = 600;
-		var data = audio.getChannelData(0);
-		var peaks = new Float32Array(buckets);
-		var step = Math.max(1, Math.floor(data.length / buckets));
-		for (var b = 0; b < buckets; b++) {
-			var m = 0;
-			for (var i = b * step; i < (b + 1) * step && i < data.length; i++) {
-				var v = Math.abs(data[i]);
-				if (v > m) { m = v; }
-			}
-			peaks[b] = m;
-		}
+		var peaks = studioWaveformPeaks(audio);
 		studioWaveformCache[take.src] = peaks;
 		delete studioWaveformLoading[take.src];
-		take.waveform = peaks;
+		studioApplyWaveform(take, peaks);
 		studioDrawChannel(ch);
 	}).catch(function (e) {
 		studioWaveformCache[take.src] = 'failed';
@@ -1291,6 +1376,9 @@ function studioTakeRequestBuffer(take) {
 		// if the transport is already past this take for the current pass, re-anchor
 		// so the freshly decoded audio joins now rather than at the next wrap
 		studioTakesChanged();
+		// The transport is usually stopped when the take lands, so nothing else
+		// would repaint the lane and the new waveform would stay invisible.
+		if (typeof studioDrawTracks === 'function') { studioDrawTracks(); }
 	}).catch(function (e) {
 		take.bufferFailed = true;
 		delete take.bufferLoading;

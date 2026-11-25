@@ -936,6 +936,10 @@ function studioStartTake(ch, looping, at) {
 		take.src = URL.createObjectURL(event.data);
 		take.track.src = take.src;
 		studioTakeRequestBuffer(take);
+		// The transport may already be stopped when the recorder hands over its
+		// last chunk, so repaint once here: the live peaks are kept until the
+		// decoded waveform replaces them.
+		if (typeof studioDrawTracks === 'function') { studioDrawTracks(); }
 	};
 	// Measurement only: stamp the request and the recorder's own start so the
 	// take (and studioAudioReport) carries how long the browser took to begin.
