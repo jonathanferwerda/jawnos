@@ -185,6 +185,17 @@ if ($android) {
 	local $ENV{'AR_aarch64-linux-android'}   = $ar;
 	local $ENV{'CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER'} = $clang;
 
+	# The cdylib statically links Oboe's C++ but leaves the runtime symbols to
+	# the loader. Name libc++_shared in its own link so those symbols come from
+	# its dependency graph; System.loadLibrary does not put the STL in the
+	# global scope, and a preload cannot promote an already-loaded library.
+	my $android_rustflags = ( defined $ENV{'CARGO_ENCODED_RUSTFLAGS'} && length $ENV{'CARGO_ENCODED_RUSTFLAGS'} )
+		? $ENV{'CARGO_ENCODED_RUSTFLAGS'} : '';
+	local $ENV{'CARGO_ENCODED_RUSTFLAGS'} = join("\x1f",
+		( length $android_rustflags ? $android_rustflags : () ),
+		'-C', 'link-arg=-Wl,--no-as-needed',
+		'-C', 'link-arg=-lc++_shared');
+
 	my $target = ( defined $ENV{'CARGO_TARGET_DIR'} && length $ENV{'CARGO_TARGET_DIR'} )
 		? $ENV{'CARGO_TARGET_DIR'}
 		: File::Spec->catdir( $root, 'engine', 'target' );

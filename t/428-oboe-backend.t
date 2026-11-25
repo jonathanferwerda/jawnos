@@ -147,6 +147,19 @@ SKIP: {
 	ok( !-e "$dir/jniLibs/arm64-v8a/libjawn_audio.so", 'and stages nothing' );
 }
 
+# --- the Android link carries the C++ runtime -------------------------------
+{
+	open( my $script, '<', "$root/scripts/build_engine.pl" ) or die "build_engine.pl: $!";
+	local $/;
+	my $build = <$script>;
+	close $script;
+	my ($android_block) = $build =~ /^if \(\$android\) \{\n(.*?)^\}/ms;
+	ok( $android_block, 'the build has an Android block' );
+	like( $android_block, qr/CARGO_ENCODED_RUSTFLAGS/, 'the Android build sets encoded rustflags' );
+	like( $android_block, qr/link-arg=-Wl,--no-as-needed/, 'and forces the C++ runtime into the link' );
+	like( $android_block, qr/link-arg=-lc\+\+_shared/, 'and names libc++_shared' );
+}
+
 # --- the source keeps the feature out of the default build -------------------
 {
 	open( my $man, '<', "$root/engine/Cargo.toml" ) or die "Cargo.toml: $!";
