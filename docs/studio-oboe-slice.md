@@ -11,12 +11,12 @@ This document is the plan of record. It is written as a patch list with
 
 ## 0. Verdict for this checkout - applied and cross-compiled (2026-11-25)
 
-**The engine changes in section 2 are applied; the app changes in section 5 are not.**
-The previous verdict (the crate was not cached, so the feature could not be added
-without breaking `--offline`) is no longer true on this machine: the NDK is
-installed, the crates.io sparse index and `static.rust-lang.org` answer, and the
-crate fetched. What is still true is the split the plan relies on - the
-dependency is **optional**, the feature is **off** by default, and the
+**Both halves are applied.** The engine changes in section 2 and the app changes in section 5
+are in the tree; the app side shipped in builds 1353–1356 (measured at 1356 / 0.118.358), and
+the feature-on build loads on the device and names `oboe: true` (section 9, Result). The
+previous verdicts (the crate was not cached, so the feature could not be added without breaking
+`--offline`; then engine-only) are no longer true. What is still true is the split the plan
+relies on - the dependency is **optional**, the feature is **off** by default, and the
 default/offline build compiles no C or C++ at all.
 
 Evidence gathered on this machine:
@@ -449,6 +449,33 @@ Item 5 is the one that decides whether M1 earns a monitoring half. If the phone
 only ever gets a shared stream, the native engine is still worth shipping —
 local-first takes, the same strip, the house uplink — but the latency claim in
 §3 of the mobile-audio doc must be corrected before the work continues.
+
+### Result (2026-11-25)
+
+Measured on a tablet `SM-X400`, app **1356 / 0.118.358**, engine landed **v0.1.3783**. The
+feature-on build loads on the device: `jawn-audio --backends --json` reports
+`{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}`.
+
+| Gate | Result |
+| --- | --- |
+| 1. Ten minutes of 48 kHz mono, zero unreported xruns, a WAV that opens and matches its declared length | **PASS** with findings (a) and (b) — 599.956 s WAV, xruns 0 |
+| 2. `oboe: true` on the phone; `oboe: false` and `t/428` green on Linux | **PASS** — `{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}` |
+| 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **BLOCKED** — the Oboe take ABI carries no `Channel` or plan and the capture path writes raw S16 |
+| 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
+| 5. The mobile-audio §6 round trip recorded | **BLOCKED** — capture-only, no duplex stream and no click, so the round trip was not measured |
+
+- **(a) The stop path loses the ring tail.** 0 frames on the 10 s smoke, 480 frames / 10.0 ms on
+the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take; `OboeReport` does not carry the
+loss.
+- **(b) The 10 min built-in-mic take clipped** at 1.000 (0.0 dBFS); the USB take did not (peak
+0.195862, −14.2 dBFS).
+- **(c) The granted buffer is 2,976 frames / 62.0 ms** (burst 96 frames / 2.0 ms) on every run —
+the leading indicator for the unmeasured round trip and the number to settle next.
+
+Gate 3 is blocked on the take ABI, not on the strip: the capture path writes raw S16 and the
+`Channel`/plan shape stops at the JNI boundary. Gate 5 is blocked on the slice being
+capture-only; it needs a duplex stream and a click before §6 can be recorded. Per-run numbers
+and the full finding text are in `docs/studio-mobile-audio.md` §6.
 
 ## 10. Landing checklist (once the cache has the crate)
 

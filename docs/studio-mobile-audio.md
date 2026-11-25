@@ -5,8 +5,11 @@
 > JawnOS engine on the phone would reuse from `engine/`. The engine plan is
 > `docs/studio-audio-roadmap.md`; the effect contract is `docs/studio-effects.md`.
 
-**Status:** plan only, 2026-11-18. Nothing below is built except the browser path and the
-Linux engine. No phone has been measured for this document.
+**Status:** plan, 2026-11-18; first native slice built and measured, 2026-11-25. The browser
+path and the Linux engine are in the tree, and the `oboe` slice of §4 now records on a real
+tablet (`SM-X400`, app 1356 / 0.118.358): 48 kHz mono capture, Exclusive/LowLatency, zero xruns,
+from the built-in mic and from the UM2 over USB. Open: the `Channel` fixture comparison and the
+duplex round trip — §6 is **not** measured (see "First slice result" there).
 
 **How to read the numbers.** Every figure carries one of three marks:
 
@@ -436,6 +439,11 @@ tolerance. The phone reports its granted `getSharingMode()`/`getPerformanceMode(
 the built-in mic and the USB input, and a round trip measured with the UM2 patch cable
 (headphone out → instrument in) for each.
 
+**Result — 2026-11-25:** item 1 passes with the tail-loss and clipping findings, item 2 passes,
+item 4 passes for the built-in mic and the UM2. Item 3 is blocked on the take ABI (no `Channel`)
+and item 5 is blocked because the slice is capture-only. Numbers, findings and why the round
+trip is still open are in §6.
+
 ### M2 — The phone on the house clock (P3/P4 work, 2–3 weeks)
 
 The phone becomes a source on the master's engine. **This phase is blocked on P3's transport**
@@ -490,3 +498,43 @@ but it must not be sold as lower latency, and the §3 table must say so before t
 
 The USB row is not optional: it is the row that decides whether a guitar on the phone is a
 usable source at all, and it is the only row that can reuse a measured house figure.
+
+### First slice result — 2026-11-25
+
+The first native slice (§4) ran on a tablet `SM-X400`, app 1356 / 0.118.358, engine landed
+v0.1.3783. `jawn-audio --backends --json` reports
+`{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}`: the feature-on build
+loads and opens Oboe on the device.
+
+| Run | Rate / channels | WAV | `frames_captured` / WAV | Sharing / performance | Buffer / burst | xruns | Peak |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 s smoke, built-in/default | 48 kHz mono | 9.986 s | 479,328 / 479,328 | Exclusive / LowLatency | 2,976 (62.0 ms) / 96 (2.0 ms) | 0 | 0.005127 (−45.8 dBFS) |
+| 10 min, built-in/default | 48 kHz mono | 599.956 s | 28,799,040 / 28,797,888 (1,152 frames, 24.0 ms) | Exclusive / LowLatency | 2,976 / 96 | 0 | 1.000 (0.0 dBFS; mean −33.4 dB) |
+| 60 s USB, UM2 input 0, device id 176 | 48 kHz mono | 59.986 s | 2,879,808 / 2,879,328 (480 frames, 10.0 ms) | Exclusive / LowLatency | 2,976 / 96 | 0 | 0.195862 (−14.2 dBFS; mean −43.1 dB) |
+
+| Gate | Result |
+| --- | --- |
+| 1. Ten minutes of 48 kHz mono, zero unreported xruns, a WAV that opens and matches its declared length | **PASS** with findings (a) and (b) — 599.956 s WAV, xruns 0 |
+| 2. `oboe: true` on the phone; `oboe: false` and `t/428` green on Linux | **PASS** — `{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}` |
+| 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **BLOCKED** — the Oboe take ABI carries no `Channel` or plan and the capture path writes raw S16 |
+| 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
+| 5. This section's round trip recorded | **BLOCKED** — capture-only, no duplex stream and no click, so the round trip was not measured |
+
+Three findings, none of them a reason to argue with the numbers:
+
+- **(a) The stop path loses the ring tail.** 0 frames on the 10 s take, 480 frames / 10.0 ms on
+the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take — one partial buffer fill each
+time. `OboeReport` does not carry the loss, so a take can be short of `frames_captured` with
+nothing in the status line saying so.
+- **(b) The 10 min built-in-mic take clipped.** Peak 1.000 (0.0 dBFS, mean −33.4 dB); the UM2
+take did not (peak 0.195862, −14.2 dBFS, mean −43.1 dB). The built-in mic's gain, not the
+engine's S16 path, is where to look.
+- **(c) The granted buffer is 2,976 frames / 62.0 ms** (burst 96 frames / 2.0 ms). It is the
+leading indicator for the round trip below.
+
+**The round trip is NOT measured.** This slice opens an input stream and no output, so there is
+no click to hear and no duplex stream to time; the UM2 patch-cable row above cannot run until a
+duplex slice exists. A round trip cannot come in under one input buffer plus one output buffer,
+so the number to settle next is the granted **2,976 frames / 62.0 ms**: if a duplex stream is
+granted the same buffer, the round trip starts at 62 ms before any scheduling, USB or acoustic
+time. Measure it before the §3 latency table is used to argue for a monitoring half.
