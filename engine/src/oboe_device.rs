@@ -43,6 +43,7 @@ use crate::disk::DiskWriter;
 use crate::monbus::{self, Consumer, Producer};
 use crate::plan::{ChannelPlan, Strip};
 use crate::roundtrip as rt;
+use crate::roundtrip::RoundTripReport;
 
 /// The rate the slice asks for. The report carries the rate actually granted;
 /// a device that refuses 48 kHz is reported, never silently resampled.
@@ -56,6 +57,16 @@ const MAX_CALLBACK_FRAMES: usize = 32_768;
 /// Ring capacity: about 341 ms at 48 kHz, enough to ride out a disk stall. A
 /// full ring discards the newest frames and counts them.
 const RING_FRAMES: usize = 16_384;
+
+/// Disk queue depth, in blocks. The measured cause of the first slice's losses:
+/// the 10 s take at app 1358 dropped 6,528 frames (68 blocks of 96) with
+/// `dropped_ring` zero and `dropped_disk` 6,528, so the writer thread, not the
+/// ring, was behind. Eight blocks was only 16 ms of audio at a 96-frame burst —
+/// shorter than one filesystem stall. 256 blocks is 512 ms at 96 frames
+/// (256 KiB of S16 mono), allocated by the bounded channel before the stream
+/// starts, so the audio path still allocates nothing and `push` still never
+/// blocks.
+pub const DISK_QUEUE_BLOCKS: usize = 256;
 
 /// What one Oboe take actually got. The granted values, not the requested ones.
 #[derive(Debug, Clone)]
@@ -188,7 +199,13 @@ pub fn run_capture_plan(
     // granted. A bad path fails here, not after the take began.
     let disk = match out {
         Some(path) => Some(
-            DiskWriter::spawn(Path::new(path), rate, 1, frames_per_burst, 8)
+            DiskWriter::spawn(
+                Path::new(path),
+                rate,
+                1,
+                frames_per_burst,
+                DISK_QUEUE_BLOCKS,
+            )
                 .map_err(|error| format!("cannot write {path}: {error}"))?,
         ),
         None => None,
@@ -274,79 +291,14 @@ fn device_label(device_id: Option<i32>) -> String {
 
 // --- the duplex round-trip probe (docs/studio-mobile-audio.md §6) -------------
 //
-// This is the *engine* half of the measurement. It is deliberately not
-// exported through the JNI shim or the Studio panel yet: the measurement has not
-// been proven on a device. What is testable without hardware is in
-// `roundtrip.rs` (the chirp, the correlation, the timestamp arithmetic); what
-// remains is whether two Oboe streams on the phone grant comparable
-// CLOCK_MONOTONIC timestamps and whether the built-in speaker/mic path yields a
-// strong enough correlation. Until a real number exists, a button would invite a
-// false reading.
-
-/// What one duplex probe got. All the granted shapes are reported beside the
-/// number, because a round trip without its buffer and sharing mode is not a
-/// measurement.
-#[derive(Debug, Clone)]
-pub struct RoundTripReport {
-    pub device_in: String,
-    pub device_out: String,
-    pub rate: u32,
-    pub input_channels: usize,
-    pub output_channels: usize,
-    pub input_buffer_frames: usize,
-    pub output_buffer_frames: usize,
-    pub input_burst: usize,
-    pub output_burst: usize,
-    pub sharing_input: String,
-    pub sharing_output: String,
-    pub performance_input: String,
-    pub performance_output: String,
-    pub xruns_input: u32,
-    pub xruns_output: u32,
-    pub input_frames: u64,
-    pub output_frames: u64,
-    pub input_dropped: u64,
-    pub click_frame: i64,
-    pub heard_frame: i64,
-    pub score: f32,
-    pub method: String,
-    pub round_trip_ms: f64,
-    pub round_trip_frames: f64,
-}
-
-impl RoundTripReport {
-    /// The status line the app would show. Not wired to the panel; kept beside
-    /// the report so a later JNI method has one shape to marshal.
-    pub fn to_json(&self) -> String {
-        format!(
-            "{{\"ok\":true,\"backend\":\"oboe\",\"probe\":\"roundtrip\",\"method\":\"{}\",\"device_in\":\"{}\",\"device_out\":\"{}\",\"rate\":{},\"channels_in\":{},\"channels_out\":{},\"buffer_in\":{},\"buffer_out\":{},\"burst_in\":{},\"burst_out\":{},\"sharing_in\":\"{}\",\"sharing_out\":\"{}\",\"performance_in\":\"{}\",\"performance_out\":\"{}\",\"xruns_in\":{},\"xruns_out\":{},\"input_frames\":{},\"output_frames\":{},\"input_dropped\":{},\"click_frame\":{},\"heard_frame\":{},\"score\":{:.3},\"round_trip_ms\":{:.3},\"round_trip_frames\":{:.1}}}",
-            json_escape(&self.method),
-            json_escape(&self.device_in),
-            json_escape(&self.device_out),
-            self.rate,
-            self.input_channels,
-            self.output_channels,
-            self.input_buffer_frames,
-            self.output_buffer_frames,
-            self.input_burst,
-            self.output_burst,
-            json_escape(&self.sharing_input),
-            json_escape(&self.sharing_output),
-            json_escape(&self.performance_input),
-            json_escape(&self.performance_output),
-            self.xruns_input,
-            self.xruns_output,
-            self.input_frames,
-            self.output_frames,
-            self.input_dropped,
-            self.click_frame,
-            self.heard_frame,
-            self.score,
-            self.round_trip_ms,
-            self.round_trip_frames,
-        )
-    }
-}
+// This is the Oboe half of the measurement. The chirp, the correlation, the
+// timestamp arithmetic and the report's JSON live in `roundtrip.rs`, which is
+// always compiled and unit-tested; what remains here is the part that needs a
+// device: whether two Oboe streams grant comparable CLOCK_MONOTONIC timestamps
+// and whether the acoustic path yields a correlation above the floor. The
+// probe is exported through the C ABI (`jawn_audio_roundtrip`) and reaches the
+// panel, which records a number without claiming one until the UM2 patch-cable
+// run says so.
 
 /// One short chirp out, one capture back: the duplex probe.
 ///
@@ -564,6 +516,8 @@ pub fn run_roundtrip(
     Ok(RoundTripReport {
         device_in: device_label(device_in),
         device_out: device_label(device_out),
+        device_in_id: device_in.unwrap_or(-1),
+        device_out_id: device_out.unwrap_or(-1),
         rate: pair.rate,
         input_channels,
         output_channels,
@@ -1196,6 +1150,30 @@ pub extern "C" fn jawn_audio_status() -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn jawn_audio_backends() -> *mut c_char {
     into_c_string(crate::backends::json(&crate::backends::availability()))
+}
+
+/// The duplex round-trip probe (docs/studio-mobile-audio.md §6).
+///
+/// Opens an input and an output stream, plays one chirp, captures it back and
+/// answers the [`RoundTripReport`] JSON, or the engine's error JSON when the
+/// HAL refuses a stream/pair or the correlation misses. `device_in` or
+/// `device_out` below zero asks the HAL to choose, the same rule as
+/// [`jawn_audio_start`].
+///
+/// This call blocks for up to ~3 s (the probe's own capture window), so a UI
+/// must run it on a worker thread rather than on the page's thread. The
+/// returned string belongs to the caller and is freed with
+/// [`jawn_audio_free`].
+#[no_mangle]
+pub extern "C" fn jawn_audio_roundtrip(device_in: i32, device_out: i32) -> *mut c_char {
+    let report = run_roundtrip(
+        crate::roundtrip::device_from_id(device_in),
+        crate::roundtrip::device_from_id(device_out),
+    );
+    into_c_string(match report {
+        Ok(report) => report.to_json(),
+        Err(error) => error_json(&error),
+    })
 }
 
 /// Free a string returned by any of the functions above.

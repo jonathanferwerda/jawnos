@@ -518,7 +518,7 @@ loads and opens Oboe on the device.
 | 2. `oboe: true` on the phone; `oboe: false` and `t/428` green on Linux | **PASS** — `{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}` |
 | 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **RUNNABLE, on-device take pending** — the engine and the app carry one plan (§6, "Second slice") |
 | 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
-| 5. This section's round trip recorded | **NOT MEASURED** — the probe and its detector exist and are unit-tested; no device number yet |
+| 5. This section's round trip recorded | **PROBE EXPOSED, NUMBER PENDING** — the probe and its detector are unit-tested and the panel has a *Round trip* button; no device number yet |
 
 Three findings, none of them a reason to argue with the numbers:
 
@@ -529,20 +529,20 @@ drain loop, so the ring tail is not the cause: the frames were captured and then
 the take ran, when the ring or the disk queue was full. `OboeReport` did not carry the loss; it
 now reports `frames_written` and a `dropped` total split into `dropped_ring` (the ring was full
 because the drain fell behind) and `dropped_disk` (the disk queue was full because the writer
-thread fell behind). The next 60 s take's split names which one; only then is raising
-`RING_FRAMES` justified.
+thread fell behind). The 1358 sidecars answered it: `dropped_ring` was **0** and `dropped_disk`
+carried the whole loss, so the disk queue — not `RING_FRAMES` — was raised (§ "Third slice").
 - **(b) The 10 min built-in-mic take clipped.** Peak 1.000 (0.0 dBFS, mean −33.4 dB); the UM2
 take did not (peak 0.195862, −14.2 dBFS, mean −43.1 dB). The built-in mic's gain, not the
 engine's S16 path, is where to look.
 - **(c) The granted buffer is 2,976 frames / 62.0 ms** (burst 96 frames / 2.0 ms). It is the
 leading indicator for the round trip below.
 
-**The round trip is NOT measured.** This slice opens an input stream and no output, so there is
-no click to hear and no duplex stream to time; the UM2 patch-cable row above cannot run until a
-duplex slice exists. A round trip cannot come in under one input buffer plus one output buffer,
-so the number to settle next is the granted **2,976 frames / 62.0 ms**: if a duplex stream is
-granted the same buffer, the round trip starts at 62 ms before any scheduling, USB or acoustic
-time. Measure it before the §3 latency table is used to argue for a monitoring half.
+**The round trip is NOT measured.** The first slice opened an input stream and no output, so
+there was no click to hear and no duplex stream to time. A round trip cannot come in under one
+input buffer plus one output buffer, so the number to settle next is the granted **2,976 frames
+/ 62.0 ms**: if a duplex stream is granted the same buffer, the round trip starts at 62 ms before
+any scheduling, USB or acoustic time. The probe is now exported and has a panel button (see
+"Third slice"); measure it before the §3 latency table is used to argue for a monitoring half.
 
 ### Second slice — the strip plan and the probe (2026-11-25)
 
@@ -561,7 +561,39 @@ passed until that take is recorded.
 For this section's number, the engine half exists (`roundtrip.rs` + `oboe_device::run_roundtrip`):
 a 6 ms chirp, a normalized cross-correlation, and the difference of the two streams'
 `getTimestamp(CLOCK_MONOTONIC)` readings. Nine unit tests cover the detector and the arithmetic on
-synthetic buffers. The Oboe glue is deliberately **not** exposed to the app and has **no button**:
-the open questions are whether two Oboe streams on this phone grant comparable CLOCK_MONOTONIC
-positions and whether the speaker→microphone path clears the correlation floor. Until those are
-answered with a real number, this table stays empty and no latency claim is made.
+synthetic buffers. At 1358 the Oboe glue had no button because the two open questions — whether
+two Oboe streams on this phone grant comparable CLOCK_MONOTONIC positions, and whether the
+speaker→microphone path clears the correlation floor — were unanswered. It is exported now
+(§ "Third slice"); the table still stays empty until a real number is recorded.
+
+### Third slice — the disk queue, and the probe's button (2026-11-25)
+
+App **1359 / 0.118.361**, engine landed with the change. What the 1358 sidecars proved, and what
+was done with it:
+
+| Take | `frames_captured` | `frames_written` | `dropped` | `dropped_ring` | `dropped_disk` |
+| --- | --- | --- | --- | --- | --- |
+| 60 s raw, UM2 input 176 | 28,799,616 | 28,798,272 | 1,344 | **0** | **1,344** |
+| 10 s tone+delay, UM2 input 176 | 479,328 | 472,800 | 6,528 | **0** | **6,528** |
+
+The loss was the disk queue, not the ring. `engine/src/oboe_device.rs` had passed
+`queue_blocks = 8`, which at a 96-frame burst is 16 ms — shorter than one filesystem stall; the
+10 s take lost 68 whole blocks. The queue is `DISK_QUEUE_BLOCKS = 256` now (24,576 frames /
+512 ms), preallocated before the stream starts. The callback still allocates nothing and `push`
+still never blocks. A 10 s take is expected to report `dropped_disk: 0` with
+`frames_written == frames_captured`; any residual is stated in frames and 96-frame blocks, never
+rounded away.
+
+The probe is exposed additively: `jawn_audio_roundtrip(int, int)` returns the report JSON
+(`round_trip_ms`, `round_trip_frames`, both streams' sharing/performance/buffer/xruns, and the
+requested `device_in_id`/`device_out_id`) or an error JSON; negative ids mean the HAL's default.
+The JNI shim resolves it as optional, the bridge runs it on a worker thread and polls a status
+method, and the Studio panel has *Round trip input*, *Round trip output*, *Measure round trip*
+and a result line. Results are written to
+`/sdcard/Download/jawnos-native-roundtrip-<timestamp>.json` (best effort).
+
+**Item 5 is not passed.** No round trip has been measured on the tablet. The UM2 patch-cable row
+(input 176, the matching USB output, instrument gain as for the `table` measurement) is the run
+that records it; three runs per granted sharing mode, then the median and the panel's granted
+buffers/xruns fill this section. The built-in speaker/mic row follows and may be refused by the
+0.35 correlation floor — a refusal is recorded as a result, not as a latency.

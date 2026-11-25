@@ -214,6 +214,107 @@ pub fn measure(
     })
 }
 
+/// The C ABI's one way to say "let the HAL choose": every `device < 0` is the
+/// default, and every other value is a real device id. Shared by the export and
+/// the always-compiled tests so the app and the engine cannot disagree.
+pub fn device_from_id(id: i32) -> Option<i32> {
+    if id < 0 {
+        None
+    } else {
+        Some(id)
+    }
+}
+
+fn json_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// What one duplex probe got. All the granted shapes are reported beside the
+/// number, because a round trip without its buffer and sharing mode is not a
+/// measurement. The numeric device ids are kept next to their labels (with -1
+/// for "default") so the result is attributable to the USB input output, not to
+/// a name that two devices could share.
+#[derive(Debug, Clone)]
+pub struct RoundTripReport {
+    pub device_in: String,
+    pub device_out: String,
+    /// The requested input id, or -1 when the HAL chose.
+    pub device_in_id: i32,
+    /// The requested output id, or -1 when the HAL chose.
+    pub device_out_id: i32,
+    pub rate: u32,
+    pub input_channels: usize,
+    pub output_channels: usize,
+    pub input_buffer_frames: usize,
+    pub output_buffer_frames: usize,
+    pub input_burst: usize,
+    pub output_burst: usize,
+    pub sharing_input: String,
+    pub sharing_output: String,
+    pub performance_input: String,
+    pub performance_output: String,
+    pub xruns_input: u32,
+    pub xruns_output: u32,
+    pub input_frames: u64,
+    pub output_frames: u64,
+    pub input_dropped: u64,
+    pub click_frame: i64,
+    pub heard_frame: i64,
+    pub score: f32,
+    pub method: String,
+    pub round_trip_ms: f64,
+    pub round_trip_frames: f64,
+}
+
+impl RoundTripReport {
+    /// The one JSON shape the C ABI, the JNI shim, the panel and the sidecar
+    /// all carry. Always compiled, so the field names are unit-tested on Linux
+    /// even though the streams themselves need a phone.
+    pub fn to_json(&self) -> String {
+        format!(
+            "{{\"ok\":true,\"backend\":\"oboe\",\"probe\":\"roundtrip\",\"method\":\"{}\",\"device_in\":\"{}\",\"device_out\":\"{}\",\"device_in_id\":{},\"device_out_id\":{},\"rate\":{},\"channels_in\":{},\"channels_out\":{},\"buffer_in\":{},\"buffer_out\":{},\"burst_in\":{},\"burst_out\":{},\"sharing_in\":\"{}\",\"sharing_out\":\"{}\",\"performance_in\":\"{}\",\"performance_out\":\"{}\",\"xruns_in\":{},\"xruns_out\":{},\"input_frames\":{},\"output_frames\":{},\"input_dropped\":{},\"click_frame\":{},\"heard_frame\":{},\"score\":{:.3},\"round_trip_ms\":{:.3},\"round_trip_frames\":{:.1}}}",
+            json_escape(&self.method),
+            json_escape(&self.device_in),
+            json_escape(&self.device_out),
+            self.device_in_id,
+            self.device_out_id,
+            self.rate,
+            self.input_channels,
+            self.output_channels,
+            self.input_buffer_frames,
+            self.output_buffer_frames,
+            self.input_burst,
+            self.output_burst,
+            json_escape(&self.sharing_input),
+            json_escape(&self.sharing_output),
+            json_escape(&self.performance_input),
+            json_escape(&self.performance_output),
+            self.xruns_input,
+            self.xruns_output,
+            self.input_frames,
+            self.output_frames,
+            self.input_dropped,
+            self.click_frame,
+            self.heard_frame,
+            self.score,
+            self.round_trip_ms,
+            self.round_trip_frames,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +475,80 @@ mod tests {
             rate: 0,
         };
         assert!(measure(output, 0, zero, 0).is_err());
+    }
+
+    fn sample_report() -> RoundTripReport {
+        RoundTripReport {
+            device_in: "device 176".to_string(),
+            device_out: "device 177".to_string(),
+            device_in_id: 176,
+            device_out_id: 177,
+            rate: RATE,
+            input_channels: 1,
+            output_channels: 2,
+            input_buffer_frames: 2_976,
+            output_buffer_frames: 2_976,
+            input_burst: 96,
+            output_burst: 96,
+            sharing_input: "Exclusive".to_string(),
+            sharing_output: "Shared".to_string(),
+            performance_input: "LowLatency".to_string(),
+            performance_output: "None".to_string(),
+            xruns_input: 0,
+            xruns_output: 2,
+            input_frames: 72_000,
+            output_frames: 71_616,
+            input_dropped: 0,
+            click_frame: 12_000,
+            heard_frame: 5_664,
+            score: 0.912,
+            method: "getTimestamp(CLOCK_MONOTONIC)".to_string(),
+            round_trip_ms: 71.25,
+            round_trip_frames: 3_420.0,
+        }
+    }
+
+    #[test]
+    fn the_report_json_names_both_ids_and_both_grants() {
+        let json = sample_report().to_json();
+        // The number and its units: the app shows both and the sidecar keeps
+        // them, so a later reader cannot mistake frames for milliseconds.
+        assert!(json.contains("\"round_trip_ms\":71.250"), "{json}");
+        assert!(json.contains("\"round_trip_frames\":3420.0"), "{json}");
+        // Attribution: the selected ids travel beside the labels.
+        assert!(json.contains("\"device_in_id\":176"), "{json}");
+        assert!(json.contains("\"device_out_id\":177"), "{json}");
+        // Every granted shape a measurement needs to be comparable.
+        for key in [
+            "sharing_in",
+            "sharing_out",
+            "performance_in",
+            "performance_out",
+            "buffer_in",
+            "buffer_out",
+            "xruns_in",
+            "xruns_out",
+        ] {
+            assert!(json.contains(&format!("\"{key}\":")), "{key} missing: {json}");
+        }
+        assert!(json.starts_with("{\"ok\":true,"), "{json}");
+    }
+
+    #[test]
+    fn a_report_escapes_a_device_name_that_needs_it() {
+        let mut report = sample_report();
+        report.device_in = "mic \"left\"\\input".to_string();
+        let json = report.to_json();
+        assert!(json.contains("\\\"left\\\"\\\\input"), "{json}");
+    }
+
+    #[test]
+    fn a_negative_device_id_means_the_default() {
+        // The panel sends -1 for "This phone microphone (default)"; the C ABI
+        // and the JNI shim must both read that as "the HAL chooses".
+        assert_eq!(device_from_id(-1), None);
+        assert_eq!(device_from_id(-99), None);
+        assert_eq!(device_from_id(0), Some(0));
+        assert_eq!(device_from_id(176), Some(176));
     }
 }

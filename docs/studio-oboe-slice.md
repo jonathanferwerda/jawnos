@@ -484,24 +484,26 @@ feature-on build loads on the device: `jawn-audio --backends --json` reports
 | 2. `oboe: true` on the phone; `oboe: false` and `t/428` green on Linux | **PASS** — `{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}` |
 | 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **RUNNABLE, on-device take pending** — the plan-carrying ABI and the fixture test exist (§11); the phone take needs the panel's fixture choice |
 | 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
-| 5. The mobile-audio §6 round trip recorded | **NOT MEASURED** — the engine probe and its detector exist (§11.4), but it is deliberately not exposed to the app until a real number is recorded |
+| 5. The mobile-audio §6 round trip recorded | **PROBE EXPOSED, NUMBER PENDING** — the C export and the panel button exist (§11.7); item 5 is **not passed** until the UM2 patch-cable number is recorded |
 
 - **(a) The loss is in-take overflow, not the stop-path tail.** 0 frames on the 10 s smoke,
 480 frames / 10.0 ms on the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take — each an
 exact multiple of the 96-frame burst (5 and 12 callbacks). `drain_ring` already drains the ring
 after the stream stops, so the tail is not the cause: the frames were captured and then
 discarded while the take ran. `OboeReport` did not carry the loss; it now reports
-`frames_written` and a `dropped` total split into `dropped_ring` and `dropped_disk`, so the next
-take says which overflow it was.
+`frames_written` and a `dropped` total split into `dropped_ring` and `dropped_disk`. The 1358
+sidecars answered it: `dropped_ring` was **0** and `dropped_disk` carried the whole loss (1,344
+frames on the 60 s UM2 take, 6,528 on the 10 s tone+delay take), so the queue depth is now 256
+blocks (§11.7).
 - **(b) The 10 min built-in-mic take clipped** at 1.000 (0.0 dBFS); the USB take did not (peak
 0.195862, −14.2 dBFS).
 - **(c) The granted buffer is 2,976 frames / 62.0 ms** (burst 96 frames / 2.0 ms) on every run —
 the leading indicator for the unmeasured round trip and the number to settle next.
 
 Gate 3 is blocked on the take ABI, not on the strip: the capture path writes raw S16 and the
-`Channel`/plan shape stops at the JNI boundary. Gate 5 is blocked on the slice being
-capture-only; it needs a duplex stream and a click before §6 can be recorded. Per-run numbers
-and the full finding text are in `docs/studio-mobile-audio.md` §6.
+`Channel`/plan shape stops at the JNI boundary. Gate 5's probe is now exported and has a panel
+button (§11.7); the gate itself stays open because no UM2 patch-cable number has been recorded.
+Per-run numbers and the full finding text are in `docs/studio-mobile-audio.md` §6.
 
 ## 10. Landing checklist (once the cache has the crate)
 
@@ -588,7 +590,7 @@ passed** until that take is recorded.
   fixture* — and passes the bytes the engine returned. The status block lists
   `plan`.
 
-### 11.4 The duplex probe — started, not shipped
+### 11.4 The duplex probe — the measurement, then the button
 
 `engine/src/roundtrip.rs` (always compiled, Oboe-free) holds the measurement:
 a 6 ms 1 kHz→5 kHz chirp, a normalized cross-correlation with a 0.35 floor, the
@@ -604,13 +606,11 @@ streams. It refuses when the two grant different rates, when the capture ring
 dropped frames, when either stream has no timestamp, when a timestamp's frame
 position is outside the probe's own counter, or when the correlation misses.
 
-It is **not** exported through the JNI shim and **not** in the panel. The
-blocker is exactly the one §6 of the mobile-audio doc names: whether two Oboe
-streams on this phone grant comparable CLOCK_MONOTONIC positions, and whether
-the built-in speaker→microphone path gives a correlation above the floor. The
-UM2 patch-cable row is the one most likely to work; the built-in row may be
-dominated by AGC and the 62 ms granted buffer. A button before a real number
-would invite a false latency claim, so there is no button.
+At 1358 the probe was engine-only on purpose: whether two Oboe streams on the
+phone grant comparable CLOCK_MONOTONIC positions, and whether the built-in
+speaker→microphone path clears the correlation floor, were both unproven. The
+probe is now exposed (§11.7), and the UM2 patch-cable run is still the row that
+has to produce the number; no round-trip figure is claimed before it does.
 
 ### 11.5 Verification run
 
@@ -637,5 +637,108 @@ would invite a false latency claim, so there is no button.
    `"plan":"tone+delay"` and `frames_written == frames_captured`.
 
 That records the phone half of item 3. Item 5 still needs a measured number
-through `run_roundtrip` (or a future panel button) on the UM2 patch cable and
-the built-in path, three runs per sharing mode, before the §6 table is filled.
+from the panel's round-trip button (§11.7) on the UM2 patch cable and the
+built-in path, three runs per sharing mode, before the §6 table is filled.
+
+### 11.7 The disk queue and the round-trip button (2026-11-25)
+
+App **1359 / 0.118.361**, engine landed with this change. Two pieces close the
+slice's open ends: the measured cause of the take's losses, and the probe's
+route to the panel.
+
+**The loss was the disk queue, not the ring.** The sidecars from 1358 split the
+drop both ways, and the split is unambiguous:
+
+| Take | `frames_captured` | `frames_written` | `dropped` | `dropped_ring` | `dropped_disk` |
+| --- | --- | --- | --- | --- | --- |
+| 60 s raw, UM2 input 176 | 28,799,616 | 28,798,272 | 1,344 | **0** | **1,344** |
+| 10 s tone+delay, UM2 input 176 | 479,328 | 472,800 | 6,528 | **0** | **6,528** |
+
+`engine/src/oboe_device.rs` passed `queue_blocks = 8` to `DiskWriter::spawn`.
+At the granted 96-frame burst that is 768 frames — **16 ms** of audio — shorter
+than one filesystem stall, so every stall cost whole blocks (the 10 s take lost
+68 of them). The ring never overflowed. The queue is now
+`DISK_QUEUE_BLOCKS = 256` in the same file: 24,576 frames / **512 ms** at 96
+frames, preallocated by the bounded channel before the stream starts. The audio
+callback still allocates nothing and `DiskWriter::push` still never blocks; only
+the writer's slack grew. The delta between 128 and 256 blocks is 256 KiB of S16
+mono, so 256 is the chosen size rather than a marginal one.
+
+**Expected tolerance.** A 10 s take must report `dropped_disk: 0` with the WAV
+holding `frames_written == frames_captured`. Any residual is stated in frames
+and as whole 96-frame blocks against the retry that produced it; a residual is
+**not** rounded away. The on-device run is the person's (§11.8); this document
+records no number until the sidecar carries it.
+
+**The probe is exported additively.** `jawn_audio_roundtrip(int device_in, int
+device_out)` joins the C ABI; a negative id means the HAL's default, the same
+rule as `jawn_audio_start`. It returns the report JSON or the error JSON, and it
+blocks for the probe's ~1.5–3 s capture window. `RoundTripReport` and its
+`to_json` now live in `engine/src/roundtrip.rs` (always compiled), with
+`device_from_id` and three Linux unit tests: both numeric ids beside their
+labels, `round_trip_ms`/`round_trip_frames`, every granted shape (`sharing_*`,
+`performance_*`, `buffer_*`, `xruns_*`), and `-1` meaning default.
+
+New report keys: `device_in_id`, `device_out_id` (additive; the existing
+`device_in`/`device_out` labels and every prior key are unchanged).
+
+**The app path.** `JawnAudioEngineJni.cpp` resolves `jawn_audio_roundtrip` as
+optional, exactly like `jawn_audio_backends`, and exports
+`nativeRoundTrip(int, int)`. `JawnAudioEngineBridge.roundtrip()` runs the
+blocking call on a daemon worker thread and returns the started sentence;
+`roundtripStatus()` is polled until the report replaces it, so the WebView never
+freezes. The bridge writes the result to
+`/sdcard/Download/jawnos-native-roundtrip-<timestamp>.json` (best effort) and
+adds its `file` key to the returned JSON. `outputs()` lists
+`AudioManager.GET_DEVICES_OUTPUTS` with USB outputs flagged, beside the existing
+`devices()` inputs.
+
+**The panel.** A *Round trip* section carries *Round trip input*, *Round trip
+output*, *Measure round trip* and a result line. Every option shows its numeric
+id and `[USB]` marker, and the result repeats both selected ids beside the
+engine's report, so a number cannot be attributed to the wrong path. The phone
+row leaves both selects on *default*; the UM2 patch-cable row selects the USB
+input (176 on the tablet) and the matching USB output.
+
+**Not claimed:** item 5 is **not passed**. The probe is exposed and the panel
+can record the number, but no round trip has been measured on the tablet yet.
+The UM2 patch-cable run must land before §6 records a latency and before the
+native engine is described as a monitoring path.
+
+### 11.8 What the person taps for the two proofs
+
+1. **Disk queue.** Open Studio, leave *Input* on the UM2 (or choose it), *Take
+   through* → *Raw (no strip)*, *Seconds* → 10, **Start**, stay quiet, **Stop**.
+   The sidecar `/sdcard/Download/jawnos-native-take-<stamp>.wav.json` must say
+   `"dropped_disk":0` and `"frames_written"` equal to `"frames_captured"`.
+   Report any residual in frames and blocks; do not round it.
+2. **UM2 patch cable.** Cable the UM2's headphone out to its instrument input
+   (gain as for the `table` measurement). In *Round trip*, choose the USB input
+   (id 176 on the tablet) and the matching USB output. **Measure round trip**,
+   three times per granted sharing mode. Record `round_trip_ms`, both ids, both
+   sharing/performance modes, the buffers and xruns from the result line and
+   `/sdcard/Download/jawnos-native-roundtrip-<stamp>.json`.
+3. **Phone speaker/mic.** Leave both selects on *default* and measure again.
+   This row may fail the 0.35 correlation floor (AGC, the 62 ms buffer); a
+   refusal is a result and is recorded as one, not as a latency.
+
+### 11.9 Verification run
+
+- `cargo test --offline -j 4 --lib` in `engine/` (no features): **482 passed**, including the
+  three new always-compiled probe tests (report JSON + ids, escaping, `-1` = default).
+- `perl scripts/run_tests.pl --serial t/428-oboe-backend.t`: **66 assertions, PASS** — the
+  queue constant is named and at least 128 blocks, the Oboe spawn uses it, the C ABI exports
+  `jawn_audio_roundtrip`, and the probe's report/device rule stays in always-compiled code.
+- `perl scripts/build_engine.pl --android`: the arm64 `libjawn_audio.so` exports
+  `jawn_audio_roundtrip` beside the existing symbols. (The Linux `--features oboe` check
+  cannot compile `oboe-sys`'s C++ here — the host `c++` rejects `-Wshadow-field` — so the
+  Android target is the compile check, as §10 says.)
+- App release **1359 / 0.118.361** built signed with the release key and published as
+  `jawnos-app-1359-0.118.361.apk`. The APK carries both `libjawn_audio.so` and the shim
+  `libjawnaudio.so`; `llvm-nm` finds `jawn_audio_roundtrip` in the first and
+  `Java_com_jawnos_app_JawnAudioEngine_nativeRoundTrip` in the second.
+- Tablet install: `adb connect 192.168.1.84:45491` was refused twice (the host answers and the
+  port is open, so the wireless-debug pairing, not the network, is the blocker). The build is
+  published for the in-app updater; installation is the person's step, or a fresh pairing.
+- On-device disk-queue and round-trip runs: **pending the person's tap** (§11.8). Item 5 is not
+  passed, and no latency number is recorded, until the UM2 patch-cable run returns a report.

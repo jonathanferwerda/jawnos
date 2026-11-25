@@ -54,7 +54,7 @@ pub use bearing::{
 };
 pub use device::{Device, DeviceError, NullDevice};
 #[cfg(feature = "oboe")]
-pub use oboe_device::{run_duplex, run_roundtrip, OboeReport, RoundTripReport};
+pub use oboe_device::{run_duplex, run_roundtrip, OboeReport};
 pub use disk::DiskWriter;
 pub use effect::{
     Amp, Autotune, Channel, Compressor, Delay, Distortion, Effect, EffectChain, Equalizer,
@@ -84,8 +84,8 @@ pub use proto::{
     HEADER_LEN, VERSION,
 };
 pub use roundtrip::{
-    best_click, click, find_click, measure, ClickHit, RoundTrip, StreamStamp, CLICK_AMPLITUDE,
-    CLICK_MS, CLOCK_MONOTONIC, MIN_SCORE,
+    best_click, click, device_from_id, find_click, measure, ClickHit, RoundTrip, RoundTripReport,
+    StreamStamp, CLICK_AMPLITUDE, CLICK_MS, CLOCK_MONOTONIC, MIN_SCORE,
 };
 pub use capture::{
     live_ring, start_hardware, start_source, CaptureHandle, LiveConsumer, LiveProducer, LiveSource,

@@ -182,6 +182,7 @@ SKIP: {
 	like( $device, qr/extern "C" fn jawn_audio_stop/, 'a stop' );
 	like( $device, qr/extern "C" fn jawn_audio_status/, 'and a status' );
 	like( $device, qr/extern "C" fn jawn_audio_backends/, 'and a backends report for the app page' );
+	like( $device, qr/extern "C" fn jawn_audio_roundtrip/, 'and a duplex round-trip probe' );
 	# Finding (a) of the first device gate: a take could be short of
 	# frames_captured with nothing in the report saying so. The report now carries
 	# both ends of the accounting and the honest overflow split.
@@ -205,15 +206,39 @@ SKIP: {
 	like( $device, qr/run_capture_plan/, 'the plan take shares the capture path' );
 	like( $device, qr/\\"plan\\":\\"\{\}\\"/, 'report_json names the strip that ran' );
 	like( $device, qr/use crate::plan::\{ChannelPlan, Strip\}/, 'the drain uses the plan strip' );
-	# Part 2 starts in the always-compiled measurement module; the Oboe glue is
-	# deliberately not exported to the app until a device number exists.
+	# Part 2's measurement and its report live in always-compiled code; the
+	# Oboe glue is the only part the Android target can compile-check.
 	open( my $trip, '<', "$root/engine/src/roundtrip.rs" ) or die "roundtrip.rs: $!";
 	my $probe = <$trip>;
 	close $trip;
 	like( $probe, qr/pub fn find_click/, 'the chirp detector is testable without Oboe' );
 	like( $probe, qr/pub fn measure/, 'and so is the timestamp subtraction' );
 	like( $device, qr/pub fn run_roundtrip/, 'the duplex probe exists in the engine' );
-	unlike( $device, qr/jawn_audio_roundtrip/, 'but is not exposed to the app before it is measured' );
+	# The measured cause of the first slice's losses was the disk queue, not the
+	# ring: dropped_ring 0 against dropped_disk 6,528 on a 10 s take. The queue
+	# depth is one named constant that the spawn must use.
+	like( $device, qr/pub const DISK_QUEUE_BLOCKS: usize = \d+;/, 'the disk queue depth is named' );
+	my ($queue_blocks) = $device =~ /pub const DISK_QUEUE_BLOCKS: usize = (\d+);/;
+	ok(
+		defined $queue_blocks && $queue_blocks >= 128,
+		'the disk queue holds at least 128 blocks (got ' . ( $queue_blocks // 'none' ) . ')'
+	);
+	like(
+		$device,
+		qr/DiskWriter::spawn\(\s*Path::new\(path\),\s*rate,\s*1,\s*frames_per_burst,\s*DISK_QUEUE_BLOCKS,/s,
+		'and the Oboe take spawns its writer with that constant'
+	);
+	like(
+		$device,
+		qr/extern "C" fn jawn_audio_roundtrip\(\s*device_in: i32,\s*device_out: i32\s*\)/s,
+		'the C ABI has the round-trip probe'
+	);
+	like( $device, qr/crate::roundtrip::device_from_id/, 'and reads a negative id as the default' );
+	like( $probe, qr/pub struct RoundTripReport/, 'the report is always compiled' );
+	like( $probe, qr/pub fn device_from_id\(/, 'with the device-default rule' );
+	like( $probe, qr/device_in_id/, 'and both requested ids in its JSON' );
+	like( $probe, qr/round_trip_ms/, 'the number in milliseconds' );
+	like( $probe, qr/round_trip_frames/, 'and in frames' );
 	unlike( $device, qr/^\s*use jni/m, 'no jni dependency is needed' );
 	like( $device, qr/set_direction::<Input>\(\)/, 'the first slice opens an input stream' );
 	like(
