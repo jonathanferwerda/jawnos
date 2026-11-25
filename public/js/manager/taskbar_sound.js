@@ -435,7 +435,8 @@ function jawnosSoundTaskbarMusicDevicesLoad(force) {
 		jawnosSoundTaskbarMusicDevicesPaint();
 		return;
 	}
-	if (!force && jawnosSoundTaskbarMusic.devices_target === target && jawnosSoundTaskbarMusic.devices) {
+	if (!force && jawnosSoundTaskbarMusic.devices_target === target && jawnosSoundTaskbarMusic.devices
+		&& (Date.now() - (jawnosSoundTaskbarMusic.devices_at || 0)) < 30000) {
 		jawnosSoundTaskbarMusicDevicesPaint();
 		return;
 	}
