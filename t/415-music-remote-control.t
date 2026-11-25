@@ -248,6 +248,8 @@ like($remote, qr/sub music_remote_devices_read/, 'the list is that machine\'s ow
 like($remote, qr/\&subs::sound_status\(\)/, 'read from the Sound app\'s own reader');
 like($remote, qr/\&subs::sound_default\('output'/, 'and the write is its default output');
 like($taskbar, qr/data-music-device/, 'Sound\'s Remote pill has a device picker');
+like($taskbar, qr/data-music-device-label/, 'the Sound pill names whose hardware the list is');
+like($taskbar, qr/jawnosT\('Device on'\)/, 'with the chosen output\'s name');
 like($taskbar, qr{url: '/music/remote_devices'}, 'it reads the controlled machine\'s devices');
 like($taskbar, qr{url: '/music/remote_device'}, 'and sends the choice to that machine');
 like($taskbar, qr/function jawnosSoundTaskbarMusicDevicesLoad/, 'the device list refreshes with the remote');

@@ -430,14 +430,17 @@ function jawnosSoundTaskbarMusicOutputEntry(key) {
 	}
 	return null;
 }
+function jawnosSoundTaskbarMusicChosenOutput() {
+	var picker = $('[data-music-output]').first();
+	var key = picker.length ? (picker.val() || '') : '';
+	if (!key && jawnosSoundTaskbarMusic.outputs) { key = jawnosSoundTaskbarMusic.outputs.current || ''; }
+	return key;
+}
 // The machine whose hardware the Device picker shows: Me is the widget's
 // target (this machine when it is empty), a room is that room, and naming this
 // machine itself is local so the write acts here.
 function jawnosSoundTaskbarMusicDeviceTarget() {
-	var picker = $('[data-music-output]').first();
-	var key = picker.length ? (picker.val() || '') : '';
-	if (!key && jawnosSoundTaskbarMusic.outputs) { key = jawnosSoundTaskbarMusic.outputs.current || ''; }
-	var entry = jawnosSoundTaskbarMusicOutputEntry(key);
+	var entry = jawnosSoundTaskbarMusicOutputEntry(jawnosSoundTaskbarMusicChosenOutput());
 	if (!entry) { return null; }
 	if (entry.key === 'me') { return jawnosSoundTaskbarMusicTarget(); }
 	var uuid = entry.uuid || '';
@@ -467,8 +470,18 @@ function jawnosSoundTaskbarMusicDevicesLoad(force) {
 		cache: false,
 		data: { target: device_target },
 		success: function(r) {
-			if (!r || !r.ok || jawnosSoundTaskbarMusicDeviceTarget() !== device_target) { return; }
+			if (jawnosSoundTaskbarMusicDeviceTarget() !== device_target) { return; }
+			// A machine that cannot answer has no list to offer; remember that
+			// rather than leaving an empty select up for a minute.
+			if (!r || !r.ok) { r = { ok: 1, backend: '', outputs: [] }; }
 			jawnosSoundTaskbarMusic.devices = r;
+			jawnosSoundTaskbarMusic.devices_for = device_target;
+			jawnosSoundTaskbarMusic.devices_at = Date.now();
+			jawnosSoundTaskbarMusicDevicesPaint();
+		},
+		error: function() {
+			if (jawnosSoundTaskbarMusicDeviceTarget() !== device_target) { return; }
+			jawnosSoundTaskbarMusic.devices = { ok: 1, backend: '', outputs: [] };
 			jawnosSoundTaskbarMusic.devices_for = device_target;
 			jawnosSoundTaskbarMusic.devices_at = Date.now();
 			jawnosSoundTaskbarMusicDevicesPaint();
@@ -476,6 +489,13 @@ function jawnosSoundTaskbarMusicDevicesLoad(force) {
 	});
 }
 function jawnosSoundTaskbarMusicDevicesPaint() {
+	// Name whose hardware the list is when the Output is a room, the way the
+	// Music window's Remote panel does.
+	var chosen = jawnosSoundTaskbarMusicChosenOutput();
+	var chosen_entry = jawnosSoundTaskbarMusicOutputEntry(chosen);
+	var device_label = (chosen_entry && chosen_entry.key !== 'me' && chosen_entry.label)
+		? jawnosT('Device on') + ' ' + chosen_entry.label : jawnosT('Device');
+	$('[data-music-device-label]').text(device_label);
 	var device_target = jawnosSoundTaskbarMusicDeviceTarget();
 	var data = jawnosSoundTaskbarMusic.devices;
 	var known = device_target !== null && data && jawnosSoundTaskbarMusic.devices_for === device_target;
@@ -571,13 +591,13 @@ function jawnosSoundTaskbarMusicBuild(section) {
 	section.append(row);
 	var outputs = $('<div class="taskbar_panel_row taskbar_music_outputs"></div>');
 	outputs.append($('<span class="taskbar_music_output_label"></span>').text(jawnosT('Output')));
-	outputs.append($('<select class="taskbar_music_select" data-music-output hint="The output the controlled machine plays through"></select>')
-		.attr('aria-label', jawnosT('The output the controlled machine plays through')));
+	outputs.append($('<select class="taskbar_music_select" data-music-output hint="The stream output the music plays through"></select>')
+		.attr('aria-label', jawnosT('The stream output the music plays through')));
 	section.append(outputs);
 	var devices = $('<div class="taskbar_panel_row taskbar_music_devices"></div>');
-	devices.append($('<span class="taskbar_music_output_label"></span>').text(jawnosT('Device')));
-	devices.append($('<select class="taskbar_music_select" data-music-device hint="The speaker, headphones or Bluetooth device the controlled machine plays through"></select>')
-		.attr('aria-label', jawnosT('The speaker, headphones or Bluetooth device the controlled machine plays through')));
+	devices.append($('<span class="taskbar_music_output_label" data-music-device-label></span>').text(jawnosT('Device')));
+	devices.append($('<select class="taskbar_music_select" data-music-device hint="The speaker, headphones or Bluetooth device the chosen output plays through"></select>')
+		.attr('aria-label', jawnosT('The speaker, headphones or Bluetooth device the chosen output plays through')));
 	section.append(devices);
 	var volume = $('<div class="taskbar_panel_row taskbar_music_volume"></div>');
 	volume.append($('<input type="range" class="taskbar_sound_slider" min="0" max="100" step="1" hint="The volume of the Music app this widget controls">')

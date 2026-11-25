@@ -2933,8 +2933,18 @@ function musicRemoteDeviceLoad(force) {
 		cache: false,
 		data: { target: device_target },
 		success: function(r) {
-			if (!r || !r.ok || musicRemoteDeviceTarget() !== device_target) { return; }
+			if (musicRemoteDeviceTarget() !== device_target) { return; }
+			// A machine that cannot answer has no list to offer; remember that
+			// rather than leaving an empty select up for a minute.
+			if (!r || !r.ok) { r = { ok: 1, backend: '', outputs: [] }; }
 			music_remote_sound.devices = r;
+			music_remote_sound.devices_for = device_target;
+			music_remote_sound.devices_at = Date.now();
+			musicRemoteSoundPaint();
+		},
+		error: function() {
+			if (musicRemoteDeviceTarget() !== device_target) { return; }
+			music_remote_sound.devices = { ok: 1, backend: '', outputs: [] };
 			music_remote_sound.devices_for = device_target;
 			music_remote_sound.devices_at = Date.now();
 			musicRemoteSoundPaint();

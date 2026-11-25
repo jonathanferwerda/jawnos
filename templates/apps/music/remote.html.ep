@@ -46,11 +46,11 @@
 		<div class="music_cfg_fields">
 			<div class="music_cfg_field music_cfg_field_wide">
 				<label class="music_cfg_label" for="music_remote_output"><%= &subs::ui('Output') %></label>
-				<select id="music_remote_output" data-music-remote-output hint="<%= &subs::ui('The output the controlled machine plays through') %>"></select>
+				<select id="music_remote_output" data-music-remote-output hint="<%= &subs::ui('The stream output the music plays through') %>"></select>
 			</div>
 			<div class="music_cfg_field music_cfg_field_wide">
 				<label class="music_cfg_label" for="music_remote_device"><%= &subs::ui('Device') %></label>
-				<select id="music_remote_device" data-music-remote-device hint="<%= &subs::ui('The speaker, headphones or Bluetooth device the controlled machine plays through') %>"></select>
+				<select id="music_remote_device" data-music-remote-device hint="<%= &subs::ui('The speaker, headphones or Bluetooth device the chosen output plays through') %>"></select>
 			</div>
 		</div>
 		<p class="music_cfg_note" data-music-remote-device-where style="display:none;"></p>
