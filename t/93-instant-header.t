@@ -171,10 +171,16 @@ ok($delete_action, 'the manual delete action is one sub');
 unlike($delete_action, qr/centre_view_grabber/,
 	'the manual delete reply does not render the window');
 
-# --- the reply's time is logged ---------------------------------------------
+# --- the reply's time and caller are logged ---------------------------------
 
 like($reset, qr/\$log->info\('reset ' \. \(\$c->param\('type'\) \/\/ '\?'\)/,
 	'the reset route logs its own time, so a slow press can be seen');
+like($reset, qr/my \$remote = \$c->tx->remote_address \|\| '\?';/,
+	'the reset line names the address the press came from');
+like($reset, qr/my \$ua = \$c->req->headers->user_agent \|\| '-';/,
+	'and the user agent of the caller');
+like($reset, qr/from \x27 \. \$remote \. \x27 ua="\x27 \. \$ua \. \x27"/,
+	'the address and user agent ride the same line');
 
 # --- the one caller that reads the window asks for it -----------------------
 

@@ -603,8 +603,15 @@ sub action_15836 {
 	my $content = &manager_reset($c);
 	# A press is a single-page action, so its own time is the feedback time. One
 	# line per reset names the type and the app, and a slow one is visible without
-	# having to reproduce it with a profiler.
-	$log->info('reset ' . ($c->param('type') // '?') . ' ' . ($content->{'app'} // '?') . ' took ' . (&subs::rightNow() - $started) . 'ms');
+	# having to reproduce it with a profiler. The caller is named too: a reset can
+	# arrive from a panel, a peer relay or a local tab, and which one was the
+	# missing half when a stop closed a session no one remembered pressing.
+	my $remote = $c->tx->remote_address || '?';
+	my $ua = $c->req->headers->user_agent || '-';
+	$ua =~ s/\s+/ /g;
+	$ua = substr($ua, 0, 180) . '...' if length($ua) > 180;
+	$log->info('reset ' . ($c->param('type') // '?') . ' ' . ($content->{'app'} // '?')
+		. ' from ' . $remote . ' ua="' . $ua . '" took ' . (&subs::rightNow() - $started) . 'ms');
 	$c->render(json => $content );
 
 }
