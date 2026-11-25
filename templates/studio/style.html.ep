@@ -881,6 +881,36 @@
 		opacity: .7;
 		padding: 0 4px;
 	}
+	/* A controller's machine picker lives in the top bar; the badge names the
+	   table whose Studio this window is driving. */
+	.studio_remote_picker {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 12px;
+	}
+	.studio_remote_label {
+		opacity: .7;
+	}
+	.studio_remote_machine {
+		font-size: 12px;
+		max-width: 160px;
+	}
+	.studio_remote_status {
+		display: none;
+		font-size: 12px;
+		padding: 1px 6px;
+		border-radius: 4px;
+		background: var(--accent-soft, var(--accent));
+		color: var(--panel);
+		white-space: nowrap;
+	}
+	.studio_remote_status.on {
+		display: inline-block;
+	}
+	#studio.studio_remote_controller .studio_layout_bar {
+		box-shadow: inset 0 -2px 0 var(--accent);
+	}
 	#studio_tracks_panel {
 		display: flex;
 		flex-direction: column;

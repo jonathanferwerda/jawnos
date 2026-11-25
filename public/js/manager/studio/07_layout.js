@@ -1258,3 +1258,925 @@ $(document).on('click', '.studio_track_fx', function () {
 	studioPaletteLabel();
 	studioPedalboardOpen(true);
 });
+
+// ===========================================================================
+// Remote control: drive another machine's Studio from this one
+// ===========================================================================
+// A phone or tablet picks a peer in the top-bar picker and this window becomes
+// that table's face. The controller stops its own transport, monitors and
+// playback, asks the peer for its state every 500 ms, and paints the answer
+// over the same controls. Its own transport and knobs send commands instead of
+// touching local audio.
+//
+// The machine being driven publishes the same state shape on save, on a
+// transport move and once a second while its Studio is open, so one poll is
+// enough to see a track move.
+//
+// Nothing here evaluates a string. The console router names one command
+// (studioRemoteCommand -> studioRemoteApply), and this part applies that
+// command's name and data with the Studio's own functions.
+
+var studioRemoteTarget = '';
+var studioRemoteMachineLabels = {};
+var studioRemoteLastState = null;
+var studioRemoteLocalSnapshot = null;
+var studioRemoteLocalSong = null;
+
+var studioRemotePollTimer = 0;
+var studioRemotePublishTimer = 0;
+var studioRemotePublishSoonTimer = 0;
+var studioRemotePublishBusy = false;
+var studioRemoteStateBusy = false;
+var studioRemoteQuiet = false;
+var studioRemoteRestoring = false;
+var studioRemoteCommandTimers = {};
+
+function studioRemoteText(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+function studioRemoteTruthy(value) {
+	return value === true || value === 1 || value === '1' || value === 'true' || value === 'on' || value === 'yes';
+}
+
+// A console payload is data: an object, or a JSON string the server already
+// encoded. Parsing JSON is allowed; eval never is.
+function studioRemotePayload(value) {
+	if (value && typeof value === 'object' && !Array.isArray(value)) { return value; }
+	if (typeof value === 'string' && value.length) {
+		try { value = JSON.parse(value); } catch (e) { return {}; }
+		if (value && typeof value === 'object' && !Array.isArray(value)) { return value; }
+	}
+	return {};
+}
+
+function studioRemoteWhole(value) {
+	var n = parseInt(value, 10);
+	return (isFinite(n) && n > 0) ? n : 0;
+}
+
+// The picker is the whole list of peers plus this machine; the peer this window
+// is currently driving stays selected (and visible) in it.
+function studioRemotePickerLoad() {
+	var picker = $('#studio_remote_machine');
+	if (!picker.length) { return; }
+	$.ajax({
+		url: '/manager/studio/remote_machines',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		success: function (reply) {
+			if (!reply || reply.ok !== true) { return; }
+			var current = $('#studio_remote_machine');
+			if (!current.length) { return; }
+			current.empty();
+			$('<option>').val('').text(studioRemoteText('This machine')).appendTo(current);
+			$.each(reply.machines || [], function (i, machine) {
+				var uuid = String((machine && machine.uuid) || '');
+				if (!uuid) { return; }
+				var label = String(machine.label || machine.hostname || uuid);
+				studioRemoteMachineLabels[uuid] = label;
+				$('<option>').val(uuid).text(label).appendTo(current);
+			});
+			var target = String(reply.target || '');
+			studioRemoteOptionEnsure(target, studioRemoteMachineLabels[target] || target);
+			current.val(target);
+			// A saved target is the machine this Studio was already driving.
+			studioRemoteTargetSet(target, true);
+		},
+		error: function () { $('#studio_remote_machine').val(studioRemoteTarget); }
+	});
+}
+
+// The dropdown is the person's choice; persist it on this machine and enter or
+// leave controller mode only after the server agrees the peer is reachable.
+$(document).on('change', '#studio_remote_machine', function () {
+	var target = String($(this).val() || '');
+	$.ajax({
+		url: '/manager/studio/remote_target',
+		type: 'POST',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function (reply) {
+			if (!reply || reply.ok !== true) {
+				$('#studio_remote_machine').val(studioRemoteTarget);
+				return;
+			}
+			studioRemoteTargetSet(String(reply.target || target));
+		},
+		error: function () { $('#studio_remote_machine').val(studioRemoteTarget); }
+	});
+});
+
+function studioRemoteOptionEnsure(target, label) {
+	if (!target) { return; }
+	var picker = $('#studio_remote_machine');
+	if (!picker.length) { return; }
+	var found = false;
+	picker.find('option').each(function () { if (String(this.value) === String(target)) { found = true; } });
+	if (!found) { $('<option>').val(target).text(label || target).appendTo(picker); }
+}
+
+function studioRemoteBadge() {
+	var status = $('#studio_remote_status');
+	if (!status.length) { return; }
+	if (!studioRemoteTarget) {
+		status.text('').removeClass('on');
+		$('#studio').removeClass('studio_remote_controller');
+		return;
+	}
+	var label = studioRemoteMachineLabels[studioRemoteTarget] || studioRemoteTarget;
+	status.text(studioRemoteText('Controlling') + ' ' + label).addClass('on');
+	$('#studio').addClass('studio_remote_controller');
+}
+
+// Remember the local song before its controls are repainted with a peer's
+// state. The in-memory copy is also written through studioSongSet, so leaving
+// remote mode reloads the work that was here, not the mirror.
+function studioRemoteLocalSnapshotSave() {
+	if (studioRemoteLocalSnapshot) { return; }
+	if (typeof studioSaver === 'function') { studioRemoteLocalSong = studioSaver(); }
+	// studioSaver returns the cached song while a track is being added; an empty
+	// object is not the local work and must not overwrite the good cache.
+	if (studioRemoteLocalSong && typeof studioRemoteLocalSong === 'object' && !studioRemoteLocalSong.admin) {
+		var has_track = false;
+		Object.keys(studioRemoteLocalSong).forEach(function (key) {
+			if (/^[0-9]+$/.test(key)) { has_track = true; }
+		});
+		if (!has_track) { studioRemoteLocalSong = null; }
+	}
+	if (studioRemoteLocalSong && typeof studioSongSet === 'function') { studioSongSet(studioRemoteLocalSong); }
+	studioRemoteLocalSnapshot = {
+		uuid: $('#studio').attr('uuid') || '',
+		name: $('#studio').attr('name') || '',
+		tracks: $('#studio_viewer .studio_track').length || 1
+	};
+}
+
+// A controller makes no sound of its own: stop the transport, any engine take
+// and every track monitor. The local song is put back into the cache after the
+// monitor switches have had their say.
+function studioRemoteLocalSilence() {
+	if (typeof studioStop === 'function') { studioStop(); }
+	if (typeof studioEngineStop === 'function') { studioEngineStop(); }
+	if (typeof studioListenActive !== 'undefined' && studioListenActive && typeof studioListenStop === 'function') { studioListenStop(); }
+	if (typeof studioPedalboardOpen === 'function') { studioPedalboardOpen(false); }
+	if (typeof studioOpenDialogHide === 'function') { studioOpenDialogHide(); }
+	$('#studio_viewer .studio_track').each(function () {
+		var ch = $(this).attr('data-channel');
+		if (ch && typeof studioSetMonitor === 'function') { studioSetMonitor(ch, false); }
+	});
+	if (studioRemoteLocalSong && typeof studioSongSet === 'function') { studioSongSet(studioRemoteLocalSong); }
+}
+
+function studioRemoteLocalRestore() {
+	var snap = studioRemoteLocalSnapshot;
+	studioRemoteLocalSnapshot = null;
+	var song = studioRemoteLocalSong;
+	studioRemoteLocalSong = null;
+	if (song && typeof studioSongSet === 'function') { studioSongSet(song); }
+	if (!snap || typeof studioInit !== 'function') { return; }
+	studioRemoteRestoring = true;
+	setTimeout(function () { studioRemoteRestoring = false; }, 5000);
+	if (snap.uuid) { studioInit({ uuid: snap.uuid }); }
+	else { studioInit({ uuid: 'new', settings: [ { setting: 'channel_count', value: String(snap.tracks || 1) } ] }); }
+}
+
+function studioRemoteTargetSet(target, from_server) {
+	target = target ? String(target) : '';
+	if (target && target === studioRemoteTarget) { studioRemoteBadge(); return; }
+	if (!target && !studioRemoteTarget) { studioRemoteBadge(); return; }
+	if (target) {
+		studioRemoteCommandsClear();
+		studioRemoteLocalSnapshotSave();
+		studioRemoteTarget = target;
+		studioRemoteOptionEnsure(target, studioRemoteMachineLabels[target] || target);
+		$('#studio_remote_machine').val(target);
+		studioRemoteLocalSilence();
+		studioRemoteBadge();
+		studioRemotePollStart();
+		studioRemoteStateLoad();
+		return;
+	}
+	studioRemoteTarget = '';
+	studioRemotePollStop();
+	studioRemoteCommandsClear();
+	$('#studio_remote_machine').val('');
+	studioRemoteBadge();
+	studioRemoteLocalRestore();
+	if (!from_server) { studioRemotePublishSoon(); }
+}
+
+function studioRemoteCommandsClear() {
+	$.each(studioRemoteCommandTimers, function (key, bucket) {
+		if (bucket && bucket.timer) { clearTimeout(bucket.timer); }
+	});
+	studioRemoteCommandTimers = {};
+}
+
+function studioRemotePollStart() {
+	studioRemotePollStop();
+	studioRemotePollTimer = setInterval(function () {
+		if (!studioRemoteTarget || !$('#studio').length) { studioRemotePollStop(); return; }
+		studioRemoteStateLoad();
+	}, 500);
+}
+
+function studioRemotePollStop() {
+	if (studioRemotePollTimer) { clearInterval(studioRemotePollTimer); studioRemotePollTimer = 0; }
+}
+
+// The target's clock: one publish a second while its Studio is open. A window
+// that is gone stops its own timer, so a closed Studio posts nothing.
+function studioRemoteTimersStart() {
+	if (studioRemotePublishTimer) { return; }
+	studioRemotePublishTimer = setInterval(function () {
+		if (!$('#studio').length) {
+			studioRemoteTimersStop();
+			studioRemoteTarget = '';
+			studioRemoteLocalSnapshot = null;
+			studioRemoteLocalSong = null;
+			return;
+		}
+		if (!studioRemoteTarget) { studioRemotePublish(); }
+	}, 1000);
+}
+
+function studioRemoteTimersStop() {
+	studioRemotePollStop();
+	if (studioRemotePublishTimer) { clearInterval(studioRemotePublishTimer); studioRemotePublishTimer = 0; }
+	clearTimeout(studioRemotePublishSoonTimer);
+	studioRemotePublishSoonTimer = 0;
+	studioRemoteCommandsClear();
+}
+
+// The window is built by studioInit() in 04_knobs, which several callers use
+// (the app bar, a restore, a new song). Wrapping it here keeps the picker and
+// the publish clock out of that part: however the window opens, the top bar's
+// own code sees it.
+function studioRemoteWindowOpened() {
+	// studioInit replaces the old #studio node asynchronously. Wait for the new
+	// node, not merely for a node: otherwise leaving controller mode would read
+	// the mirror's picker before the local window has arrived.
+	var before = document.getElementById('studio');
+	var tries = 0;
+	var ready = function () {
+		studioRemoteRestoring = false;
+		studioRemoteTimersStart();
+		studioRemotePickerLoad();
+	};
+	(function wait() {
+		var now = document.getElementById('studio');
+		if (now && now !== before && $('#studio_remote_machine').length) { ready(); return; }
+		if (tries++ < 40) { setTimeout(wait, 100); return; }
+		// An older render may have kept the node; use the window that is there.
+		if ($('#studio_remote_machine').length) { ready(); }
+	})();
+}
+
+// ---- the controller sends commands ----------------------------------------
+
+function studioRemoteCommand(command, payload) {
+	var target = studioRemoteTarget;
+	if (!target || !command) { return false; }
+	$.ajax({
+		url: '/manager/studio/remote_command',
+		type: 'POST',
+		dataType: 'json',
+		cache: false,
+		data: { target: target, command: String(command), payload: JSON.stringify(payload || {}) }
+	});
+	return true;
+}
+
+// A fader or pan sends its settled value once, not one post per pixel.
+function studioRemoteCommandLater(key, command, payload, wait) {
+	var bucket = studioRemoteCommandTimers[key];
+	if (!bucket) { bucket = studioRemoteCommandTimers[key] = {}; }
+	bucket.command = command;
+	bucket.payload = payload;
+	if (bucket.timer) { clearTimeout(bucket.timer); }
+	bucket.timer = setTimeout(function () {
+		delete studioRemoteCommandTimers[key];
+		studioRemoteCommand(bucket.command, bucket.payload);
+	}, (wait === undefined) ? 100 : wait);
+}
+
+// ---- the target publishes its state ---------------------------------------
+
+function studioRemoteStateBuild() {
+	var time = (mixer && mixer['time']) || {};
+	var status = time.status || 'stop';
+	var tracks = [];
+	var selected = (typeof studioSelectedChannel !== 'undefined') ? String(studioSelectedChannel) : '';
+	$('#studio_viewer .studio_track').each(function () {
+		var ch = studioRemoteWhole($(this).attr('data-channel'));
+		if (!ch) { return; }
+		var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+		var input = plug ? String(plug['type'] || plug['app'] || '') : '';
+		if (plug && plug['device'] !== undefined) { input += ':' + plug['device']; }
+		tracks.push({
+			index: ch,
+			name: String($('.studio_track_name[channel="' + ch + '"]').val() || ('Track ' + ch)),
+			armed: String($('.armed[channel="' + ch + '"]').attr('state') || 'off'),
+			selected: (selected === String(ch)) ? 1 : 0,
+			gain: studioKnobNumber($('.channel_volume[channel="' + ch + '"]').first().val(), 1),
+			pan: studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').first().val(), 50),
+			mute: (mixer[ch] && mixer[ch].mute) ? 1 : 0,
+			solo: (mixer[ch] && mixer[ch].solo) ? 1 : 0,
+			input: input
+		});
+	});
+	// Clips are bounded: a controller mirrors the count and the song clock, not
+	// an unbounded dump of a long session.
+	var clips = [];
+	$.each(mixer, function (key, value) {
+		if (clips.length >= 128) { return false; }
+		if (!/^[0-9]+$/.test(String(key)) || !value || !value.media || !value.media.out) { return; }
+		$.each(value.media.out, function (ir, take) {
+			if (clips.length >= 128) { return false; }
+			if (!take) { return; }
+			clips.push({
+				id: String(take.uuid || (key + '_' + ir)),
+				track: parseInt(key, 10),
+				start: studioKnobNumber(take.startTime, 0),
+				length: studioKnobNumber(take.duration, 0),
+				name: String(take.uuid || '')
+			});
+		});
+	});
+	var master = (typeof studioMasterSave === 'function') ? studioMasterSave() : [];
+	return {
+		ok: 1,
+		at: Date.now(),
+		song: {
+			name: String($('#studio').attr('name') || ''),
+			id: String($('#studio').attr('uuid') || ''),
+			bpm: studioKnobNumber(time.bpm, 120),
+			signature: String(time.sig || '4/4'),
+			loop: String(time.loop || 'off')
+		},
+		transport: {
+			playing: (status === 'play' || status === 'record') ? 1 : 0,
+			position: studioKnobNumber(time.position, 0),
+			metronome: (time.metronome === 'yes') ? 1 : 0,
+			bpm: studioKnobNumber(time.bpm, 120),
+			loop: String(time.loop || 'off')
+		},
+		tracks: tracks,
+		clips: clips,
+		master: master
+	};
+}
+
+function studioRemotePublish() {
+	// A controller publishes no mirror: what it sends must be its own Studio.
+	if (studioRemoteTarget || studioRemoteRestoring) { return false; }
+	if (!$('#studio').length || !$('#studio_remote_machine').length) { return false; }
+	if (studioRemotePublishBusy) { return false; }
+	var state = studioRemoteStateBuild();
+	studioRemotePublishBusy = true;
+	$.ajax({
+		url: '/manager/studio/remote_publish',
+		type: 'POST',
+		dataType: 'json',
+		cache: false,
+		data: { state: JSON.stringify(state) },
+		complete: function () { studioRemotePublishBusy = false; }
+	});
+	return true;
+}
+
+function studioRemotePublishSoon() {
+	if (studioRemoteTarget || studioRemoteRestoring) { return; }
+	clearTimeout(studioRemotePublishSoonTimer);
+	studioRemotePublishSoonTimer = setTimeout(function () {
+		studioRemotePublishSoonTimer = 0;
+		studioRemotePublish();
+	}, 250);
+}
+
+// The target's own changes are already in mixer and the DOM when these run
+// (their parts registered first), so one short debounce publishes the settled
+// shape.
+$(document).on('click', '#studio_play, #studio_stop, #studio_record, #studio_ruler_canvas, #studio_metronome, #studio_loop', function () {
+	studioRemotePublishSoon();
+});
+$(document).on('input change', '#studio_bpm, #studio_signature', function () {
+	studioRemotePublishSoon();
+});
+$(document).on('click', '#studio_save', function () {
+	studioRemotePublishSoon();
+});
+
+// ---- the controller paints the peer's state -------------------------------
+
+function studioRemoteLoopPaint() {
+	var loop = String((mixer && mixer['time'] && mixer['time'].loop) || 'off');
+	var el = $('#studio_loop');
+	if (!el.length) { return; }
+	if (loop === 'on') {
+		el.attr('enabled', 'on').attr('obg', 'rgb(211, 211, 211)').css({ 'background-color': 'red' });
+	}
+	else if (loop === 'ongoing') {
+		el.attr('enabled', 'ongoing').attr('obg', 'rgb(211, 211, 211)').css({ 'background-color': 'yellow' });
+	}
+	else {
+		el.attr('enabled', 'off').css({ 'background-color': 'rgb(211, 211, 211)' });
+	}
+}
+
+function studioRemoteMetronomePaint(on) {
+	var met = $('#studio_metronome');
+	if (!met.length) { return; }
+	mixer['time']['metronome'] = on ? 'yes' : 'no';
+	met.attr('armed', on ? 'yes' : 'no');
+	met.css({ 'background-color': on ? 'red' : 'rgb(211, 211, 211)' });
+}
+
+function studioRemoteSelectTrack(index) {
+	var ch = studioRemoteWhole(index);
+	if (!ch) { return false; }
+	$('.channel, .studio_track_panel').removeClass('selected_channel');
+	$('#studio_track_row_' + ch + ' .studio_track_panel').addClass('selected_channel');
+	$('#studio_mixer_strips .channel_' + ch).addClass('selected_channel');
+	studioSelectedChannel = ch;
+	return true;
+}
+
+function studioRemoteTrackState(ch) {
+	var list = (studioRemoteLastState && studioRemoteLastState.tracks) || [];
+	for (var i = 0; i < list.length; i++) {
+		if (studioRemoteWhole(list[i].index) === studioRemoteWhole(ch)) { return list[i]; }
+	}
+	return null;
+}
+
+function studioRemoteRender(state) {
+	if (!state || state.ok === false || !studioRemoteTarget) { return false; }
+	studioRemoteLastState = state;
+	var song = state.song || {};
+	var tr = state.transport || {};
+	var name = String(song.name || '');
+	if (name) { $('#studio').attr('name', name); }
+	var bpm = studioKnobNumber(tr.bpm, studioKnobNumber(song.bpm, 120));
+	var sig = String(song.signature || (mixer['time'] && mixer['time'].sig) || '4/4');
+	mixer['time']['bpm'] = bpm;
+	mixer['time']['sig'] = sig;
+	$('#studio_bpm').val(bpm);
+	$('#studio_signature').val(sig);
+	mixer['time']['position'] = studioKnobNumber(tr.position, 0);
+	mixer['time']['status'] = studioRemoteTruthy(tr.playing) ? 'play' : 'stop';
+	mixer['time']['loop'] = String(tr.loop || song.loop || 'off');
+	studioRemoteLoopPaint();
+	studioRemoteMetronomePaint(studioRemoteTruthy(tr.metronome));
+
+	// The timeline is not cloned: the state's clips bound the song clock and the
+	// duration readout, while the controller's own take canvases stay untouched.
+	var duration = 0;
+	$.each(state.clips || [], function (i, clip) {
+		var end = studioKnobNumber(clip.start, 0) + studioKnobNumber(clip.length, 0);
+		if (end > duration) { duration = end; }
+	});
+	if (duration > 0) { mixer['time']['duration'] = duration; }
+	else { mixer['time']['duration'] = 0; }
+	$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
+	if (typeof studioTimeDisplay === 'function') { studioTimeDisplay(); }
+	$('#studio_play').css({ 'background-color': studioRemoteTruthy(tr.playing) ? 'yellow' : '' });
+	$('#studio_stop').css({ 'background-color': studioRemoteTruthy(tr.playing) ? '' : 'lightgreen' });
+
+	var tracks = state.tracks || [];
+	var highest = 0;
+	$.each(tracks, function (i, track) {
+		var ch = studioRemoteWhole(track.index);
+		if (ch > highest) { highest = ch; }
+	});
+	if (highest && typeof studioEnsureTracks === 'function') {
+		// Building a mirror-only row triggers the new channel's own knob change;
+		// that is render work, not a person moving a control, so it is not a command.
+		studioRemoteQuiet = true;
+		try { studioEnsureTracks(highest); }
+		finally { studioRemoteQuiet = false; }
+	}
+	var selected = 0;
+	$.each(tracks, function (i, track) {
+		var ch = studioRemoteWhole(track.index);
+		if (!ch) { return; }
+		var name_el = $('.studio_track_name[channel="' + ch + '"]');
+		if (name_el.length && track.name !== undefined) { name_el.val(String(track.name)); }
+		var armed = String(track.armed || 'off');
+		if (!/^(off|rec|play|loop)$/.test(armed)) { armed = 'off'; }
+		var arm_text = { off: 'O', rec: 'R', play: 'P', loop: 'L' }[armed];
+		$('.armed[channel="' + ch + '"]').attr('state', armed).text(arm_text);
+		if (!mixer[ch]) { mixer[ch] = {}; }
+		mixer[ch].armed = { state: armed, text: arm_text };
+		$('.channel_volume[channel="' + ch + '"]').val(studioKnobNumber(track.gain, 1));
+		var pan_el = $('.knob_control[channel="' + ch + '"][control="pan"]');
+		pan_el.val(studioKnobNumber(track.pan, 50));
+		if (typeof studioKnobPaint === 'function') { pan_el.each(function () { studioKnobPaint($(this)); }); }
+		mixer[ch].mute = studioRemoteTruthy(track.mute) ? 1 : 0;
+		mixer[ch].solo = studioRemoteTruthy(track.solo) ? 1 : 0;
+		if (studioRemoteTruthy(track.selected)) { selected = ch; }
+	});
+	if (selected) { studioRemoteSelectTrack(selected); }
+	if (typeof studioStripMuteSoloRender === 'function') { studioStripMuteSoloRender(); }
+	// The master rack is the same contract names on both sides; restore paints
+	// the footswitch and every control from the peer's records.
+	if (state.master && state.master.length && typeof studioMasterRestore === 'function') {
+		studioMasterRestore(state.master);
+	}
+	return true;
+}
+
+function studioRemoteStateLoad() {
+	var target = studioRemoteTarget;
+	if (!target) { return false; }
+	if (studioRemoteStateBusy) { return false; }
+	studioRemoteStateBusy = true;
+	$.ajax({
+		url: '/manager/studio/remote_state',
+		type: 'POST',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function (reply) {
+			if (studioRemoteTarget !== target) { return; }
+			studioRemoteRender(reply);
+		},
+		complete: function () { studioRemoteStateBusy = false; }
+	});
+	return true;
+}
+
+// ---- a controller's controls become commands ------------------------------
+// The local handlers live in other parts and are bound first, so a capture
+// listener stops the event before it reaches them. The native slider still
+// updates (a capture listener does not cancel the default action).
+
+function studioRemoteInterceptClick(event) {
+	if (!studioRemoteTarget || studioRemoteQuiet) { return; }
+	var el = $(event.target);
+	var stop = function () { event.stopPropagation(); };
+
+	if (el.closest('#studio_ruler_canvas').length) {
+		stop();
+		var canvas = el.closest('#studio_ruler_canvas')[0];
+		var at = (canvas && typeof studioTimelineTimeAt === 'function') ? studioTimelineTimeAt(canvas, event.clientX) : 0;
+		studioRemoteCommand('transport', { action: 'seek', value: at });
+		return;
+	}
+	if (el.closest('#studio_play').length) { stop(); studioRemoteCommand('transport', { action: 'play' }); return; }
+	if (el.closest('#studio_stop').length) { stop(); studioRemoteCommand('transport', { action: 'stop' }); return; }
+	if (el.closest('#studio_record').length) { stop(); studioRemoteCommand('record', { action: 'start' }); return; }
+	if (el.closest('#studio_metronome').length) {
+		stop();
+		var met = !((studioRemoteLastState && studioRemoteLastState.transport) ? studioRemoteLastState.transport.metronome : 0);
+		studioRemoteCommand('transport', { action: 'metronome', value: met ? 1 : 0 });
+		return;
+	}
+	if (el.closest('#studio_loop').length) {
+		stop();
+		var loop = ((studioRemoteLastState && studioRemoteLastState.transport) ? studioRemoteLastState.transport.loop : 'off') || 'off';
+		var next = (loop === 'off') ? 'on' : ((loop === 'on') ? 'ongoing' : 'off');
+		studioRemoteCommand('transport', { action: 'loop', value: next });
+		return;
+	}
+	if (el.closest('#studio_bpm').length) { stop(); return; }
+	if (el.closest('#studio_add_track').length) { stop(); studioRemoteCommand('track', { action: 'add' }); return; }
+	if (el.closest('#studio_save').length) { stop(); studioRemoteCommand('song', { action: 'save' }); return; }
+	if (el.closest('#studio_new').length) { stop(); studioRemoteCommand('song', { action: 'new' }); return; }
+	// Controls the command vocabulary does not carry yet stay local-silent: a
+	// controller must not start a monitor, open a capture, or delete the mirror.
+	if (el.closest('#studio_pedals, #pedalboard_hamburger, #studio_config_toggle, #studio_video_toggle, #studio_open').length) { stop(); return; }
+	if (el.closest('#studio_track_monitor, .studio_jack, .studio_cord, .studio_track_fx, .studio_track_automation, .studio_track_delete').length) { stop(); return; }
+	if (el.closest('#studio_drums .studio_drums_voice, #studio_drums .studio_drums_step, #studio_drums .studio_drums_lamp, #studio_drums .studio_drums_key, #studio_drums_save_loop, #studio_drums_bar_add, #studio_drums_bar_remove, #studio_drums_beat_add, #studio_drums_beat_remove').length) { stop(); return; }
+	if (el.closest('#pedalboard').length) { stop(); return; }
+	var arm = el.closest('.armed');
+	if (arm.length) {
+		stop();
+		studioRemoteCommand('record', { action: 'arm', track: studioRemoteWhole(arm.attr('channel')) });
+		return;
+	}
+	var mute = el.closest('.studio_strip_mute');
+	if (mute.length) {
+		stop();
+		var mch = studioRemoteWhole(mute.attr('channel'));
+		var mst = studioRemoteTrackState(mch);
+		studioRemoteCommand('mixer', { track: mch, control: 'mute', value: studioRemoteTruthy(mst && mst.mute) ? 0 : 1 });
+		return;
+	}
+	var solo = el.closest('.studio_strip_solo');
+	if (solo.length) {
+		stop();
+		var sch = studioRemoteWhole(solo.attr('channel'));
+		var sst = studioRemoteTrackState(sch);
+		studioRemoteCommand('mixer', { track: sch, control: 'solo', value: studioRemoteTruthy(sst && sst.solo) ? 0 : 1 });
+		return;
+	}
+	var master = el.closest('.studio_master_toggle');
+	if (master.length) {
+		stop();
+		var name = String(master.attr('effect') || '');
+		var on = master.attr('aria-pressed') !== 'true';
+		studioRemoteCommand('master', { name: name, on: on ? 1 : 0 });
+		return;
+	}
+	// Track selection is the panel or the strip itself, not one of its controls.
+	if (el.is('input, button, img, canvas, video, .armed')) { return; }
+	var panel = el.closest('.studio_track_panel, .channel');
+	if (panel.length) {
+		stop();
+		var pch = studioRemoteWhole(panel.attr('data-channel')) || studioRemoteWhole(panel.attr('channel'));
+		if (!pch) { var found = String(panel.attr('class') || '').match(/channel_(\d+)/); pch = found ? studioRemoteWhole(found[1]) : 0; }
+		if (pch) { studioRemoteCommand('track', { action: 'select', index: pch }); }
+	}
+}
+
+function studioRemoteInterceptChange(event) {
+	if (!studioRemoteTarget || studioRemoteQuiet) { return; }
+	var el = $(event.target);
+	var stop = function () { event.stopPropagation(); };
+	if (el.closest('#studio_bpm').length) {
+		stop();
+		studioRemoteCommand('transport', { action: 'bpm', value: studioKnobNumber(el.val(), 120) });
+		return;
+	}
+	if (el.closest('#studio_signature').length) {
+		// The command vocabulary has no signature move; do not let the mirror
+		// edit the local song behind the peer's back.
+		stop();
+		return;
+	}
+	var volume = el.closest('.channel_volume');
+	if (volume.length) {
+		stop();
+		var vch = studioRemoteWhole(volume.attr('channel'));
+		if (vch) { studioRemoteCommandLater('gain:' + vch, 'mixer', { track: vch, control: 'gain', value: studioKnobNumber(volume.val(), 1) }, 80); }
+		return;
+	}
+	var knob = el.closest('.knob_control');
+	if (knob.length) {
+		stop();
+		var kch = studioRemoteWhole(knob.attr('channel'));
+		var control = String(knob.attr('control') || '');
+		if (typeof studioKnobPaint === 'function') { studioKnobPaint(knob); }
+		if (kch && control === 'pan') {
+			studioRemoteCommandLater('pan:' + kch, 'mixer', { track: kch, control: 'pan', value: studioKnobNumber(knob.val(), 50) }, 80);
+		}
+		return;
+	}
+	var master = el.closest('.studio_master_control');
+	if (master.length) {
+		stop();
+		var name = String(master.closest('.studio_master_effect').attr('effect') || '');
+		var mcontrol = String(master.attr('control') || '');
+		if (/^master_[a-z0-9_]+$/.test(name) && /^[a-z][a-z0-9_]*$/.test(mcontrol)) {
+			studioRemoteCommandLater('master:' + name + ':' + mcontrol, 'master', { name: name, control: mcontrol, value: master.val() }, 80);
+		}
+		return;
+	}
+	if (el.closest('.studio_track_name, .studio_track_colour').length) {
+		// No command carries a rename or a colour yet; keep the mirror's own copy
+		// of the song out of it.
+		stop();
+		return;
+	}
+	if (el.closest('.studio_config').length) {
+		// The Studio's own latency/record settings are this machine's, not the
+		// peer's; the command list carries no setting move.
+		stop();
+		return;
+	}
+	if (el.closest('#studio_drums, #pedalboard').length) {
+		// Drum kits, sound routing and pedal values have no command yet; the
+		// controller leaves the local ones exactly as they were.
+		stop();
+	}
+}
+
+function studioRemoteInterceptInput(event) {
+	if (!studioRemoteTarget || studioRemoteQuiet) { return; }
+	var el = $(event.target);
+	// The change listener above settles faders, pans and master knobs. The input
+	// event is stopped here too, so a drag never reaches the local channel graph.
+	if (el.closest('.channel_volume, .knob_control, .studio_master_control').length) {
+		event.stopPropagation();
+	}
+}
+
+function studioRemoteInterceptPointer(event) {
+	if (!studioRemoteTarget || studioRemoteQuiet) { return; }
+	var el = $(event.target);
+	// The jog wheel seeks and a take canvas edits the local song. Neither is in
+	// the command list, so a controller scrolls or edits nothing.
+	if (el.closest('#studio_jog_wheel, canvas.track, .studio_track_resize, .studio_track_automation_lane, #studio_selection_overlay, #studio_ruler_selection').length) {
+		event.stopPropagation();
+	}
+}
+
+function studioRemoteInterceptKey(event) {
+	if (!studioRemoteTarget) { return; }
+	// Typing still reaches the field; the Studio's own shortcuts (drums, Delete,
+	// Save) do not act on the controller's local copy.
+	var target = event.target;
+	if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(String(target.tagName || '')))) { return; }
+	event.stopPropagation();
+}
+
+document.addEventListener('click', studioRemoteInterceptClick, true);
+document.addEventListener('change', studioRemoteInterceptChange, true);
+document.addEventListener('input', studioRemoteInterceptInput, true);
+document.addEventListener('pointerdown', studioRemoteInterceptPointer, true);
+document.addEventListener('mousedown', studioRemoteInterceptPointer, true);
+document.addEventListener('touchstart', studioRemoteInterceptPointer, true);
+document.addEventListener('keydown', studioRemoteInterceptKey, true);
+
+// ---- the driven machine applies a command ---------------------------------
+
+function studioRemoteApply(command, payload) {
+	// A closed Studio has no controls to move. Minimised is still open.
+	if (!$('#studio').length) { return false; }
+	// Events the command's own functions fire are not a person's press: do not
+	// let a machine that is both controller and target forward them again.
+	var quiet = studioRemoteQuiet;
+	studioRemoteQuiet = true;
+	var ok;
+	try { ok = studioRemoteApplyCommand(command, payload); }
+	finally { studioRemoteQuiet = quiet; }
+	// A command that moved the target is a transport or mixer change like any
+	// other; publish it at once rather than waiting for the one-second clock.
+	if (ok) { studioRemotePublishSoon(); }
+	return ok;
+}
+
+function studioRemoteApplyCommand(command, payload) {
+	command = String(command || '');
+	payload = studioRemotePayload(payload);
+	var action = String(payload.action || '').toLowerCase();
+	var ch = studioRemoteWhole(payload.track);
+
+	if (command === 'transport') {
+		if (action === 'play') {
+			if (mixer['time']['status'] !== 'play' && mixer['time']['status'] !== 'record' && typeof studioPlay === 'function') {
+				studioPlay('play');
+				mixer['time']['status'] = 'play';
+			}
+			return true;
+		}
+		if (action === 'stop') {
+			if (typeof studioStop === 'function') { studioStop(); }
+			mixer['time']['status'] = 'stop';
+			return true;
+		}
+		if (action === 'seek') {
+			if (typeof studioSeek !== 'function') { return false; }
+			return studioSeek(studioKnobNumber(payload.value, 0));
+		}
+		if (action === 'bpm') {
+			var bpm = Math.max(30, Math.min(240, studioKnobNumber(payload.value, 120)));
+			$('#studio_bpm').val(bpm).trigger('change');
+			return true;
+		}
+		if (action === 'metronome') {
+			var want = studioRemoteTruthy(payload.value);
+			if ((mixer['time']['metronome'] === 'yes') !== want) { $('#studio_metronome').trigger('click'); }
+			return true;
+		}
+		if (action === 'loop') {
+			var loop = payload.value;
+			if (typeof loop === 'boolean') { loop = loop ? 'on' : 'off'; }
+			loop = String(loop || 'off').toLowerCase();
+			if (loop !== 'on' && loop !== 'ongoing') { loop = 'off'; }
+			mixer['time']['loop'] = loop;
+			studioRemoteLoopPaint();
+			if (typeof studioSaver === 'function') { studioSaver(); }
+			return true;
+		}
+		return false;
+	}
+
+	if (command === 'record') {
+		if (action === 'start') {
+			if (typeof studioRecord === 'function') { studioRecord(); return true; }
+			return false;
+		}
+		if (action === 'stop') {
+			if (typeof studioStop === 'function') { studioStop(); mixer['time']['status'] = 'stop'; return true; }
+			return false;
+		}
+		if (action === 'arm' && ch) {
+			var arm = $('.armed[channel="' + ch + '"]');
+			if (!arm.length) { return false; }
+			// Arm is not a cycle: put this track in rec, then run the same
+			// post-click work the local button does.
+			arm.attr('state', 'rec').text('R');
+			if (!mixer[ch]) { mixer[ch] = {}; }
+			mixer[ch].armed = { state: 'rec', text: 'R' };
+			if (typeof studioInputStreamGrabber === 'function') { studioInputStreamGrabber(ch, 'rec'); }
+			if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(); }
+			if (typeof studioSaver === 'function') { studioSaver(); }
+			if (typeof studioDrawTracks === 'function') { studioDrawTracks(); }
+			return true;
+		}
+		return false;
+	}
+
+	if (command === 'track') {
+		if (action === 'select') { return studioRemoteSelectTrack(payload.index); }
+		if (action === 'add') {
+			if (typeof studioAddTrack !== 'function') { return false; }
+			studioAddTrack();
+			return true;
+		}
+		return false;
+	}
+
+	if (command === 'mixer') {
+		if (!ch) { return false; }
+		var control = String(payload.control || '');
+		if (control === 'gain') {
+			if (typeof studioChannelVolumeSet !== 'function') { return false; }
+			studioChannelVolumeSet(ch, payload.value);
+			return true;
+		}
+		if (control === 'pan') {
+			var pan = $('.knob_control[channel="' + ch + '"][control="pan"]');
+			if (!pan.length) { return false; }
+			pan.val(studioKnobNumber(payload.value, 50)).trigger('change');
+			return true;
+		}
+		if (control === 'mute' || control === 'solo') {
+			if (!mixer[ch]) { mixer[ch] = {}; }
+			mixer[ch][control] = studioRemoteTruthy(payload.value) ? 1 : 0;
+			if (typeof studioStripMuteSoloRender === 'function') { studioStripMuteSoloRender(); }
+			if (typeof studioApplyMuteSolo === 'function') { studioApplyMuteSolo(); }
+			if (typeof studioSaver === 'function') { studioSaver(); }
+			return true;
+		}
+		return false;
+	}
+
+	if (command === 'master') {
+		var name = String(payload.name || '');
+		if (!/^master_[a-z0-9_]+$/.test(name)) { return false; }
+		if (payload.on !== undefined) {
+			if (typeof studioMasterToggle !== 'function') { return false; }
+			studioMasterToggle(name, studioRemoteTruthy(payload.on));
+			return true;
+		}
+		var mcontrol = String(payload.control || '');
+		if (!/^[a-z][a-z0-9_]*$/.test(mcontrol) || typeof studioMasterSet !== 'function') { return false; }
+		studioMasterSet(name, mcontrol, payload.value);
+		return true;
+	}
+
+	if (command === 'song') {
+		if (action === 'open') {
+			var id = String(payload.id || '');
+			if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || typeof studioLoad !== 'function') { return false; }
+			studioLoad(id);
+			return true;
+		}
+		if (action === 'save') {
+			if (typeof studioSave !== 'function') { return false; }
+			studioSave();
+			return true;
+		}
+		if (action === 'new') {
+			var button = $('#studio_new');
+			if (!button.length) { return false; }
+			button.trigger('click');
+			return true;
+		}
+		return false;
+	}
+
+	if (command === 'select') { return studioRemoteSelectTrack(payload.track); }
+
+	// An unknown command is ignored: the name table above is the whole of it.
+	return false;
+}
+
+// The Studio window is opened through studioInit() in several places; wrap it
+// once here so the picker and the publish clock follow every open.
+(function () {
+	if (typeof studioInit !== 'function' || studioInit.studioRemoteWrapped) { return; }
+	var studioInitLocal = studioInit;
+	var studioInitRemote = function (data) {
+		var result = studioInitLocal(data);
+		studioRemoteWindowOpened();
+		return result;
+	};
+	studioInitRemote.studioRemoteWrapped = true;
+	studioInit = studioInitRemote;
+})();
+
+// A closed window stops its clocks even when the close did not come through
+// the window's own close button.
+$(document).on('click', '.studio_close_button', function () {
+	studioRemoteTimersStop();
+	studioRemoteTarget = '';
+	studioRemoteLocalSnapshot = null;
+	studioRemoteLocalSong = null;
+});

@@ -93,6 +93,13 @@ var jawnosConsoleCommands = {
 			if (typeof playerCacheSaver === 'function') { playerCacheSaver(undefined, true); }
 		}
 	},
+	studioRemoteCommand: function (a) {
+		// The Studio's own table applies a command name and its data. The payload
+		// is data, never source; an unknown name is ignored by studioRemoteApply.
+		if (typeof studioRemoteApply === 'function') {
+			studioRemoteApply(String(a[0] || ''), a[1] || {});
+		}
+	},
 	jawnosPrivateRefresh: function (a) {
 		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(a[0] || 0); }
 	},

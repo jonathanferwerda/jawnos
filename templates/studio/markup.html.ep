@@ -133,6 +133,16 @@
 			<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
 		</span>
 		<span id="studio_track_count" class="studio_track_count"></span>
+		<%# A phone or tablet may drive another machine's Studio. The picker starts on
+		   this machine; choosing a peer turns this window into that table's controls
+		   and the badge names the machine currently being driven. %>
+		<span id="studio_remote_picker" class="studio_remote_picker" role="group" aria-label="<%= &subs::ui('Control another machine') %>">
+			<label class="studio_remote_label" for="studio_remote_machine"><%= &subs::ui('Machine') %></label>
+			<select id="studio_remote_machine" class="studio_remote_machine" hint="<%= &subs::ui('Choose the machine this Studio controls') %>">
+				<option value=""><%= &subs::ui('This machine') %></option>
+			</select>
+			<span id="studio_remote_status" class="studio_remote_status" role="status" aria-live="polite"></span>
+		</span>
 		<%# One button for the DAW-informed arrangement: transport across the top,
 		   the timeline under it, and the console at the foot. On a narrow window
 		   every panel stacks instead. %>
