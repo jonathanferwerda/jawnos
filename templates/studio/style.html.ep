@@ -936,6 +936,37 @@
 		font-size: 12px;
 		max-width: 160px;
 	}
+	/* The stream row is a different kind of monitor: its italic label sets it
+	   apart from the target's physical outputs below it. */
+	.studio_remote_monitor_stream {
+		font-style: italic;
+	}
+	/* The stream's own line: hidden until the target answers, so an empty bar
+	   stays empty; the poll leaves an unchanged line untouched. */
+	.studio_remote_monitor_status {
+		display: none;
+		font-size: 12px;
+		padding: 1px 6px;
+		border-radius: 4px;
+		white-space: nowrap;
+	}
+	.studio_remote_monitor_status.on,
+	.studio_remote_monitor_status.stopped,
+	.studio_remote_monitor_status.pending,
+	.studio_remote_monitor_status.error {
+		display: inline-block;
+	}
+	.studio_remote_monitor_status.on {
+		background: var(--accent-soft, var(--accent));
+		color: var(--panel);
+	}
+	.studio_remote_monitor_status.stopped,
+	.studio_remote_monitor_status.pending {
+		opacity: .7;
+	}
+	.studio_remote_monitor_status.error {
+		color: var(--danger, #c53030);
+	}
 	.studio_remote_status {
 		display: none;
 		font-size: 12px;

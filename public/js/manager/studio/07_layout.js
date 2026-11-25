@@ -1291,6 +1291,12 @@ var studioRemoteQuiet = false;
 var studioRemoteRestoring = false;
 var studioRemoteCommandTimers = {};
 var studioRemoteMonitorCurrent = '';
+var studioRemoteStreamOption = '__stream__';
+var studioRemoteStreaming = false;
+var studioRemoteStreamWanted = false;
+var studioRemoteStreamBusy = false;
+var studioRemoteStreamSeq = 0;
+var studioRemoteStreamPollTimer = 0;
 var studioRemoteOverlayQueued = false;
 
 function studioRemoteText(text) {
@@ -1381,9 +1387,12 @@ function studioRemoteOptionEnsure(target, label) {
 }
 
 // ---- the controlled machine's own output -----------------------------------
-// A monitor is not a stream to this tablet: it is the speaker, headphone jack
-// or Bluetooth sink the controlled machine plays through. The list and the
-// write belong to that machine, exactly as the Sound app sets its default.
+// The picker lists two kinds of monitor. A device is the speaker, headphone
+// jack or Bluetooth sink the controlled machine plays through: the list and
+// the write belong to that machine, exactly as the Sound app sets its default.
+// The stream option asks that machine to send the same monitor mix to this
+// controller's Music receiver instead. The tablet's receiver does the playing;
+// nothing is decoded in this browser window.
 function studioRemoteMonitorPickerShow(show) {
 	var group = $('#studio_remote_monitor_picker');
 	if (!group.length) { return; }
@@ -1392,12 +1401,42 @@ function studioRemoteMonitorPickerShow(show) {
 	$('#studio_remote_monitor').prop('disabled', !show);
 }
 
+// The stream option is a select sentinel, never a device id, so it cannot
+// collide with a real output from the target. The markup ships it; this puts
+// it back on a select that was emptied or built by an older render.
+function studioRemoteStreamOptionEnsure() {
+	var select = $('#studio_remote_monitor');
+	if (!select.length) { return; }
+	var option = select.find('option[value="' + studioRemoteStreamOption + '"]');
+	if (option.length) { option.addClass('studio_remote_monitor_stream'); return; }
+	$('<option>').val(studioRemoteStreamOption).addClass('studio_remote_monitor_stream')
+		.text(studioRemoteText('Stream to this tablet')).prependTo(select);
+}
+
+function studioRemoteStreamStatusShow(text, kind) {
+	var line = $('#studio_remote_monitor_status');
+	if (!line.length) { return; }
+	var shown = text ? studioRemoteText(text) : '';
+	var state = text ? (kind || 'on') : '';
+	// The status poll runs every two seconds; an unchanged line stays untouched
+	// so a polite live region does not repeat itself.
+	if (line.text() === shown) {
+		if (state && line.hasClass(state)) { return; }
+		if (!state && !line.hasClass('on stopped pending error')) { return; }
+	}
+	line.text(shown);
+	line.removeClass('on stopped pending error');
+	if (state) { line.addClass(state); }
+}
+
 // Reloading keeps the target's remembered output selected, so re-entering
-// remote mode shows the monitor that machine was last heard through.
+// remote mode shows the monitor that machine was last heard through. The
+// physical rows are replaced; the stream option stays at the top.
 function studioRemoteMonitorLoad() {
 	var target = studioRemoteTarget;
 	if (!target || !$('#studio_remote_monitor').length) { studioRemoteMonitorPickerShow(false); return false; }
 	studioRemoteMonitorPickerShow(true);
+	studioRemoteStreamOptionEnsure();
 	$.ajax({
 		url: '/manager/studio/remote_devices',
 		type: 'GET',
@@ -1408,17 +1447,151 @@ function studioRemoteMonitorLoad() {
 			if (studioRemoteTarget !== target || !$('#studio_remote_monitor').length) { return; }
 			if (!reply || reply.ok !== true) { return; }
 			var current = $('#studio_remote_monitor');
-			current.empty();
+			current.find('option.studio_remote_monitor_device').remove();
 			$.each(reply.outputs || [], function (i, output) {
 				var id = String((output && output.id) || '');
-				if (!id) { return; }
-				$('<option>').val(id).text(String(output.label || id)).appendTo(current);
+				if (!id || id === studioRemoteStreamOption) { return; }
+				$('<option>').val(id).addClass('studio_remote_monitor_device')
+					.text(String(output.label || id)).appendTo(current);
 			});
+			studioRemoteStreamOptionEnsure();
 			studioRemoteMonitorCurrent = String(reply.current || '');
-			if (studioRemoteMonitorCurrent) { current.val(studioRemoteMonitorCurrent); }
+			// No remembered device leaves the select blank, not the stream
+			// option pre-selected, so choosing the stream still fires a change.
+			current.val(studioRemoteStreaming ? studioRemoteStreamOption : (studioRemoteMonitorCurrent || ''));
 		}
 	});
 	return true;
+}
+
+// A start that the target refuses puts the picker back on the physical output
+// and says why. This never paints "streaming" from a request alone: only the
+// server's own streaming flag can show that state.
+function studioRemoteStreamStart() {
+	var target = studioRemoteTarget;
+	var select = $('#studio_remote_monitor');
+	if (!target) { return false; }
+	studioRemoteStreamWanted = true;
+	studioRemoteStreamBusy = true;
+	studioRemoteStreamSeq++;
+	studioRemoteStreamStatusShow('Starting the stream', 'pending');
+	$.ajax({
+		url: '/manager/studio/monitor_stream',
+		type: 'POST',
+		dataType: 'json',
+		cache: false,
+		data: { action: 'start', target: target, output: 'stream' },
+		success: function (reply) {
+			if (studioRemoteTarget !== target) { return; }
+			studioRemoteStreamBusy = false;
+			if (!reply || reply.ok !== true || !studioRemoteTruthy(reply.streaming)) {
+				studioRemoteStreamWanted = false;
+				studioRemoteStreaming = false;
+				studioRemoteStreamStatusShow((reply && reply.error) ? String(reply.error) : 'Could not stream to this tablet', 'error');
+				if (select.length) { select.val(studioRemoteMonitorCurrent || ''); }
+				return;
+			}
+			studioRemoteStreaming = true;
+			studioRemoteStreamStatusShow('Streaming to this tablet', 'on');
+			if (select.length) { select.val(studioRemoteStreamOption); }
+		},
+		error: function () {
+			if (studioRemoteTarget !== target) { return; }
+			studioRemoteStreamBusy = false;
+			studioRemoteStreamWanted = false;
+			studioRemoteStreaming = false;
+			studioRemoteStreamStatusShow('Could not stream to this tablet', 'error');
+			if (select.length) { select.val(studioRemoteMonitorCurrent || ''); }
+		}
+	});
+	return true;
+}
+
+// Stop is idempotent and also runs before a physical output is chosen, so the
+// target never keeps sending audio to a tablet that has moved on. The callback
+// runs whichever way the request ends: a failed stop must not wedge the picker.
+function studioRemoteStreamStop(done) {
+	var target = studioRemoteTarget;
+	studioRemoteStreamWanted = false;
+	studioRemoteStreaming = false;
+	studioRemoteStreamSeq++;
+	if (!target) { if (done) { done(null); } return false; }
+	studioRemoteStreamBusy = true;
+	$.ajax({
+		url: '/manager/studio/monitor_stream',
+		type: 'POST',
+		dataType: 'json',
+		cache: false,
+		data: { action: 'stop', target: target },
+		success: function (reply) {
+			studioRemoteStreamBusy = false;
+			if (studioRemoteTarget === target) {
+				if (reply && reply.ok === true) { studioRemoteStreamStatusShow('Stopped', 'stopped'); }
+				else { studioRemoteStreamStatusShow((reply && reply.error) ? String(reply.error) : 'Could not stop the stream', 'error'); }
+			}
+			if (done) { done(reply); }
+		},
+		error: function () {
+			studioRemoteStreamBusy = false;
+			if (studioRemoteTarget === target) { studioRemoteStreamStatusShow('Could not stop the stream', 'error'); }
+			if (done) { done(null); }
+		}
+	});
+	return true;
+}
+
+// The status poll is the target's truth, so a stream it ended (or refused)
+// returns the picker to the remembered device and says Stopped.
+function studioRemoteStreamStatusApply(reply) {
+	if (studioRemoteStreamBusy) { return false; }
+	if (!reply || reply.ok !== true) {
+		studioRemoteStreaming = false;
+		studioRemoteStreamStatusShow((reply && reply.error) ? String(reply.error) : 'Stream status unavailable', 'error');
+		return false;
+	}
+	var streaming = studioRemoteTruthy(reply.streaming);
+	studioRemoteStreaming = streaming;
+	var select = $('#studio_remote_monitor');
+	if (streaming) {
+		studioRemoteStreamWanted = true;
+		studioRemoteStreamStatusShow('Streaming to this tablet', 'on');
+		if (select.length) { select.val(studioRemoteStreamOption); }
+		return true;
+	}
+	studioRemoteStreamWanted = false;
+	studioRemoteStreamStatusShow(reply.error ? String(reply.error) : 'Stopped', reply.error ? 'error' : 'stopped');
+	if (select.length && select.val() === studioRemoteStreamOption) { select.val(studioRemoteMonitorCurrent || ''); }
+	return false;
+}
+
+function studioRemoteStreamStatusRequest() {
+	var target = studioRemoteTarget;
+	if (!target) { return false; }
+	var seq = studioRemoteStreamSeq;
+	$.ajax({
+		url: '/manager/studio/monitor_stream',
+		type: 'POST',
+		dataType: 'json',
+		cache: false,
+		data: { action: 'status', target: target },
+		success: function (reply) {
+			if (studioRemoteTarget !== target || seq !== studioRemoteStreamSeq) { return; }
+			studioRemoteStreamStatusApply(reply);
+		}
+	});
+	return true;
+}
+
+function studioRemoteStreamPollStart() {
+	studioRemoteStreamPollStop();
+	studioRemoteStreamPollTimer = setInterval(function () {
+		if (!studioRemoteTarget || !$('#studio').length) { studioRemoteStreamPollStop(); return; }
+		studioRemoteStreamStatusRequest();
+	}, 2000);
+}
+
+function studioRemoteStreamPollStop() {
+	if (studioRemoteStreamPollTimer) { clearInterval(studioRemoteStreamPollTimer); studioRemoteStreamPollTimer = 0; }
 }
 
 // The chosen output is the target's default: this machine's own hardware is
@@ -1426,6 +1599,13 @@ function studioRemoteMonitorLoad() {
 function studioRemoteMonitorPick(id) {
 	var target = studioRemoteTarget;
 	if (!target || !id) { return false; }
+	if (id === studioRemoteStreamOption) { return studioRemoteStreamStart(); }
+	studioRemoteStreamStop(function () { studioRemoteDevicePick(target, id); });
+	return true;
+}
+
+function studioRemoteDevicePick(target, id) {
+	var select = $('#studio_remote_monitor');
 	$.ajax({
 		url: '/manager/studio/remote_device',
 		type: 'POST',
@@ -1434,11 +1614,11 @@ function studioRemoteMonitorPick(id) {
 		data: { target: target, id: String(id) },
 		success: function (reply) {
 			if (studioRemoteTarget !== target) { return; }
-			if (!reply || reply.ok !== true) { $('#studio_remote_monitor').val(studioRemoteMonitorCurrent); return; }
+			if (!reply || reply.ok !== true) { if (select.length) { select.val(studioRemoteMonitorCurrent); } return; }
 			studioRemoteMonitorCurrent = String(reply.current || id);
-			$('#studio_remote_monitor').val(studioRemoteMonitorCurrent);
+			if (select.length) { select.val(studioRemoteMonitorCurrent); }
 		},
-		error: function () { $('#studio_remote_monitor').val(studioRemoteMonitorCurrent); }
+		error: function () { if (select.length) { select.val(studioRemoteMonitorCurrent); } }
 	});
 	return true;
 }
@@ -1517,9 +1697,17 @@ function studioRemoteTargetSet(target, from_server) {
 	if (target && target === studioRemoteTarget) { studioRemoteBadge(); return; }
 	if (!target && !studioRemoteTarget) { studioRemoteBadge(); return; }
 	if (target) {
+		if (studioRemoteTarget && studioRemoteTarget !== target) {
+			studioRemoteStreamStop();
+			studioRemoteStreamPollStop();
+		}
 		studioRemoteCommandsClear();
 		studioRemoteLocalSnapshotSave();
 		studioRemoteTarget = target;
+		studioRemoteStreaming = false;
+		studioRemoteStreamWanted = false;
+		studioRemoteStreamSeq++;
+		studioRemoteStreamStatusShow('');
 		studioRemoteOptionEnsure(target, studioRemoteMachineLabels[target] || target);
 		$('#studio_remote_machine').val(target);
 		studioRemoteLocalSilence();
@@ -1527,8 +1715,10 @@ function studioRemoteTargetSet(target, from_server) {
 		studioRemoteMonitorLoad();
 		studioRemotePollStart();
 		studioRemoteStateLoad();
+		studioRemoteStreamStatusRequest();
 		return;
 	}
+	studioRemoteStreamStop();
 	studioRemoteTarget = '';
 	studioRemotePollStop();
 	studioRemoteCommandsClear();
@@ -1549,6 +1739,7 @@ function studioRemoteCommandsClear() {
 
 function studioRemotePollStart() {
 	studioRemotePollStop();
+	studioRemoteStreamPollStart();
 	studioRemotePollTimer = setInterval(function () {
 		if (!studioRemoteTarget || !$('#studio').length) { studioRemotePollStop(); return; }
 		studioRemoteStateLoad();
@@ -1557,6 +1748,7 @@ function studioRemotePollStart() {
 
 function studioRemotePollStop() {
 	if (studioRemotePollTimer) { clearInterval(studioRemotePollTimer); studioRemotePollTimer = 0; }
+	studioRemoteStreamPollStop();
 }
 
 // The target's clock: one publish a second while its Studio is open. A window
@@ -1565,6 +1757,7 @@ function studioRemoteTimersStart() {
 	if (studioRemotePublishTimer) { return; }
 	studioRemotePublishTimer = setInterval(function () {
 		if (!$('#studio').length) {
+			studioRemoteStreamStop();
 			studioRemoteTimersStop();
 			studioRemoteTarget = '';
 			studioRemoteLocalSnapshot = null;
@@ -2389,10 +2582,27 @@ function studioRemoteApplyCommand(command, payload) {
 // A closed window stops its clocks even when the close did not come through
 // the window's own close button.
 $(document).on('click', '.studio_close_button', function () {
+	studioRemoteStreamStop();
 	studioRemoteTimersStop();
 	studioRemoteMonitorPickerShow(false);
 	studioRemoteOverlayClear();
 	studioRemoteTarget = '';
 	studioRemoteLocalSnapshot = null;
 	studioRemoteLocalSong = null;
+});
+
+// A browser tab or window closed without the Studio's own close button still
+// stops the target's stream. The page is going away, so send a beacon; a
+// plain ajax is the fallback when sendBeacon is unavailable.
+$(window).on('pagehide', function () {
+	var target = studioRemoteTarget;
+	if (!target || (!studioRemoteStreamWanted && !studioRemoteStreaming)) { return; }
+	var body = null;
+	try {
+		body = new URLSearchParams();
+		body.append('action', 'stop');
+		body.append('target', target);
+	} catch (e) { body = null; }
+	if (body && navigator.sendBeacon) { navigator.sendBeacon('/manager/studio/monitor_stream', body); return; }
+	$.ajax({ url: '/manager/studio/monitor_stream', type: 'POST', cache: false, data: { action: 'stop', target: target } });
 });

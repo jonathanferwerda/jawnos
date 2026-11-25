@@ -171,11 +171,16 @@
 			<select id="studio_remote_machine" class="studio_remote_machine" hint="<%= &subs::ui('Choose the machine this Studio controls') %>">
 				<option value=""><%= &subs::ui('This machine') %></option>
 			</select>
-			<%# The monitor is the controlled machine's own speaker, jack or sink,
-			   not a stream to this tablet. Hidden while this window drives itself. %>
+			<%# The monitor picker mixes two kinds of output: the controlled
+			   machine's own speaker, jack or sink, and a stream of its monitor mix
+			   to this tablet's Music receiver. Hidden while this window drives
+			   itself. The stream option is a select sentinel, not a device id. %>
 			<span id="studio_remote_monitor_picker" class="studio_remote_monitor_picker" role="group" aria-label="<%= &subs::ui('Monitor output') %>" hidden>
 				<label class="studio_remote_label" for="studio_remote_monitor"><%= &subs::ui('Monitor') %></label>
-				<select id="studio_remote_monitor" class="studio_remote_monitor" hint="<%= &subs::ui('Choose the output the controlled machine is monitored on') %>"></select>
+				<select id="studio_remote_monitor" class="studio_remote_monitor" hint="<%= &subs::ui('Choose the output the controlled machine is monitored on; a stream plays through the Music receiver on this tablet') %>">
+					<option value="__stream__" class="studio_remote_monitor_stream"><%= &subs::ui('Stream to this tablet') %></option>
+				</select>
+				<span id="studio_remote_monitor_status" class="studio_remote_monitor_status" role="status" aria-live="polite"></span>
 			</span>
 			<span id="studio_remote_status" class="studio_remote_status" role="status" aria-live="polite"></span>
 		</span>
