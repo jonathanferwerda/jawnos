@@ -1,27 +1,60 @@
-//! The `reverb` pedal: five generated tails, convolved without adding latency.
+//! The `reverb` pedal: five modelled mechanical tails, convolved without adding
+//! latency.
 //!
-//! `studioInsert(ctx, 'reverb2')` is a `ConvolverNode` over
-//! `studioImpulse(ctx, 2.4, 2.6)` — 2.4 s of uniform noise under a
-//! `(1 - i/length)^2.6` envelope — mixed with the dry signal
-//! (`wet = mix/100 * 0.9`, `dry = 1 - mix/100 * 0.4`). That impulse *is* the
-//! sound; a Freeverb or a Schroeder network would be a different reverb, so
-//! this is honest convolution, only arranged so the engine's own fixed block
-//! does not become a block of delay.
+//! `studioInsert(ctx, 'reverb2')` is a `ConvolverNode` mixed with the dry signal
+//! (`wet = mix/100 * 0.9`, `dry = 1 - mix/100 * 0.4`). The engine does the same
+//! arithmetic — an impulse convolved with the signal — but the impulse is no
+//! longer noise reshaped by a handful of filters. Each model is the impulse
+//! response of a small *mechanical* model of the thing that rings. One delay
+//! network, five parameter sets: the models are the same instrument played at
+//! five scales, not five unrelated textures.
 //!
-//! The contract adds five models: Room (0.8 s), Spring (1.8 s), Plate (2.2 s),
-//! Hall (3.4 s) and Cave (6.0 s). Each is the same generated noise reshaped — a
-//! decay, a low/high cut and, for Spring, a pair of combs that give it the
-//! metallic ring — which keeps them the same kind of sound as the web's
-//! generated impulse rather than importing sampled rooms. The numbers are in
-//! [`MODEL_SECONDS`] and the names in [`MODEL_NAMES`]; the order is shared with
-//! the browser.
+//! # The models, and what rings
+//!
+//! * **Spring (1)** is a Fender 6G15-style spring tank. Two coiled springs are
+//!   driven at one end and picked up at the other. The torsional wave in a coil
+//!   is dispersive, so the tank is two delay lines (the springs, 29.3 ms and
+//!   34.1 ms of travel) whose feedback passes through a cascade of first-order
+//!   allpass sections. An allpass changes no magnitude, only the delay of each
+//!   band; the cascade therefore turns every echo into a chirp (the high "drip"
+//!   ahead of the low "boing"), and the two loop periods give the metallic comb.
+//!   A mild one-pole damping in each loop is the wire and transducer loss, and
+//!   the loop gains are set for the contract's 1.8 s.
+//! * **Plate (2)** is an EMT 140-style plate. A tensioned steel plate has
+//!   thousands of densely packed, inharmonic modes, so its response is dense
+//!   from the first millisecond and has no discrete early gap. It is modelled as
+//!   a bank of twelve short delay lines (1.1-4.1 ms) mixed by an orthogonal
+//!   Householder feedback matrix, preceded by four Schroeder diffusers. The
+//!   short loops build echo density immediately; the damping corner is high
+//!   (14 kHz), so the plate stays bright for the contract's 2.2 s.
+//! * **Room (0)**, **Hall (3)** and **Cave (4)** are the same network at larger
+//!   scales: six short lines and discrete wall bounces for the room, eight
+//!   metre-scale lines with a dark loop for the hall, and the longest, darkest,
+//!   low-mid-heaviest set for the cave. They are not sampled spaces; the
+//!   mechanical picture is a box whose walls are the delay lines and whose air
+//!   and surface loss are the damping.
+//!
+//! # The real circuit, and the honest approximation
+//!
+//! The spring's dispersion is a *lumped* allpass cascade, not a solution of the
+//! helical spring's wave equation: it gets the chirp and the comb, but not the
+//! coil's exact dispersion curve, the transducer's nonlinearity or its
+//! mechanical hum. The plate is a feedback delay network whose echo density
+//! stands in for the plate's thousands of modes; it does not solve the plate
+//! equation, and the EMT's driver, pickup and frame are not modelled. Room,
+//! Hall and Cave are parameter studies of the same network, not measurements.
+//! What is real is the structure: delay, dispersion, diffusion, damping, and
+//! the decay each physical object would have.
+//!
+//! The generated lengths are in [`MODEL_SECONDS`] and the names in
+//! [`MODEL_NAMES`]; the order is shared with the browser.
 //!
 //! Every model's impulse and its partition spectra are built in `prepare`, so
 //! `set("model", ...)` only swaps an index at the next 1024-sample boundary:
 //! no allocation and no FFT work on the audio thread. The bank costs about
-//! 18 MB at 48 kHz (the six-second Cave alone is 4.6 MB of spectra), against
-//! 4.2 MB for the old single tail. That memory is the price of a model switch
-//! that cannot glitch, and it is paid once per prepared reverb.
+//! 18 MB at 48 kHz (the six-second Cave alone is 4.6 MB of spectra). That memory
+//! is the price of a model switch that cannot glitch, and it is paid once per
+//! prepared reverb.
 //!
 //! # Why there is no latency
 //!
@@ -63,13 +96,12 @@
 //!
 //! # What it matches, and what it does not
 //!
-//! The generator is `studioImpulse`'s expression verbatim, with a fixed xorshift
-//! seed instead of `Math.random`, and mono instead of the web's two independent
-//! channels (the engine's strip is one input). The WebAudio `ConvolverNode`
-//! normalizes its buffer by default (`normalize = true`), so the effective
-//! impulse the page plays is the generated one times the spec's equal-power
-//! scale; [`Reverb::impulse`] returns that effective impulse. The samples are
-//! therefore the same shape and level as the browser's, not the same bytes.
+//! The browser still generates a `studioImpulse`-style noise shape per model and
+//! plays it through a `ConvolverNode`; the engine's impulse now comes from the
+//! tank simulation above. The two therefore share the model indices, the lengths
+//! and the character table — not the bytes. The WebAudio convolver normalizes by
+//! default, so [`Reverb::impulse`] returns the simulated impulse times the spec's
+//! equal-power scale, the same level convention the page uses.
 
 use crate::effect::Effect;
 
@@ -88,16 +120,13 @@ pub const DEFAULT_MODEL: usize = 2;
 
 const MODEL_COUNT: usize = MODEL_NAMES.len();
 
-/// The envelope's exponent per model. A larger value decays faster: Room is
-/// short and tight, Cave is long enough that its low-mid energy needs a gentler
-/// slope to stay audible beneath the length.
-const MODEL_DECAY: [f32; MODEL_COUNT] = [3.4, 2.2, 2.6, 2.4, 2.9];
-
-/// The reference shape the web generator was written for; the model table
-/// reuses the same generator with its own length and decay.
+/// The browser's reference generator (`studioImpulse(ctx, 2.4, 2.6)`) and its
+/// envelope exponent. The engine no longer generates noise, but the constants
+/// stay public because the shared shape predates the physical models and the
+/// integration tests pin them for the browser mirror.
 pub const SECONDS: f32 = 2.4;
 
-/// The exponential decay applied across the reference impulse.
+/// The exponential decay applied across the browser's reference impulse.
 pub const DECAY: f32 = 2.6;
 
 /// The partition length in samples: 21.3 ms at 48 kHz, and the FFT's size is
@@ -122,9 +151,9 @@ const DRY_SCALE: f32 = 0.4;
 /// How long a knob takes to travel most of the way to a new value.
 const SMOOTH_SECONDS: f32 = 0.02;
 
-/// The fixed seed the impulse is generated from, so a take and a test meet the
-/// same noise. Any non-zero value would sound the same; this one is only a name
-/// for "the house's reverb".
+/// The fixed seed the simulated sign patterns are drawn from, so a take and a
+/// test meet the same tank. Any non-zero value would sound the same; this one is
+/// only a name for "the house's reverb".
 const RNG_SEED: u32 = 0x2545_f491;
 
 /// Twice [`PARTITION`]: the FFT covers one previous block and the current one.
@@ -281,27 +310,6 @@ impl XorShift32 {
         self.state = value;
         value
     }
-
-    /// Uniform in `[-1, 1)`, the range of `Math.random() * 2 - 1`.
-    fn bipolar(&mut self) -> f64 {
-        (f64::from(self.next_u32()) / 4_294_967_296.0) * 2.0 - 1.0
-    }
-}
-
-/// `studioImpulse(rate, seconds, decay)` as written in `studio.js`, for one
-/// channel: uniform noise times `(1 - i/length)^decay`.
-fn studio_impulse(rate: u32, seconds: f32, decay: f32) -> Vec<f32> {
-    // Round rather than floor: 1.8 as an f32 is a hair under 1.8, and the
-    // contract's model lengths are written as whole sample counts at 48 kHz.
-    let length = ((f64::from(rate) * f64::from(seconds)).round() as usize).max(1);
-    let mut rng = XorShift32::new(RNG_SEED);
-    let mut impulse = Vec::with_capacity(length);
-    for index in 0..length {
-        let across = index as f64 / length as f64;
-        let envelope = (1.0 - across).powf(f64::from(decay));
-        impulse.push((rng.bipolar() * envelope) as f32);
-    }
-    impulse
 }
 
 /// The scale WebAudio's `ConvolverNode` applies when `normalize` is left at its
@@ -376,73 +384,392 @@ fn high_boost_shape(impulse: &mut [f32], rate: f64, hz: f64, gain: f64) {
     }
 }
 
-/// A feed-forward comb: the delayed copy gives the tail a metallic ring. The
-/// gain stays below one, so the shape cannot run away.
-fn comb_shape(impulse: &mut [f32], delay: usize, gain: f32) {
-    if delay == 0 || delay >= impulse.len() {
-        return;
+/// A first-order allpass section. A cascade of these is the spring's
+/// dispersion model: every frequency passes at unit gain, but the band near the
+/// pole is delayed more than the rest, so one echo becomes a chirp instead of a
+/// click.
+struct Allpass1 {
+    a: f32,
+    x1: f32,
+    y1: f32,
+}
+
+impl Allpass1 {
+    fn new(a: f32) -> Self {
+        Allpass1 {
+            a: a.clamp(-0.999, 0.999),
+            x1: 0.0,
+            y1: 0.0,
+        }
     }
-    for index in delay..impulse.len() {
-        impulse[index] += gain * impulse[index - delay];
+
+    /// `H(z) = (a + z^-1) / (1 + a z^-1)`, the stable first-order allpass.
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        let y = self.a * x + self.x1 - self.a * self.y1;
+        self.x1 = x;
+        self.y1 = y;
+        y
     }
 }
 
-/// A handful of discrete early reflections, which is what makes a small room
-/// sound like a room rather than a short plate.
-fn early_reflections(impulse: &mut [f32], rate: f64, taps: &[(f32, f32)]) {
-    for &(seconds, gain) in taps {
-        let delay = (rate * f64::from(seconds)) as usize;
-        if delay == 0 || delay >= impulse.len() {
-            continue;
+/// A Schroeder allpass, used as a diffuser in front of a tank. It smears the
+/// first few milliseconds without changing the magnitude, which is how a plate
+/// loses its discrete early gap while a hall keeps one.
+struct Diffuser {
+    buf: Vec<f32>,
+    pos: usize,
+    gain: f32,
+}
+
+impl Diffuser {
+    fn new(delay: usize, gain: f32) -> Self {
+        Diffuser {
+            buf: vec![0.0; delay.max(1)],
+            pos: 0,
+            gain: gain.clamp(0.0, 0.95),
         }
-        for index in delay..impulse.len() {
-            impulse[index] += gain * impulse[index - delay];
+    }
+
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        let delayed = self.buf[self.pos];
+        let write = x + self.gain * delayed;
+        let out = delayed - self.gain * write;
+        self.buf[self.pos] = write;
+        self.pos += 1;
+        if self.pos == self.buf.len() {
+            self.pos = 0;
+        }
+        out
+    }
+}
+
+/// One delay line of the tank. `gain` is the amplitude the loop keeps per pass,
+/// chosen so the line decays by 60 dB in the model's tail time.
+struct DelayLine {
+    buf: Vec<f32>,
+    pos: usize,
+    gain: f32,
+}
+
+impl DelayLine {
+    fn new(delay: usize, gain: f32) -> Self {
+        DelayLine {
+            buf: vec![0.0; delay.max(1)],
+            pos: 0,
+            gain,
+        }
+    }
+
+    #[inline]
+    fn read(&self) -> f32 {
+        self.buf[self.pos]
+    }
+
+    #[inline]
+    fn write(&mut self, value: f32) {
+        self.buf[self.pos] = value;
+        self.pos += 1;
+        if self.pos == self.buf.len() {
+            self.pos = 0;
         }
     }
 }
 
-/// The generated impulse for one model, before the convolver's normalization.
+/// One mechanical model, in the vocabulary of the network: how far the wave
+/// travels, how much of it comes back, what the medium passes, and where the
+/// first wall bounces land.
+struct TankParams {
+    /// Delay-line lengths in seconds. Two for the spring tank; more for the
+    /// rooms and plates, where they stand for a wall or a mode cluster.
+    lines: &'static [f32],
+    /// RT60, the time the loop takes to fall 60 dB. This is the contract's
+    /// model length, so the tail ends where the model says it does.
+    rt60: f32,
+    /// One-pole loop damping corner: the air and surface loss.
+    damping_hz: f64,
+    /// First-order allpass sections in each loop, and their coefficient. Zero
+    /// sections means no dispersion (everything except the spring).
+    dispersion_sections: usize,
+    dispersion: f32,
+    /// Schroeder diffusers in front of the tank: (seconds, gain).
+    diffusers: &'static [(f32, f32)],
+    /// Mix the lines with an orthogonal Householder matrix (a dense tank) or
+    /// leave them independent (two springs).
+    coupling: bool,
+    /// Discrete wall/floor bounces, added as delayed copies of the input:
+    /// (seconds, gain).
+    early: &'static [(f32, f32)],
+    /// Output shaping applied once the impulse has been simulated.
+    highpass_hz: f64,
+    lowpass_hz: f64,
+    low_boost_hz: f64,
+    low_boost_gain: f64,
+    high_boost_hz: f64,
+    high_boost_gain: f64,
+}
+
+const ROOM_LINES: [f32; 6] = [0.0041, 0.0059, 0.0083, 0.0117, 0.0157, 0.0211];
+const SPRING_LINES: [f32; 2] = [0.0293, 0.0341];
+const PLATE_LINES: [f32; 12] = [
+    0.00113, 0.00137, 0.00161, 0.00179, 0.00211, 0.00239, 0.00271, 0.00293, 0.00323,
+    0.00353, 0.00383, 0.00409,
+];
+const HALL_LINES: [f32; 8] = [
+    0.0311, 0.0367, 0.0421, 0.0473, 0.0533, 0.0591, 0.0667, 0.0731,
+];
+const CAVE_LINES: [f32; 8] = [
+    0.0413, 0.0529, 0.0661, 0.0787, 0.0911, 0.1033, 0.1169, 0.1307,
+];
+
+const PLATE_DIFFUSERS: [(f32, f32); 4] = [
+    (0.0007, 0.70),
+    (0.0011, 0.65),
+    (0.0017, 0.60),
+    (0.0023, 0.55),
+];
+const ROOM_DIFFUSERS: [(f32, f32); 2] = [(0.0007, 0.50), (0.0013, 0.40)];
+const HALL_DIFFUSERS: [(f32, f32); 2] = [(0.0009, 0.35), (0.0017, 0.30)];
+const CAVE_DIFFUSERS: [(f32, f32); 2] = [(0.0013, 0.30), (0.0023, 0.25)];
+
+/// The spring's dispersion: a cascade of first-order allpasses. Eight sections
+/// at `-0.5` delay the low band by about 24 samples while the high band takes
+/// three, enough for an audible chirp without smearing the comb away.
+const SPRING_DISPERSION_SECTIONS: usize = 8;
+const SPRING_DISPERSION: f32 = -0.5;
+
+const ROOM_EARLY: [(f32, f32); 4] = [
+    (0.003, 0.8),
+    (0.007, -0.55),
+    (0.013, 0.4),
+    (0.023, -0.3),
+];
+const NO_EARLY: [(f32, f32); 0] = [];
+
+/// The five tanks. The order is the contract's model order, and each entry is
+/// the same network with a different physical scale.
+static TANK_MODELS: [TankParams; MODEL_COUNT] = [
+    TankParams {
+        lines: &ROOM_LINES,
+        rt60: MODEL_SECONDS[0],
+        damping_hz: 7_000.0,
+        dispersion_sections: 0,
+        dispersion: 0.0,
+        diffusers: &ROOM_DIFFUSERS,
+        coupling: true,
+        early: &ROOM_EARLY,
+        highpass_hz: 200.0,
+        lowpass_hz: 9_000.0,
+        low_boost_hz: 0.0,
+        low_boost_gain: 0.0,
+        high_boost_hz: 0.0,
+        high_boost_gain: 0.0,
+    },
+    TankParams {
+        lines: &SPRING_LINES,
+        rt60: MODEL_SECONDS[1],
+        damping_hz: 10_000.0,
+        dispersion_sections: SPRING_DISPERSION_SECTIONS,
+        dispersion: SPRING_DISPERSION,
+        diffusers: &NO_EARLY,
+        coupling: false,
+        early: &NO_EARLY,
+        highpass_hz: 350.0,
+        lowpass_hz: 8_000.0,
+        low_boost_hz: 0.0,
+        low_boost_gain: 0.0,
+        high_boost_hz: 2_500.0,
+        high_boost_gain: 0.5,
+    },
+    TankParams {
+        lines: &PLATE_LINES,
+        rt60: MODEL_SECONDS[2],
+        damping_hz: 14_000.0,
+        dispersion_sections: 0,
+        dispersion: 0.0,
+        diffusers: &PLATE_DIFFUSERS,
+        coupling: true,
+        early: &NO_EARLY,
+        highpass_hz: 90.0,
+        lowpass_hz: 0.0,
+        low_boost_hz: 0.0,
+        low_boost_gain: 0.0,
+        high_boost_hz: 2_000.0,
+        high_boost_gain: 0.35,
+    },
+    TankParams {
+        lines: &HALL_LINES,
+        rt60: MODEL_SECONDS[3],
+        damping_hz: 6_000.0,
+        dispersion_sections: 0,
+        dispersion: 0.0,
+        diffusers: &HALL_DIFFUSERS,
+        coupling: true,
+        early: &NO_EARLY,
+        highpass_hz: 90.0,
+        lowpass_hz: 4_500.0,
+        low_boost_hz: 0.0,
+        low_boost_gain: 0.0,
+        high_boost_hz: 0.0,
+        high_boost_gain: 0.0,
+    },
+    TankParams {
+        lines: &CAVE_LINES,
+        rt60: MODEL_SECONDS[4],
+        damping_hz: 2_500.0,
+        dispersion_sections: 0,
+        dispersion: 0.0,
+        diffusers: &CAVE_DIFFUSERS,
+        coupling: true,
+        early: &NO_EARLY,
+        highpass_hz: 60.0,
+        lowpass_hz: 2_500.0,
+        low_boost_hz: 150.0,
+        low_boost_gain: 0.8,
+        high_boost_hz: 0.0,
+        high_boost_gain: 0.0,
+    },
+];
+
+/// The amplitude a loop of `delay_seconds` keeps per pass so it is 60 dB down
+/// after `rt60` seconds: `10^(-3 * delay / rt60)`.
+fn loop_gain(delay_seconds: f32, rt60: f32) -> f32 {
+    let rt60 = rt60.max(1e-3);
+    (-std::f32::consts::LN_10 * 3.0 * delay_seconds / rt60).exp()
+}
+
+/// Simulate one tank for one impulse: a bank of delay lines with an orthogonal
+/// feedback matrix (or independent loops for the spring), loop damping,
+/// optional dispersion in each loop, and input diffusion.
+fn tank_impulse(rate: u32, seconds: f32, params: &TankParams) -> Vec<f32> {
+    let rate = rate.max(1);
+    let length = ((f64::from(rate) * f64::from(seconds)).round() as usize).max(1);
+    let lines_count = params.lines.len().max(1);
+
+    let mut lines: Vec<DelayLine> = params
+        .lines
+        .iter()
+        .map(|&delay_seconds| {
+            let delay = ((f64::from(rate) * f64::from(delay_seconds)).round() as usize).max(1);
+            DelayLine::new(delay, loop_gain(delay_seconds, params.rt60))
+        })
+        .collect();
+    if lines.is_empty() {
+        lines.push(DelayLine::new(1, 0.0));
+    }
+
+    // Fixed signs, so the model is reproducible; the norm keeps the injected
+    // power independent of the line count.
+    let mut rng = XorShift32::new(RNG_SEED);
+    let norm = 1.0 / (lines_count as f32).sqrt();
+    let input_weights: Vec<f32> = (0..lines_count)
+        .map(|_| if rng.next_u32() & 1 == 0 { norm } else { -norm })
+        .collect();
+    let output_weights: Vec<f32> = (0..lines_count)
+        .map(|_| if rng.next_u32() & 1 == 0 { 1.0 } else { -1.0 })
+        .collect();
+
+    let mut diffusers: Vec<Diffuser> = params
+        .diffusers
+        .iter()
+        .map(|&(delay_seconds, gain)| {
+            let delay = ((f64::from(rate) * f64::from(delay_seconds)).round() as usize).max(1);
+            Diffuser::new(delay, gain)
+        })
+        .collect();
+    let mut damp_state = vec![0.0f32; lines_count];
+    let damp = shape_coefficient(f64::from(rate), params.damping_hz) as f32;
+    let mut dispersion: Vec<Vec<Allpass1>> = (0..lines_count)
+        .map(|_| {
+            (0..params.dispersion_sections)
+                .map(|_| Allpass1::new(params.dispersion))
+                .collect()
+        })
+        .collect();
+    let mut feedback = vec![0.0f32; lines_count];
+
+    let mut impulse = vec![0.0f32; length];
+    for index in 0..length {
+        let mut input = if index == 0 { 1.0 } else { 0.0 };
+        for diffuser in &mut diffusers {
+            input = diffuser.process(input);
+        }
+
+        let mut sum = 0.0f32;
+        for line in 0..lines_count {
+            let read = lines[line].read();
+            damp_state[line] += damp * (read - damp_state[line]);
+            let mut value = damp_state[line];
+            for allpass in &mut dispersion[line] {
+                value = allpass.process(value);
+            }
+            feedback[line] = value;
+            sum += value * output_weights[line];
+        }
+
+        // Householder reflection: y = x - (2/N) * sum(x). Orthogonal, so the
+        // only loss in the loop is the per-line gain and the damping.
+        let mean = feedback.iter().sum::<f32>() / lines_count as f32;
+        for line in 0..lines_count {
+            let mixed = if params.coupling {
+                feedback[line] - 2.0 * mean
+            } else {
+                feedback[line]
+            };
+            let gain = lines[line].gain;
+            lines[line].write(input * input_weights[line] + mixed * gain);
+        }
+        impulse[index] = sum;
+    }
+
+    // A room's first wall bounces are discrete copies of the input, not part of
+    // the diffuse loop. The other models have none: their response is dense from
+    // the start (plate) or begins at the first line-length (hall/cave).
+    let rate_f = f64::from(rate);
+    for &(delay_seconds, gain) in params.early {
+        let delay = ((rate_f * f64::from(delay_seconds)).round() as usize).max(1);
+        if delay < impulse.len() {
+            impulse[delay] += gain;
+        }
+    }
+
+    impulse
+}
+
+/// The simulated impulse for one model, before the convolver's normalization.
 ///
-/// The base is the same `studioImpulse` noise as the browser, then one of five
-/// shapes: Room is cut low and given early reflections; Spring is narrowed to a
-/// bright band and run through two combs; Plate is dense and bright with no
-/// pre-delay; Hall has a dark 4.5 kHz top; Cave is darker still and low-mid
-/// heavy. None of these shapes adds a pre-delay, so a note's reverb starts with
-/// the note.
+/// The spring is two dispersive loops; the plate is a dense short-loop network
+/// with input diffusion; the room, hall and cave are the same network at
+/// successively larger scales. None adds a pre-delay, so a note's reverb starts
+/// with the note.
 fn model_impulse(rate: u32, model: usize) -> Vec<f32> {
     let model = model.min(MODEL_COUNT - 1);
+    let params = &TANK_MODELS[model];
     let rate_hz = rate.max(1);
-    let rate = f64::from(rate_hz);
-    let mut impulse = studio_impulse(rate_hz, MODEL_SECONDS[model], MODEL_DECAY[model]);
-    match model {
-        0 => {
-            highpass_shape(&mut impulse, rate, 200.0);
-            early_reflections(
-                &mut impulse,
-                rate,
-                &[(0.003, 0.8), (0.007, -0.55), (0.013, 0.4), (0.023, -0.3)],
-            );
-        }
-        1 => {
-            highpass_shape(&mut impulse, rate, 400.0);
-            lowpass_shape(&mut impulse, rate, 6_000.0);
-            high_boost_shape(&mut impulse, rate, 2_000.0, 0.5);
-            comb_shape(&mut impulse, (rate * 0.0037) as usize, 0.65);
-            comb_shape(&mut impulse, (rate * 0.0059) as usize, 0.45);
-        }
-        2 => {
-            highpass_shape(&mut impulse, rate, 120.0);
-            high_boost_shape(&mut impulse, rate, 1_500.0, 0.35);
-        }
-        3 => {
-            highpass_shape(&mut impulse, rate, 90.0);
-            lowpass_shape(&mut impulse, rate, 4_500.0);
-        }
-        _ => {
-            highpass_shape(&mut impulse, rate, 60.0);
-            lowpass_shape(&mut impulse, rate, 2_500.0);
-            low_boost_shape(&mut impulse, rate, 150.0, 0.8);
-        }
+    let rate_f = f64::from(rate_hz);
+    let mut impulse = tank_impulse(rate_hz, MODEL_SECONDS[model], params);
+    if params.highpass_hz > 0.0 {
+        highpass_shape(&mut impulse, rate_f, params.highpass_hz);
+    }
+    if params.lowpass_hz > 0.0 {
+        lowpass_shape(&mut impulse, rate_f, params.lowpass_hz);
+    }
+    if params.high_boost_gain > 0.0 {
+        high_boost_shape(
+            &mut impulse,
+            rate_f,
+            params.high_boost_hz,
+            params.high_boost_gain,
+        );
+    }
+    if params.low_boost_gain > 0.0 {
+        low_boost_shape(
+            &mut impulse,
+            rate_f,
+            params.low_boost_hz,
+            params.low_boost_gain,
+        );
     }
     impulse
 }
@@ -855,6 +1182,103 @@ impl Effect for Reverb {
 mod tests {
     use super::*;
 
+    fn energy(samples: &[f32]) -> f64 {
+        samples
+            .iter()
+            .map(|sample| f64::from(*sample) * f64::from(*sample))
+            .sum()
+    }
+
+    fn rms(samples: &[f32]) -> f64 {
+        (energy(samples) / samples.len().max(1) as f64).sqrt()
+    }
+
+    fn zero_crossings(samples: &[f32]) -> usize {
+        samples
+            .windows(2)
+            .filter(|pair| (pair[0] >= 0.0) != (pair[1] >= 0.0))
+            .count()
+    }
+
+    /// Energy in the first difference relative to the signal: a cheap,
+    /// scale-free brightness measure.
+    fn brightness(samples: &[f32]) -> f64 {
+        let difference: f64 = samples
+            .windows(2)
+            .map(|pair| {
+                let delta = f64::from(pair[1] - pair[0]);
+                delta * delta
+            })
+            .sum();
+        difference / energy(samples).max(f64::MIN_POSITIVE)
+    }
+
+    /// Normalised self-similarity at one lag, over the first `window` samples.
+    fn autocorrelation(samples: &[f32], lag: usize, window: usize) -> f64 {
+        let length = window.min(samples.len().saturating_sub(lag));
+        if length == 0 {
+            return 0.0;
+        }
+        let mut dot = 0.0;
+        let mut left = 0.0;
+        let mut right = 0.0;
+        for index in 0..length {
+            let a = f64::from(samples[index]);
+            let b = f64::from(samples[index + lag]);
+            dot += a * b;
+            left += a * a;
+            right += b * b;
+        }
+        if left == 0.0 || right == 0.0 {
+            0.0
+        } else {
+            dot / (left.sqrt() * right.sqrt())
+        }
+    }
+
+    /// Where a signal's energy sits in time, in samples.
+    fn energy_center(samples: &[f32]) -> f64 {
+        let mut weighted = 0.0;
+        let mut total = 0.0;
+        for (index, sample) in samples.iter().enumerate() {
+            let value = f64::from(*sample);
+            weighted += index as f64 * value * value;
+            total += value * value;
+        }
+        if total == 0.0 {
+            0.0
+        } else {
+            weighted / total
+        }
+    }
+
+    fn one_pole(samples: &[f32], coefficient: f32) -> Vec<f32> {
+        let mut state = 0.0f32;
+        samples
+            .iter()
+            .map(|&sample| {
+                state += coefficient * (sample - state);
+                state
+            })
+            .collect()
+    }
+
+    /// The impulse response of the same allpass cascade the spring uses.
+    fn dispersion_impulse(sections: usize, coefficient: f32, length: usize) -> Vec<f32> {
+        let mut chain: Vec<Allpass1> = (0..sections)
+            .map(|_| Allpass1::new(coefficient))
+            .collect();
+        (0..length)
+            .map(|index| {
+                let mut sample = if index == 0 { 1.0 } else { 0.0 };
+                for allpass in &mut chain {
+                    sample = allpass.process(sample);
+                }
+                sample
+            })
+            .collect()
+    }
+
     #[test]
     fn the_fft_matches_a_direct_dft_and_inverts() {
         let n = 16;
@@ -898,22 +1322,152 @@ mod tests {
     }
 
     #[test]
-    fn the_impulse_is_the_web_length_and_decay() {
-        let rate = 48_000;
-        let impulse = studio_impulse(rate, SECONDS, DECAY);
-        assert_eq!(impulse.len(), (rate as f32 * SECONDS) as usize);
+    fn every_model_tail_decays_by_its_contract_length() {
+        let rate = 48_000u32;
+        for (model, seconds) in MODEL_SECONDS.iter().enumerate() {
+            let impulse = model_impulse(rate, model);
+            assert_eq!(impulse.len(), (rate as f32 * seconds) as usize);
+            assert!(
+                impulse.iter().all(|sample| sample.is_finite()),
+                "{} produced a non-finite sample",
+                MODEL_NAMES[model]
+            );
 
-        let rms = |slice: &[f32]| {
-            (slice.iter().map(|s| s * s).sum::<f32>() / slice.len() as f32).sqrt()
-        };
-        let first = rms(&impulse[..1_000]);
-        let last = rms(&impulse[impulse.len() - 1_000..]);
-        assert!(first > 0.2, "the head of the impulse is too quiet");
+            let head = rms(&impulse[..4_800.min(impulse.len())]);
+            let tail = rms(&impulse[impulse.len() - 4_800..]);
+            assert!(head > 0.0, "{} is silent", MODEL_NAMES[model]);
+            assert!(
+                tail < head * 0.1,
+                "{} did not decay: tail {tail} against head {head}",
+                MODEL_NAMES[model]
+            );
+        }
+    }
+
+    #[test]
+    fn the_spring_is_a_dispersive_comb_with_a_finite_decay() {
+        let rate = 48_000u32;
+        let spring = model_impulse(rate, 1);
+
+        let head = rms(&spring[..4_800]);
+        let tail = rms(&spring[spring.len() - 4_800..]);
+        assert!(tail < head * 0.1, "the spring tail did not decay");
+
+        // Metallic comb: each spring repeats at its own loop period. The
+        // allpass cascade adds a few samples of group delay, so the loop repeats
+        // just after the bare line length; look there and require a clear peak.
+        for &seconds in &SPRING_LINES {
+            let delay = (f64::from(rate) * f64::from(seconds)).round() as usize;
+            let best = (delay..=delay + 64)
+                .map(|lag| autocorrelation(&spring, lag, 16_000))
+                .fold(f64::MIN, f64::max);
+            assert!(
+                best > 0.2,
+                "the spring has no metallic comb near {seconds} s: {best}"
+            );
+        }
+
+        // Chirp: the loop's allpass cascade delays low frequencies more than
+        // high ones, so the low band of one dispersed echo arrives later than
+        // the high band. That frequency-dependent arrival *is* the chirp.
+        let dispersed = dispersion_impulse(SPRING_DISPERSION_SECTIONS, SPRING_DISPERSION, 1_024);
+        let low = one_pole(&dispersed, 0.123);
+        let high: Vec<f32> = dispersed.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        let low_center = energy_center(&low);
+        let high_center = energy_center(&high);
         assert!(
-            last < first * 0.01,
-            "the tail did not decay: {last} against {first}"
+            low_center > high_center + 10.0,
+            "the spring is not dispersive: low at {low_center}, high at {high_center}"
         );
-        assert!(impulse.iter().all(|sample| sample.abs() <= 1.0));
+    }
+
+    #[test]
+    fn the_plate_is_denser_and_brighter_than_the_hall() {
+        let rate = 48_000u32;
+        let plate = model_impulse(rate, 2);
+        let hall = model_impulse(rate, 3);
+
+        // No early gap: the plate has returned energy within 10 ms, while the
+        // hall's shortest line is 31 ms, so it is still exactly silent.
+        let early = rate as usize / 100;
+        assert!(rms(&plate[..early]) > 0.0, "the plate left an early gap");
+        assert_eq!(rms(&hall[..early]), 0.0, "the hall has a 31 ms line and yet spoke early");
+
+        // Denser: the plate's millimetre-scale loops cross zero far more often
+        // in the first tenth of a second than the hall's metre-scale ones.
+        let window = rate as usize / 10;
+        let plate_crossings = zero_crossings(&plate[..window]);
+        let hall_crossings = zero_crossings(&hall[..window]);
+        assert!(
+            plate_crossings > hall_crossings * 2,
+            "the plate is not denser: {plate_crossings} crossings against {hall_crossings}"
+        );
+
+        // Brighter: the plate's damping corner is 14 kHz, the hall's is 6 kHz
+        // with a 4.5 kHz output cut, so more of the plate's energy is in the
+        // first difference.
+        let plate_brightness = brightness(&plate);
+        let hall_brightness = brightness(&hall);
+        assert!(
+            plate_brightness > hall_brightness * 1.5,
+            "the plate is not brighter: {plate_brightness} against {hall_brightness}"
+        );
+    }
+
+    #[test]
+    fn the_simulation_is_reproducible() {
+        for model in 0..MODEL_COUNT {
+            assert_eq!(
+                model_impulse(48_000, model),
+                model_impulse(48_000, model),
+                "{} is not reproducible",
+                MODEL_NAMES[model]
+            );
+        }
+    }
+
+    #[test]
+    fn silence_in_is_silence_out_for_every_model() {
+        let mut reverb = Reverb::new();
+        reverb.prepare(48_000, PARTITION);
+        for model in 0..MODEL_COUNT {
+            reverb.set("model", model as f32);
+            for _ in 0..2 {
+                let mut block = vec![0.0f32; PARTITION];
+                reverb.process(&mut block);
+                assert!(
+                    block.iter().all(|sample| *sample == 0.0),
+                    "{} rang on silence",
+                    MODEL_NAMES[model]
+                );
+            }
+            assert_eq!(reverb.model(), model);
+        }
+    }
+
+    #[test]
+    fn switching_models_mid_stream_is_safe_and_finite() {
+        let rate = 48_000u32;
+        let mut reverb = Reverb::new();
+        reverb.prepare(rate, 512);
+        for (step, &model) in [4usize, 1, 3, 0, 2].iter().enumerate() {
+            reverb.set("model", model as f32);
+            for block_index in 0..4 {
+                let mut block: Vec<f32> = (0..PARTITION)
+                    .map(|index| {
+                        let sample = (step * 4 + block_index) * PARTITION + index;
+                        (std::f32::consts::TAU * 220.0 * sample as f32 / rate as f32).sin() * 0.3
+                    })
+                    .collect();
+                reverb.process(&mut block);
+                assert_eq!(reverb.model(), model, "the switch did not land at the block edge");
+                assert!(
+                    block.iter().all(|sample| sample.is_finite()),
+                    "{} produced a non-finite sample",
+                    MODEL_NAMES[model]
+                );
+            }
+        }
     }
 
     #[test]
