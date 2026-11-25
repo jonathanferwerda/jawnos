@@ -28,8 +28,8 @@
 #     reported, because it is somebody's data until a person says otherwise;
 #     --format is what says so.
 # An adopted card is mounted at --mount (default /media/jawn/SD) and named in
-# /etc/fstab by UUID with nofail, so the archive root survives a reboot with no
-# card in the slot.
+# /etc/fstab by UUID with nofail and an automount, so the archive root survives a
+# reboot with no card in the slot and comes back when a pulled card is re-inserted.
 #
 # Both modes print JSON on stdout and every human word on stderr, like the
 # provisioner. Exit codes: 0 ok, 6 the token could not be redeemed, 7 the card
@@ -542,14 +542,17 @@ sub _config_archive_dir {
 }
 
 sub _fstab_add {
-	my ($dev, $mount, $fstype) = @_;
-	my $path = '/etc/fstab';
+	my ($dev, $mount, $fstype, $opts) = @_;
+	$opts ||= {};
+	# The path and UUID are parameters so a test can exercise the line without
+	# writing the machine's own /etc/fstab or shelling out to blkid.
+	my $path = $opts->{'fstab'} || '/etc/fstab';
 	my $raw = '';
 	if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh; }
 	return { ok => 0, error => '/etc/fstab could not be read' } unless length $raw || -z $path;
 	return { ok => 1, already => 1 } if $raw =~ m{\s\Q$mount\E\s};
-	my $uuid = '';
-	if (open(my $fh, '-|', 'blkid', '-s', 'UUID', '-o', 'value', $dev)) { $uuid = <$fh> // ''; close $fh; }
+	my $uuid = $opts->{'uuid'} // '';
+	if (!length $uuid && open(my $fh, '-|', 'blkid', '-s', 'UUID', '-o', 'value', $dev)) { $uuid = <$fh> // ''; close $fh; }
 	$uuid =~ s/\s+$//;
 	return { ok => 0, error => 'the card has no UUID' } unless length $uuid;
 	# A card adopted with its own filesystem keeps its own type in fstab; an
@@ -562,8 +565,13 @@ sub _fstab_add {
 		my ($uid, $gid) = &_tree_owner();
 		$owners = 'uid=' . $uid . ',gid=' . $gid . ',umask=0077,';
 	}
+	# A card is removable and may be pulled while mounted; the mount unit then
+	# fails and does not return when the card is re-inserted. An automount retries
+	# on the next access (the archive check), so the sync resumes without a
+	# reboot. The pass is 0,0: the kernel replays an ext4 journal on mount, and a
+	# card - or its absence - must not hold up boot with a full fsck.
 	my $line = 'UUID=' . $uuid . ' ' . $mount . ' ' . $type . ' ' . $owners
-		. 'defaults,nofail,x-systemd.device-timeout=10 0 2' . "\n";
+		. 'defaults,nofail,x-systemd.automount,x-systemd.device-timeout=10s,x-systemd.mount-timeout=30s 0 0' . "\n";
 	$raw .= "\n" unless $raw =~ /\n$/ || !length $raw;
 	my $ok = open(my $out, '>>', $path);
 	return { ok => 0, error => '/etc/fstab could not be written' } unless $ok;

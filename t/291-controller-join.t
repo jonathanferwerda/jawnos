@@ -129,6 +129,29 @@ like($first_boot, qr/sub _house_peers/, 'a board that joined before this pass fi
 like($first_boot, qr/my \$house = ref \$joined->\{'house'\} eq 'HASH' \? \$joined->\{'house'\} : \{\};/, 'the join keeps its house hash');
 like($first_boot, qr/_adopt_house_key\(\$house\)/, 'and hands it to the adoption');
 
+# The archive card is removable: a pull while mounted kills the mount unit, and a
+# re-inserted card must come back without a reboot. The fstab entry is therefore
+# an automount with no boot fsck, so a card (or its absence) cannot delay boot.
+my ($fstab_sub) = $first_boot =~ /^(sub _fstab_add \{.*?^\})/ms;
+ok(length($fstab_sub // ''), 'the fstab sub is readable');
+if (length $fstab_sub) {
+	my $pkg = 'FstabProbe';
+	eval "package $pkg;\n$fstab_sub\n1;\n" or die $@;
+	my $fstab = tempdir(CLEANUP => 1) . '/fstab';
+	write_file($fstab, "proc /proc proc defaults 0 0\n");
+	my $uuid = '9c229da4-4e19-42b8-9f4e-2c91f83d8136';
+	my $added = $pkg->can('_fstab_add')->('/dev/mmcblk0p2', '/media/jawn/SD', 'ext4', { fstab => $fstab, uuid => $uuid });
+	ok($added->{'ok'}, 'the archive card is named in fstab');
+	my ($line) = grep { m{/media/jawn/SD} } split /\n/, read_file($fstab);
+	like($line // '', qr/^UUID=\Q$uuid\E \/media\/jawn\/SD ext4 /, 'by UUID, at the archive root');
+	like($line // '', qr/x-systemd\.automount/, 'with an automount so a re-inserted card returns');
+	like($line // '', qr/x-systemd\.device-timeout=10s/, 'and a missing card cannot stall the boot');
+	like($line // '', qr/ 0 0$/, 'and no boot fsck on a removable card');
+	unlike($line // '', qr/ 0 2$/, 'not the fsck-each-boot pass');
+	my $again = $pkg->can('_fstab_add')->('/dev/mmcblk0p2', '/media/jawn/SD', 'ext4', { fstab => $fstab, uuid => $uuid });
+	ok($again->{'already'}, 'a second pass does not add a duplicate');
+}
+
 # The board files the house as an origin, not as the manager route: the sync
 # rail appends /manager, and vault_pull_one appends /manager/vault_share.
 my ($house_row_sub) = $first_boot =~ /^(sub _house_row \{.*?^\})/ms;
