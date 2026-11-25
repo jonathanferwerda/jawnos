@@ -3108,6 +3108,19 @@ sub studio_remote_peer($uuid) {
 	return $peer;
 }
 
+# A relayed Studio request has no session on the target. The app gate proves a
+# pinned peer key when it runs; when app access is off, the route proves the
+# same signature here. Never trust `remoted=yes` alone: a browser can type it,
+# and the answer carries the target's Studio state.
+sub studio_remote_peer_ok($c) {
+	return 1 if $c->stash('peer_verified_key');
+	# The app gate is a Manager part; a controller harness that loads only this
+	# file has no Manager package, and a request with no verified stash is a
+	# browser, not a peer.
+	return 0 unless Manager->can('app_peer_ok');
+	return &Manager::app_peer_ok($c) ? 1 : 0;
+}
+
 # A request value may arrive as a form/query parameter (the route the relay
 # copies) or in a JSON body (what the Studio window sends). Read both without
 # letting a repeated field become an array.
@@ -3254,6 +3267,10 @@ sub action_44040 {
 	my $body = &studio_remote_body($c);
 	my $target = &studio_remote_value($c, $body, 'target');
 	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+	if ($remoted && !&studio_remote_peer_ok($c)) {
+		$c->render(json => { ok => 0, error => 'a relayed request must come from a linked machine' }, status => 403);
+		return;
+	}
 	if (!$remoted && defined $target && !ref $target && length $target && $target ne 'local') {
 		my $peer = &studio_remote_peer($target);
 		unless ($peer) {
@@ -3276,6 +3293,10 @@ sub action_44041 {
 	my $body = &studio_remote_body($c);
 	my $target = &studio_remote_value($c, $body, 'target');
 	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+	if ($remoted && !&studio_remote_peer_ok($c)) {
+		$c->render(json => { ok => 0, error => 'a relayed request must come from a linked machine' }, status => 403);
+		return;
+	}
 
 	my $command = &studio_remote_value($c, $body, 'command');
 	$command = '' unless defined $command && !ref $command;
@@ -3368,6 +3389,10 @@ sub action_44042 {
 	my $body = &studio_remote_body($c);
 	my $target = &studio_remote_value($c, $body, 'target');
 	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+	if ($remoted && !&studio_remote_peer_ok($c)) {
+		$c->render(json => { ok => 0, error => 'a relayed request must come from a linked machine' }, status => 403);
+		return;
+	}
 	if (!$remoted && defined $target && !ref $target && length $target && $target ne 'local') {
 		my $peer = &studio_remote_peer($target);
 		unless ($peer) {
@@ -3390,6 +3415,10 @@ sub action_44043 {
 	my $body = &studio_remote_body($c);
 	my $target = &studio_remote_value($c, $body, 'target');
 	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+	if ($remoted && !&studio_remote_peer_ok($c)) {
+		$c->render(json => { ok => 0, error => 'a relayed request must come from a linked machine' }, status => 403);
+		return;
+	}
 	my $id = &studio_remote_value($c, $body, 'id');
 	$id = '' unless defined $id && !ref $id;
 	if (!$remoted && defined $target && !ref $target && length $target && $target ne 'local') {
@@ -3600,6 +3629,10 @@ sub action_44044 {
 	$output =~ s/\A\s+|\s+\z//g;
 	$output = 'stream' unless length $output;
 	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+	if ($remoted && !&studio_remote_peer_ok($c)) {
+		$c->render(json => &studio_monitor_reply(0, 0, $output, 'a relayed request must come from a linked machine'), status => 403);
+		return;
+	}
 
 	unless ($action eq 'start' || $action eq 'stop' || $action eq 'status') {
 		$c->render(json => &studio_monitor_reply(0, 0, $output,

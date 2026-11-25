@@ -333,6 +333,19 @@ Manager::app->hook(before_dispatch => sub {
 		# session, so the gate must step aside for the route's peer_verify - the
 		# same reason the audio path above is exempt.
 		$path eq '/manager/music/video' ||
+		# the Studio remote rail: a controller reads the target's state and device
+		# list, moves its monitor or starts a stream for the controller. A peer
+		# has no session on the target, so the login gate must step aside for the
+		# route's own studio_remote_peer_ok (a pinned peer signature, never a bare
+		# `remoted=yes`). Without these entries the relay got the Gate page, which
+		# decodes as "that machine did not answer" and the controller never left
+		# its own machine. remote_publish and remote_target are deliberately
+		# absent: publish refuses a relayed request, target is local-only.
+		$path eq '/manager/studio/remote_state' ||
+		$path eq '/manager/studio/remote_command' ||
+		$path eq '/manager/studio/remote_devices' ||
+		$path eq '/manager/studio/remote_device' ||
+		$path eq '/manager/studio/monitor_stream' ||
 		# the tunnel control calls come from a peer's supervisor. A peer whose
 		# session cookie lapsed must still reserve and confirm its ports (the
 		# request would otherwise get the Gate page and the tunnel never form);

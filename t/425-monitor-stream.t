@@ -153,7 +153,7 @@ require "$root/lib/JawnOS/Controller/manager_misc9.pm";
 	my $c = FakeMonitorController->new(
 		params => { action => 'start', output => 'alsa_output.pci', remoted => 'yes' },
 		req => FakeMonitorRequest->new,
-		stash => {},
+		stash => { peer_verified_key => 'laptop-uuid' },
 	);
 	Manager::action_44044($c);
 	is($c->{'status'}, 400, 'a physical output is refused here');
@@ -164,11 +164,22 @@ require "$root/lib/JawnOS/Controller/manager_misc9.pm";
 	my $c = FakeMonitorController->new(
 		params => { action => 'start', output => 'stream', remoted => 'yes' },
 		req => FakeMonitorRequest->new,
-		stash => {},
+		stash => { peer_verified_key => 'laptop-uuid' },
 	);
 	Manager::action_44044($c);
 	is($c->{'status'}, 409, 'a start with no verified controller is refused');
 	like($c->{'json'}{'error'}, qr/not an active peer/, 'naming the reason');
+}
+
+{
+	my $c = FakeMonitorController->new(
+		params => { action => 'status', output => 'stream', remoted => 'yes' },
+		req => FakeMonitorRequest->new,
+		stash => {},
+	);
+	Manager::action_44044($c);
+	is($c->{'status'}, 403, 'a relayed request with no verified peer is refused');
+	like($c->{'json'}{'error'}, qr/linked machine/, 'and says why');
 }
 
 done_testing();
