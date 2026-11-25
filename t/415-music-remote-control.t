@@ -180,6 +180,12 @@ like($music, qr/function musicRemoteApplyPlaying/, 'the remote row has its own m
 my ($play_item) = $music =~ /function musicRemotePlayItem\(item\) \{(.*?)\n\}/s;
 ok(defined $play_item && length $play_item, 'musicRemotePlayItem is readable as a hunk');
 unlike($play_item || '', qr/tree\.current_track\s*=/, 'a remote play does not move the local queue cursor');
+like($play_item || '', qr/musicRemoteSend\('play_track', \{ file: file \}\)/, 'a remote click names one file');
+like($music, qr/function musicPlayTrack\(/, 'the host can start a named row');
+like($music, qr/function musicPlayTrackFlush/, 'and waits for a window that is opening');
+like($router, qr/musicPlayTrack: function/, 'the browser router whitelists the row');
+like($remote, qr/console_command\('musicPlayTrack'/, 'the row crosses as a named instruction');
+like($remote, qr/\$action eq 'play_track'/, 'the transport action exists');
 like($video_tpl, qr/if \(typeof musicRemoteTarget === 'function' && musicRemoteTarget\(\)\)/,
 	'the local bar tick stands down while the window controls a peer');
 like($video_tpl, qr/musicRemoteSeekPercent\(percent\)/, 'a seek moves the peer bar at once');
@@ -189,14 +195,19 @@ my ($seek_hunk) = $music =~ /if \(action == 'seek_percent'\) \{(.*?)\n\t\}/s;
 ok(defined $seek_hunk && length $seek_hunk, 'the seek hunk is readable');
 like($seek_hunk || '', qr/playerCacheSaver\(undefined, true\)/, 'a seek writes its position at once');
 like($music_css, qr/music_remote_glow/, 'the controlled machine glows');
-like($music_css, qr/:not\(\[data-remote-target="local"\]\)/, 'the glow is for a peer, not This machine');
+unlike($music_css, qr/:not\(\[data-remote-target="local"\]\)/, 'This machine glows when its own library is on screen');
 like($remote, qr{/music/remote_queue}, 'the controlled machine has a queue route');
 like($remote, qr/sub music_remote_queue/, 'which reads the host queue cache');
+like($music, qr/function musicToggle\(files, same_order, start_key\)/, 'a handed list can name its start row');
+like($music, qr/if \(start_key\) \{ thisTrack\(start_key\); \}/, 'and opens on that row');
+like($music, qr/tree\.all_songs\[n\]\.file === key/, 'thisTrack finds a row by its path');
+like($music, qr/musicToggle\(files, same_order \? 1 : 0, key\)/, 'play_files hands the start row through');
+like($taskbar, qr/action: 'play_track', file: file/, 'the Sound list names the row too');
 like($boot, qr/my \$handed_list/, 'a handed list is recognised on open');
 like($boot, qr/!\$handed_list/, 'and the old now-playing is not pushed ahead of it');
 like($taskbar, qr{/music/remote_queue}, 'the Sound remote reads that queue');
 like($taskbar, qr/data-remote-track/, 'and lists its tracks');
-like($taskbar, qr/action: 'play_files'/, 'a track press hands the peer a list');
+like($taskbar, qr/action: 'play_track', file: file/, 'a track press names the row, not a list');
 like($music, qr/#music_library_select[\s\S]{0,1600}musicRemoteSnapshotRestore/,
 	'choosing another library leaves the remote-control session');
 like($music, qr/setting == 'normalize'/, 'normalization is applied in the peer player');

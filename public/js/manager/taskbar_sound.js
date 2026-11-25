@@ -737,22 +737,15 @@ $(document).on('click', '[data-remote-track]', function(e) {
 	var file = $(this).attr('data-remote-track');
 	var target = jawnosSoundTaskbarMusicTarget();
 	if (!file || !target) { return; }
-	// Hand the host the clicked track and the rest of the visible queue, in that
-	// order, so its Next/Previous continues down this list.
-	var q = jawnosSoundTaskbarMusic.queue;
-	var files = [file], seen = false;
-	$.each((q && q.songs) || [], function(i, song) {
-		if (!song || !song.file) { return; }
-		if (song.file === file) { seen = true; return; }
-		if (seen) { files.push(song.file); }
-	});
+	// One file: the host keeps its own queue, the tracks already played included,
+	// and starts this row in it.
 	$('[data-remote-track]').removeClass('is-current');
 	$(this).addClass('is-current');
 	$.ajax({
 		url: '/music/transport',
 		type: 'POST',
 		dataType: 'json',
-		data: { target: target, action: 'play_files', files: JSON.stringify(files), same_order: 1, key: file },
+		data: { target: target, action: 'play_track', file: file },
 		success: function(r) {
 			if (r && r.ok) {
 				setTimeout(jawnosSoundTaskbarMusicStateLoad, 400);

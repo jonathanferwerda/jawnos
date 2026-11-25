@@ -66,6 +66,9 @@ var jawnosConsoleCommands = {
 	musicSettingApply: function (a) {
 		if (typeof musicSettingApply === 'function') { musicSettingApply(String(a[0]), a[1]); }
 	},
+	musicPlayTrack: function (a) {
+		if (typeof musicPlayTrack === 'function') { musicPlayTrack(String(a[0] || '')); }
+	},
 	musicVolumeSet: function (a) {
 		// a level aimed at this machine never forwards to a machine this window
 		// happens to be controlling

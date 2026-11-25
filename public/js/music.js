@@ -2414,7 +2414,7 @@ $(document).on('click', '#music_toggle', function() {
 	musicToggle();
 });
 
-function musicToggle(files, same_order) {
+function musicToggle(files, same_order, start_key) {
 	var url = '/manager/music';
 	var timestamp = Date.now();
 	var jmiss = JSON.stringify(misses);
@@ -2436,6 +2436,8 @@ function musicToggle(files, same_order) {
 				// and layout back but leaves the player to the list about to start
 				musicInit(files ? 'files' : undefined);
 				if (files) {
+					// a handed list keeps its order; the caller may name the row to start
+					if (start_key) { thisTrack(start_key); }
 					mediaMaker();
 				}
 			}, error: function (response) {  }
@@ -2571,7 +2573,7 @@ function musicTransportRun(action, opts) {
 // Music window rather than making a second one.
 function musicPlayFiles(files, same_order, key) {
 	if (!files || !files.length) { return false; }
-	if (typeof musicToggle == 'function') { musicToggle(files, same_order ? 1 : 0); }
+	if (typeof musicToggle == 'function') { musicToggle(files, same_order ? 1 : 0, key); }
 	return true;
 }
 function musicTransportStateLocal() {
@@ -2886,21 +2888,44 @@ function musicRemoteChoose(target) {
 	});
 }
 function musicRemotePlayItem(item) {
-	var key = musicKey(item);
-	if (!key) { return; }
-	var files = [], seen = false;
-	$.each(tree.all_songs || [], function(i, song) {
-		if (!song) { return; }
-		if (musicSongKey(song) === key) { seen = true; }
-		if (seen && song.file) { files.push(song.file); }
-	});
-	if (!files.length) {
-		var f = item.attr('file');
-		if (f) { files = [f]; }
+	var file = item.attr('file') || '';
+	if (!file) { return; }
+	// One file, not a list: the host keeps its own queue (the tracks already
+	// played included) and simply starts this row.
+	musicRemoteApplyPlaying(musicKey(item), file);
+	musicRemoteSend('play_track', { file: file });
+}
+// A track named from a controller. The host's queue is already on screen (or is
+// the remembered queue an open rebuilds), so only the row is named; nothing is
+// replaced and the history above it stays. A window that is not open is opened
+// first and the row waits for its player.
+var music_play_track_pending = '';
+function musicPlayTrack(file) {
+	file = String(file || '');
+	if (!file) { return false; }
+	if (musicTransportReady() && musicEntryByFile(file)) {
+		thisTrack(file);
+		mediaMaker();
+		return true;
 	}
-	if (!files.length) { return; }
-	musicRemoteApplyPlaying(key);
-	musicRemoteSend('play_files', { files: JSON.stringify(files), same_order: 1, key: key });
+	music_play_track_pending = file;
+	if (!$('#music').length && typeof musicToggle === 'function') { musicToggle(); }
+	musicPlayTrackFlush();
+	return true;
+}
+function musicPlayTrackFlush() {
+	if (!music_play_track_pending || !musicTransportReady()) { return; }
+	var file = music_play_track_pending;
+	if (!musicEntryByFile(file)) {
+		// the queue on screen no longer holds this row; open on it alone rather
+		// than doing nothing
+		music_play_track_pending = '';
+		musicToggle([file], 1);
+		return;
+	}
+	music_play_track_pending = '';
+	thisTrack(file);
+	mediaMaker();
 }
 // A setting pushed onto this machine by the controller. It runs in this
 // machine's own player, exactly as the panel would have done it here.
@@ -3199,6 +3224,7 @@ async function musicInit(method) {
 	musicRemotePaint();
 	music_transport_window_ready = true;
 	musicTransportFlush();
+	musicPlayTrackFlush();
 }
 // The file the player element is actually playing, read back out of its src.
 // The cache used to save tree.songs[0] - the first row of the CURRENT list - and
@@ -5114,7 +5140,8 @@ function thisTrack(item) {
 	if (!key) { return; }
 	treeMaker();
 	for (var n = 0; n < tree.all_songs.length; n++) {
-		if (tree.all_songs[n] && musicSongKey(tree.all_songs[n]) === key) {
+		if (tree.all_songs[n] && (musicSongKey(tree.all_songs[n]) === key
+			|| tree.all_songs[n].file === key || tree.all_songs[n].filename === key)) {
 			tree.past_songs = tree.all_songs.slice(0, n);
 			tree.songs = tree.all_songs.slice(n);
 			tree.current_track = key;

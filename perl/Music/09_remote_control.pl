@@ -95,7 +95,7 @@ sub music_transport_state {
 sub music_transport_local($action, $opts = {}) {
 	$action = '' unless defined $action;
 	$action = lc $action;
-	return 0 unless $action =~ /^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files|volume|mute)$/;
+	return 0 unless $action =~ /^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files|play_track|volume|mute)$/;
 	if ($action eq 'play_files') {
 		my $files = $opts->{'files'};
 		return 0 unless ref $files eq 'ARRAY' && scalar @{$files};
@@ -117,6 +117,14 @@ sub music_transport_local($action, $opts = {}) {
 		$level = 0 if $level < 0;
 		$level = 1 if $level > 1;
 		&Websocket::send('server', { console => &Websocket::console_command('musicVolumeSet', $level + 0) });
+		return 1;
+	}
+	# A track press starts one file in the controlled machine's own queue. The
+	# list is not replaced, so the tracks already played stay above it.
+	if ($action eq 'play_track') {
+		my $file = $opts->{'file'};
+		return 0 unless defined $file && length $file;
+		&Websocket::send('server', { console => &Websocket::console_command('musicPlayTrack', $file) });
 		return 1;
 	}
 	# Mute keeps the level for the next play, so it is a switch of its own, not a
@@ -193,7 +201,8 @@ Manager::app->routes->post('/music/transport' => sub ($c) {
 		same_order => ($c->param('same_order') ? 1 : 0),
 		key => ($c->param('key') || ''),
 		percent => $c->param('percent'),
-		value => $c->param('value')
+		value => $c->param('value'),
+		file => $c->param('file')
 	);
 	if ($target && $target ne 'local' && !$remoted) {
 		my $rm = &music_remote_row($target);
