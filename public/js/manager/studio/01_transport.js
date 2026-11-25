@@ -87,9 +87,11 @@ var studioWaveformLoading = {};
 
 // A clip's waveform is two channel views: the lane paints L in its upper half
 // and R in its lower half. A mono buffer feeds both, so a mono take still reads
-// as a stereo track rather than a single mirrored line.
+// as a stereo track rather than a single mirrored line. The overview is fine
+// enough to stay honest at a normal zoom; the canvas reads the buffer directly
+// for the deepest zoom, where even this would be coarser than a pixel.
 function studioWaveformPeaks(audio, buckets) {
-	buckets = buckets || 600;
+	buckets = buckets || 9600;
 	var left = audio.getChannelData(0);
 	var right = (audio.numberOfChannels > 1) ? audio.getChannelData(1) : left;
 	var peaksL = new Float32Array(buckets);

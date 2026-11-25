@@ -20,6 +20,59 @@ var studioCutDrag = null;
 var studioSelectionDrawQueued = false;
 var studioSelectionExporting = false;
 
+// Follow keeps the playhead in the window while the transport moves. It is the
+// Tracks bar's padlock: pressed (locked) follows, released leaves the view where
+// the editor put it. This is a view preference, not part of the song, so it
+// survives a window rebuild and is restored by studioFollowSync().
+var studioFollowPlayhead = true;
+var STUDIO_FOLLOW_FRACTION = 0.33;
+
+function studioFollowSync() {
+	var button = $('#studio_follow');
+	if (!button.length) { return; }
+	button.attr('aria-pressed', studioFollowPlayhead ? 'true' : 'false');
+}
+
+// Put the playhead a third of the way into the window; the clamps at the song's
+// ends leave it travelling normally for the first and last third.
+function studioFollowCenter() {
+	if (!studioFollowPlayhead) { return false; }
+	var view = studioTimelineView();
+	var pos = (mixer['time'] && mixer['time']['position']) || 0;
+	var start = pos - view.span * STUDIO_FOLLOW_FRACTION;
+	start = Math.max(0, Math.min(start, view.duration - view.span));
+	if (Math.abs(start - view.start) < 1e-6) { return false; }
+	studioTimelineSetStart(start);
+	// A DOM selection block was positioned from the old window, so move it with
+	// the window; the lane canvases are repainted by the caller.
+	if (typeof studioSelectionQueueDraw === 'function') { studioSelectionQueueDraw(); }
+	return true;
+}
+
+function studioFollowView() {
+	// A drag or a pinch owns the pointer and the view it started on; following
+	// must not slide the lane out from under it.
+	if (typeof studioTakeDrag !== 'undefined' && studioTakeDrag) { return false; }
+	if (studioSelectDrag || studioCutDrag) { return false; }
+	if (typeof studioTimelineGestureActive !== 'undefined' && studioTimelineGestureActive) { return false; }
+	var status = (mixer['time'] && mixer['time']['status']) || 'stop';
+	if (status != 'play' && status != 'record' && status != 'scroll') { return false; }
+	return studioFollowCenter();
+}
+
+function studioFollowSet(on) {
+	studioFollowPlayhead = !!on;
+	studioFollowSync();
+	if (studioFollowPlayhead) {
+		studioFollowCenter();
+		if (typeof studioDrawTracks === 'function') { studioDrawTracks(); }
+	}
+}
+
+$(document).on('click', '#studio_follow', function () {
+	studioFollowSet(!studioFollowPlayhead);
+});
+
 function studioToolText(text) {
 	var translated = (typeof jawnosT === 'function') ? jawnosT(text) : text;
 	return (translated === undefined || translated === null) ? text : translated;

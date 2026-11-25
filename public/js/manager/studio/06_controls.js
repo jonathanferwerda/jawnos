@@ -160,6 +160,10 @@ function studioTeardown() {
 	studioSelectedTake = null;
 	studioTakeDrag = null;
 	studioReleaseTakes();
+	// A new window's takes get fresh blob URLs, so peaks cached by the old URLs
+	// would never be reached again and would only cost memory.
+	studioWaveformCache = {};
+	studioWaveformLoading = {};
 }
 
 if (window.jawnosAppTeardown) { jawnosAppTeardown['studio'] = studioTeardown; }
@@ -229,6 +233,8 @@ function studioTransportTick() {
 		studioStartPendingTakes();
 	}
 
+	// Keep a locked view on the playhead before the lanes are painted.
+	if (typeof studioFollowView === 'function') { studioFollowView(); }
 	studioTimeDisplay();
 	studioSyncTakes();
 	studioDrawTracks();
@@ -613,6 +619,10 @@ function studioLoad(uuid) {
 	studioOpenDialogHide();
 	var buttons = mixer['buttons'];
 	studioStop();
+	// A song load replaces every take; peaks cached by the old blob URLs cannot
+	// be reused, so drop them before the new takes are built.
+	studioWaveformCache = {};
+	studioWaveformLoading = {};
 	$.ajax({ 
 		url: '/manager/studio/load',
 		type: 'GET',

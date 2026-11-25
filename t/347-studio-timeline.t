@@ -122,6 +122,7 @@ like($channel, qr/studioCaptureLivePeaks\(ch, take\)/, 'a recording take is samp
 
 # --- the stereo waveform, live and decoded ----------------------------------
 like($transport, qr/function studioWaveformPeaks\(audio, buckets\)/, 'one builder makes both channel views');
+like($transport, qr/buckets = buckets \|\| 9600;/, 'the overview holds enough buckets for a normal zoom');
 like($transport, qr/audio\.getChannelData\(1\) : left;/, 'a mono buffer feeds both halves');
 like($transport, qr/function studioTakeWaveform\(take\)/, 'the lane asks for the pair, not one array');
 like($transport, qr/function studioCaptureLivePeaks\(ch, take\)/, 'the record path has one live sampler');
@@ -133,6 +134,7 @@ like($transport, qr/studioWaveformPeaks\(take\.buffer\)/, 'a decoded or printed 
 
 # --- two minutes, then growth ----------------------------------------------
 like($knobs, qr/duration: STUDIO_NEW_SONG_SECONDS, status: 'stop'/, 'a new song opens two minutes long');
+like($knobs, qr/studioFollowSync\(\)/, 'a rebuilt window restores the follow lock');
 like($ctrl, qr/Math\.max\(STUDIO_NEW_SONG_SECONDS, studioKnobNumber\(response\.song/, 'a loaded legacy song also opens two minutes long');
 like($ctrl, qr/take\.duration = Math\.max\(0, mixer\['time'\]\['position'\] - take\.startTime\);/, 'a recording clip grows under the playhead');
 like($ctrl, qr/\/\/ A take stopped by this call has just been given its final duration/, 'stopping a take explains the repaint');
@@ -227,6 +229,9 @@ like($takes, qr/take\.data = null/, 'and its Blob dropped');
 like($takes, qr/!take\.track\.paused.*?take\.track\.pause\(\)/, 'a take still marked playing is paused first');
 like($ctrl, qr/function studioTeardown\(\)/, 'one close hook ties them together');
 like($ctrl, qr/jawnosAppTeardown\['studio'\] = studioTeardown/, 'the shell registry learns about it');
+like($ctrl, qr/studioWaveformCache = \{\};/, 'a teardown drops the waveform cache');
+like($ctrl, qr/studioWaveformLoading = \{\};/, 'and its in-flight loads');
+like($ctrl, qr/function studioLoad\(uuid\)[\s\S]{0,300}studioWaveformCache = \{\};/, 'loading a song drops the old waveform cache');
 my $release_at = index($knobs, 'studioTeardown');
 my $mixer_at = index($knobs, 'mixer = {');
 ok($release_at != -1 && $mixer_at != -1 && $release_at < $mixer_at,

@@ -81,6 +81,8 @@ function studioInit(data) {
 			// the strips paint their mute and solo state now that the window is up
 			if (typeof studioStripMuteSoloRender === 'function') { studioStripMuteSoloRender(); }
 			studioApplyLayoutSettings();
+			// the follow lock is a view preference, so a rebuilt window restores it
+			if (typeof studioFollowSync === 'function') { studioFollowSync(); }
 			studioApplyMonitor();
 			// Ask the engine on the first frame: Monitor needs to know whether the
 			// engine is there before the person presses it, not only after Configure

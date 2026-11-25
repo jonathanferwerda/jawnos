@@ -33,6 +33,11 @@ like($markup, qr/data-tool="select"[^>]*hint="<%= &subs::ui\('Select a time rang
 	'Select says what it selects');
 like($markup, qr/data-tool="cut"[^>]*hint="<%= &subs::ui\('Click a clip to cut it at that point'\) %>"/,
 	'Cut says what a click does');
+like($markup, qr/id="studio_follow"/, 'the Tracks bar carries a follow lock');
+like($markup, qr/id="studio_follow"[^>]*aria-pressed="true"/, 'the follow lock starts locked');
+like($markup, qr/class="studio_follow_icon"/, 'the lock has an icon');
+like($markup, qr/hint="<%= &subs::ui\('Follow the playhead; press to unlock the view'\) %>"/,
+	'the lock says what it does');
 
 # --- the selection bar and its four actions ---------------------------------
 like($markup, qr/id="studio_selection_bar"/, 'the selection bar exists');
@@ -58,6 +63,19 @@ like($js, qr/\.toggle\('studio_tool_select', tool === 'select'\)/,
 like($js, qr/\.toggle\('studio_tool_cut', tool === 'cut'\)/,
 	'the Cut class follows the chosen tool');
 like($js, qr/aria-pressed/, 'the buttons publish their pressed state');
+
+# --- the follow lock ---------------------------------------------------------
+like($js, qr/var studioFollowPlayhead = true;/, 'follow is the default view lock');
+like($js, qr/function studioFollowSync\(\)/, 'the button state is restored');
+like($js, qr/function studioFollowCenter\(\)/, 'one function centers the playhead');
+like($js, qr/function studioFollowView\(\)/, 'the transport asks whether to follow');
+like($js, qr/function studioFollowSet\(/, 'the toggle has one setter');
+like($js, qr/\$\(document\)\.on\('click', '#studio_follow'/, 'the lock is delegated');
+like($js, qr/studioTimelineSetStart\(start\)/, 'following moves the window start');
+like($js, qr/studioTakeDrag/, 'following stands down during a clip drag');
+like($js, qr/studioSelectDrag \|\| studioCutDrag/, 'following stands down during a select or cut drag');
+like($js, qr/studioTimelineGestureActive/, 'following stands down during a pinch');
+like($js, qr/studioSelectionQueueDraw\(\)/, 'following moves the selection overlay');
 
 # --- the selection model -----------------------------------------------------
 like($js, qr/var studioSelection = null;/, 'there is one selection slot');
@@ -137,6 +155,8 @@ like($js, qr/There are no takes in the selection to export\./,
 # --- the style ---------------------------------------------------------------
 like($style, qr/\.studio_tools\s*\{[\s\S]*?display:\s*inline-flex/, 'the tools share a row');
 like($style, qr/\.studio_tools \.studio_tool\[aria-pressed="true"\]/, 'the pressed tool reads pressed');
+like($style, qr/\.studio_tools \.studio_follow\s*\{[\s\S]*?display:\s*inline-flex/, 'the follow lock shares the tools row');
+like($style, qr/\.studio_tools \.studio_follow\[aria-pressed="true"\]/, 'a locked follow lock reads lit');
 like($style, qr/#studio_viewer\.studio_tool_select canvas\.track,[\s\S]*?cursor:\s*var\(--jawnos-cursor-crosshair, crosshair\)/,
 	'Select gives the lanes a crosshair');
 like($style, qr/#studio_ruler\.studio_tool_select \.studio_ruler_canvas\s*\{[\s\S]*?cursor:\s*var\(--jawnos-cursor-crosshair, crosshair\)/,

@@ -128,6 +128,50 @@ function studioFitCanvas(canvas) {
 	if (canvas.height != h) { canvas.height = h; }
 }
 
+// The per-take overview is a few thousand buckets for the whole file. At a deep
+// zoom that is coarser than a pixel column, so the lane reads the decoded
+// buffer for the visible columns instead; the work is capped because only a
+// short window ever needs it. The take's own in-point and length bound the
+// read, so a trimmed or split clip draws its own samples.
+var STUDIO_FINE_PEAK_SAMPLES = 600000;
+var studioFinePeakBudget = 0;
+var studioFinePeakAt = 0;
+
+function studioFinePeaks(take, tw, b0, b1) {
+	var buffer = take && take.buffer;
+	if (!buffer || !buffer.length || !(tw > 0) || !(b1 > b0)) { return null; }
+	var duration = take.duration || 0;
+	if (!(duration > 0)) { return null; }
+	var offset = Math.max(0, take.offset || 0);
+	var rate = buffer.sampleRate || 44100;
+	var left = buffer.getChannelData(0);
+	var right = (buffer.numberOfChannels > 1) ? buffer.getChannelData(1) : left;
+	var len = buffer.length;
+	var n = b1 - b0;
+	var peaksL = new Float32Array(n);
+	var peaksR = new Float32Array(n);
+	for (var j = 0; j < n; j++) {
+		var b = b0 + j;
+		// the column's source-time window; one sample at the least, so a thin
+		// column never reads as silence
+		var t0 = offset + (b / tw) * duration;
+		var t1 = offset + ((b + 1) / tw) * duration;
+		var i0 = Math.max(0, Math.floor(t0 * rate));
+		var i1 = Math.min(len, Math.ceil(t1 * rate));
+		if (i1 <= i0) { i1 = Math.min(len, i0 + 1); }
+		var ml = 0, mr = 0;
+		for (var i = i0; i < i1; i++) {
+			var l = Math.abs(left[i]);
+			if (l > ml) { ml = l; }
+			var r = Math.abs(right[i]);
+			if (r > mr) { mr = r; }
+		}
+		peaksL[j] = ml;
+		peaksR[j] = mr;
+	}
+	return { L: peaksL, R: peaksR };
+}
+
 function studioDrawChannel(ch) {
 	var canvas = document.getElementById('track_view_' + ch);
 	if (!canvas) { return; }
@@ -189,27 +233,67 @@ function studioDrawChannel(ch) {
 				var midL = 3 + band / 2;
 				var midR = 3 + band + band / 2;
 				var amp = (band / 2) * 0.9;
+				var view = studioTimelineView();
+				// only the peaks the window can show: a zoomed take is many lanes wide
+				var b0 = Math.max(0, Math.floor(-x));
+				var b1 = Math.min(tw, Math.ceil(w - x));
+				// A deeply zoomed clip reads the decoded buffer for its visible
+				// columns; the whole-song overview would be a stair-step there.
+				// The overview spans the whole file, so its bucket width is the
+				// source duration, not the clip's trimmed length.
+				var fine = null;
+				if (!take.livePeaks && take.buffer && b1 > b0) {
+					var sourceSpan = (take.buffer.duration > 0) ? take.buffer.duration : (take.duration || 0);
+					var bucket = sourceSpan / Math.max(1, wave.L.length);
+					var secPerPx = view.span / Math.max(1, w);
+					var rate = take.buffer.sampleRate || 44100;
+					var samples = view.span * rate;
+					var now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+					if (!(now - studioFinePeakAt < 20)) { studioFinePeakBudget = 1200000; studioFinePeakAt = now; }
+					if (bucket > secPerPx * 4 && samples <= STUDIO_FINE_PEAK_SAMPLES && samples <= studioFinePeakBudget) {
+						fine = studioFinePeaks(take, tw, b0, b1);
+						studioFinePeakBudget -= samples;
+					}
+				}
+				// The overview covers the whole file; a trimmed or split clip draws
+				// only its own in-point and length from it.
+				var first = 0, count = wave.L.length;
+				if (!take.livePeaks && !fine && take.buffer && take.buffer.duration > 0) {
+					var srcDur = take.buffer.duration;
+					var takeOff = Math.max(0, take.offset || 0);
+					var takeDur = (take.duration > 0) ? take.duration : srcDur;
+					if (takeOff > 1e-4 || takeDur < srcDur - 1e-4) {
+						first = Math.max(0, Math.floor((takeOff / srcDur) * wave.L.length));
+						var last = Math.min(wave.L.length, Math.ceil(((takeOff + takeDur) / srcDur) * wave.L.length));
+						count = Math.max(1, last - first);
+					}
+				}
 				ctx.save();
 				ctx.beginPath();
 				ctx.rect(x, 3, tw, h - 6);
 				ctx.clip();
 				ctx.strokeStyle = 'rgba(255,255,255,0.85)';
 				ctx.lineWidth = 1;
-				// only the peaks the window can show: a zoomed take is many lanes wide
-				var b0 = Math.max(0, Math.floor(-x));
-				var b1 = Math.min(tw, Math.ceil(w - x));
 				ctx.beginPath();
 				for (var b = b0; b < b1; b++) {
-					var idx = Math.min(wave.L.length - 1, Math.floor((b / tw) * wave.L.length));
-					var lAmp = wave.L[idx] * amp;
+					var lAmp;
+					if (fine) { lAmp = fine.L[b - b0] * amp; }
+					else {
+						var idx = Math.min(count - 1, Math.floor((b / tw) * count)) + first;
+						lAmp = wave.L[Math.min(wave.L.length - 1, idx)] * amp;
+					}
 					ctx.moveTo(x + b, midL - lAmp);
 					ctx.lineTo(x + b, midL + lAmp);
 				}
 				ctx.stroke();
 				ctx.beginPath();
 				for (var br = b0; br < b1; br++) {
-					var idxR = Math.min(wave.R.length - 1, Math.floor((br / tw) * wave.R.length));
-					var rAmp = wave.R[idxR] * amp;
+					var rAmp;
+					if (fine) { rAmp = fine.R[br - b0] * amp; }
+					else {
+						var idxR = Math.min(count - 1, Math.floor((br / tw) * count)) + first;
+						rAmp = wave.R[Math.min(wave.R.length - 1, idxR)] * amp;
+					}
 					ctx.moveTo(x + br, midR - rAmp);
 					ctx.lineTo(x + br, midR + rAmp);
 				}
@@ -352,13 +436,27 @@ function studioTimelineDuration() {
 // mapping reads the view, so a clip, a tick and a click agree at any zoom.
 var studioTimelineZoom = 1;
 var studioTimelineStart = 0;
-var STUDIO_TIMELINE_ZOOM_MAX = 32;
+// The deepest zoom keeps a quarter second on screen, whatever the song's
+// length, so a 1/64 note is still wide enough to edit; the hard ceiling stops
+// a very long song from asking for a sub-pixel window.
+var STUDIO_TIMELINE_MIN_SPAN = 0.25;
+var STUDIO_TIMELINE_ZOOM_MAX = 1024;
+
+function studioTimelineZoomCeiling(duration) {
+	duration = duration || studioTimelineDuration();
+	var bySpan = Math.ceil(duration / STUDIO_TIMELINE_MIN_SPAN);
+	return Math.max(32, Math.min(STUDIO_TIMELINE_ZOOM_MAX, bySpan));
+}
 
 function studioTimelineView() {
 	var duration = studioTimelineDuration();
+	var ceiling = studioTimelineZoomCeiling(duration);
 	var zoom = studioTimelineZoom || 1;
 	if (!(zoom >= 1)) { zoom = 1; }
-	if (zoom > STUDIO_TIMELINE_ZOOM_MAX) { zoom = STUDIO_TIMELINE_ZOOM_MAX; }
+	if (zoom > ceiling) { zoom = ceiling; }
+	// The clamped value is the one the next step must start from, so a shorter
+	// song cannot leave a deeper zoom waiting to snap back when it grows again.
+	studioTimelineZoom = zoom;
 	var span = duration / zoom;
 	// a shorter song (or a take that shrank it) can leave the window past the end
 	var start = Math.max(0, Math.min(studioTimelineStart || 0, duration - span));
@@ -428,9 +526,26 @@ function studioSeek(t) {
 	if (mixer['time']['status'] == 'play' && typeof studioClockStart === 'function') {
 		studioClockStart(t);
 	}
+	// A seek moves the cursor, so a locked view follows it even while stopped.
+	if (typeof studioFollowCenter === 'function') { studioFollowCenter(); }
 	if (typeof studioTimeDisplay === 'function') { studioTimeDisplay(); }
 	studioDrawTracks();
 	return true;
+}
+
+// The finest note grid that still leaves six pixels between ticks: 1/64,
+// 1/32, 1/16 or 1/8 of a beat. A beat is a quarter note here, so 1/16 of a
+// beat is the 1/64 note the deep zoom exists for.
+function studioBeatSubdivision(canvas, view) {
+	var beat = studioBeatSeconds();
+	var divisions = [1 / 16, 1 / 8, 1 / 4, 1 / 2];
+	for (var d = 0; d < divisions.length; d++) {
+		var step = beat * divisions[d];
+		if (studioTimelineWidth(canvas, step) >= 6) {
+			return { step: step, label: '1/' + Math.round(4 / divisions[d]) };
+		}
+	}
+	return null;
 }
 
 // Ticks and labels over the timeline. The display button swaps plain seconds
@@ -461,7 +576,7 @@ function studioDrawRuler() {
 
 	if (mixer['time'] && mixer['time']['display'] == 'beats') {
 		// seconds: the coarsest step that still leaves room for its label
-		var ladder = [0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+		var ladder = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
 		var step = ladder[ladder.length - 1];
 		for (var s = 0; s < ladder.length; s++) {
 			if ((ladder[s] / view.span) * w >= 46) { step = ladder[s]; break; }
@@ -491,6 +606,27 @@ function studioDrawRuler() {
 		var every = 1;
 		var spans = [2, 4, 8, 16, 32, 64];
 		for (var e = 0; e < spans.length && (pxBar * every) < 46; e++) { every = spans[e]; }
+		// The note grid: the finest subdivision that still reads, so a deep
+		// zoom shows 1/64 ticks and its name at the right edge.
+		var grid = studioBeatSubdivision(canvas, view);
+		if (grid) {
+			for (var si = Math.ceil(view.start / grid.step); si * grid.step <= view.end + 1e-9; si++) {
+				var beats = (si * grid.step) / beat;
+				if (Math.abs(beats - Math.round(beats)) < 1e-6) { continue; }
+				var sx = studioTimelineXAt(canvas, si * grid.step);
+				ctx.strokeStyle = line;
+				ctx.beginPath();
+				ctx.moveTo(sx + 0.5, h - 3);
+				ctx.lineTo(sx + 0.5, h);
+				ctx.stroke();
+			}
+			if (studioTimelineWidth(canvas, grid.step) >= 18) {
+				ctx.fillStyle = ink;
+				ctx.textAlign = 'right';
+				ctx.fillText(grid.label, w - 4, 2);
+				ctx.textAlign = 'left';
+			}
+		}
 		if (pxBeat >= 5) {
 			for (var bi = Math.ceil(view.start / beat); bi * beat <= view.end + 1e-9; bi++) {
 				var bx = studioTimelineXAt(canvas, bi * beat);
@@ -731,15 +867,19 @@ function studioTimelineCanvasFor(target) {
 	return target.closest('canvas.track') || document.querySelector('#studio_viewer canvas.track');
 }
 
-// Zoom by `factor` about the canvas point, keeping that point's time fixed.
+// Zoom by `factor` about the canvas point, keeping that point's time fixed. A
+// locked view running the transport re-centers on the playhead instead: there
+// the playhead is the anchor the person asked to follow.
 function studioTimelineZoomAt(canvas, clientX, factor) {
 	var view = studioTimelineView();
 	var time = studioTimelineTimeAt(canvas, clientX);
 	var rect = canvas.getBoundingClientRect();
-	studioTimelineZoom = Math.max(1, Math.min(STUDIO_TIMELINE_ZOOM_MAX, view.zoom * factor));
+	var ceiling = studioTimelineZoomCeiling(view.duration);
+	studioTimelineZoom = Math.max(1, Math.min(ceiling, view.zoom * factor));
 	// the point's fraction of the window is unchanged; only its span is narrower
 	var frac = rect.width ? (clientX - rect.left) / rect.width : 0.5;
 	studioTimelineSetStart(time - (frac * (view.duration / studioTimelineZoom)));
+	if (typeof studioFollowView === 'function') { studioFollowView(); }
 	studioDrawTracks();
 }
 

@@ -227,6 +227,14 @@
 				<button class="studio_tool hover" data-tool="cursor" aria-pressed="true" hint="<%= &subs::ui('Drag clips and their edges') %>"><%= &subs::ui('Cursor') %></button>
 				<button class="studio_tool hover" data-tool="select" aria-pressed="false" hint="<%= &subs::ui('Select a time range across tracks') %>"><%= &subs::ui('Select') %></button>
 				<button class="studio_tool hover" data-tool="cut" aria-pressed="false" hint="<%= &subs::ui('Click a clip to cut it at that point') %>"><%= &subs::ui('Cut') %></button>
+				<button id="studio_follow" class="studio_follow hover" aria-pressed="true" aria-label="<%= &subs::ui('Follow the playhead') %>" hint="<%= &subs::ui('Follow the playhead; press to unlock the view') %>">
+					<svg class="studio_follow_icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
+						<path d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+						<rect x="3.2" y="7" width="9.6" height="6.4" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+						<circle cx="8" cy="10.2" r="1" fill="currentColor"/>
+					</svg>
+					<span class="studio_follow_label"><%= &subs::ui('Follow') %></span>
+				</button>
 			</span>
 			<span class="studio_panel_buttons">
 				<button class="studio_panel_pin hover" data-panel="tracks" aria-pressed="false" hint="<%= &subs::ui('Keep this panel above the others') %>">📌</button>

@@ -1079,6 +1079,27 @@
 		background: var(--accent);
 		color: var(--panel);
 	}
+	/* The padlock locks the view to the playhead; lit means following. */
+	.studio_tools .studio_follow {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-left: 4px;
+		font-size: 11px;
+		line-height: 1;
+		padding: 2px 7px;
+		border-radius: 4px;
+	}
+	.studio_tools .studio_follow_icon {
+		width: 13px;
+		height: 13px;
+		display: block;
+	}
+	.studio_tools .studio_follow[aria-pressed="true"] {
+		background: var(--accent);
+		color: var(--panel);
+		box-shadow: 0 0 0 1px var(--accent), 0 0 6px color-mix(in srgb, var(--accent) 55%, transparent);
+	}
 	/* Select and Cut change the pointer over the lanes and the ruler. */
 	#studio_viewer.studio_tool_select canvas.track,
 	#studio_ruler.studio_tool_select .studio_ruler_canvas {

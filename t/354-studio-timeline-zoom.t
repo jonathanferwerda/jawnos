@@ -24,7 +24,9 @@ my $univ   = read_file("$root/public/js/universal/07_hints_long_press_multiselec
 # --- the window's state ------------------------------------------------------
 like($canvas, qr/var studioTimelineZoom = 1;/, 'the timeline opens unzoomed');
 like($canvas, qr/var studioTimelineStart = 0;/, 'the window opens at the song start');
-like($canvas, qr/var STUDIO_TIMELINE_ZOOM_MAX = 32;/, 'the zoom tops out at 32');
+like($canvas, qr/var STUDIO_TIMELINE_MIN_SPAN = 0\.25;/, 'the deepest zoom keeps a quarter second');
+like($canvas, qr/var STUDIO_TIMELINE_ZOOM_MAX = 1024;/, 'a hard ceiling caps the deepest zoom');
+like($canvas, qr/function studioTimelineZoomCeiling\(duration\)/, 'the ceiling follows the song length');
 like($canvas, qr/function studioTimelineView\(\)/, 'one function describes the window');
 
 my ($view) = $canvas =~ /function studioTimelineView\(\) \{(.*?)\n\}/s;
@@ -36,7 +38,9 @@ like($view, qr/start: start, span: span, end: start \+ span, duration: duration/
 	'the view exposes start, span, end and duration');
 like($view, qr/Math\.max\(0, Math\.min\(studioTimelineStart \|\| 0, duration - span\)\)/,
 	'the start is clamped to 0..duration-span');
-like($view, qr/if \(zoom > STUDIO_TIMELINE_ZOOM_MAX\)/, 'the zoom is clamped to the top');
+like($view, qr/var ceiling = studioTimelineZoomCeiling\(duration\);/, 'the view asks for the song\'s ceiling');
+like($view, qr/if \(zoom > ceiling\) \{ zoom = ceiling; \}/, 'the zoom is clamped to that ceiling');
+like($view, qr/studioTimelineZoom = zoom;/, 'the view stores the clamped zoom');
 
 my ($set_start) = $canvas =~ /function studioTimelineSetStart\(seconds\) \{(.*?)\n\}/s;
 ok(defined $set_start, 'the start setter is found');
@@ -128,6 +132,7 @@ ok(defined $seek, 'the seek function is found');
 $seek = '' unless defined $seek;
 like($seek, qr/t = Math\.min\(t, duration\)/, 'a seek still clamps to the whole song');
 unlike($seek, qr/view\.span/, 'a seek never clamps to the visible window');
+like($seek, qr/studioFollowCenter\(\)/, 'a seek recenters a locked view');
 
 # --- hit testing, moves and trims read the same view ------------------------
 my ($hit) = $edit =~ /function studioCanvasHit\(canvas, clientX\) \{(.*?)\n\}/s;
@@ -167,13 +172,38 @@ my ($zoom_at) = $canvas =~ /function studioTimelineZoomAt\(canvas, clientX, fact
 ok(defined $zoom_at, 'the anchored zoom is found');
 $zoom_at = '' unless defined $zoom_at;
 like($zoom_at, qr/var time = studioTimelineTimeAt\(canvas, clientX\);/, 'the anchor is the time under the pointer');
-like($zoom_at, qr/Math\.max\(1, Math\.min\(STUDIO_TIMELINE_ZOOM_MAX, view\.zoom \* factor\)\)/,
-	'the zoom stays inside 1..32');
+like($zoom_at, qr/var ceiling = studioTimelineZoomCeiling\(view\.duration\);/, 'a zoom step reads the song\'s ceiling');
+like($zoom_at, qr/Math\.max\(1, Math\.min\(ceiling, view\.zoom \* factor\)\)/,
+	'the zoom stays inside the ceiling');
 like($zoom_at, qr/var frac = rect\.width \? \(clientX - rect\.left\) \/ rect\.width : 0\.5;/,
 	'the anchor keeps its fraction of the window');
 like($zoom_at, qr/studioTimelineSetStart\(time - \(frac \* \(view\.duration \/ studioTimelineZoom\)\)\)/,
 	'the anchored time stays under the pointer');
 like($zoom_at, qr/studioDrawTracks\(\);/, 'a zoom repaints the lanes');
+like($zoom_at, qr/studioFollowView\(\)/, 'a locked zoom keeps the playhead as its anchor');
+
+# --- a deep zoom reads the take's own samples -------------------------------
+like($canvas, qr/var STUDIO_FINE_PEAK_SAMPLES = 600000;/, 'the fine read is capped');
+like($canvas, qr/function studioFinePeaks\(take, tw, b0, b1\)/, 'one builder reads the visible columns');
+like($canvas, qr/var right = \(buffer\.numberOfChannels > 1\) \? buffer\.getChannelData\(1\) : left;/, 'a mono take mirrors both halves');
+like($canvas, qr/var t0 = offset \+ \(b \/ tw\) \* duration;/, 'a column is mapped into the take\'s own source time');
+like($canvas, qr/studioFinePeaks\(take, tw, b0, b1\)/, 'the lane reads fine peaks when the overview is coarse');
+like($canvas, qr/bucket > secPerPx \* 4/, 'the overview is replaced only when it is blockier than a pixel');
+like($canvas, qr/var sourceSpan = \(take\.buffer\.duration > 0\) \? take\.buffer\.duration : \(take\.duration \|\| 0\);/, 'the overview bucket is measured on the whole file');
+like($canvas, qr/studioFinePeakBudget = 1200000;/, 'the fine reads share one frame budget');
+like($canvas, qr/samples <= studioFinePeakBudget/, 'a lane that would exhaust the frame falls back to the overview');
+like($canvas, qr/var first = 0, count = wave\.L\.length;/, 'the overview is sliced for a trimmed or split clip');
+
+# --- the ruler names the note grid ----------------------------------------
+like($canvas, qr/function studioBeatSubdivision\(canvas, view\)/, 'the ruler has one note-grid chooser');
+like($canvas, qr/var divisions = \[1 \/ 16, 1 \/ 8, 1 \/ 4, 1 \/ 2\];/, 'the grid reaches a 1/64 note');
+like($canvas, qr/label: '1\/' \+ Math\.round\(4 \/ divisions\[d\]\)/, 'the grid names itself in note values');
+like($ruler, qr/var grid = studioBeatSubdivision\(canvas, view\);/, 'the ruler reads the grid');
+like($ruler, qr/si \* grid\.step <= view\.end \+ 1e-9/, 'grid ticks begin at the window start');
+like($ruler, qr/ctx\.fillText\(grid\.label, w - 4, 2\);/, 'the ruler names the note grid');
+
+# --- the transport tick follows a locked view ------------------------------
+like($ctrl, qr/studioFollowView\(\)/, 'the transport tick follows the playhead');
 
 # --- the wheel listener's surface and guards --------------------------------
 my ($listener) = $canvas =~ /document\.addEventListener\('wheel', function \(event\) \{\n(.*?)\n\}, \{ capture: true, passive: false \}\);/s;
