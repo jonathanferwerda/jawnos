@@ -201,15 +201,29 @@ function studioEffectShell(ctx, name) {
 	return fx;
 }
 
+// A tanh soft-clip curve for the pedals whose output stage is the op-amp's
+// finite output swing (Dyna Comp, Electric Mistress). The WaveShaper's domain
+// is -1..1, so a sample beyond that is clamped to the curve's endpoint; the
+// engine's tanh runs on the full amplitude. That is part of the node-graph
+// approximation the audit names.
+function studioTanhCurve() {
+	var n = 2048;
+	var curve = new Float32Array(n);
+	for (var i = 0; i < n; i++) {
+		curve[i] = Math.tanh((i * 2) / (n - 1) - 1);
+	}
+	return curve;
+}
+
 // ---- reverb ----------------------------------------------------------------
 
 // One shape per model, in the contract's order. The numbers are the doc's
-// character, not a sample library: a generated impulse that decays the right
-// way is enough to tell a room from a cave.
+// character, not a sample library. Spring and Plate are built as mechanical
+// tanks (below); Room, Hall and Cave keep the generated-noise shape.
 var studioReverbShapes = [
 	{ name: 'Room',   seconds: 0.8, decay: 3.2, bright: 0.55, early: 1.0, low: 0.15 },
 	{ name: 'Spring', seconds: 1.8, decay: 2.6, bright: 0.95, early: 0.15, low: 0.2, spring: 1 },
-	{ name: 'Plate',  seconds: 2.2, decay: 2.4, bright: 0.75, early: 0.3, low: 0.35 },
+	{ name: 'Plate',  seconds: 2.2, decay: 2.4, bright: 0.75, early: 0.3, low: 0.35, plate: 1 },
 	{ name: 'Hall',   seconds: 3.4, decay: 2.0, bright: 0.35, early: 0.25, low: 0.5 },
 	{ name: 'Cave',   seconds: 6.0, decay: 1.6, bright: 0.18, early: 0.2, low: 0.8 }
 ];
@@ -225,16 +239,123 @@ function studioReverbModelName(value) {
 	return shape ? shape.name : 'Room';
 }
 
-// Built once per context and cached on it: a model change is a buffer swap,
-// not a new noise loop, and the impulse is generated away from the audio
-// callback (contract rule 1). The cache lives on the context because a buffer
-// belongs to the context that made it.
-function studioReverbImpulse(ctx, model) {
-	var index = studioReverbModel(model);
-	if (!ctx.jawnosReverbCache) { ctx.jawnosReverbCache = {}; }
-	var cache = ctx.jawnosReverbCache;
-	if (cache[index]) { return cache[index]; }
-	var shape = studioReverbShapes[index];
+// A one-pole highpass followed by a one-pole lowpass, applied to a finished
+// impulse. The engine's model_impulse shades its tank the same way.
+function studioImpulseShade(data, rate, highpassHz, lowpassHz) {
+	var i, alpha;
+	if (highpassHz > 0) {
+		alpha = 1 - Math.exp(-2 * Math.PI * highpassHz / rate);
+		var low = 0;
+		for (i = 0; i < data.length; i++) {
+			low += (data[i] - low) * alpha;
+			data[i] -= low;
+		}
+	}
+	if (lowpassHz > 0) {
+		alpha = 1 - Math.exp(-2 * Math.PI * lowpassHz / rate);
+		var shaped = 0;
+		for (i = 0; i < data.length; i++) {
+			shaped += (data[i] - shaped) * alpha;
+			data[i] = shaped;
+		}
+	}
+}
+
+function studioNormalizeImpulse(data) {
+	var peak = 0, i;
+	for (i = 0; i < data.length; i++) { peak = Math.max(peak, Math.abs(data[i])); }
+	if (peak > 0) {
+		for (i = 0; i < data.length; i++) { data[i] = data[i] / peak * 0.8; }
+	}
+}
+
+// The Fender 6G15 tank: two comb loops (the two springs) mixed, then two
+// Schroeder allpass sections for the spring's dispersion. The loop gain is the
+// model's RT60 over each line's own length, so the tail ends where the contract
+// says it does (engine/src/reverb.rs, tank_impulse).
+function studioSpringImpulse(ctx, shape) {
+	var rate = ctx.sampleRate;
+	var length = Math.max(1, Math.floor(rate * shape.seconds));
+	var buffer = ctx.createBuffer(2, length, rate);
+	var combs = [0.0293, 0.0341];
+	var allpasses = [0.0017, 0.0053];
+	for (var c = 0; c < 2; c++) {
+		var data = buffer.getChannelData(c);
+		var loops = [];
+		for (var n = 0; n < combs.length; n++) {
+			var seconds = combs[n] + c * 0.0007 + n * 0.0003;
+			var line = Math.max(1, Math.round(rate * seconds));
+			loops.push({
+				buf: new Float32Array(line),
+				pos: 0,
+				gain: Math.pow(10, -3 * (line / rate) / shape.seconds)
+			});
+		}
+		for (var i = 0; i < length; i++) {
+			var source = (i === 0) ? 1 : 0;
+			var sum = 0;
+			for (var l = 0; l < loops.length; l++) {
+				var loop = loops[l];
+				var read = loop.buf[loop.pos];
+				loop.buf[loop.pos] = source + read * loop.gain;
+				loop.pos = (loop.pos + 1) % loop.buf.length;
+				sum += read;
+			}
+			data[i] = sum;
+		}
+		for (var a = 0; a < allpasses.length; a++) {
+			var apLine = Math.max(1, Math.round(rate * allpasses[a]));
+			var apBuf = new Float32Array(apLine);
+			var apPos = 0, g = -0.5;
+			for (var j = 0; j < length; j++) {
+				var delayed = apBuf[apPos];
+				var value = data[j] + g * delayed;
+				apBuf[apPos] = value;
+				apPos = (apPos + 1) % apLine;
+				data[j] = -g * value + delayed;
+			}
+		}
+		studioImpulseShade(data, rate, 350, 8000);
+		studioNormalizeImpulse(data);
+	}
+	return buffer;
+}
+
+// The EMT 140 plate: a dense wall of short early reflections (no gap before the
+// tail) over a diffuse, slowly decaying noise bed. The engine builds a short
+// delay-line network plus diffusers; this is the same density in a buffer.
+function studioPlateImpulse(ctx, shape) {
+	var rate = ctx.sampleRate;
+	var length = Math.max(1, Math.floor(rate * shape.seconds));
+	var buffer = ctx.createBuffer(2, length, rate);
+	for (var c = 0; c < 2; c++) {
+		var data = buffer.getChannelData(c);
+		var taps = 64;
+		for (var k = 0; k < taps; k++) {
+			var spread = (k + 1) / taps;
+			var at = Math.floor(rate * (0.0004 + 0.011 * Math.pow(spread, 0.6))
+				+ c * rate * 0.00013);
+			var gain = Math.pow(0.92, k) * ((k % 2) ? -1 : 1) * 0.5;
+			if (at < length) { data[at] += gain; }
+		}
+		var bright = 0, low = 0;
+		for (var i = 0; i < length; i++) {
+			var t = i / length;
+			var white = Math.random() * 2 - 1;
+			bright += shape.bright * (white - bright);
+			low += 0.02 * (white - low);
+			data[i] += (bright * (1 - shape.low) + low * shape.low * 3)
+				* Math.pow(1 - t, shape.decay) * 0.25;
+		}
+		studioImpulseShade(data, rate, 90, 0);
+		studioNormalizeImpulse(data);
+	}
+	return buffer;
+}
+
+// Room, Hall and Cave keep the generated-noise shape: a decaying filtered-noise
+// bed with the Room's discrete first bounces.
+function studioNoiseImpulse(ctx, shape) {
 	var rate = ctx.sampleRate;
 	var length = Math.max(1, Math.floor(rate * shape.seconds));
 	var impulse = ctx.createBuffer(2, length, rate);
@@ -249,27 +370,34 @@ function studioReverbImpulse(ctx, model) {
 			// keeps the noise's top, the slow tap is the low-mid weight.
 			bright += shape.bright * (white - bright);
 			low += 0.02 * (white - low);
-			var s = bright * (1 - shape.low) + low * shape.low * 3;
-			if (shape.spring) {
-				// two short combs give the spring its metallic, narrow ring
-				s += Math.sin(2 * Math.PI * (900 + c * 130) * (i / rate)) * 0.18 * Math.pow(1 - t, 3);
-				s += Math.sin(2 * Math.PI * (1700 + c * 90) * (i / rate)) * 0.12 * Math.pow(1 - t, 4);
-			}
-			data[i] = s * Math.pow(1 - t, shape.decay);
+			data[i] = (bright * (1 - shape.low) + low * shape.low * 3)
+				* Math.pow(1 - t, shape.decay);
 		}
-		// A room's first echo is loud and discrete; a plate has no early gap.
 		if (shape.early > 0) {
 			early.forEach(function (seconds, n) {
 				var spot = Math.floor((seconds + c * 0.0017) * rate);
 				if (spot < length) { data[spot] += (n % 2 ? -1 : 1) * 0.55 * shape.early; }
 			});
 		}
-		var peak = 0;
-		for (var j = 0; j < length; j++) { peak = Math.max(peak, Math.abs(data[j])); }
-		if (peak > 0) {
-			for (var k = 0; k < length; k++) { data[k] = data[k] / peak * 0.8; }
-		}
+		studioNormalizeImpulse(data);
 	}
+	return impulse;
+}
+
+// Built once per context and cached on it: a model change is a buffer swap,
+// not a new tank, and the impulse is generated away from the audio callback
+// (contract rule 1). The cache lives on the context because a buffer belongs to
+// the context that made it.
+function studioReverbImpulse(ctx, model) {
+	var index = studioReverbModel(model);
+	if (!ctx.jawnosReverbCache) { ctx.jawnosReverbCache = {}; }
+	var cache = ctx.jawnosReverbCache;
+	if (cache[index]) { return cache[index]; }
+	var shape = studioReverbShapes[index];
+	var impulse;
+	if (shape.spring) { impulse = studioSpringImpulse(ctx, shape); }
+	else if (shape.plate) { impulse = studioPlateImpulse(ctx, shape); }
+	else { impulse = studioNoiseImpulse(ctx, shape); }
 	cache[index] = impulse;
 	return impulse;
 }
@@ -305,30 +433,75 @@ function studioEffectReverb(ctx, name) {
 }
 
 // ---- flanger ---------------------------------------------------------------
+// The Electro-Harmonix Electric Mistress. The line is a SAD1024-class BBD swept
+// by a triangle clock: 0.7 ms at the fast end to 5 ms at the slow end. The input
+// is pre-amplified about 6 dB, compressed 2:1 above the compander threshold and
+// soft-clipped by the BBD input; the line's output is filtered at 6.8 kHz and
+// highpassed at 160 Hz, and the Color feedback returns through the same pair.
+// The expander, the clock's dark top end and the clock whine need an
+// AudioWorklet (engine/src/effect/flanger.rs is the reference); the node graph
+// keeps the compressor, the clip and the filtered feedback, which is the sound
+// the pedal is bought for. Dry is `1 - mix`: the old `1 - mix * 0.5` let the dry
+// signal ride over a fully wet setting.
+var studioFlangerMinDelay = 0.0007;
+var studioFlangerMaxSweep = 0.0043;
 
 function studioEffectFlanger(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'flanger');
+	var preGain = ctx.createGain();
+	preGain.gain.value = 2;
+	var comp = ctx.createDynamicsCompressor();
+	comp.threshold.value = -14;
+	comp.knee.value = 0;
+	comp.ratio.value = 2;
+	comp.attack.value = 0.004;
+	comp.release.value = 0.12;
+	var shaper = ctx.createWaveShaper();
+	shaper.curve = studioTanhCurve();
 	var delay = ctx.createDelay(0.05);
-	delay.delayTime.value = 0.004;
+	var wetLP = ctx.createBiquadFilter();
+	wetLP.type = 'lowpass';
+	wetLP.frequency.value = 6800;
+	wetLP.Q.value = 0.707;
+	var wetHP = ctx.createBiquadFilter();
+	wetHP.type = 'highpass';
+	wetHP.frequency.value = 160;
+	wetHP.Q.value = 0.707;
+	var colorLP = ctx.createBiquadFilter();
+	colorLP.type = 'lowpass';
+	colorLP.frequency.value = 6800;
+	colorLP.Q.value = 0.707;
+	var colorHP = ctx.createBiquadFilter();
+	colorHP.type = 'highpass';
+	colorHP.frequency.value = 160;
+	colorHP.Q.value = 0.707;
 	var feedback = ctx.createGain();
 	var wet = ctx.createGain();
 	var dry = ctx.createGain();
 	var lfo = ctx.createOscillator();
-	var depth = ctx.createGain();
-	lfo.type = 'sine';
-	lfo.connect(depth).connect(delay.delayTime);
-	fx.input.connect(delay);
-	delay.connect(feedback).connect(delay);
-	delay.connect(wet).connect(fx.wet);
+	var sweep = ctx.createGain();
+	lfo.type = 'triangle';
+	lfo.connect(sweep).connect(delay.delayTime);
+	fx.input.connect(preGain).connect(comp).connect(shaper).connect(delay);
+	delay.connect(wetLP).connect(wetHP);
+	wetHP.connect(wet).connect(fx.wet);
+	wetHP.connect(colorLP).connect(colorHP).connect(feedback).connect(delay);
 	fx.input.connect(dry).connect(fx.wet);
 	try { lfo.start(0); } catch (e) {}
+	var depthValue = 0.6;
+	var applyDepth = function () {
+		var amount = studioEffectClamp(depthValue, 0, 1);
+		var span = studioFlangerMaxSweep * amount;
+		delay.delayTime.value = studioFlangerMinDelay + span * 0.5;
+		sweep.gain.value = span * 0.5;
+	};
 	fx.setters['rate'] = function (v) { lfo.frequency.value = studioEffectNatural(fx.name, 'rate', v); };
-	fx.setters['depth'] = function (v) { depth.gain.value = studioEffectNatural(fx.name, 'depth', v) * 0.006; };
+	fx.setters['depth'] = function (v) { depthValue = studioEffectNatural(fx.name, 'depth', v); applyDepth(); };
 	fx.setters['feedback'] = function (v) { feedback.gain.value = studioEffectNatural(fx.name, 'feedback', v); };
 	fx.setters['mix'] = function (v) {
 		var n = studioEffectNatural(fx.name, 'mix', v);
 		wet.gain.value = n;
-		dry.gain.value = 1 - n * 0.5;
+		dry.gain.value = 1 - n;
 	};
 	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
 	fx.set('rate', 20);
@@ -340,14 +513,34 @@ function studioEffectFlanger(ctx, name) {
 
 // ---- fuzz / distortion / amp ----------------------------------------------
 
-function studioDistortionCurve(amount) {
-	var n = 44100;
+// The ProCo RAT: an LM308 non-inverting stage whose feedback pot is the Drive
+// knob, so the gain runs from 2 to 200 over the travel. A pair of silicon
+// diodes to ground clips the stage at about 0.7 V, and the pedal's fixed Filter
+// is a two-pole lowpass at 4 kHz because the contract has no Filter control.
+// The curve is asymmetric (the two diodes are not matched) and carries the
+// diode's short exponential shoulder; the op-amp's gain-dependent bandwidth and
+// slew are the part a WaveShaper cannot model (engine/src/effect.rs is the
+// reference).
+var studioRatCurveCache = null;
+
+function studioRatCurve() {
+	if (studioRatCurveCache) { return studioRatCurveCache; }
+	var n = 4096;
 	var curve = new Float32Array(n);
-	var deg = Math.PI / 180;
+	var knee = 0.04;
 	for (var i = 0; i < n; i++) {
-		var x = (i * 2) / n - 1;
-		curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + (amount * Math.abs(x)));
+		var x = (i * 2) / (n - 1) - 1;
+		var forward = (x < 0) ? 0.74 : 0.66;
+		var magnitude = Math.abs(x);
+		if (magnitude <= forward) {
+			curve[i] = x;
+		}
+		else {
+			curve[i] = (x < 0 ? -1 : 1)
+				* (forward + knee * (1 - Math.exp(-(magnitude - forward) / knee)));
+		}
 	}
+	studioRatCurveCache = curve;
 	return curve;
 }
 
@@ -420,14 +613,32 @@ function studioEffectFuzz(ctx, name) {
 
 function studioEffectDistortion(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'distortion');
+	var inputHP = ctx.createBiquadFilter();
+	inputHP.type = 'highpass';
+	inputHP.frequency.value = 10;
+	inputHP.Q.value = 0.707;
+	var preGain = ctx.createGain();
 	var shaper = ctx.createWaveShaper();
-	var lp = ctx.createBiquadFilter();
-	lp.type = 'lowpass';
-	lp.frequency.value = 4500;
-	fx.input.connect(shaper).connect(lp).connect(fx.wet);
-	var drive = function (v) { shaper.curve = studioDistortionCurve(studioEffectNatural(fx.name, 'drive', v) * 100); shaper.oversample = '4x'; };
-	// The shelf pedal's knob is called gain; the contract calls it drive.
+	shaper.curve = studioRatCurve();
+	shaper.oversample = '4x';
+	var lp1 = ctx.createBiquadFilter();
+	lp1.type = 'lowpass';
+	lp1.frequency.value = 4000;
+	lp1.Q.value = 0.5;
+	var lp2 = ctx.createBiquadFilter();
+	lp2.type = 'lowpass';
+	lp2.frequency.value = 4000;
+	lp2.Q.value = 0.5;
+	var trim = ctx.createGain();
+	trim.gain.value = 0.7;
+	fx.input.connect(inputHP).connect(preGain).connect(shaper)
+		.connect(lp1).connect(lp2).connect(trim).connect(fx.wet);
+	var drive = function (v) {
+		var travel = studioEffectClamp(studioEffectNatural(fx.name, 'drive', v) * 100, 0, 100) / 100;
+		preGain.gain.value = 2 + travel * travel * 198;
+	};
 	fx.setters['drive'] = drive;
+	// The old shelf pedal's knob is called gain; the contract calls it drive.
 	fx.setters['gain'] = drive;
 	fx.set('drive', 50);
 	return fx;
@@ -538,91 +749,340 @@ function studioEffectAmp(ctx, name) {
 	return fx;
 }
 
-// ---- limiter ---------------------------------------------------------------
+// ---- limiter / maximizer ---------------------------------------------------
+// The UREI 1176's FET detector, shared with the maximizer. The real detector is
+// an inline AudioWorkletProcessor (engine/src/effect/limiter.rs is the
+// algorithm): a fixed 20 us attack, a program-dependent release that blends a
+// fast and a slow time constant through a sustain memory, a soft 2.5 dB knee
+// above the ceiling, and a hard clamp on every sample. The synchronous builder
+// returns a DynamicsCompressor (ratio 20) plus a hard-ceiling WaveShaper while
+// the module loads; the worklet replaces that chain when addModule resolves, so
+// a browser without AudioWorklet keeps the documented node-graph approximation
+// instead of a silent pedal.
+var studioFetWorkletSource = [
+	"class JawnosFetProcessor extends AudioWorkletProcessor {",
+	"  constructor() {",
+	"    super();",
+	"    this.ceilingDb = -6; this.targetCeilingDb = -6;",
+	"    this.release = 0.1; this.targetRelease = 0.1;",
+	"    this.driveDb = 0; this.targetDriveDb = 0;",
+	"    this.attack = 1 - Math.exp(-1 / (20e-6 * sampleRate));",
+	"    this.channels = [];",
+	"    this.port.onmessage = (e) => {",
+	"      const d = e.data || {};",
+	"      if (typeof d.ceiling === 'number') { this.targetCeilingDb = d.ceiling; }",
+	"      if (typeof d.release === 'number') { this.targetRelease = d.release; }",
+	"      if (typeof d.drive === 'number') { this.targetDriveDb = d.drive; }",
+	"    };",
+	"  }",
+	"  state(index) {",
+	"    if (!this.channels[index]) { this.channels[index] = { env: 0, sustain: 0 }; }",
+	"    return this.channels[index];",
+	"  }",
+	"  process(inputs, outputs) {",
+	"    const input = inputs[0] || [];",
+	"    const output = outputs[0] || [];",
+	"    const frames = (output.length && output[0]) ? output[0].length : 128;",
+	"    const alpha = 1 - Math.exp(-frames / (0.02 * sampleRate));",
+	"    this.ceilingDb += (this.targetCeilingDb - this.ceilingDb) * alpha;",
+	"    this.release += (this.targetRelease - this.release) * alpha;",
+	"    this.driveDb += (this.targetDriveDb - this.driveDb) * alpha;",
+	"    const ceiling = Math.pow(10, this.ceilingDb / 20);",
+	"    const drive = Math.pow(10, this.driveDb / 20);",
+	"    const release = Math.max(1e-5, this.release);",
+	"    const fast = 1 - Math.exp(-1 / (release * 0.35 * sampleRate));",
+	"    const slow = 1 - Math.exp(-1 / (release * sampleRate));",
+	"    const sustainCoef = 1 - Math.exp(-1 / (0.02 * sampleRate));",
+	"    const kneeDb = 2.5, kneeBow = kneeDb / 4, kneeTop = Math.pow(10, kneeDb / 20);",
+	"    for (let c = 0; c < output.length; c++) {",
+	"      const out = output[c];",
+	"      const inp = input[c] || input[0];",
+	"      const st = this.state(c);",
+	"      for (let i = 0; i < out.length; i++) {",
+	"        const x = (inp ? inp[i] : 0) * drive;",
+	"        const magnitude = Math.abs(x);",
+	"        if (!isFinite(magnitude)) { out[i] = 0; continue; }",
+	"        if (magnitude > st.env) { st.env += (magnitude - st.env) * this.attack; }",
+	"        else {",
+	"          const r = fast + (slow - fast) * st.sustain;",
+	"          st.env += (magnitude - st.env) * r;",
+	"          if (st.env < 0) { st.env = 0; }",
+	"        }",
+	"        let gain = 1;",
+	"        if (ceiling > 0 && st.env > ceiling) {",
+	"          if (st.env >= ceiling * kneeTop) { gain = ceiling / st.env; }",
+	"          else {",
+	"            const excess = 20 * Math.log10(st.env) - this.ceilingDb;",
+	"            const u = Math.max(0, Math.min(1, excess / kneeDb));",
+	"            const reduction = excess + 4 * kneeBow * u * (1 - u);",
+	"            gain = Math.pow(10, -reduction / 20);",
+	"          }",
+	"        }",
+	"        const depth = 1 - gain;",
+	"        if (depth > st.sustain) { st.sustain += (depth - st.sustain) * sustainCoef; }",
+	"        else { st.sustain += (depth - st.sustain) * slow; }",
+	"        const safe = magnitude > ceiling ? ceiling / magnitude : 1;",
+	"        gain = Math.min(gain, safe);",
+	"        let y = x * gain;",
+	"        if (y > ceiling) { y = ceiling; } else if (y < -ceiling) { y = -ceiling; }",
+	"        out[i] = y;",
+	"      }",
+	"    }",
+	"    return true;",
+	"  }",
+	"}",
+	"registerProcessor('jawnos-fet', JawnosFetProcessor);"
+].join('\n');
 
-function studioEffectLimiter(ctx, name) {
-	var fx = studioEffectShell(ctx, name || 'limiter');
-	var comp = ctx.createDynamicsCompressor();
-	comp.ratio.value = 20;
-	comp.knee.value = 0;
-	comp.attack.value = 0.002;
-	fx.input.connect(comp).connect(fx.wet);
-	// The slider is the ceiling, so a higher slider limits less and plays louder.
-	fx.setters['ceiling'] = function (v) { comp.threshold.value = studioEffectNatural(fx.name, 'ceiling', v); };
-	fx.setters['release'] = function (v) { comp.release.value = studioEffectNatural(fx.name, 'release', v) / 1000; };
-	fx.set('ceiling', 85);
-	fx.set('release', 40);
-	return fx;
+// One module per context: two inserts of the same family share the load, and
+// the promise is cached on the context so the processor name is registered
+// once. A failed load leaves the caller's synchronous fallback in place.
+function studioFetWorkletReady(ctx) {
+	if (!ctx || !ctx.audioWorklet) { return null; }
+	if (ctx.jawnosFetWorklet) { return ctx.jawnosFetWorklet; }
+	var url;
+	try {
+		url = URL.createObjectURL(new Blob([studioFetWorkletSource], { type: 'application/javascript' }));
+	}
+	catch (e) {
+		return null;
+	}
+	ctx.jawnosFetWorklet = ctx.audioWorklet.addModule(url).then(
+		function () { try { URL.revokeObjectURL(url); } catch (e) {} return true; },
+		function () { return false; }
+	);
+	return ctx.jawnosFetWorklet;
 }
 
-// A maximiser is the limiter with loudness make-up and a hard ceiling: the
-// compressor catches the peaks, the shaper guarantees the ceiling.
-function studioMaximizerCurve(ceiling) {
+// The fallback's hard ceiling: unity below the ceiling, flat at it above. The
+// WaveShaper's domain is -1..1, so the ceiling is also its endpoint.
+function studioFetCeilingCurve(ceiling) {
 	var n = 4096;
 	var curve = new Float32Array(n);
-	var scale = Math.tanh(1 / ceiling);
 	for (var i = 0; i < n; i++) {
 		var x = (i * 2) / (n - 1) - 1;
-		curve[i] = ceiling * Math.tanh(x / ceiling) / scale;
+		curve[i] = Math.max(-ceiling, Math.min(ceiling, x));
 	}
 	return curve;
 }
 
-function studioEffectMaximizer(ctx, name) {
-	var fx = studioEffectShell(ctx, name || 'master_maximizer');
+function studioEffectFet(ctx, name, maximizer) {
+	var fx = studioEffectShell(ctx, name || (maximizer ? 'maximizer' : 'limiter'));
+	var state = {
+		ceiling: -6,
+		release: maximizer ? 0.1 : 0.06,
+		drive: 0
+	};
+	// Synchronous fallback: a 20:1 compressor plus a hard ceiling. It has no
+	// program-dependent release and no soft knee; the worklet below has both.
+	var makeup = ctx.createGain();
 	var comp = ctx.createDynamicsCompressor();
 	comp.ratio.value = 20;
 	comp.knee.value = 0;
-	comp.attack.value = 0.003;
-	comp.release.value = 0.2;
-	var makeup = ctx.createGain();
-	var clip = ctx.createWaveShaper();
-	var ceiling = 0.9;
-	fx.input.connect(comp).connect(makeup).connect(clip).connect(fx.wet);
+	comp.attack.value = 0.00002;
+	comp.release.value = maximizer ? 0.1 : state.release;
+	var ceilingShaper = ctx.createWaveShaper();
+	ceilingShaper.curve = studioFetCeilingCurve(Math.pow(10, state.ceiling / 20));
+	fx.input.connect(makeup).connect(comp).connect(ceilingShaper).connect(fx.wet);
+	var apply = function () {
+		var ceiling = Math.pow(10, state.ceiling / 20);
+		makeup.gain.value = Math.pow(10, state.drive / 20);
+		comp.threshold.value = state.ceiling;
+		comp.release.value = maximizer ? 0.1 : Math.max(0.001, state.release);
+		ceilingShaper.curve = studioFetCeilingCurve(ceiling);
+		if (fx.fetNode) {
+			fx.fetNode.port.postMessage({
+				ceiling: state.ceiling,
+				release: state.release,
+				drive: state.drive
+			});
+		}
+	};
+	var cancelled = false;
+	var ready = studioFetWorkletReady(ctx);
+	if (ready) {
+		ready.then(function (loaded) {
+			if (!loaded || cancelled) { return; }
+			var node;
+			try { node = new AudioWorkletNode(ctx, 'jawnos-fet'); }
+			catch (e) { return; }
+			try { fx.input.disconnect(makeup); } catch (e) {}
+			try { makeup.disconnect(); } catch (e) {}
+			try { comp.disconnect(); } catch (e) {}
+			try { ceilingShaper.disconnect(); } catch (e) {}
+			fx.input.connect(node);
+			node.connect(fx.wet);
+			fx.fetNode = node;
+			apply();
+		});
+	}
+	fx.destroy = function () {
+		cancelled = true;
+		if (fx.fetNode) {
+			try { fx.input.disconnect(fx.fetNode); } catch (e) {}
+			try { fx.fetNode.disconnect(); } catch (e) {}
+			fx.fetNode = null;
+		}
+	};
 	fx.setters['ceiling'] = function (v) {
-		var ceiling_db = studioEffectNatural(fx.name, 'ceiling', v);
-		ceiling = Math.pow(10, ceiling_db / 20);
-		comp.threshold.value = ceiling_db;
-		clip.curve = studioMaximizerCurve(ceiling);
+		state.ceiling = studioEffectNatural(fx.name, 'ceiling', v);
+		apply();
 	};
-	fx.setters['loudness'] = function (v) {
-		makeup.gain.value = Math.pow(10, (studioEffectNatural(fx.name, 'loudness', v) * 12) / 20);
-	};
-	fx.set('ceiling', 90);
-	fx.set('loudness', 20);
+	if (maximizer) {
+		fx.setters['loudness'] = function (v) {
+			var amount = studioEffectNatural(fx.name, 'loudness', v);
+			state.drive = amount * 18;
+			apply();
+		};
+		fx.set('ceiling', 90);
+		fx.set('loudness', 20);
+	}
+	else {
+		fx.setters['release'] = function (v) {
+			state.release = studioEffectNatural(fx.name, 'release', v) / 1000;
+			apply();
+		};
+		fx.set('ceiling', 85);
+		fx.set('release', 40);
+	}
 	return fx;
 }
 
+function studioEffectLimiter(ctx, name) {
+	return studioEffectFet(ctx, name || 'limiter', false);
+}
+
+// A maximizer is the same 1176 detector behind a 0..18 dB drive: `loudness` is
+// the drive, `ceiling` the hard limit, and the release is the engine's fixed
+// 0.1 s because the master rack gives it no release knob.
+function studioEffectMaximizer(ctx, name) {
+	return studioEffectFet(ctx, name || 'maximizer', true);
+}
+
 // ---- equalizer / compressor / delay / tone --------------------------------
+// The Baxandall bass/treble pair from engine/src/effect/equalizer.rs: one
+// coupled second-order section whose bass and treble corners share a feedback
+// loop, so each knob also reshapes the other arm's transition. The mid knob is
+// the separate RBJ bell. Flat settings return exact identity coefficients, so
+// the flat pedal is transparent. The coefficients are rebuilt in place when a
+// bass or treble knob moves; `createIIRFilter` is synchronous, so this does not
+// break studioInsert's contract. A browser without IIRFilterNode keeps the
+// three cheap biquads and says so here.
+function studioBaxandallCoefficients(rate, lowDb, highDb) {
+	var bass = Math.pow(10, lowDb / 20);
+	var treble = Math.pow(10, highDb / 20);
+	var corner = function (hz) { return Math.max(1, Math.min(rate * 0.49, hz)); };
+	var wLow = 2 * rate * Math.tan(Math.PI * corner(200) / rate);
+	var wHigh = 2 * rate * Math.tan(Math.PI * corner(4000) / rate);
+	// One zero per arm, at the corner scaled by that arm's plateau gain.
+	var bassZero = wLow * bass;
+	var trebleZero = wHigh;
+	// The shared feedback loop shifts the two poles by the bass/treble balance,
+	// keeping their product so the plateaus stay exactly `bass` and `treble`.
+	var shift = Math.pow(bass / treble, 0.15);
+	var poleLow = wLow * shift;
+	var poleHigh = wHigh / shift;
+	var n2 = treble;
+	var n1 = trebleZero + bassZero * treble;
+	var n0 = bassZero * trebleZero;
+	var d1 = poleLow + poleHigh;
+	var d0 = poleLow * poleHigh;
+	// Bilinear transform: s = 2*rate*(1 - z^-1)/(1 + z^-1).
+	var k = 2 * rate;
+	var b0 = n2 * k * k + n1 * k + n0;
+	var b1 = -2 * n2 * k * k + 2 * n0;
+	var b2 = n2 * k * k - n1 * k + n0;
+	var a0 = k * k + d1 * k + d0;
+	var a1 = -2 * k * k + 2 * d0;
+	var a2 = k * k - d1 * k + d0;
+	if (!isFinite(a0) || Math.abs(a0) < 1e-12) { return null; }
+	var feedforward = [b0 / a0, b1 / a0, b2 / a0];
+	var feedback = [1, a1 / a0, a2 / a0];
+	for (var i = 0; i < 3; i++) {
+		if (!isFinite(feedforward[i]) || !isFinite(feedback[i])) { return null; }
+	}
+	return { feedforward: feedforward, feedback: feedback };
+}
 
 function studioEffectEqualizer(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'equalizer');
-	var low = ctx.createBiquadFilter();
-	low.type = 'lowshelf';
-	low.frequency.value = 200;
 	var mid = ctx.createBiquadFilter();
 	mid.type = 'peaking';
 	mid.frequency.value = 1000;
 	mid.Q.value = 1;
-	var high = ctx.createBiquadFilter();
-	high.type = 'highshelf';
-	high.frequency.value = 4000;
-	fx.input.connect(low).connect(mid).connect(high).connect(fx.wet);
-	fx.setters['low'] = function (v) { low.gain.value = studioEffectNatural(fx.name, 'low', v); };
-	fx.setters['mid'] = function (v) { mid.gain.value = studioEffectNatural(fx.name, 'mid', v); };
-	fx.setters['high'] = function (v) { high.gain.value = studioEffectNatural(fx.name, 'high', v); };
+	var state = { low: 0, mid: 0, high: 0 };
+	var coupled = null;
+	var lowShelf = null;
+	var highShelf = null;
+	var canIIR = (typeof ctx.createIIRFilter === 'function');
+	if (canIIR) {
+		coupled = ctx.createIIRFilter([1, 0, 0], [1, 0, 0]);
+		fx.input.connect(coupled).connect(mid).connect(fx.wet);
+	}
+	else {
+		// No IIRFilterNode: the cheap approximation, three independent filters.
+		lowShelf = ctx.createBiquadFilter();
+		lowShelf.type = 'lowshelf';
+		lowShelf.frequency.value = 200;
+		highShelf = ctx.createBiquadFilter();
+		highShelf.type = 'highshelf';
+		highShelf.frequency.value = 4000;
+		fx.input.connect(lowShelf).connect(highShelf).connect(mid).connect(fx.wet);
+	}
+	var design = function () {
+		if (!canIIR) {
+			lowShelf.gain.value = state.low;
+			highShelf.gain.value = state.high;
+			return;
+		}
+		var coefficients = studioBaxandallCoefficients(ctx.sampleRate, state.low, state.high);
+		if (!coefficients) { return; }
+		var next;
+		try { next = ctx.createIIRFilter(coefficients.feedforward, coefficients.feedback); }
+		catch (e) { return; }
+		try { fx.input.disconnect(coupled); } catch (e) {}
+		try { coupled.disconnect(mid); } catch (e) {}
+		fx.input.connect(next);
+		next.connect(mid);
+		coupled = next;
+	};
+	fx.setters['low'] = function (v) {
+		var db = studioEffectNatural(fx.name, 'low', v);
+		if (db === state.low) { return; }
+		state.low = db;
+		design();
+	};
+	fx.setters['mid'] = function (v) {
+		state.mid = studioEffectNatural(fx.name, 'mid', v);
+		mid.gain.value = state.mid;
+	};
+	fx.setters['high'] = function (v) {
+		var db = studioEffectNatural(fx.name, 'high', v);
+		if (db === state.high) { return; }
+		state.high = db;
+		design();
+	};
 	fx.set('low', 50);
 	fx.set('mid', 50);
 	fx.set('high', 50);
 	return fx;
 }
 
+// The MXR Dyna Comp: a CA3080 OTA with a fast attack, a slow release and the
+// level-dependent squash no fixed-ratio compressor has. WebAudio's
+// DynamicsCompressor supplies the four contract knobs (threshold, ratio, attack,
+// release, knee); the tanh WaveShaper is the OTA's finite output swing, and the
+// dry/wet mix is the pedal's parallel blend. The extra slope the OTA's control
+// current adds at high level (the engine's SQUASH term) is the one part a
+// node-graph compressor cannot follow; engine/src/effect.rs is the reference.
 function studioEffectCompressor(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'compressor');
 	var comp = ctx.createDynamicsCompressor();
+	var shaper = ctx.createWaveShaper();
+	shaper.curve = studioTanhCurve();
 	var wet = ctx.createGain();
 	var dry = ctx.createGain();
-	fx.input.connect(comp).connect(wet).connect(fx.wet);
+	fx.input.connect(comp).connect(shaper).connect(wet).connect(fx.wet);
 	fx.input.connect(dry).connect(fx.wet);
 	fx.setters['thresh'] = function (v) { comp.threshold.value = studioEffectNatural(fx.name, 'thresh', v); };
 	fx.setters['attack'] = function (v) { comp.attack.value = Math.max(0.001, studioEffectNatural(fx.name, 'attack', v) / 1000); };
@@ -643,17 +1103,50 @@ function studioEffectCompressor(ctx, name) {
 	return fx;
 }
 
+// The Boss DM-2: a BBD line with an NE570-style compander and clock-dependent
+// bandwidth. The engine's encoder/expander and its clock feedthrough need an
+// AudioWorklet; the node graph keeps the input compressor, the 1.5 s DelayNode
+// and the feedback lowpass whose corner follows the delay time, which is the
+// DM-2's darkening repeat. The wet path's first sample lands at `time` (the
+// DelayNode's own delay); WebAudio's compressor has a few milliseconds of
+// look-ahead the engine's feed-forward encoder does not, and that is the
+// documented difference.
+function studioDm2Bandwidth(seconds) {
+	var time = Math.max(0.001, seconds);
+	return Math.max(700, Math.min(8000, 8000 * Math.sqrt(0.02 / time)));
+}
+
 function studioEffectDelay(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'delay');
-	var delay = ctx.createDelay(2.0);
+	var inputHP = ctx.createBiquadFilter();
+	inputHP.type = 'highpass';
+	inputHP.frequency.value = 20;
+	inputHP.Q.value = 0.707;
+	var comp = ctx.createDynamicsCompressor();
+	comp.threshold.value = -30;
+	comp.knee.value = 0;
+	comp.ratio.value = 2;
+	comp.attack.value = 0.005;
+	comp.release.value = 0.08;
+	var delay = ctx.createDelay(1.5);
+	var feedbackLP = ctx.createBiquadFilter();
+	feedbackLP.type = 'lowpass';
+	feedbackLP.frequency.value = 8000;
+	feedbackLP.Q.value = 0.707;
 	var feedback = ctx.createGain();
 	var wet = ctx.createGain();
 	var dry = ctx.createGain();
+	fx.input.connect(inputHP).connect(comp).connect(delay);
+	delay.connect(wet).connect(fx.wet);
+	delay.connect(feedbackLP).connect(feedback).connect(delay);
 	fx.input.connect(dry).connect(fx.wet);
-	fx.input.connect(delay).connect(wet).connect(fx.wet);
-	delay.connect(feedback).connect(delay);
 	dry.gain.value = 0.7;
-	fx.setters['time'] = function (v) { delay.delayTime.value = studioEffectNatural(fx.name, 'time', v); };
+	var timeValue = 0.35;
+	var applyTime = function () {
+		delay.delayTime.value = timeValue;
+		feedbackLP.frequency.value = studioDm2Bandwidth(timeValue);
+	};
+	fx.setters['time'] = function (v) { timeValue = studioEffectNatural(fx.name, 'time', v); applyTime(); };
 	fx.setters['feedback'] = function (v) { feedback.gain.value = studioEffectNatural(fx.name, 'feedback', v); };
 	fx.setters['vol'] = function (v) { wet.gain.value = studioEffectNatural(fx.name, 'vol', v); };
 	fx.set('time', 35);
@@ -662,6 +1155,12 @@ function studioEffectDelay(ctx, name) {
 	return fx;
 }
 
+// The channel strip's own three-band tone control. The exact passive FMV
+// network is a 5x5 nodal solve at the block edge in the engine (ToneStack in
+// engine/src/effect.rs), where the three pots load one another the way the
+// circuit does. The browser keeps the three-biquad approximation below: the
+// exact interaction needs an AudioWorklet, which is the remaining mirror work
+// the pedal audit names.
 function studioEffectTone(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'tone');
 	var gain = ctx.createGain();
@@ -1083,6 +1582,61 @@ function studioEffectSynth(ctx, name) {
 	return fx;
 }
 
+// ---- master graphic equalizer ----------------------------------------------
+// The master rack's graphic EQ: ten peaking bands on the octave centres, Q 1.4,
+// each knob -12..+12 dB. `master_eq` keeps the track equalizer's kind in the
+// alias table, so the contract's natural-unit mapping (dB) still applies to the
+// three old names; those are now shortcuts onto 125 Hz, 1 kHz and 8 kHz so an
+// old song lands on the right bands. The builder is registered under its exact
+// name in studioEffectBuilders (not its alias kind), so studioInsert(ctx,
+// 'master_eq') returns this one rather than the track's Baxandall equalizer.
+var studioMasterEqBands = [
+	{ control: 'b32',  hz: 32 },
+	{ control: 'b64',  hz: 64 },
+	{ control: 'b125', hz: 125 },
+	{ control: 'b250', hz: 250 },
+	{ control: 'b500', hz: 500 },
+	{ control: 'b1k',  hz: 1000 },
+	{ control: 'b2k',  hz: 2000 },
+	{ control: 'b4k',  hz: 4000 },
+	{ control: 'b8k',  hz: 8000 },
+	{ control: 'b16k', hz: 16000 }
+];
+
+function studioMasterEqDb(value) {
+	return -12 + studioEffectClamp(value, 0, 100) / 100 * 24;
+}
+
+function studioEffectMasterEq(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'master_eq');
+	var bands = {};
+	var chain = [];
+	studioMasterEqBands.forEach(function (band) {
+		var filter = ctx.createBiquadFilter();
+		filter.type = 'peaking';
+		filter.frequency.value = Math.min(band.hz, ctx.sampleRate * 0.49);
+		filter.Q.value = 1.4;
+		bands[band.control] = filter;
+		chain.push(filter);
+	});
+	var node = fx.input;
+	chain.forEach(function (filter) { node.connect(filter); node = filter; });
+	node.connect(fx.wet);
+	var setBand = function (control, v) {
+		bands[control].gain.value = studioMasterEqDb(v);
+	};
+	studioMasterEqBands.forEach(function (entry) {
+		fx.setters[entry.control] = function (v) { setBand(entry.control, v); };
+	});
+	// The contract's three old names, each a shortcut onto a band.
+	var legacy = { low: 'b125', mid: 'b1k', high: 'b8k' };
+	Object.keys(legacy).forEach(function (control) {
+		fx.setters[control] = function (v) { setBand(legacy[control], v); };
+	});
+	studioMasterEqBands.forEach(function (entry) { fx.set(entry.control, 50); });
+	return fx;
+}
+
 // ---- the dispatch table ----------------------------------------------------
 
 // Every name the contract (and the old song files) can ask for, mapped to the
@@ -1135,7 +1689,11 @@ var studioEffectBuilders = {
 	equalizer: studioEffectEqualizer,
 	tone: studioEffectTone,
 	stereowidener: studioEffectStereoWidener,
-	synth: studioEffectSynth
+	synth: studioEffectSynth,
+	// The master rack's ten-band graphic EQ is its own builder, under its exact
+	// wire name; the alias table still maps it to the track equalizer's kind for
+	// the contract's natural units.
+	master_eq: studioEffectMasterEq
 };
 
 // The canonical kind behind a name, so an insert added from the shelf
@@ -1145,7 +1703,17 @@ function studioEffectKind(name) {
 }
 
 function studioEffectBuilder(name) {
-	return studioEffectBuilders[studioEffectKind(name)] || null;
+	// An exact builder name wins over the alias kind (the master Eq has its own
+	// builder but shares the equalizer kind for its natural units). `hasOwnProperty`
+	// keeps Object.prototype names out of the lookup.
+	if (Object.prototype.hasOwnProperty.call(studioEffectBuilders, name)) {
+		return studioEffectBuilders[name];
+	}
+	var kind = studioEffectKind(name);
+	if (Object.prototype.hasOwnProperty.call(studioEffectBuilders, kind)) {
+		return studioEffectBuilders[kind];
+	}
+	return null;
 }
 
 // The label and controls the server's effect table gives a name, if any.
