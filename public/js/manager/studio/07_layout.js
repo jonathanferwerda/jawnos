@@ -1290,6 +1290,8 @@ var studioRemoteStateBusy = false;
 var studioRemoteQuiet = false;
 var studioRemoteRestoring = false;
 var studioRemoteCommandTimers = {};
+var studioRemoteMonitorCurrent = '';
+var studioRemoteOverlayQueued = false;
 
 function studioRemoteText(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
@@ -1378,6 +1380,73 @@ function studioRemoteOptionEnsure(target, label) {
 	if (!found) { $('<option>').val(target).text(label || target).appendTo(picker); }
 }
 
+// ---- the controlled machine's own output -----------------------------------
+// A monitor is not a stream to this tablet: it is the speaker, headphone jack
+// or Bluetooth sink the controlled machine plays through. The list and the
+// write belong to that machine, exactly as the Sound app sets its default.
+function studioRemoteMonitorPickerShow(show) {
+	var group = $('#studio_remote_monitor_picker');
+	if (!group.length) { return; }
+	if (show) { group.removeAttr('hidden'); }
+	else { group.attr('hidden', 'hidden'); }
+	$('#studio_remote_monitor').prop('disabled', !show);
+}
+
+// Reloading keeps the target's remembered output selected, so re-entering
+// remote mode shows the monitor that machine was last heard through.
+function studioRemoteMonitorLoad() {
+	var target = studioRemoteTarget;
+	if (!target || !$('#studio_remote_monitor').length) { studioRemoteMonitorPickerShow(false); return false; }
+	studioRemoteMonitorPickerShow(true);
+	$.ajax({
+		url: '/manager/studio/remote_devices',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function (reply) {
+			if (studioRemoteTarget !== target || !$('#studio_remote_monitor').length) { return; }
+			if (!reply || reply.ok !== true) { return; }
+			var current = $('#studio_remote_monitor');
+			current.empty();
+			$.each(reply.outputs || [], function (i, output) {
+				var id = String((output && output.id) || '');
+				if (!id) { return; }
+				$('<option>').val(id).text(String(output.label || id)).appendTo(current);
+			});
+			studioRemoteMonitorCurrent = String(reply.current || '');
+			if (studioRemoteMonitorCurrent) { current.val(studioRemoteMonitorCurrent); }
+		}
+	});
+	return true;
+}
+
+// The chosen output is the target's default: this machine's own hardware is
+// never touched by a controller's picker.
+function studioRemoteMonitorPick(id) {
+	var target = studioRemoteTarget;
+	if (!target || !id) { return false; }
+	$.ajax({
+		url: '/manager/studio/remote_device',
+		type: 'POST',
+		dataType: 'json',
+		cache: false,
+		data: { target: target, id: String(id) },
+		success: function (reply) {
+			if (studioRemoteTarget !== target) { return; }
+			if (!reply || reply.ok !== true) { $('#studio_remote_monitor').val(studioRemoteMonitorCurrent); return; }
+			studioRemoteMonitorCurrent = String(reply.current || id);
+			$('#studio_remote_monitor').val(studioRemoteMonitorCurrent);
+		},
+		error: function () { $('#studio_remote_monitor').val(studioRemoteMonitorCurrent); }
+	});
+	return true;
+}
+
+$(document).on('change', '#studio_remote_monitor', function () {
+	studioRemoteMonitorPick(String($(this).val() || ''));
+});
+
 function studioRemoteBadge() {
 	var status = $('#studio_remote_status');
 	if (!status.length) { return; }
@@ -1455,6 +1524,7 @@ function studioRemoteTargetSet(target, from_server) {
 		$('#studio_remote_machine').val(target);
 		studioRemoteLocalSilence();
 		studioRemoteBadge();
+		studioRemoteMonitorLoad();
 		studioRemotePollStart();
 		studioRemoteStateLoad();
 		return;
@@ -1463,6 +1533,8 @@ function studioRemoteTargetSet(target, from_server) {
 	studioRemotePollStop();
 	studioRemoteCommandsClear();
 	$('#studio_remote_machine').val('');
+	studioRemoteMonitorPickerShow(false);
+	studioRemoteOverlayClear();
 	studioRemoteBadge();
 	studioRemoteLocalRestore();
 	if (!from_server) { studioRemotePublishSoon(); }
@@ -1585,7 +1657,10 @@ function studioRemoteStateBuild() {
 			pan: studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').first().val(), 50),
 			mute: (mixer[ch] && mixer[ch].mute) ? 1 : 0,
 			solo: (mixer[ch] && mixer[ch].solo) ? 1 : 0,
-			input: input
+			input: input,
+			// The controller draws the arrangement in these colours; a peer that
+			// predates the field still falls back to its own mirror row.
+			colour: (typeof studioTrackColour === 'function') ? studioTrackColour(ch) : ''
 		});
 	});
 	// Clips are bounded: a controller mirrors the count and the song clock, not
@@ -1669,6 +1744,131 @@ $(document).on('input change', '#studio_bpm, #studio_signature', function () {
 $(document).on('click', '#studio_save', function () {
 	studioRemotePublishSoon();
 });
+
+// ---- the peer's arrangement, drawn over this window's timeline -------------
+// The state already carries the target's clips and transport position, so the
+// controller shows the arrangement rather than only the song. The overlay is a
+// mirror: it takes no pointer, and nothing here seeks, drags, trims or splits.
+// It is a separate canvas over the viewer, so the local lanes are untouched.
+function studioRemoteOverlayCanvas() {
+	var canvas = document.getElementById('studio_remote_overlay');
+	var viewer = document.getElementById('studio_viewer');
+	var panel = document.getElementById('studio_tracks_panel');
+	if (!canvas || !viewer || !panel || !viewer.getBoundingClientRect) { return null; }
+	var box = viewer.getBoundingClientRect();
+	var anchor = panel.getBoundingClientRect();
+	// The viewer scrolls; the overlay is anchored to the panel and sized to the
+	// viewer's viewport, so a paint reads the lanes in the same box it draws in.
+	canvas.style.left = (box.left - anchor.left) + 'px';
+	canvas.style.top = (box.top - anchor.top) + 'px';
+	canvas.style.width = box.width + 'px';
+	canvas.style.height = box.height + 'px';
+	if (typeof studioFitCanvas === 'function') { studioFitCanvas(canvas); }
+	else {
+		canvas.width = canvas.clientWidth || 300;
+		canvas.height = canvas.clientHeight || 60;
+	}
+	return { canvas: canvas, viewer: viewer, box: box };
+}
+
+// The target's own colour for a track, falling back to the mirror row's when an
+// older peer publishes no colour with its state.
+function studioRemoteOverlayColour(state, ch) {
+	var tracks = (state && state.tracks) || [];
+	for (var i = 0; i < tracks.length; i++) {
+		if (studioRemoteWhole(tracks[i] && tracks[i].index) !== ch) { continue; }
+		var picked = (typeof studioHexColour === 'function') ? studioHexColour(String(tracks[i].colour || '')) : '';
+		if (picked) { return picked; }
+	}
+	return (typeof studioTrackColour === 'function') ? studioTrackColour(ch) : '#145abe';
+}
+
+function studioRemoteOverlayClear() {
+	var canvas = document.getElementById('studio_remote_overlay');
+	if (!canvas || !canvas.getContext) { return false; }
+	var ctx = canvas.getContext('2d');
+	if (ctx) { ctx.clearRect(0, 0, canvas.width, canvas.height); }
+	return true;
+}
+
+function studioRemoteOverlayPaint() {
+	var view = studioRemoteOverlayCanvas();
+	if (!view || !studioRemoteTarget) { return false; }
+	var canvas = view.canvas, viewer = view.viewer, box = view.box;
+	var ctx = canvas.getContext('2d');
+	if (!ctx) { return false; }
+	var w = canvas.width, h = canvas.height;
+	ctx.clearRect(0, 0, w, h);
+
+	var state = studioRemoteLastState || {};
+	var lane = document.querySelector('#studio_viewer canvas.track');
+	if (!lane) { return false; }
+	// Every lane shares the ruler's scale, so one lane's rect maps a song time to
+	// the lane column; the overlay is that column plus its own left offset.
+	var laneLeft = lane.getBoundingClientRect().left - box.left;
+
+	var byTrack = {};
+	$.each(state.clips || [], function (i, clip) {
+		if (!clip) { return; }
+		var ch = studioRemoteWhole(clip.track);
+		if (!ch) { return; }
+		if (!byTrack[ch]) { byTrack[ch] = []; }
+		byTrack[ch].push(clip);
+	});
+
+	$('#studio_viewer .studio_track').each(function () {
+		var ch = studioRemoteWhole($(this).attr('data-channel'));
+		var clips = byTrack[ch];
+		if (!ch || !clips || !clips.length) { return; }
+		var rect = this.getBoundingClientRect();
+		var top = rect.top - box.top;
+		var laneH = Math.max(2, rect.height - 6);
+		var colour = studioRemoteOverlayColour(state, ch);
+		var fill = (typeof studioColourRgba === 'function') ? studioColourRgba(colour, 0.5) : colour;
+		var edge = (typeof studioColourRgba === 'function') ? studioColourRgba(colour, 0.9) : colour;
+		$.each(clips, function (i, clip) {
+			var x = laneLeft + studioTimelineXAt(lane, studioKnobNumber(clip.start, 0));
+			var cw = Math.max(2, studioTimelineWidth(lane, studioKnobNumber(clip.length, 0)));
+			if (x > w || (x + cw) < laneLeft) { return; }
+			ctx.fillStyle = fill;
+			ctx.fillRect(x, top + 3, cw, laneH);
+			ctx.strokeStyle = edge;
+			ctx.lineWidth = 1;
+			ctx.strokeRect(x + 0.5, top + 3.5, Math.max(1, cw - 1), Math.max(1, laneH - 1));
+		});
+	});
+
+	// The playhead is the target's position, not this window's: it moves with
+	// the 500 ms poll and never seeks the local transport.
+	var pos = studioKnobNumber((state.transport || {}).position, 0);
+	if (pos > 0) {
+		var px = laneLeft + studioTimelineXAt(lane, pos);
+		if (px >= laneLeft && px <= w) {
+			var style = window.getComputedStyle ? window.getComputedStyle(canvas) : null;
+			var accent = style ? String(style.getPropertyValue('--accent') || '').trim() : '';
+			ctx.strokeStyle = accent || '#145abe';
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			ctx.moveTo(px, 0);
+			ctx.lineTo(px, h);
+			ctx.stroke();
+		}
+	}
+	return true;
+}
+
+// Scrolling and resizing move the viewer under a stationary owner: one frame
+// after either, the mirror is painted in the new box.
+function studioRemoteOverlayQueue() {
+	if (studioRemoteOverlayQueued || !studioRemoteTarget) { return; }
+	studioRemoteOverlayQueued = true;
+	var run = function () {
+		studioRemoteOverlayQueued = false;
+		if (studioRemoteTarget) { studioRemoteOverlayPaint(); }
+	};
+	if (window.requestAnimationFrame) { window.requestAnimationFrame(run); }
+	else { window.setTimeout(run, 16); }
+}
 
 // ---- the controller paints the peer's state -------------------------------
 
@@ -1786,6 +1986,9 @@ function studioRemoteRender(state) {
 	if (state.master && state.master.length && typeof studioMasterRestore === 'function') {
 		studioMasterRestore(state.master);
 	}
+	// The arrangement mirror follows every poll: clips in the target's colours
+	// and a playhead at the target's position, drawn over, never into, the lanes.
+	studioRemoteOverlayPaint();
 	return true;
 }
 
@@ -1992,6 +2195,17 @@ document.addEventListener('mousedown', studioRemoteInterceptPointer, true);
 document.addEventListener('touchstart', studioRemoteInterceptPointer, true);
 document.addEventListener('keydown', studioRemoteInterceptKey, true);
 
+// The viewer is the mirror's own scroller; a scroll or a resize moves the lanes
+// under a stationary overlay, so one paint restores their alignment.
+document.addEventListener('scroll', function (event) {
+	var target = event.target;
+	if (!studioRemoteTarget || !target || target.id !== 'studio_viewer') { return; }
+	studioRemoteOverlayQueue();
+}, { capture: true, passive: true });
+window.addEventListener('resize', function () {
+	if (studioRemoteTarget) { studioRemoteOverlayQueue(); }
+});
+
 // ---- the driven machine applies a command ---------------------------------
 
 function studioRemoteApply(command, payload) {
@@ -2176,6 +2390,8 @@ function studioRemoteApplyCommand(command, payload) {
 // the window's own close button.
 $(document).on('click', '.studio_close_button', function () {
 	studioRemoteTimersStop();
+	studioRemoteMonitorPickerShow(false);
+	studioRemoteOverlayClear();
 	studioRemoteTarget = '';
 	studioRemoteLocalSnapshot = null;
 	studioRemoteLocalSong = null;

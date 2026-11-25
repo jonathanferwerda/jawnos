@@ -171,6 +171,12 @@
 			<select id="studio_remote_machine" class="studio_remote_machine" hint="<%= &subs::ui('Choose the machine this Studio controls') %>">
 				<option value=""><%= &subs::ui('This machine') %></option>
 			</select>
+			<%# The monitor is the controlled machine's own speaker, jack or sink,
+			   not a stream to this tablet. Hidden while this window drives itself. %>
+			<span id="studio_remote_monitor_picker" class="studio_remote_monitor_picker" role="group" aria-label="<%= &subs::ui('Monitor output') %>" hidden>
+				<label class="studio_remote_label" for="studio_remote_monitor"><%= &subs::ui('Monitor') %></label>
+				<select id="studio_remote_monitor" class="studio_remote_monitor" hint="<%= &subs::ui('Choose the output the controlled machine is monitored on') %>"></select>
+			</span>
 			<span id="studio_remote_status" class="studio_remote_status" role="status" aria-live="polite"></span>
 		</span>
 		<%# One button for the DAW-informed arrangement: transport across the top,
@@ -264,6 +270,10 @@
 			<% } %>
 			<div id="studio_selection_overlay" class="studio_selection_overlay" aria-hidden="true"></div>
 		</div>
+		<%# A controller paints the chosen peer's clips and playhead here. It
+		   sits over the viewer and takes no pointer, so the mirror is
+		   read-only; the local timeline is untouched when no peer is chosen. %>
+		<canvas id="studio_remote_overlay" class="studio_remote_overlay" aria-hidden="true"></canvas>
 		<div id="studio_track_container"></div>
 	</div>
 	<div id="studio_mixer" class="studio_panel">

@@ -3311,4 +3311,100 @@ sub action_44041 {
 	$c->render(json => { ok => 1, command => $command });
 }
 
+# ---- the controlled machine's physical output ------------------------------
+#
+# A Studio monitor is not a browser stream: it is the speaker, headphone jack
+# or Bluetooth sink the controlled machine's own Studio comes out of. The list
+# and the write are that machine's, exactly as the Sound app sets its default
+# output, so a controller never moves its own hardware.
+sub studio_remote_devices_read {
+	my $status = eval { &subs::sound_status() } || {};
+	$status = {} unless ref $status eq 'HASH';
+	my @outputs;
+	foreach my $device ( @{ $status->{'outputs'} || [] } ) {
+		next unless ref $device eq 'HASH' && defined $device->{'id'} && length $device->{'id'};
+		push @outputs, {
+			id => $device->{'id'},
+			label => ($device->{'name'} || $device->{'id'}),
+			default => ($device->{'default'} ? 1 : 0)
+		};
+	}
+	# The person's choice is kept as a Studio setting on the machine that owns
+	# the output, so re-entering remote mode shows it even if the sound backend
+	# does not report a default between sessions.
+	my $stored = &subs::setting_grabber({ app => 'studio', setting => 'remote_monitor' }) || '';
+	my $current = '';
+	if (defined $stored && !ref $stored && length $stored
+		&& grep { $_->{'id'} eq $stored } @outputs) {
+		$current = $stored;
+	}
+	elsif (ref $status->{'output'} eq 'HASH') {
+		$current = ($status->{'output'}->{'id'} // '');
+	}
+	return { ok => 1, outputs => \@outputs, current => $current };
+}
+
+# Choosing an output is the same write the Sound app makes: the machine's
+# default output. The setting is the memory of that choice, not a second path
+# to the hardware.
+sub studio_remote_device_set {
+	my ($id) = @_;
+	return 0 unless defined $id && !ref $id && length $id;
+	my $result = eval { &subs::sound_default('output', $id) } || {};
+	return 0 unless ref $result eq 'HASH' && $result->{'ok'};
+	&subs::setting_setter({ app => 'studio', setting => 'remote_monitor', value => $id });
+	return 1;
+}
+
+# GET /manager/studio/remote_devices
+# The controlled machine's own outputs for the Monitor picker. A machine with
+# no sound backend answers an empty list, not an error. A controller request is
+# relayed once the target is known to be active; a relayed request answers here.
+sub action_44042 {
+	my $c = shift;
+	my $body = &studio_remote_body($c);
+	my $target = &studio_remote_value($c, $body, 'target');
+	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+	if (!$remoted && defined $target && !ref $target && length $target && $target ne 'local') {
+		my $peer = &studio_remote_peer($target);
+		unless ($peer) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' }, status => 409);
+			return;
+		}
+		$c->req->query_params->append(target => $target) unless defined $c->param('target');
+		$c->param('remote_uuid' => $peer->{'uuid'});
+		$c->render(json => &studio_remote_relay($c));
+		return;
+	}
+	$c->render(json => &studio_remote_devices_read());
+}
+
+# POST /manager/studio/remote_device
+# Choose the output the controlled machine's Studio is monitored through. Only
+# an id the target's own device list carries can reach its sound backend.
+sub action_44043 {
+	my $c = shift;
+	my $body = &studio_remote_body($c);
+	my $target = &studio_remote_value($c, $body, 'target');
+	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+	my $id = &studio_remote_value($c, $body, 'id');
+	$id = '' unless defined $id && !ref $id;
+	if (!$remoted && defined $target && !ref $target && length $target && $target ne 'local') {
+		my $peer = &studio_remote_peer($target);
+		unless ($peer) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' }, status => 409);
+			return;
+		}
+		# The relay copies body and query parameters, not the values read out of
+		# a JSON body; put any that arrived only there on the query.
+		$c->req->query_params->append(target => $target) unless defined $c->param('target');
+		$c->req->query_params->append(id => $id) unless defined $c->param('id');
+		$c->param('remote_uuid' => $peer->{'uuid'});
+		$c->render(json => &studio_remote_relay($c));
+		return;
+	}
+	my $ok = &studio_remote_device_set($id);
+	$c->render(json => { ok => $ok ? 1 : 0, id => $id, current => $id });
+}
+
 1;

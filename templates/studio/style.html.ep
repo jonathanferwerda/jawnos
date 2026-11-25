@@ -921,6 +921,21 @@
 		font-size: 12px;
 		max-width: 160px;
 	}
+	/* The controlled machine's own output picker. It is absent until a peer is
+	   chosen, so the bar reads as this machine's when it drives itself. */
+	.studio_remote_monitor_picker {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 12px;
+	}
+	.studio_remote_monitor_picker[hidden] {
+		display: none;
+	}
+	.studio_remote_monitor {
+		font-size: 12px;
+		max-width: 160px;
+	}
 	.studio_remote_status {
 		display: none;
 		font-size: 12px;
@@ -935,6 +950,22 @@
 	}
 	#studio.studio_remote_controller .studio_layout_bar {
 		box-shadow: inset 0 -2px 0 var(--accent);
+	}
+	/* The target's clips and playhead are painted here. The overlay is a mirror:
+	   it sits over the lanes, takes no pointer, and is blank outside controller
+	   mode, so the local timeline is never drawn into. */
+	.studio_remote_overlay {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		z-index: 3;
+		display: none;
+	}
+	#studio.studio_remote_controller .studio_remote_overlay {
+		display: block;
 	}
 	#studio_tracks_panel {
 		display: flex;
