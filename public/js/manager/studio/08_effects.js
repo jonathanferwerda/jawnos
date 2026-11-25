@@ -351,33 +351,67 @@ function studioDistortionCurve(amount) {
 	return curve;
 }
 
-// The fuzz curve is hard clipping with the quiet part squared away: a note
-// speaks and the silence between does not, which is the gate in "gated".
-function studioFuzzCurve(drive) {
-	var n = 2048;
+// The JH-2 is a two-transistor germanium fuzz: a common-emitter stage with a
+// 68 kΩ feedback resistor from the second stage's emitter. The circuit clips
+// one half of the wave before the other (germanium's soft, low knee), and the
+// fuzz pot bypasses more of the second emitter as it turns up. The engine
+// solves the circuit's own nodes; this is the same transfer as a table, plus
+// the two coupling caps and the feedback cap's top end.
+function studioJH2Curve(fuzz) {
+	var n = 4096;
 	var curve = new Float32Array(n);
-	var k = 1 + drive * 40;
+	var drive = 3 + fuzz * 55;
+	var bias = 0.10 + 0.16 * fuzz;
+	var knee = 1.35;
+	var stage = function (x) {
+		var up = Math.exp(Math.min(20, drive * (x + bias) / knee)) - 1;
+		var down = Math.exp(Math.min(20, drive * (bias - x) / knee)) - 1;
+		return (up - down) / (1 + up + down);
+	};
+	var peak = 0;
 	for (var i = 0; i < n; i++) {
 		var x = (i * 2) / (n - 1) - 1;
-		var y = Math.tanh(x * k);
-		if (Math.abs(y) < 0.02) { y = 0; }
+		var y = stage(-stage(x) * 0.85);
 		curve[i] = y;
+		peak = Math.max(peak, Math.abs(y));
 	}
+	if (peak > 0) { for (var j = 0; j < n; j++) { curve[j] /= peak; } }
 	return curve;
 }
+var studioJH2Curves = {};
 
 function studioEffectFuzz(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'fuzz');
+	var inputHP = ctx.createBiquadFilter();
+	inputHP.type = 'highpass';
+	inputHP.frequency.value = 7;
+	inputHP.Q.value = 0.7;
 	var shaper = ctx.createWaveShaper();
 	shaper.oversample = '4x';
+	var outputHP = ctx.createBiquadFilter();
+	outputHP.type = 'highpass';
+	outputHP.frequency.value = 25;
+	outputHP.Q.value = 0.7;
 	var tone = ctx.createBiquadFilter();
 	tone.type = 'lowpass';
 	tone.frequency.value = 3000;
+	tone.Q.value = 0.8;
 	var level = ctx.createGain();
-	fx.input.connect(shaper).connect(tone).connect(level).connect(fx.wet);
-	fx.setters['gain'] = function (v) { shaper.curve = studioFuzzCurve(studioEffectNatural(fx.name, 'gain', v)); };
-	fx.setters['tone'] = function (v) { tone.frequency.value = 500 + studioEffectNatural(fx.name, 'tone', v) * 7500; };
-	fx.setters['level'] = function (v) { level.gain.value = studioEffectNatural(fx.name, 'level', v) * 1.2; };
+	fx.input.connect(inputHP).connect(shaper).connect(outputHP).connect(tone).connect(level).connect(fx.wet);
+	var curveFor = function (v) {
+		var f = studioEffectNatural(fx.name, 'gain', v);
+		var key = Math.round(f * 20) / 20;
+		if (!studioJH2Curves[key]) { studioJH2Curves[key] = studioJH2Curve(key); }
+		return studioJH2Curves[key];
+	};
+	fx.setters['gain'] = function (v) { shaper.curve = curveFor(v); };
+	// The JH-2 has no tone knob; this is the feedback-cap mod. Low is the
+	// 47 pF cap's dark end, high opens it.
+	fx.setters['tone'] = function (v) {
+		var t = studioEffectNatural(fx.name, 'tone', v);
+		tone.frequency.value = 1200 * Math.pow(6.5, t);
+	};
+	fx.setters['level'] = function (v) { level.gain.value = studioEffectNatural(fx.name, 'level', v) * 1.4; };
 	fx.set('gain', 65);
 	fx.set('tone', 45);
 	fx.set('level', 60);
@@ -400,56 +434,102 @@ function studioEffectDistortion(ctx, name) {
 }
 
 // 0 Combo (1x12), 1 Open (2x12), 2 Closed (4x12), 3 Tweed (4x10). The engine's
-// four cabinets follow this order; the names come from the palette's data.
+// four cabinets follow this order; each also chooses the valve voice that
+// suits the box (6V6 combo, 6L6 open-back, EL34 stack, tweed 4x10).
 var studioAmpCabinets = [
-	{ name: 'Combo',  highpass: 90,  lowpass: 5200, presence: 2600, presenceGain: 2 },
-	{ name: 'Open',   highpass: 75,  lowpass: 6000, presence: 3000, presenceGain: 3 },
-	{ name: 'Closed', highpass: 60,  lowpass: 4500, presence: 2200, presenceGain: 5 },
-	{ name: 'Tweed',  highpass: 110, lowpass: 4000, presence: 1800, presenceGain: 4 }
+	{ name: 'Combo',  highpass: 85,  lowpass: 5200, peak1: 2600, peak1Db: 2, peak1Q: 1.1, peak2: 1100, peak2Db: 2,   peak2Q: 1.5, reflection: 1.1, reflectionGain: 0.40, drive: 1.0, stage2: 2.2, bias: 0.050, sag: 0.12 },
+	{ name: 'Open',   highpass: 70,  lowpass: 6000, peak1: 3000, peak1Db: 3, peak1Q: 1.0, peak2: 1400, peak2Db: 1.5, peak2Q: 1.4, reflection: 1.5, reflectionGain: 0.35, drive: 0.9, stage2: 2.0, bias: 0.035, sag: 0.08 },
+	{ name: 'Closed', highpass: 55,  lowpass: 4500, peak1: 2200, peak1Db: 5, peak1Q: 0.9, peak2: 900,  peak2Db: 3,   peak2Q: 1.8, reflection: 2.2, reflectionGain: 0.50, drive: 1.2, stage2: 2.6, bias: 0.080, sag: 0.15 },
+	{ name: 'Tweed',  highpass: 95,  lowpass: 4000, peak1: 1800, peak1Db: 4, peak1Q: 0.9, peak2: 1200, peak2Db: 2,   peak2Q: 1.6, reflection: 0.9, reflectionGain: 0.45, drive: 1.1, stage2: 2.4, bias: 0.060, sag: 0.20 }
 ];
+
+// A short speaker impulse: two damped cone/box resonances, a one-pole highpass
+// and lowpass for the box, and one mic-distance reflection. It mirrors
+// engine/src/effect/amp.rs's design_cabinet; the four voices share the shape.
+function studioCabinetImpulse(ctx, cab) {
+	var rate = ctx.sampleRate;
+	var length = Math.max(64, Math.round(rate * 0.0053));
+	var buffer = ctx.createBuffer(1, length, rate);
+	var data = buffer.getChannelData(0);
+	var hpA = 1 - Math.exp(-2 * Math.PI * cab.highpass / rate);
+	var lpA = 1 - Math.exp(-2 * Math.PI * cab.lowpass / rate);
+	var p1 = 2 * Math.PI * cab.peak1 / rate;
+	var p2 = 2 * Math.PI * cab.peak2 / rate;
+	var hp = 0;
+	var lp = 0;
+	var raw = new Float32Array(length);
+	for (var i = 0; i < length; i++) {
+		var t = i / rate;
+		var x = (i === 0) ? 1 : 0;
+		x += 0.20 * Math.sin(p1 * i) * Math.exp(-t / 0.006) * (cab.peak1Db / 5);
+		x += 0.16 * Math.sin(p2 * i) * Math.exp(-t / 0.010) * (cab.peak2Db / 5);
+		hp += (x - hp) * hpA;
+		x -= hp;
+		lp += (x - lp) * lpA;
+		raw[i] = lp;
+	}
+	var delay = Math.max(1, Math.round(rate * cab.reflection / 1000));
+	for (var j = length - 1; j >= delay; j--) { raw[j] += raw[j - delay] * cab.reflectionGain; }
+	var sum = 0;
+	for (var k = 0; k < length; k++) { sum += Math.abs(raw[k]); }
+	if (sum > 0) { for (var m = 0; m < length; m++) { data[m] = raw[m] / sum; } }
+	return buffer;
+}
+
+// A single-ended valve stage: a soft knee around the grid bias, with a little
+// second harmonic so the two halves do not match.
+function studioTubeCurve(drive, bias) {
+	var n = 4096;
+	var curve = new Float32Array(n);
+	for (var i = 0; i < n; i++) {
+		var x = (i * 2) / (n - 1) - 1;
+		var y = Math.tanh(x * drive + bias) - Math.tanh(bias);
+		curve[i] = y + 0.08 * y * y;
+	}
+	return curve;
+}
 
 function studioEffectAmp(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'amp');
 	var pre = ctx.createGain();
-	var shaper = ctx.createWaveShaper();
-	shaper.curve = studioFuzzCurve(0.15);
-	shaper.oversample = '4x';
+	var stage1 = ctx.createWaveShaper();
+	stage1.curve = studioTubeCurve(1.0, 0.05);
+	stage1.oversample = '4x';
+	var stage2 = ctx.createWaveShaper();
+	stage2.curve = studioTubeCurve(0.7, -0.025);
+	stage2.oversample = '4x';
 	var bass = ctx.createBiquadFilter();
 	bass.type = 'lowshelf';
-	bass.frequency.value = 120;
+	bass.frequency.value = 220;
 	var mid = ctx.createBiquadFilter();
 	mid.type = 'peaking';
-	mid.frequency.value = 800;
+	mid.frequency.value = 1000;
 	mid.Q.value = 1;
 	var treble = ctx.createBiquadFilter();
 	treble.type = 'highshelf';
-	treble.frequency.value = 3000;
-	var hp = ctx.createBiquadFilter();
-	hp.type = 'highpass';
-	var presence = ctx.createBiquadFilter();
-	presence.type = 'peaking';
-	presence.Q.value = 0.9;
-	var lp = ctx.createBiquadFilter();
-	lp.type = 'lowpass';
+	treble.frequency.value = 3500;
+	var convolver = ctx.createConvolver();
 	var level = ctx.createGain();
-	fx.input.connect(pre).connect(shaper).connect(bass).connect(mid).connect(treble)
-		.connect(hp).connect(presence).connect(lp).connect(level).connect(fx.wet);
+	fx.input.connect(pre).connect(stage1).connect(stage2)
+		.connect(bass).connect(mid).connect(treble)
+		.connect(convolver).connect(level).connect(fx.wet);
+	var impulses = {};
+	var impulseFor = function (index) {
+		if (!impulses[index]) { impulses[index] = studioCabinetImpulse(ctx, studioAmpCabinets[index]); }
+		return impulses[index];
+	};
 	fx.setters['gain'] = function (v) {
-		// -15 dB to +15 dB around the shaper, which saturates as it is pushed
-		pre.gain.value = Math.pow(10, ((studioEffectNatural(fx.name, 'gain', v) - 0.5) * 2 * 15) / 20);
+		pre.gain.value = Math.pow(10, ((studioEffectNatural(fx.name, 'gain', v) - 0.5) * 2 * 24) / 20);
 	};
 	var shelf = function (filter, control, v) { filter.gain.value = studioEffectNatural(fx.name, control, v); };
 	fx.setters['bass'] = function (v) { shelf(bass, 'bass', v); };
 	fx.setters['mid'] = function (v) { shelf(mid, 'mid', v); };
 	fx.setters['treble'] = function (v) { shelf(treble, 'treble', v); };
 	fx.setters['cabinet'] = function (v) {
-		var cab = studioAmpCabinets[studioEffectNatural(fx.name, 'cabinet', v)] || studioAmpCabinets[0];
-		hp.frequency.value = cab.highpass;
-		presence.frequency.value = cab.presence;
-		presence.gain.value = cab.presenceGain;
-		lp.frequency.value = cab.lowpass;
+		var index = studioEffectNatural(fx.name, 'cabinet', v);
+		convolver.buffer = impulseFor(index);
 	};
-	level.gain.value = 0.7;
+	level.gain.value = 2.0;
 	fx.set('gain', 50);
 	fx.set('bass', 50);
 	fx.set('mid', 50);

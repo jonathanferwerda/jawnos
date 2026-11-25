@@ -208,7 +208,7 @@ our $studio = {
 		{ name => '808', label => '808' },
 		{ name => 'metal', label => 'Metal' }
 	],
-	# The shared effect contract (docs/studio-effects.md). `effects` is what the
+	# The shared effect contract (docs/studio-effects.md) and the circuit map (docs/pedal-audit.md). `effects` is what the
 	# rack palette offers and what the browser's studioInsert() builds; `master`
 	# is the fixed chain after the mix. A control with `options` is a dropdown,
 	# the rest are 0..100 sliders. Keep these names and their order in step with

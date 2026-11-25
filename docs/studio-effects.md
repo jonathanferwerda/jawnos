@@ -26,8 +26,8 @@ bypasses it like any pedal, and the song keeps it in the chain.
 | --- | --- | --- |
 | `reverb` | the reverb family | `mix`, `volume`, `model` |
 | `flanger` | swept comb | `rate`, `depth`, `feedback`, `mix` |
-| `fuzz` | hard, gated distortion | `gain`, `tone`, `level` |
-| `amp` | amplifier + cabinet | `gain`, `bass`, `mid`, `treble`, `cabinet` |
+| `fuzz` | germanium two-transistor fuzz (JH-2) | `gain`, `tone`, `level` |
+| `amp` | valve amp + cabinet (four voices) | `gain`, `bass`, `mid`, `treble`, `cabinet` |
 | `limiter` | peak limiter | `ceiling`, `release` |
 | `autotune` | monophonic pitch correction (JawnPitch in the UI) | `speed`, `amount`, `key`, `scale` |
 | `equalizer` | three-band tone shaping | `low`, `mid`, `high` |
@@ -35,6 +35,11 @@ bypasses it like any pedal, and the song keeps it in the chain.
 | `distortion` | existing | `drive` |
 | `delay` | existing | `time`, `feedback`, `vol` |
 | `compressor` | existing | `thresh`, `attack`, `ratio`, `release`, `knee`, `mix` |
+
+The names and controls above are the contract. **What each pedal models** —
+the real circuit, the control mapping and the honest approximation — is in
+`docs/pedal-audit.md`. Read it before changing a pedal's sound: the two sides
+share the control names, not a claim of a sample-identical circuit.
 
 ## Reverb models
 
