@@ -62,8 +62,72 @@ function studioMasterRender() {
 			else {
 				el.val(value);
 			}
+			if (el.closest('.studio_master_band').length) { studioMasterBandReadout(el); }
 		});
 	});
+	studioMasterMeterStart();
+}
+
+// ---- the graphic EQ's fader readouts ---------------------------------------
+// The contract's slider is 0..100 and the master EQ's faders are -12..+12 dB
+// (docs/studio-effects.md, "Master rack"), so each fader shows the dB it asks
+// for. The generic loop only moves the input; this keeps the label with it.
+function studioMasterBandDb(value) {
+	var n = studioEffectNumber(value);
+	if (n === null) { return ''; }
+	var db = (studioEffectClamp(n, 0, 100) - 50) * 0.24;
+	var rounded = Math.round(db * 10) / 10;
+	if (Math.abs(rounded - Math.round(rounded)) < 0.05) { rounded = Math.round(rounded); }
+	return (rounded > 0 ? '+' : '') + rounded;
+}
+
+function studioMasterBandReadout(input) {
+	var el = $(input);
+	var label = el.closest('.studio_master_band').find('.studio_master_band_db');
+	if (label.length) { label.text(studioMasterBandDb(el.val())); }
+}
+
+// ---- the rack's output meter -----------------------------------------------
+// The mixer already feeds the destination through studioAudio.masterAnalyser,
+// so the rack's twelve LEDs read that same analyser. The loop starts with the
+// first render and stops itself when the context is gone; it paints at about
+// 20 frames a second and only while the rack is on screen, so a hidden studio
+// costs one idle frame at a time.
+var studioMasterMeterFrame = 0;
+var studioMasterMeterLast = 0;
+var studioMasterMeterData = null;
+
+function studioMasterMeterPaint(analyser) {
+	var size = analyser.fftSize || 2048;
+	if (!studioMasterMeterData || studioMasterMeterData.length !== size) {
+		studioMasterMeterData = new Float32Array(size);
+	}
+	analyser.getFloatTimeDomainData(studioMasterMeterData);
+	var sum = 0;
+	for (var i = 0; i < size; i++) { sum += studioMasterMeterData[i] * studioMasterMeterData[i]; }
+	var level = Math.min(1, Math.sqrt(sum / size) * 3);
+	var lit = Math.round(level * 12);
+	$('#studio_master_meter .studio_master_led').each(function () {
+		var index = parseInt($(this).attr('data-led'), 10) || 0;
+		$(this).toggleClass('lit', index < lit);
+	});
+}
+
+function studioMasterMeterStep(now) {
+	studioMasterMeterFrame = 0;
+	var analyser = studioAudio && studioAudio.masterAnalyser;
+	if (!analyser || typeof analyser.getFloatTimeDomainData !== 'function') { return; }
+	var stamp = (typeof now === 'number') ? now : Date.now();
+	if (!studioMasterMeterLast || (stamp - studioMasterMeterLast) >= 50) {
+		studioMasterMeterLast = stamp;
+		if ($('#studio_master_meter').is(':visible')) { studioMasterMeterPaint(analyser); }
+	}
+	if (window.requestAnimationFrame) { studioMasterMeterFrame = window.requestAnimationFrame(studioMasterMeterStep); }
+}
+
+function studioMasterMeterStart() {
+	if (studioMasterMeterFrame || typeof window.requestAnimationFrame !== 'function') { return; }
+	studioMasterMeterFrame = window.requestAnimationFrame(studioMasterMeterStep);
 }
 
 // Read the rack as the window shows it, then push it into the graph.

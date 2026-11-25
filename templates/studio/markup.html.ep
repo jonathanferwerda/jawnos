@@ -298,14 +298,25 @@
 				</span>
 			<% } %>
 			<%# The mastering chain is one rack on the mixer's bus, not a pedal on a
-			   track: each block is a footswitch and its own controls. It is the last
-			   strip in the row, so it sits at the far right of the strips and scrolls
-			   with them instead of covering them. %>
+			   track: a dark chassis with a rail down each side, a level meter over
+			   the units, one numbered rack unit per effect and the graphic EQ's
+			   wide fader block. It is the last strip in the row, so it sits at the
+			   far right of the strips and scrolls with them instead of covering
+			   them. %>
 			<div id="studio_master_rack" class="studio_master_rack" hint="<%= &subs::ui('Master effects, after every track') %>">
 				<b class="studio_master_title"><%= &subs::ui('Master') %></b>
-				<% foreach my $m ( @{$gb::studio->{'master'}} ) { %>
-					<div class="studio_master_effect" effect="<%= $m->{'name'} %>">
-						<button class="studio_master_toggle hover" effect="<%= $m->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Turn this mastering effect on or off') %>"><%= &subs::ui($m->{'label'}) %></button>
+				<span id="studio_master_meter" class="studio_master_meter" aria-hidden="true">
+					<% for my $led (0 .. 11) { %>
+						<span class="studio_master_led <%= $led < 7 ? 'led_green' : ($led < 10 ? 'led_yellow' : 'led_red') %>" data-led="<%= $led %>"></span>
+					<% } %>
+				</span>
+				<% my $unit = 0; foreach my $m ( @{$gb::studio->{'master'}} ) { $unit++;
+					my $graphic = ( ($m->{'layout'} // '') eq 'graphic' ) ? 1 : 0; %>
+					<div class="studio_master_effect<%= $graphic ? ' studio_master_graphic' : '' %>" effect="<%= $m->{'name'} %>" data-unit="<%= $unit %>">
+						<span class="studio_master_unit_head">
+							<span class="studio_master_unit_no" aria-hidden="true"><%= sprintf('%02d', $unit) %></span>
+							<button class="studio_master_toggle hover" effect="<%= $m->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Turn this mastering effect on or off') %>"><%= &subs::ui($m->{'label'}) %></button>
+						</span>
 						<span class="studio_master_controls">
 							<% foreach my $c ( @{$m->{'controls'}} ) { %>
 								<% if ($c->{'options'}) { %>
@@ -317,6 +328,16 @@
 												<% $oi++; %>
 											<% } %>
 										</select>
+									</label>
+								<% } elsif ($graphic) { %>
+									<%# A graphic fader: the band name above the vertical slider and
+									   the fader's dB below it. 10_master.js keeps the readout in
+									   step with the value, because the generic loop only moves
+									   the input. %>
+									<label class="studio_master_label studio_master_band" hint="<%= &subs::ui($c->{'label'} . ' Hz band') %>">
+										<span class="studio_master_band_hz"><%= $c->{'label'} %></span>
+										<input type="range" min="0" max="100" value="50" class="studio_master_control" effect="<%= $m->{'name'} %>" control="<%= $c->{'control'} %>" aria-label="<%= $c->{'label'} %> Hz">
+										<span class="studio_master_band_db" aria-hidden="true">0</span>
 									</label>
 								<% } else { %>
 									<label class="studio_master_label"><%= &subs::ui($c->{'label'}) %>

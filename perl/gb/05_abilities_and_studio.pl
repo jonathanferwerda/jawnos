@@ -314,10 +314,20 @@ our $studio = {
 			{ control => 'attack', label => 'Attack' },
 			{ control => 'mix', label => 'Mix' }
 		] },
-		{ name => 'master_eq', label => 'Equaliser', controls => [
-			{ control => 'low', label => 'Low' },
-			{ control => 'mid', label => 'Mid' },
-			{ control => 'high', label => 'High' }
+		# A ten-band graphic equaliser, one vertical fader per octave. The
+		# control names are the contract's (`docs/studio-effects.md`); `layout`
+		# tells the template to render the wide fader block instead of knobs.
+		{ name => 'master_eq', label => 'Equaliser', layout => 'graphic', controls => [
+			{ control => 'b32',  label => '32' },
+			{ control => 'b64',  label => '64' },
+			{ control => 'b125', label => '125' },
+			{ control => 'b250', label => '250' },
+			{ control => 'b500', label => '500' },
+			{ control => 'b1k',  label => '1k' },
+			{ control => 'b2k',  label => '2k' },
+			{ control => 'b4k',  label => '4k' },
+			{ control => 'b8k',  label => '8k' },
+			{ control => 'b16k', label => '16k' }
 		] },
 		{ name => 'master_stereowidener', label => 'Stereo Widener', controls => [
 			{ control => 'width', label => 'Width' },

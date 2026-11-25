@@ -1299,58 +1299,226 @@
 		opacity: .45;
 		text-decoration: line-through;
 	}
-	/* The mastering chain: one rack on the mixer's own bus, and the strips' last
-	   child so it sits at their far right. It is a compact block that wraps and
+	/* The mastering chain: a rack on the mixer's own bus, and the strips' last
+	   child so it sits at their far right. A dark chassis with a grip rail down
+	   each side, a meter plate on top and one numbered rack unit per effect; it
 	   scrolls inside its own box instead of spilling over the strips. */
 	.studio_master_rack {
-		flex: 0 0 210px;
-		width: 210px;
+		--rack-face: #1d1f23;
+		--rack-face-top: #26282d;
+		--rack-unit: #1b1c1f;
+		--rack-edge: #34363c;
+		--rack-screw: #8d9096;
+		--rack-ink: #d3d6dc;
+		--rack-ink-dim: #9a9da4;
+		position: relative;
+		flex: 0 0 244px;
+		width: 244px;
 		align-self: stretch;
 		max-height: 100%;
 		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
-		padding: 4px;
-		border-left: 2px solid var(--line);
+		gap: 4px;
+		padding: 8px 14px 8px 14px;
+		background: linear-gradient(180deg, var(--rack-face-top), var(--rack-face) 30%, #131417);
+		border: 1px solid #0e0f11;
+		border-left: 2px solid #3c3e44;
+		border-radius: 6px;
+		box-shadow: inset 0 0 24px rgba(0, 0, 0, .7), inset 0 1px 0 rgba(255, 255, 255, .05), 0 2px 8px rgba(0, 0, 0, .45);
+		color: var(--rack-ink);
 		overflow: auto;
 	}
+	/* The grip rails: a repeated tread on each side, the way a rack's handles
+	   run the height of the chassis. They are inside the box so the scrollbar
+	   and the rounded corners do not clip them. */
+	.studio_master_rack::before,
+	.studio_master_rack::after {
+		content: "";
+		position: absolute;
+		top: 4px;
+		bottom: 4px;
+		width: 7px;
+		border-radius: 3px;
+		background: repeating-linear-gradient(180deg, #3b3d43 0 5px, #202126 5px 10px);
+		box-shadow: inset 0 0 3px rgba(0, 0, 0, .8), 0 0 2px rgba(255, 255, 255, .06);
+		pointer-events: none;
+	}
+	.studio_master_rack::before { left: 2px; }
+	.studio_master_rack::after { right: 2px; }
 	.studio_master_title {
 		flex: 0 0 auto;
-		font-size: 12px;
+		text-align: center;
+		font-size: 10px;
+		letter-spacing: .18em;
+		text-transform: uppercase;
+		color: var(--rack-ink-dim);
+		text-shadow: 0 1px 0 #000;
 	}
-	.studio_master_effect {
-		border: 1px solid var(--line);
-		border-radius: 4px;
-		padding: 2px 4px;
-		background: var(--panel);
-		color: var(--ink);
-		font-size: 11px;
+	/* The rack's output meter: one segment per LED, lit by 10_master.js from the
+	   destination analyser the mixer already feeds. */
+	.studio_master_meter {
+		flex: 0 0 auto;
+		display: flex;
+		gap: 1px;
+		height: 8px;
+		padding: 2px;
 		box-sizing: border-box;
+		background: #090a0b;
+		border: 1px solid #0d0e10;
+		border-radius: 2px;
+		box-shadow: inset 0 1px 3px rgba(0, 0, 0, .9);
 	}
+	.studio_master_led {
+		flex: 1 1 0;
+		min-width: 2px;
+		border-radius: 1px;
+		background: #1a1d1a;
+		opacity: .55;
+	}
+	.studio_master_led.lit { opacity: 1; }
+	.studio_master_led.led_green.lit { background: #43a86a; box-shadow: 0 0 4px rgba(67, 168, 106, .8); }
+	.studio_master_led.led_yellow.lit { background: #d6b24a; box-shadow: 0 0 4px rgba(214, 178, 74, .8); }
+	.studio_master_led.led_red.lit { background: #c1524a; box-shadow: 0 0 5px rgba(193, 82, 74, .85); }
+	/* One rack unit: a faceplate between two drilled rails, with a numbered
+	   header and the unit's controls below it. */
+	.studio_master_effect {
+		position: relative;
+		border: 1px solid #0d0e10;
+		border-radius: 3px;
+		padding: 3px 13px 5px 13px;
+		background: linear-gradient(180deg, var(--rack-face-top), var(--rack-unit));
+		color: var(--rack-ink);
+		font-size: 10px;
+		box-sizing: border-box;
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), inset 0 -1px 0 rgba(0, 0, 0, .6), 0 1px 2px rgba(0, 0, 0, .5);
+	}
+	.studio_master_effect::before,
+	.studio_master_effect::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		width: 9px;
+		background-color: #17181b;
+		background-image:
+			radial-gradient(circle at 50% 4px, var(--rack-screw) 0 1.3px, #060708 1.7px, transparent 2px),
+			radial-gradient(circle at 50% calc(100% - 4px), var(--rack-screw) 0 1.3px, #060708 1.7px, transparent 2px);
+		background-repeat: no-repeat;
+		border-radius: 2px;
+		pointer-events: none;
+	}
+	.studio_master_effect::before { left: 1px; }
+	.studio_master_effect::after { right: 1px; }
 	.studio_master_effect.studio_master_on {
-		background: var(--accent-soft, var(--panel-2));
-		border-color: var(--accent-line, var(--accent));
+		background: linear-gradient(180deg, #2e3330, #202521);
+		border-color: #4d7a5e;
+		box-shadow: inset 0 0 10px rgba(67, 168, 106, .14), 0 1px 2px rgba(0, 0, 0, .5);
+	}
+	.studio_master_unit_head {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+	}
+	.studio_master_unit_no {
+		flex: 0 0 auto;
+		font-size: 8px;
+		font-variant-numeric: tabular-nums;
+		color: #6f727a;
+		text-shadow: 0 1px 0 #000;
 	}
 	.studio_master_toggle {
-		font-size: 11px;
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		text-align: left;
+		font-size: 10px;
+		letter-spacing: .03em;
+		color: var(--rack-ink);
+		background: linear-gradient(180deg, #3b3d43, #26282c);
+		border: 1px solid #101113;
+		border-radius: 3px;
+		padding: 2px 6px;
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 1px 1px rgba(0, 0, 0, .6);
+	}
+	/* The footswitch's lamp sits in the button, dark until the unit is on. */
+	.studio_master_toggle::before {
+		content: "";
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		margin-right: 5px;
+		border-radius: 50%;
+		vertical-align: middle;
+		background: #3a2020;
+		box-shadow: inset 0 0 2px #000, 0 0 0 1px #0c0d0e;
+	}
+	.studio_master_effect.studio_master_on .studio_master_toggle::before {
+		background: #5fd389;
+		box-shadow: 0 0 6px rgba(95, 211, 137, .9), 0 0 0 1px #0c0d0e;
 	}
 	.studio_master_controls {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 2px 6px;
+		gap: 3px 8px;
+		margin-top: 3px;
 	}
 	.studio_master_label {
 		display: flex;
 		flex-direction: column;
 		font-size: 9px;
+		color: var(--rack-ink-dim);
 	}
 	.studio_master_label input[type=range] {
-		width: 54px;
+		width: 56px;
+		accent-color: #b9bcc2;
 	}
 	.studio_master_label select {
-		max-width: 100px;
+		max-width: 108px;
 		font-size: 10px;
+		color: var(--rack-ink);
+		background: #26282c;
+		border: 1px solid #101113;
+	}
+	/* The graphic EQ: ten vertical faders across the unit, each with its band
+	   name above and its dB below. The grid keeps the columns even, so the
+	   block reads as one wide graphic rather than ten knobs. */
+	.studio_master_graphic .studio_master_controls {
+		display: grid;
+		grid-template-columns: repeat(10, minmax(0, 1fr));
+		gap: 0;
+		margin-top: 2px;
+	}
+	.studio_master_band {
+		align-items: center;
+		gap: 1px;
+		font-size: 8px;
+		color: var(--rack-ink-dim);
+	}
+	.studio_master_band_hz,
+	.studio_master_band_db {
+		font-variant-numeric: tabular-nums;
+		line-height: 1.1;
+		text-shadow: 0 1px 0 #000;
+	}
+	.studio_master_band_db {
+		color: #7f838b;
+		min-height: 9px;
+	}
+	.studio_master_band input[type=range] {
+		-webkit-appearance: slider-vertical;
+		writing-mode: vertical-lr;
+		direction: rtl;
+		width: 18px;
+		height: 84px;
+		margin: 0;
+		padding: 0;
+		accent-color: #b9bcc2;
+	}
+	.studio_master_graphic.studio_master_on .studio_master_band_db {
+		color: #7fd39b;
 	}
 	.studio_track_body {
 		position: relative;

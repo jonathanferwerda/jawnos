@@ -42,6 +42,7 @@ mod autotune;
 mod equalizer;
 mod flanger;
 mod fuzz;
+mod graphic_eq;
 mod limiter;
 mod maximizer;
 
@@ -50,6 +51,7 @@ pub use autotune::Autotune;
 pub use equalizer::Equalizer;
 pub use flanger::Flanger;
 pub use fuzz::Fuzz;
+pub use graphic_eq::GraphicEq;
 pub use limiter::Limiter;
 pub use maximizer::Maximizer;
 
@@ -1210,11 +1212,14 @@ impl Effect for Compressor {
 /// The inserts `--insert` accepts, with the WebAudio defaults each pedal is
 /// built with until a control path moves its knobs.
 ///
-/// The `master_` names (`master_comp`, `master_eq`, `master_reverb`,
-/// `master_maximizer`, `master_limiter`) parse to the same implementations as
-/// their channel counterparts: the prefix says where the insert belongs, not
-/// what it does. [`Mixer`](crate::mixer::Mixer) owns the master rack that uses
-/// them; this enum only selects the implementation.
+/// Most `master_` names (`master_comp`, `master_reverb`, `master_maximizer`,
+/// `master_limiter`) parse to the same implementations as their channel
+/// counterparts: the prefix says where the insert belongs, not what it does.
+/// `master_eq` is the exception: the master rack's ten-band graphic equaliser
+/// is its own [`GraphicEq`], because a mastering EQ has a band per octave where
+/// the channel pedal has three broad tone knobs. [`Mixer](crate::mixer::Mixer)
+/// owns the master rack that uses them; this enum only selects the
+/// implementation.
 ///
 /// # Stereo Widener is browser only
 ///
@@ -1241,6 +1246,7 @@ pub enum InsertKind {
     Limiter,
     Autotune,
     Equalizer,
+    MasterEq,
     Maximizer,
 }
 
@@ -1257,7 +1263,8 @@ impl InsertKind {
             "amp" => Some(InsertKind::Amp),
             "limiter" | "master_limiter" => Some(InsertKind::Limiter),
             "autotune" => Some(InsertKind::Autotune),
-            "equalizer" | "master_eq" => Some(InsertKind::Equalizer),
+            "equalizer" => Some(InsertKind::Equalizer),
+            "master_eq" => Some(InsertKind::MasterEq),
             "maximizer" | "master_maximizer" => Some(InsertKind::Maximizer),
             _ => None,
         }
@@ -1276,6 +1283,7 @@ impl InsertKind {
             InsertKind::Limiter => "limiter",
             InsertKind::Autotune => "autotune",
             InsertKind::Equalizer => "equalizer",
+            InsertKind::MasterEq => "master_eq",
             InsertKind::Maximizer => "maximizer",
         }
     }
@@ -1301,6 +1309,7 @@ impl InsertKind {
             InsertKind::Limiter => &["ceiling", "release"],
             InsertKind::Autotune => &["speed", "amount", "key", "scale"],
             InsertKind::Equalizer => &["low", "mid", "high"],
+            InsertKind::MasterEq => GraphicEq::CONTROLS,
             InsertKind::Maximizer => &["ceiling", "loudness"],
         }
     }
@@ -1310,7 +1319,7 @@ impl InsertKind {
     pub const fn master_prefix(self) -> Option<&'static str> {
         match self {
             InsertKind::Compressor => Some("master_comp"),
-            InsertKind::Equalizer => Some("master_eq"),
+            InsertKind::MasterEq => Some("master_eq"),
             InsertKind::Reverb => Some("master_reverb"),
             InsertKind::Maximizer => Some("master_maximizer"),
             InsertKind::Limiter => Some("master_limiter"),
@@ -1328,6 +1337,12 @@ impl InsertKind {
         let canonical = match (self, control) {
             (InsertKind::Compressor, "threshold") => "thresh",
             (InsertKind::Delay, "mix") => "vol",
+            // The master EQ's first three faders were three knobs; a song saved
+            // then still names them Low/Mid/High, so they land on the same
+            // 125 Hz / 1 kHz / 8 kHz bands the pedal moved.
+            (InsertKind::MasterEq, "low") => "b125",
+            (InsertKind::MasterEq, "mid") => "b1k",
+            (InsertKind::MasterEq, "high") => "b8k",
             _ => return None,
         };
         self.controls()
@@ -1339,7 +1354,8 @@ impl InsertKind {
     /// The control path speaks the contract's units; an effect's internal knob
     /// may be on another scale. Only the millisecond controls differ: the
     /// engine's compressor and limiter hold seconds, the wire says ms.
-    /// Everything else already is its natural unit (dB, Hz, 0..1, an index).
+    /// Everything else already is its natural unit (dB, Hz, 0..1, an index) —
+    /// including the master EQ's ten bands, which arrive in dB.
     pub fn native_value(self, control: &str, value: f32) -> f32 {
         match (self, control) {
             (InsertKind::Compressor, "attack" | "release")
@@ -1364,6 +1380,7 @@ impl InsertKind {
             InsertKind::Autotune => 10,
             InsertKind::Equalizer => 11,
             InsertKind::Maximizer => 12,
+            InsertKind::MasterEq => 13,
         }
     }
 
@@ -1381,6 +1398,7 @@ impl InsertKind {
             10 => InsertKind::Autotune,
             11 => InsertKind::Equalizer,
             12 => InsertKind::Maximizer,
+            13 => InsertKind::MasterEq,
             _ => return None,
         })
     }
@@ -1393,7 +1411,8 @@ impl InsertKind {
     /// start: flanger 1.05 Hz / 0.6 depth / 0.225 feedback / 0.5 mix, fuzz
     /// 0.65 gain / 0.45 tone / 0.6 level, amp 0.5 gain (0 dB) / flat tone /
     /// Combo 1x12, limiter −3 dBFS / 0.2 s, autotune 0.4 speed / full amount /
-    /// C major, equalizer flat, and maximizer −0.8 dBFS / 0.2 loudness.
+    /// C major, equalizer flat, maximizer −0.8 dBFS / 0.2 loudness, and the
+    /// master rack's graphic EQ flat on all ten bands.
     pub fn build(self) -> Box<dyn Effect> {
         match self {
             InsertKind::Tone => Box::new(ToneStack::new(0.0, 0.0, 0.0)),
@@ -1410,6 +1429,7 @@ impl InsertKind {
             InsertKind::Autotune => Box::new(Autotune::new(0.4, 1.0, 0, 0)),
             InsertKind::Equalizer => Box::new(Equalizer::new(0.0, 0.0, 0.0)),
             InsertKind::Maximizer => Box::new(Maximizer::new(-0.8, 0.2)),
+            InsertKind::MasterEq => Box::new(GraphicEq::new()),
         }
     }
 }
@@ -1822,6 +1842,10 @@ mod tests {
 
     #[test]
     fn every_effect_turns_silence_into_silence() {
+        let mut graphic = GraphicEq::new();
+        for (band, control) in GraphicEq::CONTROLS.iter().enumerate() {
+            assert!(graphic.set(control, if band % 2 == 0 { 9.0 } else { -9.0 }));
+        }
         let mut effects: Vec<Box<dyn Effect>> = vec![
             Box::new(ToneStack::new(9.0, -6.0, 6.0)),
             Box::new(Distortion::new(80.0)),
@@ -1834,6 +1858,7 @@ mod tests {
             Box::new(Autotune::new(1.0, 1.0, 0, 0)),
             Box::new(Equalizer::new(6.0, -6.0, 3.0)),
             Box::new(Maximizer::new(-3.0, 0.5)),
+            Box::new(graphic),
         ];
         for effect in &mut effects {
             effect.prepare(RATE, 256);
@@ -1849,6 +1874,10 @@ mod tests {
 
     #[test]
     fn full_scale_input_stays_finite() {
+        let mut graphic = GraphicEq::new();
+        for (band, control) in GraphicEq::CONTROLS.iter().enumerate() {
+            assert!(graphic.set(control, if band % 2 == 0 { 12.0 } else { -12.0 }));
+        }
         let mut effects: Vec<Box<dyn Effect>> = vec![
             Box::new(ToneStack::new(12.0, 12.0, 12.0)),
             Box::new(Distortion::new(100.0)),
@@ -1861,6 +1890,7 @@ mod tests {
             Box::new(Autotune::new(1.0, 1.0, 0, 0)),
             Box::new(Equalizer::new(15.0, 15.0, 15.0)),
             Box::new(Maximizer::new(-12.0, 1.0)),
+            Box::new(graphic),
         ];
         for effect in &mut effects {
             effect.prepare(RATE, 256);
@@ -2589,10 +2619,11 @@ mod tests {
         assert_eq!(InsertKind::parse("reverb2"), Some(InsertKind::Reverb));
         assert_eq!(InsertKind::Reverb.name(), "reverb");
         // The master prefix selects the same implementation; placement is the
-        // caller's business, so the canonical name has no prefix.
+        // caller's business, so the canonical name has no prefix. The master EQ
+        // is the exception: it is a ten-band GraphicEq, not the channel pedal.
         for (word, kind) in [
             ("master_comp", InsertKind::Compressor),
-            ("master_eq", InsertKind::Equalizer),
+            ("master_eq", InsertKind::MasterEq),
             ("master_reverb", InsertKind::Reverb),
             ("master_maximizer", InsertKind::Maximizer),
             ("master_limiter", InsertKind::Limiter),
@@ -2600,6 +2631,27 @@ mod tests {
             assert_eq!(InsertKind::parse(word), Some(kind), "{word}");
         }
         assert_eq!(InsertKind::Maximizer.name(), "maximizer");
+        assert_eq!(InsertKind::MasterEq.name(), "master_eq");
+        assert_eq!(InsertKind::MasterEq.master_prefix(), Some("master_eq"));
+        assert_eq!(
+            InsertKind::Equalizer.master_prefix(),
+            None,
+            "the channel equalizer is not the master EQ"
+        );
+        // The ten faders, and the three old master-EQ knob names as aliases.
+        assert_eq!(InsertKind::MasterEq.controls(), GraphicEq::CONTROLS);
+        assert_eq!(InsertKind::MasterEq.controls().len(), 10);
+        assert_eq!(InsertKind::MasterEq.control_index("b32"), Some(0));
+        assert_eq!(InsertKind::MasterEq.control_index("b16k"), Some(9));
+        assert_eq!(InsertKind::MasterEq.control_index("low"), Some(2));
+        assert_eq!(InsertKind::MasterEq.control_index("mid"), Some(5));
+        assert_eq!(InsertKind::MasterEq.control_index("high"), Some(8));
+        assert_eq!(InsertKind::MasterEq.control_index("bass"), None);
+        // The wire unit is dB, unchanged by native_value.
+        assert_eq!(InsertKind::MasterEq.native_value("b2k", 6.0), 6.0);
+        assert_eq!(InsertKind::MasterEq.code(), 13);
+        assert_eq!(InsertKind::from_code(13), Some(InsertKind::MasterEq));
+        assert_eq!(InsertKind::MasterEq.build().name(), "master_eq");
         // Stereo Widener is browser only: the insert chain is mono, so there
         // is no kind to build and a native take omits the pedal (see
         // `InsertKind`). Both the track and the rack spelling are refused.

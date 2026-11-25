@@ -516,10 +516,14 @@ sub route {
 		'an old alias is not written into a plan' );
 
 	# The plan's vocabulary is the engine's. One list, two implementations; a
-	# new InsertKind or control that lands on only one side fails here.
+	# new InsertKind or control that lands on only one side fails here. The
+	# `master_*` kinds are the master rack's alone: a plan names a *source*
+	# insert and its own contract forbids a master prefix, so `MasterEq` is
+	# excluded by name rather than added to the plan.
 	my $engine = read_file("$root/engine/src/effect.rs");
 	my ($name_block) = $engine =~ /(pub const fn name\(self\).*?\n\s{4}\})/s;
-	my @engine_names = ($name_block // '') =~ /InsertKind::\w+ => "([a-z0-9_]+)"/g;
+	my @engine_names = grep { !/^master_/ }
+		($name_block // '') =~ /InsertKind::\w+ => "([a-z0-9_]+)"/g;
 	is_deeply( \@engine_names, \@JawnOS::Audio::Plan::audio_plan_insert_names,
 		'the plan names every InsertKind the engine builds, in its own order' );
 
@@ -528,6 +532,7 @@ sub route {
 	if (defined $controls_block) {
 		while ($controls_block =~ /InsertKind::(\w+) => &\[(.*?)\],/gs) {
 			my ($kind, $list) = ($1, $2);
+			next if $kind eq 'MasterEq'; # the rack's ten bands, not a source insert
 			my @controls = $list =~ /"([a-z0-9_]+)"/g;
 			$engine_controls{lc $kind} = \@controls;
 		}

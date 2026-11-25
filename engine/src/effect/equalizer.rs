@@ -390,6 +390,9 @@ mod tests {
     fn the_insert_name_round_trips() {
         assert_eq!(InsertKind::parse("equalizer"), Some(InsertKind::Equalizer));
         assert_eq!(InsertKind::Equalizer.name(), "equalizer");
-        assert_eq!(InsertKind::parse("master_eq"), Some(InsertKind::Equalizer));
+        // The master rack's `master_eq` is its own ten-band GraphicEq
+        // (effect/graphic_eq.rs); this three-knob pedal stays the channel's.
+        assert_eq!(InsertKind::parse("master_eq"), Some(InsertKind::MasterEq));
+        assert_eq!(InsertKind::Equalizer.master_prefix(), None);
     }
 }

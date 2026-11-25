@@ -78,6 +78,7 @@ controls that are amounts (gains, mixes, depths) the mapping is the slider over
 | control | UI 0..100 maps to |
 | --- | --- |
 | `equalizer.low/mid/high`, `amp.bass/mid/treble`, `tone.*` | -12 .. +12 dB |
+| `master_eq.b32` … `master_eq.b16k` (and the `low`/`mid`/`high` aliases) | -12 .. +12 dB |
 | `limiter.ceiling`, `maximizer.ceiling`, `master_limiter.ceiling` | -24 .. 0 dB |
 | `limiter.release` | 10 .. 500 ms |
 | `compressor.thresh` | -60 .. 0 dB |
@@ -91,19 +92,39 @@ controls that are amounts (gains, mixes, depths) the mapping is the slider over
 
 The master chain is a fixed set of inserts applied to the mixer's stereo bus,
 after every channel. The UI must expose them as one rack, not as a pedal on a
-track.
+track. The order is the house's chain, not a per-song list:
+
+1. `master_comp`
+2. `master_eq`
+3. `master_stereowidener` (browser only; a native take omits it)
+4. `master_reverb`
+5. `master_maximizer`
+6. `master_limiter`
 
 | name | controls |
 | --- | --- |
 | `master_comp` | `thresh`, `attack`, `mix` |
-| `master_eq` | `low`, `mid`, `high` |
+| `master_eq` | `b32`, `b64`, `b125`, `b250`, `b500`, `b1k`, `b2k`, `b4k`, `b8k`, `b16k` |
+| `master_stereowidener` | `width`, `mix` |
 | `master_reverb` | `mix`, `model`, `volume` |
 | `master_maximizer` | `ceiling`, `loudness` |
 | `master_limiter` | `ceiling`, `release` |
 
-In Rust, `master_*` maps to the same effect implementations as the channel
-versions; the prefix exists so the socket and the song document can say where
-the insert belongs.
+The master EQ is a **ten-band graphic**: one peaking bell per octave at 32, 64,
+125, 250, 500 Hz and 1, 2, 4, 8, 16 kHz, Q 1.4, each fader -12 .. +12 dB. The
+control names are `b32` … `b16k`. The three names the old three-knob master EQ
+used — `low`, `mid`, `high` — are **legacy aliases** for `b125`, `b1k` and
+`b8k`, so a song saved before the faders existed still loads and still moves
+the same part of the mix. The native engine builds `GraphicEq`
+(`engine/src/effect/graphic_eq.rs`); the browser builder is
+`studioEffectGraphicEq` (`public/js/manager/studio/08_effects.js`), the same ten
+bands as ten peaking biquads.
+
+In Rust, the other `master_*` names map to the same effect implementations as
+their channel versions; the prefix exists so the socket and the song document
+can say where the insert belongs. `master_eq` is the exception: `InsertKind::MasterEq`
+is its own kind, not the channel `equalizer`, because the two have different
+controls and different circuits.
 
 ## A source's inserts in the house plan
 

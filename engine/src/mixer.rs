@@ -328,7 +328,9 @@ impl Default for ParamQueue {
 pub fn master_effect_name(prefix: &str) -> &str {
     match prefix {
         "master_comp" => "compressor",
-        "master_eq" => "equalizer",
+        // The master EQ is its own ten-band implementation, not the channel's
+        // three-knob `equalizer`, so the prefix resolves to itself.
+        "master_eq" => "master_eq",
         "master_reverb" => "reverb",
         "master_maximizer" => "maximizer",
         "master_limiter" => "limiter",
@@ -341,7 +343,7 @@ pub fn master_effect_name(prefix: &str) -> &str {
 /// chain, not a per-song list (`docs/studio-effects.md`, "Master rack").
 pub const MASTER_ORDER: [InsertKind; 5] = [
     InsertKind::Compressor,
-    InsertKind::Equalizer,
+    InsertKind::MasterEq,
     InsertKind::Reverb,
     InsertKind::Maximizer,
     InsertKind::Limiter,
@@ -1095,6 +1097,7 @@ mod tests {
             InsertKind::Limiter,
             InsertKind::Autotune,
             InsertKind::Equalizer,
+            InsertKind::MasterEq,
             InsertKind::Maximizer,
         ] {
             for control in kind.controls() {
@@ -1103,7 +1106,9 @@ mod tests {
                 assert_eq!(name.insert_kind(), Some(kind), "{text}");
                 assert_eq!(name.insert(), Some(kind.name()), "{text}");
                 assert_eq!(name.control(), *control, "{text}");
-                assert!(!name.master(), "{text}");
+                // Only `master_eq`'s canonical name is itself a master prefix;
+                // that address belongs to the rack, every other pedal does not.
+                assert_eq!(name.master(), kind.name().starts_with("master_"), "{text}");
             }
         }
         assert_eq!(ParamName::parse("gain"), Some(ParamName::Gain));
@@ -1296,14 +1301,16 @@ mod tests {
     #[test]
     fn the_master_rack_routes_its_prefixed_names() {
         let mut mixer = Mixer::new(&[0], &["ch1"]);
-        mixer.push_master(InsertKind::Equalizer);
+        mixer.push_master(InsertKind::MasterEq);
         assert!(mixer.set_master("master_eq.low", 6.0));
-        assert!(mixer.set_master("equalizer.high", -6.0));
+        assert!(mixer.set_master("master_eq.b1k", -6.0));
+        // The channel pedal's name does not reach the rack's graphic EQ.
+        assert!(!mixer.set_master("equalizer.high", -6.0));
         assert!(!mixer.set_master("master_comp.threshold", -10.0));
         assert!(!mixer.set_master("gain", 0.5));
         assert!(mixer.bypass_master("master_eq", true));
         assert!(!mixer.bypass_master("master_limiter", true));
-        assert_eq!(mixer.master_insert_names(), "equalizer");
+        assert_eq!(mixer.master_insert_names(), "master_eq");
     }
 
     #[test]
