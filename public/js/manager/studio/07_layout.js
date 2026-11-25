@@ -1334,7 +1334,7 @@ function studioRemotePickerLoad() {
 		dataType: 'json',
 		cache: false,
 		success: function (reply) {
-			if (!reply || reply.ok !== true) { return; }
+			if (!reply || !studioRemoteTruthy(reply.ok)) { return; }
 			var current = $('#studio_remote_machine');
 			if (!current.length) { return; }
 			current.empty();
@@ -1367,7 +1367,7 @@ $(document).on('change', '#studio_remote_machine', function () {
 		cache: false,
 		data: { target: target },
 		success: function (reply) {
-			if (!reply || reply.ok !== true) {
+			if (!reply || !studioRemoteTruthy(reply.ok)) {
 				$('#studio_remote_machine').val(studioRemoteTarget);
 				return;
 			}
@@ -1445,7 +1445,7 @@ function studioRemoteMonitorLoad() {
 		data: { target: target },
 		success: function (reply) {
 			if (studioRemoteTarget !== target || !$('#studio_remote_monitor').length) { return; }
-			if (!reply || reply.ok !== true) { return; }
+			if (!reply || !studioRemoteTruthy(reply.ok)) { return; }
 			var current = $('#studio_remote_monitor');
 			current.find('option.studio_remote_monitor_device').remove();
 			$.each(reply.outputs || [], function (i, output) {
@@ -1484,7 +1484,7 @@ function studioRemoteStreamStart() {
 		success: function (reply) {
 			if (studioRemoteTarget !== target) { return; }
 			studioRemoteStreamBusy = false;
-			if (!reply || reply.ok !== true || !studioRemoteTruthy(reply.streaming)) {
+			if (!reply || !studioRemoteTruthy(reply.ok) || !studioRemoteTruthy(reply.streaming)) {
 				studioRemoteStreamWanted = false;
 				studioRemoteStreaming = false;
 				studioRemoteStreamStatusShow((reply && reply.error) ? String(reply.error) : 'Could not stream to this tablet', 'error');
@@ -1526,7 +1526,7 @@ function studioRemoteStreamStop(done) {
 		success: function (reply) {
 			studioRemoteStreamBusy = false;
 			if (studioRemoteTarget === target) {
-				if (reply && reply.ok === true) { studioRemoteStreamStatusShow('Stopped', 'stopped'); }
+				if (reply && studioRemoteTruthy(reply.ok)) { studioRemoteStreamStatusShow('Stopped', 'stopped'); }
 				else { studioRemoteStreamStatusShow((reply && reply.error) ? String(reply.error) : 'Could not stop the stream', 'error'); }
 			}
 			if (done) { done(reply); }
@@ -1544,7 +1544,7 @@ function studioRemoteStreamStop(done) {
 // returns the picker to the remembered device and says Stopped.
 function studioRemoteStreamStatusApply(reply) {
 	if (studioRemoteStreamBusy) { return false; }
-	if (!reply || reply.ok !== true) {
+	if (!reply || !studioRemoteTruthy(reply.ok)) {
 		studioRemoteStreaming = false;
 		studioRemoteStreamStatusShow((reply && reply.error) ? String(reply.error) : 'Stream status unavailable', 'error');
 		return false;
@@ -1614,7 +1614,7 @@ function studioRemoteDevicePick(target, id) {
 		data: { target: target, id: String(id) },
 		success: function (reply) {
 			if (studioRemoteTarget !== target) { return; }
-			if (!reply || reply.ok !== true) { if (select.length) { select.val(studioRemoteMonitorCurrent); } return; }
+			if (!reply || !studioRemoteTruthy(reply.ok)) { if (select.length) { select.val(studioRemoteMonitorCurrent); } return; }
 			studioRemoteMonitorCurrent = String(reply.current || id);
 			if (select.length) { select.val(studioRemoteMonitorCurrent); }
 		},

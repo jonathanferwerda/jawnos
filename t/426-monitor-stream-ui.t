@@ -32,6 +32,17 @@ like($markup, qr/Choose the output the controlled machine is monitored on/,
 like($markup, qr/id="studio_remote_monitor_picker"[^\n]*\bhidden\b/,
 	'the whole group still starts hidden while this window drives itself');
 
+# --- the route's `ok` is numeric; every remote reply must still be read ------
+# The remote routes answer { ok => 1 } (a JSON number), while the engine's
+# replies are JSON true. studioRemoteTruthy accepts both; a strict
+# `reply.ok !== true` would drop every remote list, target and stream on the
+# floor. This is the regression the headless probe found: the picker stayed at
+# "This machine" because the route's 1 never equals true.
+my @truthy_ok = ($layout =~ /studioRemoteTruthy\(reply\.ok\)/g);
+cmp_ok(scalar @truthy_ok, '>=', 7, 'every remote reply gates on studioRemoteTruthy(reply.ok)');
+unlike($layout, qr/reply\.ok !== true|reply\.ok === true/,
+	'no remote reply is gated on a strict JSON true');
+
 # --- the sentinel and the physical rows --------------------------------------
 like($layout, qr/var studioRemoteStreamOption = '__stream__';/,
 	'JS names the stream sentinel once');
@@ -50,7 +61,7 @@ like($layout, qr/function studioRemoteStreamStart\(\)/, 'one function starts the
 like($layout, qr{url: '/manager/studio/monitor_stream'}, 'it uses the monitor_stream route');
 like($layout, qr/data: \{ action: 'start', target: target, output: 'stream' \}/,
 	'with action start, the target and output stream');
-like($layout, qr/!reply \|\| reply\.ok !== true \|\| !studioRemoteTruthy\(reply\.streaming\)/,
+like($layout, qr/!reply \|\| !studioRemoteTruthy\(reply\.ok\) \|\| !studioRemoteTruthy\(reply\.streaming\)/,
 	'only a server streaming flag counts as started');
 like($layout, qr/'Streaming to this tablet', 'on'/, 'success says it is streaming');
 like($layout, qr/'Could not stream to this tablet', 'error'/, 'a refusal is an error, never a fake stream');
