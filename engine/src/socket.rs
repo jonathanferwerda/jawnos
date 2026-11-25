@@ -5787,7 +5787,7 @@ fn parse_drums(value: Option<&Value>) -> Result<Option<DrumChart>, String> {
                 ));
             }
         },
-        _ => return Err("drums \"style\" must be one of soft, hard, aggressive".to_string()),
+        _ => return Err("drums \"style\" must be one of timid, soft, moderate, cool, hard, aggressive".to_string()),
     };
     let performance = match (player, style) {
         (None, None) => None,
@@ -10821,7 +10821,7 @@ break"}"#).is_err());
         // A player alone plays their own style.
         assert_eq!(
             chart(r#"{"drums":{"length":4,"player":"wren"}}"#).performance,
-            Some(Performance::new(Player::Wren, Style::Soft))
+            Some(Performance::new(Player::Wren, Style::Cool))
         );
         // A style overrides how hard that player is playing.
         assert_eq!(

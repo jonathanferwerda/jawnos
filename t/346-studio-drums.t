@@ -69,10 +69,12 @@ my ($players) = $studio =~ /drum_players\s*=>\s*\[(.*?)\n\t\],/s;
 ok(defined $players, 'the studio data carries a drum player table');
 $players = '' unless defined $players;
 is_deeply([ $players =~ /name\s*=>\s*'([^']+)'/g ],
-	[qw(studio tuck wren odile moxie bram dov)],
-	'the seven players are the ones the panel offers, in order');
-for my $pair ([ studio => 'hard' ], [ tuck => 'soft' ], [ wren => 'soft' ],
-	[ odile => 'hard' ], [ moxie => 'hard' ], [ bram => 'aggressive' ], [ dov => 'aggressive' ]) {
+	[qw(studio tuck wren odile moxie bram dov marla ines juno sable nell)],
+	'the twelve players are the ones the panel offers, in order');
+for my $pair ([ studio => 'hard' ], [ tuck => 'soft' ], [ wren => 'cool' ],
+	[ odile => 'hard' ], [ moxie => 'hard' ], [ bram => 'aggressive' ], [ dov => 'aggressive' ],
+	[ marla => 'cool' ], [ ines => 'timid' ], [ juno => 'moderate' ],
+	[ sable => 'aggressive' ], [ nell => 'moderate' ]) {
 	my ($name, $style) = @$pair;
 	like($players, qr/\{ name => '\Q$name\E',[\s\S]*?style => '\Q$style\E'/,
 		"the $name player opens on $style");
@@ -83,9 +85,11 @@ like($studio, qr/# The drum players:/, 'the player table says what its columns m
 my ($styles) = $studio =~ /drum_styles\s*=>\s*\[(.*?)\n\t\],/s;
 ok(defined $styles, 'the studio data carries a drum style table');
 $styles = '' unless defined $styles;
-is_deeply([ $styles =~ /name\s*=>\s*'([^']+)'/g ], [qw(soft hard aggressive)],
-	'the three styles are the ones the panel offers, in order');
-is_deeply([ $styles =~ /label\s*=>\s*'([^']+)'/g ], [qw(Soft Hard Aggressive)],
+is_deeply([ $styles =~ /name\s*=>\s*'([^']+)'/g ],
+	[qw(timid soft moderate cool hard aggressive)],
+	'the six styles are the ones the panel offers, in order');
+is_deeply([ $styles =~ /label\s*=>\s*'([^']+)'/g ],
+	[qw(Timid Soft Moderate Cool Hard Aggressive)],
 	'every style has the label people read');
 
 # --- the panel is included once and is data-driven --------------------------
@@ -459,8 +463,11 @@ like($help, qr/Connect MIDI/, 'help explains MIDI');
 like($help, qr/The native engine take cannot record them yet/, 'help states the engine limitation');
 like($help, qr/Beside Sound, Player chooses who plays the chart/, 'help explains the Player list');
 like($help, qr/Machine plays it exactly as written/, 'help names Machine');
-like($help, qr/Tuck, Wren, Odile, Moxie, Bram and Dov/, 'help names the six players');
-like($help, qr/Style sets how hard that player plays/, 'help explains Style');
+like($help, qr/Tuck, Wren, Odile, Moxie, Bram, Dov, Marla, Ines, Juno, Sable and Nell/,
+	'help names the eleven players');
+like($help, qr/Timid, Soft, Moderate, Cool, Hard or Aggressive/, 'help names the six styles');
+like($help, qr/ghost note or a flam/, 'help says the players add hits of their own');
+like($help, qr/Style sets how that player plays/, 'help explains Style');
 like($help, qr/shape the Engine kit only/, 'help says Browser plays the chart as written');
 
 my ($controls) = $help =~ /\$topic\{'studio'\} = \{([\s\S]*?)\n\t\};/;

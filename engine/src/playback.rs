@@ -2348,7 +2348,7 @@ impl TransportSource {
                         if velocity == 0 {
                             continue;
                         }
-                        let (velocity, offset) = match performance {
+                        let (velocity, offset, extra) = match performance {
                             Some(performance) => {
                                 let played = performance.play(
                                     voice,
@@ -2358,11 +2358,20 @@ impl TransportSource {
                                     q,
                                     self.rate,
                                 );
-                                (played.velocity, played.offset_frames)
+                                (played.velocity, played.offset_frames, played.extra)
                             }
-                            None => (velocity, 0),
+                            None => (velocity, 0, None),
                         };
                         render.machine.trigger_at(voice.index(), velocity, frame + offset);
+                        // A ghost note or flam is the same voice a few
+                        // milliseconds later; the pool lets the two overlap.
+                        if let Some(extra) = extra {
+                            render.machine.trigger_at(
+                                voice.index(),
+                                extra.velocity,
+                                frame + extra.offset_frames,
+                            );
+                        }
                     }
                 }
                 render.step = (metric_step + 1) % chart_length;

@@ -2,13 +2,13 @@
 //!
 //! A [`Pattern`](crate::Pattern) and a chart are the skeleton: which sixteenths
 //! sound and how hard the grid says they are. A [`Player`] is the person playing
-//! that skeleton. A player bends each hit a few milliseconds off the grid,
-//! narrows or widens the velocities, and leans on the metre, so the same chart
-//! stops sounding stamped out of a machine.
+//! that skeleton. A player moves each hit behind the grid, widens or narrows the
+//! velocities, swings the offbeats, and adds ghost notes or flams of their own,
+//! so the same chart stops sounding stamped out of a machine.
 //!
-//! [`Style`] is the second axis: the same player can play soft, hard or
-//! aggressive, and the style scales the whole performance. Naming a player and
-//! leaving the style alone uses the player's own style (see
+//! [`Style`] is the second axis: the same player can play timid, soft, moderate,
+//! cool, hard or aggressive, and the style scales the whole performance. Naming
+//! a player and leaving the style alone uses the player's own style (see
 //! [`Player::style`]); naming only a style plays it through [`Player::Studio`],
 //! the uncoloured house player.
 //!
@@ -19,15 +19,23 @@
 
 use crate::Voice;
 
-/// How hard a player is playing: soft, hard or aggressive.
+/// How a player is playing, from the quietest and most hesitant to the loudest
+/// and most forward.
 ///
 /// The style sets the level (a fraction of the chart's velocity), how wide the
-/// dynamics are, how much a strong beat is accented, and how far behind the grid
-/// the player sits. A player then tints those numbers with their own habits.
+/// dynamics are, how much a strong beat is accented, how far behind the grid the
+/// player sits, how much the offbeats swing, and how often a ghost note or a
+/// flam is added. A player then tints those numbers with their own habits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Style {
+    /// Barely there: very soft, hesitant, late, and almost no accent.
+    Timid,
     /// Brushes and a quiet foot: rounder, softer, sitting back.
     Soft,
+    /// A middle setting: even hands, a normal backbeat, a little air.
+    Moderate,
+    /// Relaxed and swung: a loose pocket with ghost notes under it.
+    Cool,
     /// A firm, even backbeat that keeps its place.
     Hard,
     /// Leaning into the kit: wide dynamics and heavy accents.
@@ -36,12 +44,22 @@ pub enum Style {
 
 impl Style {
     /// Every style, from the quietest to the loudest.
-    pub const ALL: [Style; 3] = [Style::Soft, Style::Hard, Style::Aggressive];
+    pub const ALL: [Style; 6] = [
+        Style::Timid,
+        Style::Soft,
+        Style::Moderate,
+        Style::Cool,
+        Style::Hard,
+        Style::Aggressive,
+    ];
 
     /// The wire name the socket and a saved song use.
     pub const fn name(self) -> &'static str {
         match self {
+            Style::Timid => "timid",
             Style::Soft => "soft",
+            Style::Moderate => "moderate",
+            Style::Cool => "cool",
             Style::Hard => "hard",
             Style::Aggressive => "aggressive",
         }
@@ -56,29 +74,89 @@ impl Style {
     /// The style's numbers before a player bends them.
     const fn base(self) -> Profile {
         match self {
-            Style::Soft => Profile {
-                level: 0.76,
-                spread: 4.0,
-                accent: 3.0,
-                lateness: 0.009,
-                time_spread: 0.0012,
+            Style::Timid => Profile {
+                level: 0.60,
+                spread: 3.0,
+                accent: 1.0,
+                lateness: 0.018,
+                time_spread: 0.0030,
                 swing: 0.0,
+                ghost_chance: 0.00,
+                ghost_level: 0.15,
+                ghost_delay: 0.024,
+                flam_chance: 0.00,
+                flam_level: 0.25,
+                flam_delay: 0.014,
+            },
+            Style::Soft => Profile {
+                level: 0.75,
+                spread: 6.0,
+                accent: 3.0,
+                lateness: 0.011,
+                time_spread: 0.0022,
+                swing: 0.0,
+                ghost_chance: 0.06,
+                ghost_level: 0.18,
+                ghost_delay: 0.026,
+                flam_chance: 0.00,
+                flam_level: 0.25,
+                flam_delay: 0.014,
+            },
+            Style::Moderate => Profile {
+                level: 0.88,
+                spread: 10.0,
+                accent: 6.0,
+                lateness: 0.006,
+                time_spread: 0.0018,
+                swing: 0.0,
+                ghost_chance: 0.10,
+                ghost_level: 0.20,
+                ghost_delay: 0.024,
+                flam_chance: 0.04,
+                flam_level: 0.28,
+                flam_delay: 0.013,
+            },
+            Style::Cool => Profile {
+                level: 0.92,
+                spread: 9.0,
+                accent: 4.0,
+                lateness: 0.014,
+                time_spread: 0.0032,
+                swing: 0.28,
+                ghost_chance: 0.18,
+                ghost_level: 0.22,
+                ghost_delay: 0.030,
+                flam_chance: 0.05,
+                flam_level: 0.28,
+                flam_delay: 0.014,
             },
             Style::Hard => Profile {
-                level: 0.91,
-                spread: 7.0,
-                accent: 6.0,
-                lateness: 0.003,
-                time_spread: 0.0009,
+                level: 1.00,
+                spread: 14.0,
+                accent: 9.0,
+                lateness: 0.0025,
+                time_spread: 0.0012,
                 swing: 0.0,
+                ghost_chance: 0.08,
+                ghost_level: 0.22,
+                ghost_delay: 0.018,
+                flam_chance: 0.08,
+                flam_level: 0.30,
+                flam_delay: 0.012,
             },
             Style::Aggressive => Profile {
-                level: 1.02,
-                spread: 12.0,
-                accent: 10.0,
-                lateness: 0.0008,
-                time_spread: 0.0007,
+                level: 1.08,
+                spread: 26.0,
+                accent: 16.0,
+                lateness: 0.0005,
+                time_spread: 0.0010,
                 swing: 0.0,
+                ghost_chance: 0.10,
+                ghost_level: 0.25,
+                ghost_delay: 0.018,
+                flam_chance: 0.20,
+                flam_level: 0.35,
+                flam_delay: 0.011,
             },
         }
     }
@@ -87,38 +165,53 @@ impl Style {
 /// One of the players who can sit on a drum chart.
 ///
 /// [`Player::Studio`] is the uncoloured house player: no swing, no timing
-/// habit, no voice bias. The other six are characters with a default style and
-/// a way of playing, in the spirit of a Drummer in GarageBand:
+/// habit, no voice bias. The rest are characters with a default style and a way
+/// of playing, in the spirit of a Drummer in GarageBand:
 ///
 /// | Player | Style | How they play |
 /// | --- | --- | --- |
-/// | [`Player::Tuck`] | soft | Brushes and a lazy backbeat: sits behind the click and rounds the snare. |
-/// | [`Player::Wren`] | soft | Swings the offbeat sixteenths and keeps the hats light. |
+/// | [`Player::Tuck`] | soft | Brushes and a lazy backbeat: far behind the click, quiet ghost snares. |
+/// | [`Player::Wren`] | cool | Swings the offbeat sixteenths and rolls quiet ghost hits under the snare. |
 /// | [`Player::Odile`] | hard | On the grid and dry: a tight backbeat that never rushes. |
 /// | [`Player::Moxie`] | hard | Steady four-on-the-floor; the kick leads and the hats stay even. |
-/// | [`Player::Bram`] | aggressive | Leans into the kit: a big snare and a kick right on the click. |
-/// | [`Player::Dov`] | aggressive | Punk energy: wide dynamics and heavy accents, no patience for a soft bar. |
+/// | [`Player::Bram`] | aggressive | Leans into the kit: a big snare, kick on the click, hard flams. |
+/// | [`Player::Dov`] | aggressive | Punk energy: wide dynamics, heavy accents, a flam on every other hit. |
+/// | [`Player::Marla`] | cool | Loose and busy: swung offbeats, ghost notes and flams under a light backbeat. |
+/// | [`Player::Ines`] | timid | Timid and late: soft hands, few accents, a breath behind the click. |
+/// | [`Player::Juno`] | moderate | Relaxed in the pocket: a loose kick, a lazy snare, low ghost notes. |
+/// | [`Player::Sable`] | aggressive | Heavy and wide: big snare flams, hard accents, no ghost notes. |
+/// | [`Player::Nell`] | moderate | Steady and even: a plain backbeat with a few quiet ghosts. |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Player {
     /// The house player: the grid with no colour, for a style on its own.
     Studio,
-    /// Soft, behind the beat, warm.
+    /// Soft, far behind the beat, quiet ghost snares.
     Tuck,
-    /// Soft, swinging offbeat hats, light hands.
+    /// Cool, swinging offbeat hats and ghost hits.
     Wren,
     /// Hard, dry and on the grid.
     Odile,
     /// Hard, steady four-on-the-floor.
     Moxie,
-    /// Aggressive, right on the click.
+    /// Aggressive, right on the click, hard flams.
     Bram,
     /// Aggressive, wide and loud.
     Dov,
+    /// Cool, loose and busy, ghost notes and flams.
+    Marla,
+    /// Timid, very soft and late.
+    Ines,
+    /// Moderate, relaxed in the pocket.
+    Juno,
+    /// Aggressive, heavy and wide.
+    Sable,
+    /// Moderate, steady and even.
+    Nell,
 }
 
 impl Player {
     /// Every player, house player first.
-    pub const ALL: [Player; 7] = [
+    pub const ALL: [Player; 12] = [
         Player::Studio,
         Player::Tuck,
         Player::Wren,
@@ -126,6 +219,11 @@ impl Player {
         Player::Moxie,
         Player::Bram,
         Player::Dov,
+        Player::Marla,
+        Player::Ines,
+        Player::Juno,
+        Player::Sable,
+        Player::Nell,
     ];
 
     /// The wire name the socket and a saved song use.
@@ -138,6 +236,11 @@ impl Player {
             Player::Moxie => "moxie",
             Player::Bram => "bram",
             Player::Dov => "dov",
+            Player::Marla => "marla",
+            Player::Ines => "ines",
+            Player::Juno => "juno",
+            Player::Sable => "sable",
+            Player::Nell => "nell",
         }
     }
 
@@ -154,8 +257,11 @@ impl Player {
     pub const fn style(self) -> Style {
         match self {
             Player::Studio | Player::Odile | Player::Moxie => Style::Hard,
-            Player::Tuck | Player::Wren => Style::Soft,
-            Player::Bram | Player::Dov => Style::Aggressive,
+            Player::Tuck => Style::Soft,
+            Player::Wren | Player::Marla => Style::Cool,
+            Player::Bram | Player::Dov | Player::Sable => Style::Aggressive,
+            Player::Ines => Style::Timid,
+            Player::Juno | Player::Nell => Style::Moderate,
         }
     }
 
@@ -163,12 +269,17 @@ impl Player {
     pub const fn character(self) -> &'static str {
         match self {
             Player::Studio => "The house player: on the grid, no swing. The style alone shapes the hit.",
-            Player::Tuck => "Brushes and a lazy backbeat. Sits behind the click and rounds the snare.",
-            Player::Wren => "Swings the offbeat sixteenths and keeps the hats light.",
+            Player::Tuck => "Brushes and a lazy backbeat. Far behind the click, with quiet ghost snares.",
+            Player::Wren => "Swings the offbeat sixteenths and rolls quiet ghost hits under the snare.",
             Player::Odile => "On the grid and dry. A tight backbeat that never rushes.",
             Player::Moxie => "Steady four-on-the-floor. The kick leads and the hats stay even.",
-            Player::Bram => "Leans into the kit: a big snare and a kick right on the click.",
-            Player::Dov => "Punk energy. Wide dynamics and heavy accents, no patience for a soft bar.",
+            Player::Bram => "Leans into the kit: a big snare, a kick on the click, hard flams.",
+            Player::Dov => "Punk energy. Wide dynamics, heavy accents, a flam on every other hit.",
+            Player::Marla => "Loose and busy: swung offbeats, ghost notes and flams under a light backbeat.",
+            Player::Ines => "Timid and late: soft hands, few accents, a breath behind the click.",
+            Player::Juno => "Relaxed in the pocket: a loose kick, a lazy snare, low ghost notes.",
+            Player::Sable => "Heavy and wide: big snare flams, hard accents, no ghost notes.",
+            Player::Nell => "Steady and even: a plain backbeat with a few quiet ghosts.",
         }
     }
 
@@ -176,77 +287,162 @@ impl Player {
     const fn tweak(self) -> Tweak {
         match self {
             Player::Studio => Tweak::NEUTRAL,
-            // Sits back a touch and keeps the hats out of the way.
+            // Far behind the click, light hands, quiet ghosts on the snare.
             Player::Tuck => Tweak {
-                level: 0.96,
-                accent: 0.85,
-                spread: 0.85,
-                lateness: 0.004,
-                swing: 0.0,
-                kick: 0.0,
-                snare: -1.0,
-                hat: -3.0,
-                other: 0.0,
-            },
-            // The offbeat sixteenth waits; the hats are the tell.
-            Player::Wren => Tweak {
-                level: 0.97,
-                accent: 0.90,
-                spread: 1.10,
-                lateness: 0.005,
-                swing: 0.20,
-                kick: -1.0,
+                level: 0.94,
+                accent: 0.80,
+                spread: 0.90,
+                lateness: 0.010,
+                time: 1.25,
+                ghost_chance: 0.18,
+                ghost_level: 0.02,
+                ghost_delay: 0.004,
                 snare: -2.0,
-                hat: -2.0,
-                other: 0.0,
+                hat: -4.0,
+                ..Tweak::NEUTRAL
             },
-            // A metronome with a pulse: almost no timing wobble.
+            // The offbeat sixteenth waits a long way; the hats carry ghosts.
+            Player::Wren => Tweak {
+                level: 0.95,
+                accent: 0.85,
+                spread: 1.15,
+                lateness: 0.008,
+                time: 1.35,
+                swing: 0.12,
+                ghost_chance: 0.22,
+                ghost_level: 0.02,
+                ghost_delay: 0.002,
+                kick: -1.0,
+                snare: -1.0,
+                hat: -1.0,
+                ..Tweak::NEUTRAL
+            },
+            // A metronome with a pulse: almost no timing wobble, no extras.
             Player::Odile => Tweak {
-                level: 1.02,
                 accent: 1.10,
-                spread: 0.80,
+                spread: 0.85,
                 lateness: -0.002,
-                swing: 0.0,
+                time: 0.50,
+                ghost_chance: -0.08,
+                flam_chance: -0.08,
                 kick: 1.0,
-                snare: 2.0,
-                hat: 0.0,
-                other: 0.0,
+                snare: 3.0,
+                ..Tweak::NEUTRAL
             },
             // The kick carries it; the sixteenths stay even.
             Player::Moxie => Tweak {
-                level: 1.00,
-                accent: 1.00,
                 spread: 0.90,
-                lateness: 0.0,
-                swing: 0.0,
-                kick: 3.0,
+                lateness: -0.002,
+                time: 0.70,
+                ghost_chance: -0.08,
+                kick: 4.0,
                 snare: 1.0,
                 hat: -2.0,
-                other: 0.0,
+                ..Tweak::NEUTRAL
             },
-            // Big backbeat, right on the click.
+            // Big backbeat, right on the click, a hard flam now and then.
             Player::Bram => Tweak {
-                level: 1.05,
+                level: 1.04,
                 accent: 1.20,
-                spread: 1.15,
-                lateness: -0.006,
-                swing: 0.0,
+                spread: 1.20,
+                lateness: -0.002,
+                time: 0.90,
+                flam_chance: 0.08,
+                flam_level: 0.03,
+                kick: 2.0,
+                snare: 5.0,
+                hat: -1.0,
+                ..Tweak::NEUTRAL
+            },
+            // Loud and unsubtle: toms in the room, a flam on many hits.
+            Player::Dov => Tweak {
+                level: 1.05,
+                accent: 1.25,
+                spread: 1.30,
+                lateness: -0.0003,
+                time: 1.0,
+                flam_chance: 0.15,
+                flam_level: 0.08,
                 kick: 2.0,
                 snare: 4.0,
-                hat: -1.0,
-                other: 1.0,
-            },
-            // Loud and unsubtle, with the toms in the room.
-            Player::Dov => Tweak {
-                level: 1.06,
-                accent: 1.30,
-                spread: 1.30,
-                lateness: -0.002,
-                swing: 0.0,
-                kick: 2.0,
-                snare: 3.0,
                 hat: -2.0,
                 other: 2.0,
+                ..Tweak::NEUTRAL
+            },
+            // Loose and busy: big swing, ghost notes, flams, the rim in the room.
+            Player::Marla => Tweak {
+                level: 0.97,
+                accent: 0.95,
+                spread: 1.10,
+                lateness: 0.006,
+                time: 1.45,
+                swing: 0.14,
+                ghost_chance: 0.20,
+                ghost_level: 0.03,
+                ghost_delay: 0.004,
+                flam_chance: 0.10,
+                flam_level: 0.02,
+                snare: 2.0,
+                hat: 1.0,
+                other: 4.0,
+                ..Tweak::NEUTRAL
+            },
+            // Barely there, and always a breath late.
+            Player::Ines => Tweak {
+                level: 0.90,
+                accent: 0.70,
+                spread: 0.75,
+                lateness: 0.012,
+                time: 1.60,
+                ghost_chance: 0.06,
+                ghost_level: -0.03,
+                ghost_delay: 0.006,
+                flam_chance: -0.04,
+                kick: -1.0,
+                snare: -2.0,
+                hat: -4.0,
+                ..Tweak::NEUTRAL
+            },
+            // A loose pocket: a lazy kick, a snare that sits back, quiet ghosts.
+            Player::Juno => Tweak {
+                level: 0.98,
+                accent: 0.90,
+                spread: 1.10,
+                lateness: 0.010,
+                time: 1.50,
+                swing: 0.08,
+                ghost_chance: 0.15,
+                ghost_level: 0.01,
+                ghost_delay: 0.002,
+                kick: 2.0,
+                snare: -1.0,
+                ..Tweak::NEUTRAL
+            },
+            // Heavy and wide, with a big flam on the backbeat.
+            Player::Sable => Tweak {
+                level: 1.02,
+                accent: 1.15,
+                spread: 1.15,
+                lateness: -0.0003,
+                time: 0.90,
+                ghost_chance: -0.06,
+                flam_chance: 0.12,
+                flam_level: 0.06,
+                kick: 3.0,
+                snare: 6.0,
+                hat: -2.0,
+                other: 1.0,
+                ..Tweak::NEUTRAL
+            },
+            // Steady, honest, with a few quiet ghost notes under it.
+            Player::Nell => Tweak {
+                level: 0.96,
+                lateness: 0.004,
+                time: 1.15,
+                ghost_chance: 0.08,
+                kick: 1.0,
+                snare: 1.0,
+                ..Tweak::NEUTRAL
             },
         }
     }
@@ -285,7 +481,9 @@ impl Performance {
     /// sample rate, which turn the timing feel into a frame offset.
     ///
     /// The offset is always at or after the grid: a player can sit back, but
-    /// this engine does not schedule ahead of the block it is rendering.
+    /// this engine does not schedule ahead of the block it is rendering. A
+    /// player may add a second, quieter hit ([`Played::extra`]) as a ghost note
+    /// or a flam; it is the same voice, a few milliseconds after the main hit.
     pub fn play(
         &self,
         voice: Voice,
@@ -299,6 +497,7 @@ impl Performance {
             return Played {
                 velocity: 0,
                 offset_frames: 0,
+                extra: None,
             };
         }
         let profile = self.profile();
@@ -313,7 +512,7 @@ impl Performance {
         let timing = hash_unit(step, voice, 0xA11E_0000_0000_0001);
         let jitter = (timing * 2.0 - 1.0) * profile.time_spread;
         let swing = if swings(voice) && metric_step % 2 == 1 {
-            // Half the requested fraction: 0.20 is a shade under a triplet.
+            // Half the requested fraction: 0.28 is a shade under a triplet.
             f64::from(profile.swing) * (step_frames / f64::from(rate)) * 0.5
         } else {
             0.0
@@ -324,6 +523,15 @@ impl Performance {
         Played {
             velocity,
             offset_frames,
+            extra: self.extra_hit(
+                profile,
+                voice,
+                velocity,
+                step,
+                metric_step,
+                offset_frames,
+                rate,
+            ),
         }
     }
 
@@ -336,9 +544,67 @@ impl Performance {
             spread: base.spread * tweak.spread,
             accent: base.accent * tweak.accent,
             lateness: (base.lateness + tweak.lateness).max(0.0),
-            time_spread: base.time_spread,
-            swing: base.swing.max(tweak.swing),
+            time_spread: base.time_spread * tweak.time,
+            swing: (base.swing + tweak.swing).clamp(0.0, 0.6),
+            ghost_chance: (base.ghost_chance + tweak.ghost_chance).clamp(0.0, 0.9),
+            ghost_level: (base.ghost_level + tweak.ghost_level).clamp(0.0, 0.8),
+            ghost_delay: (base.ghost_delay + tweak.ghost_delay).max(0.006),
+            flam_chance: (base.flam_chance + tweak.flam_chance).clamp(0.0, 0.9),
+            flam_level: (base.flam_level + tweak.flam_level).clamp(0.0, 0.8),
+            flam_delay: (base.flam_delay + tweak.flam_delay).max(0.006),
         }
+    }
+
+    /// A ghost note or a flam, when this player and this cell call for one.
+    ///
+    /// Ghost notes prefer the offbeat sixteenths and land on the snare, clap,
+    /// hats and rim. Flams prefer the backbeat and land on the kick, snare,
+    /// clap, toms and rim. A cell gets one extra hit at most: the ghost wins
+    /// where a player carries both habits, because two extra hits would make a
+    /// machine-gun of a single chart step.
+    fn extra_hit(
+        &self,
+        profile: Profile,
+        voice: Voice,
+        main: u8,
+        step: u64,
+        metric_step: usize,
+        main_offset: usize,
+        rate: u32,
+    ) -> Option<ExtraHit> {
+        if main <= 2 || rate == 0 {
+            return None;
+        }
+        let metric = metric_step % 16;
+        let offbeat = metric % 2 == 1;
+        let ghost_chance = (profile.ghost_chance * if offbeat { 1.35 } else { 0.75 }).min(0.9);
+        if ghostable(voice) && hash_unit(step, voice, 0x6051_0000_0000_0001) < ghost_chance {
+            return Some(make_extra(
+                main,
+                profile.ghost_level,
+                profile.ghost_delay,
+                step,
+                voice,
+                main_offset,
+                rate,
+                0x6052_0000_0000_0001,
+            ));
+        }
+        let on_beat = metric % 4 == 0 || metric % 4 == 2;
+        let flam_chance = (profile.flam_chance * if on_beat { 1.25 } else { 0.7 }).min(0.9);
+        if flamable(voice) && hash_unit(step, voice, 0xF1A3_0000_0000_0001) < flam_chance {
+            return Some(make_extra(
+                main,
+                profile.flam_level,
+                profile.flam_delay,
+                step,
+                voice,
+                main_offset,
+                rate,
+                0xF1A4_0000_0000_0001,
+            ));
+        }
+        None
     }
 }
 
@@ -348,6 +614,17 @@ pub struct Played {
     /// The velocity to trigger, `1..=100`.
     pub velocity: u8,
     /// How many frames after the step boundary the hit lands.
+    pub offset_frames: usize,
+    /// A ghost note or flam this player adds, if any.
+    pub extra: Option<ExtraHit>,
+}
+
+/// A second, quieter hit by the same voice: a ghost note or a flam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExtraHit {
+    /// The extra hit's velocity, always below the main hit's.
+    pub velocity: u8,
+    /// Frames after the step boundary; later than the main hit.
     pub offset_frames: usize,
 }
 
@@ -366,6 +643,18 @@ struct Profile {
     time_spread: f32,
     /// How far the second sixteenth of a pair waits, as a fraction of a step.
     swing: f32,
+    /// Chance of a ghost note, before the offbeat weighting.
+    ghost_chance: f32,
+    /// A ghost note's velocity as a fraction of the main hit.
+    ghost_level: f32,
+    /// How far after the main hit a ghost lands, in seconds.
+    ghost_delay: f32,
+    /// Chance of a flam, before the backbeat weighting.
+    flam_chance: f32,
+    /// A flam's velocity as a fraction of the main hit.
+    flam_level: f32,
+    /// How far after the main hit a flam lands, in seconds.
+    flam_delay: f32,
 }
 
 /// A player's additions to a style's profile.
@@ -375,7 +664,14 @@ struct Tweak {
     accent: f32,
     spread: f32,
     lateness: f32,
+    time: f32,
     swing: f32,
+    ghost_chance: f32,
+    ghost_level: f32,
+    ghost_delay: f32,
+    flam_chance: f32,
+    flam_level: f32,
+    flam_delay: f32,
     kick: f32,
     snare: f32,
     hat: f32,
@@ -389,7 +685,14 @@ impl Tweak {
         accent: 1.0,
         spread: 1.0,
         lateness: 0.0,
+        time: 1.0,
         swing: 0.0,
+        ghost_chance: 0.0,
+        ghost_level: 0.0,
+        ghost_delay: 0.0,
+        flam_chance: 0.0,
+        flam_level: 0.0,
+        flam_delay: 0.0,
         kick: 0.0,
         snare: 0.0,
         hat: 0.0,
@@ -405,6 +708,49 @@ fn voice_bias(player: Player, voice: Voice) -> f32 {
         Voice::Snare | Voice::Clap => tweak.snare,
         Voice::ClosedHat | Voice::OpenHat => tweak.hat,
         Voice::LowTom | Voice::HighTom | Voice::Rim => tweak.other,
+    }
+}
+
+/// Whether this voice takes a ghost note.
+fn ghostable(voice: Voice) -> bool {
+    matches!(
+        voice,
+        Voice::Snare | Voice::Clap | Voice::ClosedHat | Voice::OpenHat | Voice::Rim
+    )
+}
+
+/// Whether this voice takes a flam.
+fn flamable(voice: Voice) -> bool {
+    matches!(
+        voice,
+        Voice::Kick
+            | Voice::Snare
+            | Voice::Clap
+            | Voice::LowTom
+            | Voice::HighTom
+            | Voice::Rim
+    )
+}
+
+/// Build the extra hit a ghost or flam adds.
+fn make_extra(
+    main: u8,
+    level: f32,
+    delay: f32,
+    step: u64,
+    voice: Voice,
+    main_offset: usize,
+    rate: u32,
+    salt: u64,
+) -> ExtraHit {
+    let jitter = (hash_unit(step, voice, salt) * 2.0 - 1.0) * delay * 0.35;
+    let seconds = (delay + jitter).max(0.004);
+    let offset_frames = main_offset + (f64::from(seconds) * f64::from(rate)).round() as usize;
+    let cap = main.saturating_sub(1).max(1);
+    let velocity = ((main as f32 * level).round() as u8).clamp(1, cap);
+    ExtraHit {
+        velocity,
+        offset_frames,
     }
 }
 
@@ -461,16 +807,20 @@ fn accent_at(voice: Voice, metric_step: usize) -> f32 {
     }
 }
 
-/// Whether this voice feels the swing. The hats carry it; the feet and the
-/// backbeat stay where the chart put them.
+/// Whether this voice feels the swing. The hats, the rim and the clap carry it;
+/// the feet and the backbeat stay where the chart put them.
 fn swings(voice: Voice) -> bool {
-    matches!(voice, Voice::ClosedHat | Voice::OpenHat | Voice::Rim)
+    matches!(
+        voice,
+        Voice::ClosedHat | Voice::OpenHat | Voice::Rim | Voice::Clap | Voice::Snare
+    )
 }
 
 /// A deterministic value in `0..1` from a step, a voice and a salt.
 ///
 /// SplitMix64's finalizer: cheap, stable across platforms, and no state to carry
-/// between blocks. The salt keeps the velocity and timing streams independent.
+/// between blocks. The salt keeps the velocity, timing, ghost and flam streams
+/// independent.
 fn hash_unit(step: u64, voice: Voice, salt: u64) -> f32 {
     let mut x = step
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)
@@ -491,6 +841,42 @@ fn hash_unit(step: u64, voice: Voice, salt: u64) -> f32 {
 mod tests {
     use super::*;
 
+    fn mean_velocity(player: Player, style: Style, voice: Voice) -> f32 {
+        let performance = Performance::new(player, style);
+        let mut total = 0.0;
+        let mut count = 0.0;
+        for step in 0..64u64 {
+            let played = performance.play(voice, 70, step, step as usize, 6_000.0, 48_000);
+            total += played.velocity as f32;
+            count += 1.0;
+        }
+        total / count
+    }
+
+    fn mean_offset_ms(player: Player, style: Style, voice: Voice) -> f32 {
+        let performance = Performance::new(player, style);
+        let mut total = 0.0;
+        let mut count = 0.0;
+        for step in 0..64u64 {
+            let played = performance.play(voice, 70, step, step as usize, 6_000.0, 48_000);
+            total += played.offset_frames as f32 / 48.0;
+            count += 1.0;
+        }
+        total / count
+    }
+
+    fn extras(player: Player, style: Style, voice: Voice) -> usize {
+        let performance = Performance::new(player, style);
+        (0..128u64)
+            .filter(|step| {
+                performance
+                    .play(voice, 80, *step, *step as usize, 6_000.0, 48_000)
+                    .extra
+                    .is_some()
+            })
+            .count()
+    }
+
     #[test]
     fn names_round_trip() {
         for player in Player::ALL {
@@ -505,7 +891,7 @@ mod tests {
     }
 
     #[test]
-    fn every_player_but_the_house_player_has_a_style_and_a_face() {
+    fn every_player_has_a_style_and_a_face() {
         for player in Player::ALL {
             let style = player.style();
             assert!(Style::ALL.contains(&style));
@@ -514,34 +900,85 @@ mod tests {
     }
 
     #[test]
-    fn soft_is_quieter_than_hard_than_aggressive_for_one_cell() {
-        // Same step and voice, so all three share the same deterministic wobble:
-        // only the style's level and accent move the answer.
-        let cell = (Voice::Snare, 70u8, 4u64, 4usize);
-        let soft = Performance::new(Player::Studio, Style::Soft).play(cell.0, cell.1, cell.2, cell.3, 6_000.0, 48_000);
-        let hard = Performance::new(Player::Studio, Style::Hard).play(cell.0, cell.1, cell.2, cell.3, 6_000.0, 48_000);
-        let aggressive = Performance::new(Player::Studio, Style::Aggressive).play(
-            cell.0, cell.1, cell.2, cell.3, 6_000.0, 48_000,
-        );
+    fn styles_are_ordered_from_quiet_to_loud() {
+        // Same cell, no accent (kick off the pulse), so the style's level is the
+        // only thing that should move the mean.
+        let mut means = Vec::new();
+        for style in Style::ALL {
+            means.push(mean_velocity(Player::Studio, style, Voice::Kick));
+        }
+        for pair in means.windows(2) {
+            assert!(
+                pair[1] > pair[0] + 1.0,
+                "styles are not ordered quiet to loud: {means:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn players_are_measurably_different() {
+        // A player that is only a few velocity points from another is the bug
+        // this change fixes: the roster must spread across level and time.
+        let velocities: Vec<f32> = Player::ALL
+            .iter()
+            .map(|player| mean_velocity(*player, player.style(), Voice::Snare))
+            .collect();
+        let low = velocities.iter().cloned().fold(f32::MAX, f32::min);
+        let high = velocities.iter().cloned().fold(f32::MIN, f32::max);
+        assert!(high - low > 22.0, "velocity spread too small: {velocities:?}");
+
+        let offsets: Vec<f32> = Player::ALL
+            .iter()
+            .map(|player| mean_offset_ms(*player, player.style(), Voice::Kick))
+            .collect();
+        let early = offsets.iter().cloned().fold(f32::MAX, f32::min);
+        let late = offsets.iter().cloned().fold(f32::MIN, f32::max);
         assert!(
-            soft.velocity < hard.velocity && hard.velocity < aggressive.velocity,
-            "{} {} {}",
-            soft.velocity,
-            hard.velocity,
-            aggressive.velocity
+            late - early > 12.0,
+            "timing spread too small: {offsets:?}"
         );
     }
 
     #[test]
-    fn a_softer_player_sits_further_behind_the_grid() {
-        let soft = Performance::new(Player::Studio, Style::Soft).play(
-            Voice::Kick, 100, 0, 0, 6_000.0, 48_000,
-        );
-        let aggressive = Performance::new(Player::Studio, Style::Aggressive).play(
-            Voice::Kick, 100, 0, 0, 6_000.0, 48_000,
-        );
-        assert!(soft.offset_frames > aggressive.offset_frames);
-        assert!(soft.offset_frames >= 48_000 / 200, "at least ~5 ms late");
+    fn ghosts_and_flams_add_a_quieter_second_hit() {
+        let performance = Performance::of(Player::Marla);
+        let mut found = None;
+        for step in 0..128u64 {
+            let played = performance.play(
+                Voice::Snare,
+                90,
+                step,
+                step as usize,
+                6_000.0,
+                48_000,
+            );
+            if let Some(extra) = played.extra {
+                found = Some((played, extra));
+                break;
+            }
+        }
+        let (played, extra) = found.expect("Marla never ghosted or flammed a snare");
+        assert!(extra.velocity < played.velocity, "{played:?}");
+        assert!(extra.offset_frames > played.offset_frames, "{played:?}");
+        let gap = (extra.offset_frames - played.offset_frames) as f32 / 48.0;
+        assert!((4.0..=70.0).contains(&gap), "the extra was {gap} ms late");
+    }
+
+    #[test]
+    fn a_timid_house_performance_adds_no_extra_hit() {
+        for voice in Voice::ALL {
+            assert_eq!(extras(Player::Studio, Style::Timid, voice), 0);
+        }
+        assert!(extras(Player::Marla, Style::Cool, Voice::Snare) > 0);
+        assert!(extras(Player::Sable, Style::Aggressive, Voice::Snare) > 0);
+    }
+
+    #[test]
+    fn a_player_sits_behind_the_grid_by_their_own_amount() {
+        // Ines is the late one, Odile the metronome.
+        let ines = mean_offset_ms(Player::Ines, Player::Ines.style(), Voice::Kick);
+        let odile = mean_offset_ms(Player::Odile, Player::Odile.style(), Voice::Kick);
+        assert!(ines - odile > 15.0, "Ines {ines} ms vs Odile {odile} ms");
     }
 
     #[test]
@@ -557,16 +994,18 @@ mod tests {
         let performance = Performance::of(Player::Dov);
         let first = performance.play(Voice::ClosedHat, 40, 3, 3, 6_000.0, 48_000);
         let second = performance.play(Voice::ClosedHat, 40, 3 + 16, 3, 6_000.0, 48_000);
-        assert_ne!(first.velocity, second.velocity);
+        assert_ne!(first, second);
     }
 
     #[test]
     fn an_empty_step_stays_empty_and_on_the_grid() {
         for player in Player::ALL {
             for style in Style::ALL {
-                let played = Performance::new(player, style).play(Voice::Kick, 0, 5, 5, 6_000.0, 48_000);
+                let played =
+                    Performance::new(player, style).play(Voice::Kick, 0, 5, 5, 6_000.0, 48_000);
                 assert_eq!(played.velocity, 0);
                 assert_eq!(played.offset_frames, 0);
+                assert_eq!(played.extra, None);
             }
         }
     }
@@ -587,8 +1026,15 @@ mod tests {
                             48_000,
                         );
                         assert!((1..=100).contains(&played.velocity));
-                        // A player may sit back but never schedules ahead.
-                        assert!(played.offset_frames <= 48_000 / 40, "over 25 ms late");
+                        // A player may sit back but never schedules ahead, and
+                        // no feel should push a hit more than a step late.
+                        assert!(played.offset_frames <= 48_000 / 15, "over 66 ms late");
+                        if let Some(extra) = played.extra {
+                            assert!((1..=100).contains(&extra.velocity));
+                            assert!(extra.velocity < played.velocity);
+                            assert!(extra.offset_frames > played.offset_frames);
+                            assert!(extra.offset_frames <= 48_000 / 12);
+                        }
                     }
                 }
             }
@@ -607,29 +1053,12 @@ mod tests {
 
     #[test]
     fn swing_waits_the_second_sixteenth_of_a_pair() {
-        let profile = Performance::new(Player::Wren, Style::Soft).profile();
-        let show = profile.swing > 0.0;
-        assert!(show, "Wren swings");
-        let step = 6_000.0 / 48_000.0;
-        let straight = Performance::new(Player::Wren, Style::Soft).play(
-            Voice::ClosedHat,
-            40,
-            0,
-            0,
-            6_000.0,
-            48_000,
-        );
-        let swung = Performance::new(Player::Wren, Style::Soft).play(
-            Voice::ClosedHat,
-            40,
-            1,
-            1,
-            6_000.0,
-            48_000,
-        );
-        // The swing alone is ~20 ms, far more than the timing wobble.
-        let extra = swung.offset_frames as f32 / 48_000.0 - straight.offset_frames as f32 / 48_000.0;
-        assert!(extra >= profile.swing * step * 0.5 * 0.5, "{extra}");
+        // Marla is the hardest swinger in the roster.
+        let performance = Performance::of(Player::Marla);
+        let straight = performance.play(Voice::ClosedHat, 40, 0, 0, 6_000.0, 48_000);
+        let swung = performance.play(Voice::ClosedHat, 40, 1, 1, 6_000.0, 48_000);
+        let extra = swung.offset_frames as f32 / 48.0 - straight.offset_frames as f32 / 48.0;
+        assert!(extra >= 12.0, "only {extra} ms of swing");
     }
 
     #[test]
@@ -642,6 +1071,9 @@ mod tests {
             assert!((base.spread - studio.spread).abs() < 1e-6);
             assert!((base.accent - studio.accent).abs() < 1e-6);
             assert!((base.lateness - studio.lateness).abs() < 1e-6);
+            assert!((base.swing - studio.swing).abs() < 1e-6);
+            assert!((base.ghost_chance - studio.ghost_chance).abs() < 1e-6);
+            assert!((base.flam_chance - studio.flam_chance).abs() < 1e-6);
         }
     }
 }

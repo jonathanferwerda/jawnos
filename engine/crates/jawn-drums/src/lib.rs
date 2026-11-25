@@ -68,7 +68,7 @@ pub use dsp::{render_voice, render_voice_with_seed, voice_seed, DEFAULT_SEED};
 pub use kit::Kit;
 pub use machine::{Machine, MAX_HITS};
 pub use pattern::{sixteenth_frames, Pattern, PatternEvent};
-pub use player::{Performance, Played, Player, Style};
+pub use player::{ExtraHit, Performance, Played, Player, Style};
 
 /// The waveform of a pitched drum voice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

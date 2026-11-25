@@ -1892,8 +1892,8 @@ sub studio_transport_drums {
 
 	my $play_style = $data->{'style'};
 	if (defined $play_style) {
-		return ('transport drums "style" must be soft, hard or aggressive', undef)
-			unless !ref $play_style && $play_style =~ /\A(?:soft|hard|aggressive)\z/;
+		return ('transport drums "style" must be timid, soft, moderate, cool, hard or aggressive', undef)
+			unless !ref $play_style && $play_style =~ /\A(?:timid|soft|moderate|cool|hard|aggressive)\z/;
 		$out{'style'} = $play_style;
 	}
 

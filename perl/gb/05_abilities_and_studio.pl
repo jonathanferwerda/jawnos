@@ -224,17 +224,26 @@ our $studio = {
 	# uncoloured house player, for choosing a style on its own.
 	drum_players => [
 		{ name => 'studio', label => 'Session', style => 'hard', hint => 'On the grid, no swing. The style alone shapes the hit.' },
-		{ name => 'tuck', label => 'Tuck', style => 'soft', plain => 1, hint => 'Brushes and a lazy backbeat. Sits behind the click and rounds the snare.' },
-		{ name => 'wren', label => 'Wren', style => 'soft', plain => 1, hint => 'Swings the offbeat sixteenths and keeps the hats light.' },
+		{ name => 'tuck', label => 'Tuck', style => 'soft', plain => 1, hint => 'Brushes and a lazy backbeat. Far behind the click, with quiet ghost snares.' },
+		{ name => 'wren', label => 'Wren', style => 'cool', plain => 1, hint => 'Swings the offbeat sixteenths and rolls quiet ghost hits under the snare.' },
 		{ name => 'odile', label => 'Odile', style => 'hard', plain => 1, hint => 'On the grid and dry. A tight backbeat that never rushes.' },
 		{ name => 'moxie', label => 'Moxie', style => 'hard', plain => 1, hint => 'Steady four-on-the-floor. The kick leads and the hats stay even.' },
-		{ name => 'bram', label => 'Bram', style => 'aggressive', plain => 1, hint => 'Leans into the kit: a big snare and a kick right on the click.' },
-		{ name => 'dov', label => 'Dov', style => 'aggressive', plain => 1, hint => 'Punk energy. Wide dynamics and heavy accents, no patience for a soft bar.' }
+		{ name => 'bram', label => 'Bram', style => 'aggressive', plain => 1, hint => 'Leans into the kit: a big snare, a kick on the click, hard flams.' },
+		{ name => 'dov', label => 'Dov', style => 'aggressive', plain => 1, hint => 'Punk energy. Wide dynamics, heavy accents, a flam on every other hit.' },
+		{ name => 'marla', label => 'Marla', style => 'cool', plain => 1, hint => 'Loose and busy: swung offbeats, ghost notes and flams under a light backbeat.' },
+		{ name => 'ines', label => 'Ines', style => 'timid', plain => 1, hint => 'Timid and late: soft hands, few accents, a breath behind the click.' },
+		{ name => 'juno', label => 'Juno', style => 'moderate', plain => 1, hint => 'Relaxed in the pocket: a loose kick, a lazy snare, low ghost notes.' },
+		{ name => 'sable', label => 'Sable', style => 'aggressive', plain => 1, hint => 'Heavy and wide: big snare flams, hard accents, no ghost notes.' },
+		{ name => 'nell', label => 'Nell', style => 'moderate', plain => 1, hint => 'Steady and even: a plain backbeat with a few quiet ghosts.' }
 	],
 	# The drum styles: how hard the player plays. The same names the engine and
-	# a saved song use; the label is what the Style list reads.
+	# a saved song use; the label is what the Style list reads. Timid, soft,
+	# moderate, cool, hard and aggressive, from the quietest to the loudest.
 	drum_styles => [
+		{ name => 'timid', label => 'Timid' },
 		{ name => 'soft', label => 'Soft' },
+		{ name => 'moderate', label => 'Moderate' },
+		{ name => 'cool', label => 'Cool' },
 		{ name => 'hard', label => 'Hard' },
 		{ name => 'aggressive', label => 'Aggressive' }
 	],
