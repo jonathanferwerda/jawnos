@@ -399,9 +399,11 @@ sub task_writer {
 				my $data = {
 					app => $task->{'task'},
 					timestamp => $timestamp,
-					type => 'usual',
+					type => 'stop',
 					quantity => $task->{'occurences'},
 					duration => (abs $duration),
+					stop_seen => 'yes',
+					seen => 'yes',
 					source_uuid => $source_uuid,
 					# a task's checkbox is not a step the person picked on the rail
 					source => 'task',

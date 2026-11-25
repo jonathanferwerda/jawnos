@@ -119,7 +119,7 @@ our @guide_tools = (
 	{ name => 'generate', args => { kind => 'image', prompt => 'a full description', app => 'the appointment it is for' }, example => '{"action":"generate","kind":"image","prompt":"a red barn at dawn","app":"kitchen renovation"}',
 	  desc => 'make an image, a sound or a video for the person through the matching agent (set "kind" to image, audio or video, and write "prompt" as a full, self-contained description). Set "app" to the appointment it belongs to when you know it; leave "app" out and the media waits in the Camera pool to be filed' },
 	{ name => 'create', args => { app => 'lunch', title => 'lunch with Mom', when => 'in 3 hours', type => 'start', duration => '20 minutes' }, example => '{"action":"create","app":"meditate","title":"evening sit","when":"in 3 hours","type":"start","duration":"20 minutes"}',
-	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in. Set "type" to "start", "record" or "command" for something the alarm will fire at that time (a future start begins the activity; record starts a recording; command runs the app\'s configured command), or leave it "usual" for a plain one-off log entry. Set "duration" to how long it lasts ("20 minutes", "1h") only when they say - give a plain positive length; time is an accrual, so the tree stores it as a negative offset itself' },
+	  desc => 'propose a new appointment; it is staged for the person to promote, never written straight in. Set "type" to "start", "record" or "command" for something the alarm will fire at that time (a future start begins the activity; record starts a recording; command runs the app\'s configured command), or leave it "stop" for a plain one-off log entry. Set "duration" to how long it lasts ("20 minutes", "1h") only when they say - give a plain positive length; time is an accrual, so the tree stores it as a negative offset itself' },
 	{ name => 'schedule', args => { token => 'the token from the question', text => 'the clarified schedule' }, example => '{"action":"schedule","token":"abc123","text":"every third Saturday of the month for a year"}',
 	  desc => 'finish a schedule that could not be read yet: pass the token from the question and the person\'s clarified words. It writes the repeat appointments or bills and says how many. Use it after asking what was unclear; the token names the appointment or bill already waiting.' },
 	{ name => 'promote', args => { }, example => '{"action":"promote"}',
@@ -143,7 +143,7 @@ our @guide_tools = (
 # Every appointment type the Guide's create may stage, so the model is told the
 # closed set rather than inventing one. The alarm clock treats start/record/
 # command as things to fire when their time comes.
-our @guide_create_types = qw/usual start record command/;
+our @guide_create_types = qw/stop start record command/;
 
 # The Coding agent's tools: a closed vocabulary the model may pick from, one
 # action per turn, exactly like the Guide's. Unlike the Guide, these run on the

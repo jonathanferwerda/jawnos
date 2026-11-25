@@ -4,7 +4,7 @@
     shelf move), a picture/recording keeps its preview, and a note keeps notes.
     Only the controls actually rendered are saved (manager.js sends `sent`), so
     a narrower form can never blank a column it does not show. %>
-<% my $type = $app->{'type'} || 'usual'; %>
+<% my $type = $app->{'type'} || 'stop'; %>
 <% my %money = map { $_ => 1 } qw/transaction purchase quote invoice sale expense income/; %>
 <% my %session = map { $_ => 1 } qw/start record stop usual measure resume renew pause complete delay cancel/; %>
 <% my %media = map { $_ => 1 } qw/image video audio scan camera snapshot/; %>

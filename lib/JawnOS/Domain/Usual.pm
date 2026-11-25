@@ -94,17 +94,18 @@ my $sessions_for = sub {
 	my $limit = defined $opt{'limit'} ? $opt{'limit'} : 60;
 	my $half_life = defined $opt{'half_life'} && $opt{'half_life'} > 0 ? $opt{'half_life'} : 6;
 	my $min_sessions = defined $opt{'min_sessions'} ? $opt{'min_sessions'} : 3;
+	my $now = 0 + ($opt{'now'} || &subs::rightNow());
 
 	my $stop_rows = &subs::db_query(
-		q{select * from appointments where app = ? and type = ? order by cast(timestamp as integer) desc limit ?},
-		$app, 'stop', $limit
+		q{select * from appointments where app = ? and type = ? and cast(timestamp as integer) <= ? order by cast(timestamp as integer) desc limit ?},
+		$app, 'stop', $now, $limit
 	)->hashes || [];
 	my $rows = $stop_rows;
 	my $fallback = 0;
 	if (scalar(@{$stop_rows}) < $min_sessions) {
 		$rows = &subs::db_query(
-			q{select * from appointments where app = ? and type = ? and coalesce(source, '') not in ('task','default','guide') and coalesce(source_uuid, '') = '' order by cast(timestamp as integer) desc limit ?},
-			$app, 'usual', $limit
+			q{select * from appointments where app = ? and type = ? and coalesce(source, '') not in ('task','default','guide') and coalesce(source_uuid, '') = '' and cast(timestamp as integer) <= ? order by cast(timestamp as integer) desc limit ?},
+			$app, 'usual', $now, $limit
 		)->hashes || [];
 		$fallback = 1;
 	}

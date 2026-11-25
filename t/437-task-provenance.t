@@ -88,7 +88,9 @@ my $running;
 	my $provenance = decode_json($appt{'washing'}{'data'});
 	is_deeply($provenance, { task_list => 'shower', task => 'washing', task_uuid => 'tw' },
 		'the row names the checklist, the task and the entry that completed it');
-	is($appt{'washing'}{'type'}, 'usual', 'the task row is still a usual row');
+	is($appt{'washing'}{'type'}, 'stop', 'the task row is a stop');
+	is($appt{'washing'}{'stop_seen'}, 'yes', 'and is already closed');
+	is($appt{'washing'}{'seen'}, 'yes', 'and stamped seen');
 	is($appt{'washing'}{'source'}, 'task', 'and still says a task wrote it');
 	is($appt{'washing'}{'timestamp'}, 1_700_000_100_000, 'the row keeps its own moment');
 	ok($appt{'washing'}{'quiet_child'}, 'the row is written as a quiet child');

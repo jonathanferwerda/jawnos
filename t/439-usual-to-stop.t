@@ -1,4 +1,4 @@
-# tests-for: scripts/usual_to_stop.pl lib/JawnOS/Domain/Usual.pm lib/JawnOS/Domain/UsualWrite.pm
+# tests-for: scripts/usual_to_stop.pl lib/JawnOS/Domain/Usual.pm lib/JawnOS/Domain/UsualWrite.pm lib/JawnOS/Domain/Warehouse.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/Resolve.pm lib/JawnOS/Manager/Part28.pm lib/JawnOS/Manager/Part29.pm templates/apps/edit_app.html.ep perl/gb/03_engines_and_tools.pl
 # covers:    the one-off migration that turns the person's old usual rows into stop rows, and the sign-aware session reading that lets both the old end-anchored rows and the new start-anchored pre-usual rows share one type
 
 use strict;
@@ -45,5 +45,35 @@ like($write, qr/type => 'stop'/, 'the usual parent is written as a stop');
 like($write, qr/stop_seen => 'yes'/, 'and is closed');
 like($write, qr/status => 'usual'/, 'while keeping the usual marker in status');
 like($write, qr/duration => \$at->\{'signed'\}/, 'with the signed length the sign-aware reader expects');
+like($write, qr/type => 'stop',\s*\}, \{\s*project/, 'the default model/options inherit the stop type');
+
+# --------------------------------------------- every other usual writer
+my $warehouse = read_file("$root/lib/JawnOS/Domain/Warehouse.pm");
+like($warehouse, qr/type => 'stop',[\s\S]{0,180}stop_seen => 'yes'/, 'a task completion is a closed stop');
+unlike($warehouse, qr/type => 'usual'/, 'the task writer has no usual type left');
+
+my $generate = read_file("$root/lib/JawnOS/Domain/Generate.pm");
+like($generate, qr/\(\$source_row->\{'type'\} \|\| ''\) eq 'stop'/, 'a default child of a stop parent is spanned by the parent sign');
+like($generate, qr/\$done\{'duration'\} = -abs\(\$p_dur\)/, 'and written as a negative stop length');
+
+my $part29 = read_file("$root/lib/JawnOS/Manager/Part29.pm");
+unlike($part29, qr/\|\| 'usual'/, 'the Guide and schedule defaults no longer fall back to usual');
+like($part29, qr/\|\| 'stop'/, 'they fall back to stop');
+
+my $part28 = read_file("$root/lib/JawnOS/Manager/Part28.pm");
+unlike($part28, qr/\|\| 'usual'/, 'the Guide stage/promote has no usual fallback');
+like($part28, qr/\|\| 'stop'/, 'it falls back to stop');
+
+my $resolve = read_file("$root/lib/JawnOS/Domain/Resolve.pm");
+like($resolve, qr/type = 'stop'/, 'the ghost reads the stop history');
+like($resolve, qr/type => 'stop'/, 'and presents itself as a stop');
+unlike($resolve, qr/type => 'usual'/, 'no usual ghost type remains');
+
+my $edit = read_file("$root/templates/apps/edit_app.html.ep");
+like($edit, qr/\|\| 'stop'/, 'the editor defaults a new app to stop');
+
+my $gb = read_file("$root/perl/gb/03_engines_and_tools.pl");
+like($gb, qr/qw\/stop start record command\//, 'the Guide create types offer stop');
+unlike($gb, qr/leave it \\"usual\\"/, 'and no longer tell the model to leave it usual');
 
 done_testing();

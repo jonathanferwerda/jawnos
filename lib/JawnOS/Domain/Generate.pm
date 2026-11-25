@@ -436,13 +436,40 @@ sub source_appt_writer {
 		delete $done{'quiet_child'};
 		my $cancelled = ($source_row->{'type'} || '') eq 'cancel';
 		$done{'type'} = $cancelled ? 'cancel' : 'stop';
-		$done{'duration'} = defined $source_row->{'duration'} ? $source_row->{'duration'} : $done{'duration'};
-		$done{'timestamp'} = $done{'timestamp'} || $source_row->{'timestamp'} || $timestamp;
-		unless ($cancelled) {
+		if (!$cancelled && (($source_row->{'type'} || '') eq 'stop')) {
+			# A stop parent names its span by the sign: a real stop has both ends,
+			# while the usual keeps its press as either end. The child is written
+			# over the same span in the stop shape, never with the parent's raw
+			# timestamp and signed length (a positive usual would invert it).
+			my $p_ts = 0 + ($source_row->{'timestamp'} // 0);
+			my $p_dur = 0 + ($source_row->{'duration'} // 0);
+			my ($p_start, $p_end);
+			if (defined $source_row->{'stop_timestamp'} && length $source_row->{'stop_timestamp'}) {
+				$p_start = $p_ts;
+				$p_end = 0 + $source_row->{'stop_timestamp'};
+			}
+			elsif ($p_dur < 0) {
+				$p_start = $p_ts;
+				$p_end = $p_ts + abs($p_dur);
+			}
+			else {
+				$p_end = $p_ts;
+				$p_start = $p_ts - abs($p_dur);
+			}
+			$done{'timestamp'} = $p_start;
+			$done{'duration'} = -abs($p_dur);
+			$done{'stop_timestamp'} = $p_end;
 			$done{'stop_seen'} = 'yes';
-			$done{'stop_timestamp'} = (defined $source_row->{'stop_timestamp'} && length $source_row->{'stop_timestamp'})
-				? $source_row->{'stop_timestamp'}
-				: (($source_row->{'timestamp'} || $done{'timestamp'}) - ($source_row->{'duration'} || 0));
+		}
+		else {
+			$done{'duration'} = defined $source_row->{'duration'} ? $source_row->{'duration'} : $done{'duration'};
+			$done{'timestamp'} = $done{'timestamp'} || $source_row->{'timestamp'} || $timestamp;
+			unless ($cancelled) {
+				$done{'stop_seen'} = 'yes';
+				$done{'stop_timestamp'} = (defined $source_row->{'stop_timestamp'} && length $source_row->{'stop_timestamp'})
+					? $source_row->{'stop_timestamp'}
+					: (($source_row->{'timestamp'} || $done{'timestamp'}) - ($source_row->{'duration'} || 0));
+			}
 		}
 		$done{'seen'} = 'yes';
 		$done{'server_time'} = &subs::rightNow();

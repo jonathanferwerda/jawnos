@@ -167,7 +167,7 @@ sub guide_stage_change($target, $changes, $summary) {
 	&subs::db_insert('staged_appointments', {
 		uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',
 		kind => 'update', target_uuid => $target->{'uuid'},
-		app => $target->{'app'}, type => ($target->{'type'} || 'usual'),
+		app => $target->{'app'}, type => ((($target->{'type'} // '') eq '' || ($target->{'type'} // '') eq 'usual') ? 'stop' : $target->{'type'}),
 		timestamp => (exists $changes->{'timestamp'} ? $changes->{'timestamp'} : $target->{'timestamp'}),
 		title => $summary, notes => '', data => '',
 		changes => encode_json($changes),
@@ -259,7 +259,7 @@ sub guide_stage_delete($c, $params) {
 	&subs::db_insert('staged_appointments', {
 		uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',
 		kind => 'delete', target_uuid => $target->{'uuid'},
-		app => $target->{'app'}, type => ($target->{'type'} || 'usual'),
+		app => $target->{'app'}, type => ((($target->{'type'} // '') eq '' || ($target->{'type'} // '') eq 'usual') ? 'stop' : $target->{'type'}),
 		timestamp => $target->{'timestamp'}, title => $summary, notes => '', data => '',
 		device => &subs::device_setter(), status => 'pending'
 	});
@@ -383,7 +383,7 @@ sub guide_apply_schedule($c, $token, $text) {
 		my $uuid = $base_uuid . md5_sum($next - $start) . '+' . md5_sum($app . ' ' . ($row->{'type'} || ''));
 		next if &subs::db_query('select 1 from appointments where uuid = ? limit 1', $uuid)->hashes->[0];
 		&appointment_writer($c, {
-			app => $app, timestamp => $next, type => ($row->{'type'} || 'usual'),
+			app => $app, timestamp => $next, type => ((($row->{'type'} // '') eq '' || ($row->{'type'} // '') eq 'usual') ? 'stop' : $row->{'type'}),
 			project => $settings->{'project'},
 			duration => (defined $duration ? $duration : ''),
 			stop_timestamp => (defined $duration && abs($duration)) ? $next + abs($duration) : undef,
@@ -461,7 +461,8 @@ sub guide_verb_execute($c, $action) {
 		my $app = &subs::unformat_name($p{'app'} || '');
 		return 'no app named' unless length $app;
 		my $uuid = &subs::random_string_creator(40);
-		my $type = $p{'type'} || 'usual';
+		my $type = $p{'type'} || 'stop';
+		$type = 'stop' if $type eq 'usual';
 		my $duration = &guide_duration_ms($p{'duration'}, $type);
 		&subs::db_insert('staged_appointments', {
 			uuid => $uuid, staged_time => &subs::rightNow(), source => 'guide',

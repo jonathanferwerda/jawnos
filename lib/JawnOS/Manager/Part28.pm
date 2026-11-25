@@ -754,7 +754,8 @@ sub guide_stage_appointment($c, $params) {
 	my $uuid = &subs::random_string_creator(40);
 	my $now = &subs::rightNow();
 	my $app = &subs::unformat_name($params->{'app'} || '');
-	my $type = $params->{'type'} || 'usual';
+	my $type = $params->{'type'} || 'stop';
+	$type = 'stop' if $type eq 'usual';
 	my $timestamp = &guide_when_ms($params->{'timestamp'});
 	my $title = $params->{'title'} || '';
 	my $notes = $params->{'notes'} || '';
@@ -788,7 +789,7 @@ sub guide_promote_staged($c, $uuid) {
 	my $appt = {
 		uuid => $real_uuid,
 		app => $row->{'app'},
-		type => ($row->{'type'} || 'usual'),
+		type => ((($row->{'type'} // '') eq '' || ($row->{'type'} // '') eq 'usual') ? 'stop' : $row->{'type'}),
 		timestamp => $row->{'timestamp'},
 		server_time => &subs::rightNow(),
 		notes => $notes,

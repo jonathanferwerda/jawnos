@@ -447,7 +447,8 @@ sub ghost_times_for {
 		}
 	}
 	if (!@out) {
-		my $rows = &db_query(q{select timestamp from appointments where app = ? and type = 'usual' order by timestamp desc limit 200}, $app)->hashes;
+		my $cutoff = &rightNow();
+		my $rows = &db_query(q{select timestamp from appointments where app = ? and type = 'stop' and cast(timestamp as integer) <= ? order by timestamp desc limit 200}, $app, $cutoff)->hashes;
 		my (%h, %m);
 		foreach my $r (@{$rows}) {
 			next unless defined $r->{'timestamp'} && $r->{'timestamp'} =~ /^-?\d+$/;
@@ -544,7 +545,7 @@ sub ghost_rows_for {
 	@in = @in[0 .. 5] if @in > 6;
 	push @in, $beyond if !@in && defined $beyond;
 	my $duration = &usual_duration_for($app);
-	return [ map { { ghost => 1, app => $app, type => 'usual', timestamp => $_, duration => $duration, formatted_name => &format_name($app) } } @in ];
+	return [ map { { ghost => 1, app => $app, type => 'stop', timestamp => $_, duration => $duration, formatted_name => &format_name($app) } } @in ];
 }
 
 # Work claims: who is sorting out what, so two agents - or two machines - do not

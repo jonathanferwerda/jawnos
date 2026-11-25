@@ -248,7 +248,7 @@ sub usual_stock_stop {
 		uuid => $uuid,
 		timestamp => $press,
 		duration => $D,
-		type => 'usual',
+		type => 'stop',
 	}, {
 		project => $opt{'project'},
 	});
