@@ -38,6 +38,22 @@ is(subs::house_manager_address('https://192.168.2.10:45545/manager'), 'https://1
 	'a manager path is not doubled');
 like(subs::house_manager_address('https://127.0.0.1:45545'), qr{/manager$},
 	'a loopback address still answers with a manager route');
+# A request that arrived on the peer listener names this manager by the
+# listener's port. The machine that keeps the address stores the manager's port
+# and derives the listener from it, so the listener's port is rewritten back: a
+# board joined over the listener otherwise read "the house has no verified peer
+# listener" while that listener was up and proving its name (2026-11-25).
+{
+	my $config = subs::config_reader() || {};
+	my $manager_port = $ENV{'PORT_AHOY'} || $config->{'working_port'} || $config->{'port'};
+	my $listener_port = $manager_port + subs::peer_port_offset();
+	is(subs::house_manager_address("https://192.168.2.10:$listener_port"),
+		"https://192.168.2.10:$manager_port/manager",
+		'the peer listener port is rewritten to the manager port');
+	is(subs::house_manager_address("https://192.168.2.10:$manager_port"),
+		"https://192.168.2.10:$manager_port/manager",
+		'a manager port is left alone');
+}
 
 # The manager side: minting a token, and the flighty bits around it.
 my $controllers = slurp('lib/JawnOS/Controller/manager_controllers.pm');

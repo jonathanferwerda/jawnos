@@ -131,6 +131,21 @@ sub house_manager_address {
 	$base = defined $origin ? $origin : '';
 	my ($host) = $base =~ m{^https?://([^/]+)}i;
 	my $loopback = (defined $host && $host =~ /^(?:localhost|127\.|\[?::1\]?)/i) ? 1 : 0;
+	# A request that arrived on this machine's peer listener names the listener's
+	# port: this manager's port plus the peer offset. The address a joining
+	# machine keeps is a manager address - a row's `port` is the manager's and
+	# the listener is derived from it - so handing the listener's port back made
+	# every later derivation add the offset twice. A board joined that way then
+	# read "the house has no verified peer listener" while the listener was up
+	# and proving its name (2026-11-25).
+	if (defined $host && length $host && !$loopback && $base =~ m{:([0-9]{1,5})$}) {
+		my $seen = $1;
+		my $config = eval { &config_reader() } || {};
+		my $manager_port = $ENV{'PORT_AHOY'} || $config->{'working_port'} || $config->{'port'} || '';
+		if ($manager_port =~ /^\d+$/ && $seen == $manager_port + &peer_port_offset()) {
+			$base =~ s{:$seen$}{:$manager_port};
+		}
+	}
 	return $base . '/manager' if defined $host && length $host && !$loopback;
 	my $config = eval { &config_reader() } || {};
 	my $port = $ENV{'PORT_AHOY'} || $config->{'working_port'} || $config->{'port'} || '';

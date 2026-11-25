@@ -401,6 +401,22 @@ sub peer_tls_probe_timeout {
 	return 4;
 }
 
+# The listener ports a row can name, in the order to dial them. A row's `port`
+# is the manager's, and the listener is that port plus the offset. A row filed
+# by an older identity stored the listener's own port instead, and there the
+# derived port names nothing: a board joined that way read "the house has no
+# verified peer listener" while the listener was up and proving its name (it
+# then had to be repaired by hand). Both ports are the same listener, so both
+# are offered, derived first because that is the shape every current row has.
+sub peer_listener_candidates {
+	my ($rm) = @_;
+	my $derived = &peer_port_for($rm);
+	my @ports = ($derived);
+	my $stored = ref $rm eq 'HASH' ? ($rm->{'port'} // '') : '';
+	push @ports, $stored + 0 if $stored =~ /^\d+$/ && $stored > 0 && $stored != $derived;
+	return @ports;
+}
+
 sub peer_tls_port {
 	my ($rm, $opts) = @_;
 	$opts ||= {};
@@ -408,7 +424,8 @@ sub peer_tls_port {
 	return 0 unless length $ca;
 	my $host = $opts->{'host'} // ($rm->{'ip'} // '');
 	return 0 unless defined $host && length $host;
-	my $port = &peer_port_for($rm);
+	my @ports = &peer_listener_candidates($rm);
+	my $port = $ports[0];
 	my $key = $host . ':' . $port;
 	my $now = time;
 	if (my $cached = $peer_tls_probe{$key}) {
@@ -423,19 +440,24 @@ sub peer_tls_port {
 	# can. A peer whose leaf does not match keeps the stored route, which the
 	# peer signature alone proves - exactly what a peer with no leaf does.
 	require IO::Socket::SSL;
-	my $sock = IO::Socket::SSL->new(
-		PeerHost         => $host,
-		PeerPort         => $port,
-		SSL_ca_file      => $ca,
-		SSL_verify_mode  => IO::Socket::SSL::SSL_VERIFY_PEER(),
-		SSL_verifycn_name => $host,
-		SSL_hostname     => $host,
-		Timeout          => &peer_tls_probe_timeout(),
-	);
-	my $ok = $sock ? 1 : 0;
-	close $sock if $sock;
-	$peer_tls_probe{$key} = [ $now, $ok ? $port : 0 ];
-	return $ok ? $port : 0;
+	my $verified = 0;
+	foreach my $candidate (@ports) {
+		my $sock = IO::Socket::SSL->new(
+			PeerHost         => $host,
+			PeerPort         => $candidate,
+			SSL_ca_file      => $ca,
+			SSL_verify_mode  => IO::Socket::SSL::SSL_VERIFY_PEER(),
+			SSL_verifycn_name => $host,
+			SSL_hostname     => $host,
+			Timeout          => &peer_tls_probe_timeout(),
+		);
+		next unless $sock;
+		close $sock;
+		$verified = $candidate;
+		last;
+	}
+	$peer_tls_probe{$key} = [ $now, $verified ];
+	return $verified;
 }
 
 # Rewrite a peer url to the peer listener when that peer answers there and this
@@ -452,19 +474,24 @@ sub peer_listener_port {
 	$opts ||= {};
 	my $host = $opts->{'host'} // ($rm->{'ip'} // '');
 	return 0 unless defined $host && length $host;
-	my $port = &peer_port_for($rm);
-	my $key = 'tcp:' . $host . ':' . $port;
+	my @ports = &peer_listener_candidates($rm);
+	my $key = 'tcp:' . $host . ':' . $ports[0];
 	my $now = time;
 	if (my $cached = $peer_listener_probe{$key}) {
 		return $cached->[1] if $now - $cached->[0] < 300;
 	}
 	require IO::Socket::INET;
-	my $sock = IO::Socket::INET->new(
-		PeerAddr => $host, PeerPort => $port, Proto => 'tcp', Timeout => 1);
-	my $ok = $sock ? 1 : 0;
-	close $sock if $sock;
-	$peer_listener_probe{$key} = [ $now, $ok ? $port : 0 ];
-	return $ok ? $port : 0;
+	my $verified = 0;
+	foreach my $candidate (@ports) {
+		my $sock = IO::Socket::INET->new(
+			PeerAddr => $host, PeerPort => $candidate, Proto => 'tcp', Timeout => 1);
+		next unless $sock;
+		close $sock;
+		$verified = $candidate;
+		last;
+	}
+	$peer_listener_probe{$key} = [ $now, $verified ];
+	return $verified;
 }
 
 # Fill a peer row's `data` from a handshake that names the peer's database.

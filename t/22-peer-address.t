@@ -463,4 +463,44 @@ my $lo_row = {
 	ok(!$verified, 'and the named manager is used unverified, not as our own listener');
 }
 
+# A row filed by an older identity stored the peer listener's own port, so the
+# derived port (stored + offset) names nothing, and the peer was called "no
+# verified peer listener" while its listener was up and proving its name (the
+# gou's re-admit, 2026-11-25). Both ports are the same listener: the derived one
+# is tried first, then the stored one.
+SKIP: {
+	skip 'IO::Socket::SSL is not installed', 4 unless eval { require IO::Socket::SSL; 1 };
+	require IO::Socket::INET;
+	my @tried;
+	{
+		no warnings qw(redefine once);
+		local *subs::peer_ca_file = sub { return '/etc/ssl/certs/ca-certificates.crt' };
+		local *IO::Socket::SSL::new = sub {
+			my ($class, %arg) = @_;
+			push @tried, $arg{'PeerPort'};
+			return undef unless $arg{'PeerPort'} == 45551;
+			open(my $fh, '<', '/dev/null') or return undef;
+			return bless $fh, 'IO::Socket::SSL';
+		};
+		is(subs::peer_tls_port({ ip => '10.9.9.76', port => 45551, tunnel => 'no' }, { host => 'gou.example' }),
+			45551, 'a row that stores the listener port verifies on that port');
+		is_deeply(\@tried, [ 45557, 45551 ],
+			'the derived port is tried first, then the stored one');
+		is(subs::peer_tls_port({ ip => '10.9.9.77', port => 45545, tunnel => 'no' }, { host => 'hub.example' }),
+			45551, 'a manager-port row still verifies on manager plus the offset');
+	}
+	# The unverified fallback asks the same question over plain TCP.
+	{
+		no warnings qw(redefine once);
+		local *IO::Socket::INET::new = sub {
+			my ($class, %arg) = @_;
+			return undef unless $arg{'PeerPort'} == 45551;
+			open(my $fh, '<', '/dev/null') or return undef;
+			return bless $fh, 'IO::Socket::INET';
+		};
+		is(subs::peer_listener_port({ ip => '10.9.9.78', port => 45551, tunnel => 'no' }, { host => 'board.example' }),
+			45551, 'the plain probe finds a listener-port row too');
+	}
+}
+
 done_testing();
