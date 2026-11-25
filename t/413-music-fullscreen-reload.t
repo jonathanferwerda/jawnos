@@ -72,7 +72,7 @@ like($arm // '', qr/musicPseudoFullscreen\(\) && !musicFullscreenElement\(\)/,
 	'only while the dress is still up');
 like($arm // '', qr/musicPlayerFullscreen\(\)/, 'that press asks for the real fullscreen');
 
-my ($on) = $music =~ /(function musicFullscreenOn\(\)\s*\{.*?\n\})/s;
+my ($on) = $music =~ /(function musicFullscreenOn\(force\)\s*\{.*?\n\})/s;
 ok(defined $on, 'musicFullscreenOn is found');
 like($on // '', qr/addClass\('music_fullscreen'\)/, 'the dress is a class on #music');
 like($on // '', qr/musicFullscreenWindow\(true\)/, 'and on its window');
@@ -99,7 +99,7 @@ like($gesture // '', qr/messageHandlers\.jawnos\.postMessage/, 'and asks the she
 like($gesture // '', qr/action: 'resume_fullscreen'/, 'for the trusted click');
 like($gesture // '', qr/rect\.left \+ rect\.width \/ 2/, 'targeting the corner target\'s own middle');
 like($gesture // '', qr/id="music_fullscreen_gesture"/, 'a corner target catches that click');
-like($gesture // '', qr/musicPlayerFullscreen\(\)/, 'and turns it into the real request');
+like($gesture // '', qr/musicPlayerFullscreen\(1\)/, 'and turns it into the real request');
 like($gesture // '', qr/setTimeout\(musicFullscreenGestureRemove, 1200\)/,
 	'the target does not linger if no click comes');
 like($apply // '', qr/musicFullscreenGestureAsk\(\);/, 'the restore asks for the desktop gesture');
@@ -125,7 +125,7 @@ like($change // '', qr/musicVisualSelectSize\(\);/, 'and sizes the visualizer li
 like($change // '', qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\);/, 'the real fullscreen starts with the bar in reach');
 
 # --- the player toggle promotes and exits honestly --------------------------
-my ($player_fs) = $music =~ /(function musicPlayerFullscreen\(\)\s*\{.*?\n\})/s;
+my ($player_fs) = $music =~ /(function musicPlayerFullscreen\(force\)\s*\{.*?\n\})/s;
 ok(defined $player_fs, 'musicPlayerFullscreen is found');
 like($player_fs // '', qr/if \(musicFullscreenAsking\) \{ return; \}/, 'one request at a time');
 like($player_fs // '', qr/musicFullscreenIntent = false/, 'a second press forgets the choice');

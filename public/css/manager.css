@@ -5403,4 +5403,5 @@ body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[positio
 .taskbar_panel .taskbar_music_transport button { flex: 1 1 0; padding: 4px 6px; }
 .taskbar_panel .taskbar_music_transport img { width: 16px; height: 16px; object-fit: contain; }
 .taskbar_panel .taskbar_music_select { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 11px; padding: 3px 5px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: 5px; }
+.taskbar_panel .taskbar_music_output_label { flex: 0 0 auto; font-size: 11px; opacity: .72; }
 .taskbar_panel .taskbar_music_now { min-height: 1.2em; font-size: 11px; opacity: .72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

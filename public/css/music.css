@@ -1552,6 +1552,14 @@ body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="rou
 #music.music_remote_mode #music_list_view,
 #music.music_remote_mode [hint="Fullscreen"],
 #music.music_remote_mode [hint="Theatre mode"] { display: none !important; }
+/* The controller's own full-screen button: absent here, because it acts on
+   the machine whose face this window wears, and shown only in that mode. */
+#music_remote_fullscreen { display: none; }
+#music.music_remote_mode #music_remote_fullscreen { display: inline-block; }
+#music.music_remote_mode #music_remote_fullscreen[state="on"] {
+	outline: 2px solid #ffc800;
+	border-radius: 6px;
+}
 
 #music_remote_now {
 	max-width: 34%;

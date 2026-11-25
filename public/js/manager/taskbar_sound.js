@@ -21,7 +21,7 @@ var jawnosSoundTaskbarWheelTimer = {};
 // The Music transport in the panel. The machine list and the remembered remote
 // target are read once and refreshed when the panel opens; the remote player's
 // state is polled only while the panel is on screen.
-var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0, queue: null, queue_target: '', queue_at: 0 };
+var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0, queue: null, queue_target: '', queue_at: 0, outputs: null, outputs_target: '' };
 
 function jawnosSoundTaskbarPercent(value) {
 	var pct = parseFloat(value);
@@ -261,6 +261,7 @@ function jawnosSoundTaskbarMusicLoad() {
 			}
 			jawnosSoundTaskbarPanelRefresh();
 			jawnosSoundTaskbarMusicQueueLoad(1);
+			jawnosSoundTaskbarMusicOutputsLoad(1);
 		}
 	});
 }
@@ -321,6 +322,9 @@ function jawnosSoundTaskbarMusicRepaint() {
 		// The volume row belongs to a peer's Music app; this machine's own level
 		// is the house and device sliders.
 		section.find('[data-music-volume]').closest('.taskbar_panel_row').toggle(remote);
+		// the output belongs to the controlled machine; this machine's own
+		// outputs are the house and device sliders above
+		section.find('[data-music-output]').closest('.taskbar_panel_row').toggle(remote);
 		if (remote && state) {
 			var pct = Math.round((state.muted ? 0 : (parseFloat(state.volume) || 0)) * 100);
 			var slider = section.find('[data-music-volume]');
@@ -356,6 +360,55 @@ function jawnosSoundTaskbarMusicPickerPaint(section) {
 		picker.append($('<option></option>').attr('value', target).text(target));
 	}
 	if (document.activeElement !== picker[0]) { picker.val(target); }
+}
+// The machine being controlled has its own outputs (its speaker, the server,
+// and every peer it can stream to). Read them from that machine, never from
+// this one, and show the one it says it is playing through.
+function jawnosSoundTaskbarMusicOutputsLoad(force) {
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!target) {
+		jawnosSoundTaskbarMusic.outputs = null;
+		jawnosSoundTaskbarMusic.outputs_target = '';
+		jawnosSoundTaskbarMusicOutputsPaint();
+		return;
+	}
+	if (!force && jawnosSoundTaskbarMusic.outputs_target === target && jawnosSoundTaskbarMusic.outputs) {
+		jawnosSoundTaskbarMusicOutputsPaint();
+		return;
+	}
+	$.ajax({
+		url: '/music/remote_outputs',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function(r) {
+			if (!r || !r.ok || jawnosSoundTaskbarMusicTarget() !== target) { return; }
+			jawnosSoundTaskbarMusic.outputs = r;
+			jawnosSoundTaskbarMusic.outputs_target = target;
+			jawnosSoundTaskbarMusicOutputsPaint();
+		}
+	});
+}
+function jawnosSoundTaskbarMusicOutputsPaint() {
+	var picker = $('[data-music-output]');
+	if (!picker.length) { return; }
+	var target = jawnosSoundTaskbarMusicTarget();
+	var data = jawnosSoundTaskbarMusic.outputs;
+	if (!target || !data || jawnosSoundTaskbarMusic.outputs_target !== target || !data.outputs || !data.outputs.length) {
+		picker.empty();
+		return;
+	}
+	var signature = $.map(data.outputs, function(output) { return output.key; }).join(',');
+	if (picker.data('roster') !== signature) {
+		picker.empty();
+		$.each(data.outputs, function(i, output) {
+			if (!output || !output.key) { return; }
+			picker.append($('<option></option>').attr('value', output.key).text(output.label || output.key));
+		});
+		picker.data('roster', signature);
+	}
+	if (document.activeElement !== picker[0]) { picker.val(data.current || ''); }
 }
 // A drag is a lot of events; one POST per settle keeps the peer's player from
 // being re-tuned on every pixel while still feeling immediate.
@@ -424,11 +477,16 @@ function jawnosSoundTaskbarMusicBuild(section) {
 	transport.append(maker('next', next_icon, 'Next'));
 	section.append(transport);
 	var row = $('<div class="taskbar_panel_row"></div>');
-	row.append($('<select class="taskbar_music_select" data-music-target></select>')
+	row.append($('<select class="taskbar_music_select" data-music-target hint="The Music app this widget controls"></select>')
 		.attr('aria-label', jawnosT('The Music app this widget controls')));
 	section.append(row);
+	var outputs = $('<div class="taskbar_panel_row taskbar_music_outputs"></div>');
+	outputs.append($('<span class="taskbar_music_output_label"></span>').text(jawnosT('Output')));
+	outputs.append($('<select class="taskbar_music_select" data-music-output hint="The output the controlled machine plays through"></select>')
+		.attr('aria-label', jawnosT('The output the controlled machine plays through')));
+	section.append(outputs);
 	var volume = $('<div class="taskbar_panel_row taskbar_music_volume"></div>');
-	volume.append($('<input type="range" class="taskbar_sound_slider" min="0" max="100" step="1">')
+	volume.append($('<input type="range" class="taskbar_sound_slider" min="0" max="100" step="1" hint="The volume of the Music app this widget controls">')
 		.attr('data-music-volume', '')
 		.attr('aria-label', jawnosT('The volume of the Music app this widget controls')));
 	volume.append($('<span class="taskbar_panel_value"></span>').attr('data-music-volume-value', ''));
@@ -458,6 +516,7 @@ function jawnosSoundTaskbarMusicMount(target) {
 	jawnosSoundTaskbarMusicLoad();
 	jawnosSoundTaskbarMusicStateLoad();
 	jawnosSoundTaskbarMusicQueueLoad(1);
+	jawnosSoundTaskbarMusicOutputsLoad(1);
 }
 // A short list of the controlled machine's own queue, so the Sound window can
 // switch tracks without opening that machine's Music window.
@@ -761,6 +820,8 @@ $(document).on('change', '[data-music-section] [data-music-target]', function() 
 	var target = $(this).val() || '';
 	jawnosSoundTaskbarMusic.widget_target = target;
 	jawnosSoundTaskbarMusic.state = null;
+	jawnosSoundTaskbarMusic.outputs = null;
+	jawnosSoundTaskbarMusic.outputs_target = '';
 	$.ajax({
 		url: '/music/remote_target',
 		type: 'POST',
@@ -775,10 +836,37 @@ $(document).on('change', '[data-music-section] [data-music-target]', function() 
 			jawnosSoundTaskbarMusicStateLoad();
 			jawnosSoundTaskbarMusicRepaint();
 			jawnosSoundTaskbarMusicQueueLoad(1);
+			jawnosSoundTaskbarMusicOutputsLoad(1);
 		},
 		error: function() {
 			jawnosSoundTaskbarFail(jawnosT('Could not remember that machine.'));
 			jawnosSoundTaskbarMusicLoad();
+		}
+	});
+});
+
+$(document).on('change', '[data-music-section] [data-music-output]', function() {
+	var output = $(this).val() || '';
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!output || !target) { return; }
+	$.ajax({
+		url: '/music/remote_output',
+		type: 'POST',
+		dataType: 'json',
+		data: { target: target, output: output },
+		success: function(r) {
+			if (!r || !r.ok) {
+				jawnosSoundTaskbarFail((r && r.error) || jawnosT('Could not control that machine.'));
+				jawnosSoundTaskbarMusicOutputsLoad(1);
+				return;
+			}
+			if (jawnosSoundTaskbarMusic.outputs) { jawnosSoundTaskbarMusic.outputs.current = output; }
+			jawnosSoundTaskbarMusicOutputsPaint();
+			setTimeout(function() { jawnosSoundTaskbarMusicOutputsLoad(1); }, 600);
+		},
+		error: function() {
+			jawnosSoundTaskbarFail(jawnosT('Could not control that machine.'));
+			jawnosSoundTaskbarMusicOutputsLoad(1);
 		}
 	});
 });

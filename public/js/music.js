@@ -2593,7 +2593,7 @@ function musicTransportStateLocal() {
 	};
 }
 
-var music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0, at: 0, display: 0, seek_at: 0 };
+var music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
 var music_remote_poll_timer = 0;
 var music_remote_progress_timer = 0;
 var music_remote_level_timer = 0;
@@ -2624,7 +2624,7 @@ function musicRemotePaint() {
 		music_remote_poll_timer = 0;
 		clearInterval(music_remote_progress_timer);
 		music_remote_progress_timer = 0;
-		music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0, at: 0, display: 0, seek_at: 0 };
+		music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
 		$('#music_remote_now').hide().text('');
 		// the bar goes back to this machine's own level and mute
 		$('#music_volume').val(musicVolumeLevel());
@@ -2711,7 +2711,18 @@ function musicRemoteApplyState(r) {
 		music_remote_state.volume = musicVolumeClamp(r.volume);
 	}
 	music_remote_state.muted = r.muted ? 1 : 0;
+	music_remote_state.fullscreen = r.fullscreen ? 1 : 0;
+	musicRemoteFullscreenPaint();
 	musicRemoteLevelPaint();
+}
+// The controller's full-screen button wears the controlled machine's state, so
+// one press tells the host to fill its screen and the next one brings it back.
+function musicRemoteFullscreenPaint() {
+	var button = $('#music_remote_fullscreen');
+	if (!button.length) { return; }
+	var on = !!music_remote_state.fullscreen;
+	button.attr('state', on ? 'on' : 'off')
+		.attr('hint', on ? jawnosT('Leave full screen on the controlled machine') : jawnosT('Full screen on the controlled machine'));
 }
 // Paint the peer's clock from the last answer plus the time since it arrived.
 // The poll re-anchors it, so a slow host save never freezes the bar.
@@ -6087,6 +6098,31 @@ function musicOutputPaint(output, state) {
 	group.attr('state', channel || 'off');
 }
 
+// A controller picked the output this machine plays through. The setting is
+// already written on this machine by the route; this is the live player
+// noticing without a reload - the same work the Audio drawer's own press does
+// after its write answers.
+function musicOutputApply(value) {
+	var next = value;
+	if (typeof next == 'string') {
+		try { next = JSON.parse(next); } catch (e) { return; }
+	}
+	if (!next || typeof next !== 'object') { return; }
+	mao = next;
+	$.each(mao, function(key, state) { musicOutputPaint(key, state); });
+	musicVolumeApply();
+	updateMusicMuteIcon();
+	musicStreamPaint();
+	if (musicStream.active) {
+		if (musicStream.codec == 'opus') { setTimeout(musicStreamRestart, 0); }
+		else { musicStreamOutputsChanged(); }
+	}
+	else if (musicStreamOutputs().length && tree && tree.sound && tree.sound.state == 1) {
+		var file = (tree.songs && tree.songs[0]) ? tree.songs[0].file : '';
+		remoteTrackToggle({ file: file, toggle: 'on', seek: tree.sound.currentTime || 0 });
+	}
+}
+
 $(document).on('click', '#music_configuration_close', function(e) {
 	e.preventDefault();
 	// close the sheet the X belongs to, never whichever '#id' comes first
@@ -6096,6 +6132,16 @@ $(document).on('click', '#music_configuration_close', function(e) {
 $(document).on('click', '#music_remote_close', function(e) {
 	e.preventDefault();
 	$(this).closest('.music_cfg_drawer').hide();
+});
+
+$(document).on('click', '#music_remote_fullscreen', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	if (!musicRemoteTarget()) { return; }
+	var on = music_remote_state.fullscreen ? 0 : 1;
+	music_remote_state.fullscreen = on;
+	musicRemoteFullscreenPaint();
+	musicRemoteSend('fullscreen', { value: on });
 });
 
 $(document).on('click', '#music_remote_toggle', function() {
@@ -7050,7 +7096,7 @@ function musicFullscreenGestureAsk() {
 			e.preventDefault();
 			e.stopPropagation();
 			musicFullscreenGestureRemove();
-			if (musicPseudoFullscreen() && !musicFullscreenElement()) { musicPlayerFullscreen(); }
+			if (musicPseudoFullscreen() && !musicFullscreenElement()) { musicPlayerFullscreen(1); }
 		});
 	$('#music').append(target);
 	// Send the target's own middle: a window with a scrollbar or a chrome bar
@@ -7069,8 +7115,8 @@ function musicFullscreenGestureAsk() {
 	setTimeout(musicFullscreenGestureRemove, 1200);
 }
 
-function musicFullscreenOn() {
-	if (musicRemoteTarget()) { return; }
+function musicFullscreenOn(force) {
+	if (musicRemoteTarget() && !force) { return; }
 	var m = $('#music');
 	if (!m.length) { return; }
 	m.addClass('music_fullscreen');
@@ -7138,6 +7184,29 @@ function musicFullscreenLeave() {
 	return true;
 }
 
+// A controller's full-screen press. The command arrives with no press behind
+// it, so the host puts up the same full-screen dress a reload restores and asks
+// its desktop shell for the trusted click that turns it into the real top
+// layer; a browser keeps the dress until the next real press. Leaving takes the
+// dress off and steps out of the top layer too. The intent is written at once,
+// so the controller's next poll sees the state it just asked for.
+function musicFullscreenSet(on) {
+	on = (on === true || on == 1 || on == '1' || on == 'on' || on == 'true');
+	if (on) {
+		musicFullscreenIntent = true;
+		clearTimeout(musicFullscreenExitTimer);
+		musicFullscreenOn(1);
+		try { playerCacheSaver(undefined, true); } catch (e) {}
+		musicFullscreenGestureAsk();
+		return;
+	}
+	musicFullscreenLeave();
+	if (musicFullscreenElement()) { try { musicPlayerFullscreen(1); } catch (e) {} }
+	musicFullscreenIntent = false;
+	clearTimeout(musicFullscreenExitTimer);
+	try { playerCacheSaver(undefined, true); } catch (e) {}
+}
+
 // Fullscreen for the player, the way the picture needs it: the whole player
 // goes fullscreen, not the <video> element. A fullscreened <video> is the
 // browser's own media element, so moving the mouse over it brings the browser's
@@ -7147,8 +7216,8 @@ function musicFullscreenLeave() {
 // and the video include's own mousemove handler brings them in and out as it
 // does in the theatre. The sound's picture, the visualiser's video, rides along
 // the same way.
-function musicPlayerFullscreen() {
-	if (musicRemoteTarget()) { return; }
+function musicPlayerFullscreen(force) {
+	if (musicRemoteTarget() && !force) { return; }
 	var v = document.getElementById('video');
 	if (!v) { return; }
 	// the button (and F) is a toggle: a second press leaves fullscreen

@@ -86,7 +86,8 @@ sub music_transport_state {
 		currentTime => ($player->{'currentTime'} || 0),
 		duration => ($duration + 0),
 		volume => (defined $volume ? $volume + 0 : undef),
-		muted => ($player->{'muted'} ? 1 : 0)
+		muted => ($player->{'muted'} ? 1 : 0),
+		fullscreen => ($player->{'fullscreen'} ? 1 : 0)
 	};
 }
 
@@ -95,7 +96,7 @@ sub music_transport_state {
 sub music_transport_local($action, $opts = {}) {
 	$action = '' unless defined $action;
 	$action = lc $action;
-	return 0 unless $action =~ /^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files|play_track|volume|mute)$/;
+	return 0 unless $action =~ /^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files|play_track|volume|mute|fullscreen)$/;
 	if ($action eq 'play_files') {
 		my $files = $opts->{'files'};
 		return 0 unless ref $files eq 'ARRAY' && scalar @{$files};
@@ -133,6 +134,17 @@ sub music_transport_local($action, $opts = {}) {
 		my $on = $opts->{'value'};
 		return 0 unless defined $on && $on =~ /^(?:0|1)$/;
 		&Websocket::send('server', { console => &Websocket::console_command('musicMuteSet', $on + 0) });
+		return 1;
+	}
+	# The controlled window's own big picture. The command arrives with no press
+	# behind it, so the host puts up its full-screen dress and asks its desktop
+	# shell for the trusted click that makes it the real top layer; a browser
+	# keeps the dress until the next press, exactly as a reload restore does.
+	if ($action eq 'fullscreen') {
+		my $on = $opts->{'value'};
+		return 0 unless defined $on && $on =~ /^(?:0|1|on|off|true|false)$/i;
+		my $want = ($on =~ /^(?:1|on|true)$/i) ? 1 : 0;
+		&Websocket::send('server', { console => &Websocket::console_command('musicFullscreenSet', $want) });
 		return 1;
 	}
 	my @args = ($action);
@@ -259,6 +271,106 @@ sub music_remote_queue {
 	}
 	return { ok => 1, total => $total, start => $start, count => scalar @songs, file => $current, songs => \@songs };
 }
+
+# ---- the controlled machine's outputs --------------------------------------
+#
+# The table has an internal speaker, the server player, and every peer as an
+# output. A controller asks which one that machine is playing through and picks
+# one; the choice is the host's own setting, written on the host, and only the
+# host's browser is asked to notice it.
+sub music_output_on($state) {
+	return ($state // '') =~ /^(?:on|stereo|left|right)$/ ? 1 : 0;
+}
+
+sub music_output_catalogue {
+	my $settings = &subs::settings_grabber({ app => 'music' }) || {};
+	my $mao = eval { decode_json($settings->{'mao'} // '') } || {};
+	my $self = &subs::signatorial_designer();
+	my (@outputs, %seen);
+	my $add = sub {
+		my ($key, $label) = @_;
+		return unless defined $key && length $key && !$seen{$key}++;
+		my $state = $mao->{$key} // 'off';
+		$state = 'off' unless $state =~ /^(?:off|on|stereo|left|right)$/;
+		push @outputs, {
+			key => $key,
+			label => $label,
+			state => $state,
+			on => &music_output_on($state)
+		};
+	};
+	$add->('me', (&subs::machine_name() || &subs::ui('This machine')) . ' (' . &subs::ui('internal speaker') . ')');
+	$add->('srv', &subs::ui('Server'));
+	foreach my $rm ( @{&subs::remote_machine_lister() || []} ) {
+		next if (($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1');
+		next if $self && (($rm->{'signatorial'} || '') eq $self);
+		my $key = $rm->{'fqdn'} || $rm->{'ip'} || '';
+		next unless length $key;
+		my $label = &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key;
+		$add->($key, $label);
+	}
+	my $current = 'me';
+	foreach my $output ( @outputs ) {
+		if ($output->{'on'}) { $current = $output->{'key'}; last; }
+	}
+	return { ok => 1, outputs => \@outputs, current => $current };
+}
+
+# Choosing an output is a choice, not an addition: the picked one is the output
+# the machine plays through, so every other key is written off. Keys the machine
+# has written before stay in the map (as off) so the stream still knows them.
+sub music_output_pick($key) {
+	my $catalogue = &music_output_catalogue();
+	return 0 unless grep { $_->{'key'} eq $key } @{$catalogue->{'outputs'}};
+	my $settings = &subs::settings_grabber({ app => 'music' }) || {};
+	my $mao = eval { decode_json($settings->{'mao'} // '') } || {};
+	foreach my $other ( keys %{$mao} ) { $mao->{$other} = 'off'; }
+	$mao->{$key} = 'on';
+	&subs::setting_setter({ app => 'music', setting => 'mao', value => encode_json($mao) });
+	# The setting is data; the host's player is what has to move its stream now.
+	&Websocket::send('server', { console => &Websocket::console_command('musicOutputApply', encode_json($mao)) });
+	return 1;
+}
+
+# The controlled machine's own outputs, for the Sound window's Remote pill. A
+# machine that has gone offline answers as the transport does.
+Manager::app->routes->get('/music/remote_outputs' => sub ($c) {
+	my $target = $c->param('target') || '';
+	my $remoted = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	if ($target && $target ne 'local' && !$remoted) {
+		my $rm = &music_remote_row($target);
+		unless ($rm) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' });
+			return;
+		}
+		$c->param('remote_uuid' => $rm->{'uuid'});
+		$c->param('subprocess' => 'yes');
+		$c->render(json => &music_remote_relay($c));
+		return;
+	}
+	$c->render(json => &music_output_catalogue());
+});
+
+# Pick the output the controlled machine plays through. It is the host's own
+# `mao` setting, so a controller never changes this machine's outputs.
+Manager::app->routes->post('/music/remote_output' => sub ($c) {
+	my $target = $c->param('target') || '';
+	my $remoted = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	my $output = $c->param('output') || '';
+	if ($target && $target ne 'local' && !$remoted) {
+		my $rm = &music_remote_row($target);
+		unless ($rm) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' });
+			return;
+		}
+		$c->param('remote_uuid' => $rm->{'uuid'});
+		$c->param('subprocess' => 'yes');
+		$c->render(json => &music_remote_relay($c));
+		return;
+	}
+	my $ok = &music_output_pick($output);
+	$c->render(json => { ok => $ok ? 1 : 0, output => $output });
+});
 
 # A short list of the controlled machine's own queue, for the Sound window's
 # Remote pill. A machine that has gone offline answers as the transport does.

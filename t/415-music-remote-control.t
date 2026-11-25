@@ -11,6 +11,7 @@ use warnings;
 use FindBin;
 use Test::More;
 use File::Slurp qw(read_file);
+use Mojo::JSON ();
 
 my $root = "$FindBin::Bin/..";
 my $remote = read_file("$root/perl/Music/09_remote_control.pl");
@@ -137,8 +138,19 @@ unlike($choose || '', qr/tree\.sound\.pause|musicPlayToggleLocal|musicNormalizeA
 # --- no picture -------------------------------------------------------------
 like($music, qr/function theatreModeOn\(\) \{\s*\n\s*if \(musicRemoteTarget\(\)\) \{ return; \}/,
 	'Theatre mode steps aside in remote mode');
-like($music, qr/function musicFullscreenOn\(\) \{\s*\n\s*if \(musicRemoteTarget\(\)\) \{ return; \}/,
-	'full screen steps aside in remote mode');
+like($music, qr/function musicFullscreenOn\(force\) \{\s*\n\s*if \(musicRemoteTarget\(\) && !force\) \{ return; \}/,
+	'full screen steps aside in remote mode unless a controller asks for the host');
+like($music, qr/function musicFullscreenSet\(on\)/, 'the host can be sent into full screen');
+like($music, qr/musicFullscreenGestureAsk\(\);\s*\n\s*return;/, 'and asks its own shell for the trusted press');
+like($music, qr/musicPlayerFullscreen\(force\)/, 'the player full screen can be forced past remote mode');
+like($router, qr/musicFullscreenSet: function/, 'the browser router whitelists the full-screen push');
+like($remote, qr/console_command\('musicFullscreenSet'/, 'the full-screen press crosses as a named instruction');
+like($remote, qr/\$action eq 'fullscreen'/, 'the transport has a full-screen action');
+like($remote, qr/fullscreen => \(\$player->\{'fullscreen'\} \? 1 : 0\)/, 'the state reports the host full screen');
+like($music, qr/musicRemoteSend\('fullscreen', \{ value: on \}\)/, 'the controller sends its press');
+like($music_tpl, qr/id="music_remote_fullscreen"/, 'the remote Music window has its own full-screen button');
+like($music_css, qr/#music\.music_remote_mode #music_remote_fullscreen/, 'and shows it only in remote mode');
+like($music_css, qr/#music_remote_fullscreen \{ display: none; \}/, 'a local window does not carry it');
 like($music_css, qr/#music\.music_remote_mode #video/, 'the remote window hides the video surface');
 like($music_css, qr/#music\.music_remote_mode \[hint="Fullscreen"\]/, 'and the full-screen button');
 
@@ -212,5 +224,95 @@ like($music, qr/#music_library_select[\s\S]{0,1600}musicRemoteSnapshotRestore/,
 	'choosing another library leaves the remote-control session');
 like($music, qr/setting == 'normalize'/, 'normalization is applied in the peer player');
 like($music, qr/setting == 'video'/, 'video enhancement is applied in the peer player');
+
+# --- the controlled machine's outputs ---------------------------------------
+like($remote, qr{/music/remote_outputs}, 'the controlled machine offers its outputs');
+like($remote, qr{/music/remote_output}, 'and takes a chosen output');
+like($remote, qr/sub music_output_catalogue/, 'the catalogue is the host\'s own mao map');
+like($remote, qr/sub music_output_pick/, 'a choice is written on the host');
+like($remote, qr/\$mao->\{\$other\} = 'off'/, 'the other outputs go off: it is a choice, not an addition');
+like($remote, qr/\$mao->\{\$key\} = 'on'/, 'and the picked one plays');
+like($remote, qr/console_command\('musicOutputApply'/, 'the host player is told without a reload');
+like($router, qr/musicOutputApply: function/, 'the browser router whitelists the output push');
+like($music, qr/function musicOutputApply\(value\)/, 'the host applies the picked output');
+like($music, qr/musicStreamRestart|musicStreamOutputsChanged/, 'and restarts the stream when it must');
+like($taskbar, qr/data-music-output/, 'Sound\'s Remote pill has an output picker');
+like($taskbar, qr{url: '/music/remote_outputs'}, 'it reads the controlled machine\'s outputs');
+like($taskbar, qr{url: '/music/remote_output'}, 'and sends the choice to that machine');
+like($taskbar, qr/function jawnosSoundTaskbarMusicOutputsLoad/, 'the picker refreshes with the remote');
+like($queue_src, qr/\&subs::machine_name\(\) \|\| \&subs::ui\('Local'\)/, 'a local library is named by this machine, not a synced leftover');
+
+# --- a local library is named by this machine, not a synced leftover --------
+{
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub { return 'fe' };
+	local *subs::config_reader = sub { return { name => 'Laptop' } };
+	local *subs::ui = sub { return 'Local' };
+	local *subs::machine_name = sub { return 'Laptop' };
+	is(&Manager::music_library_label({ library => 'local' }, undef), 'Laptop',
+		'the local label prefers the configured machine name');
+	local *subs::machine_name = sub { return 'Phone' };
+	is(&Manager::music_library_label({ library => 'local' }, undef), 'Phone',
+		'a stale me/computer_name never becomes the library name');
+	local *subs::machine_name = sub { return 'This machine' };
+	{
+		package LocalViewContext;
+		sub param { return 'Table' }
+	}
+	my $c = bless {}, 'LocalViewContext';
+	is(&Manager::music_library_label({ library => 'local' }, $c), 'Table',
+		'a relayed library still names its host');
+}
+
+# --- the controlled machine's output catalogue and its choice ---------------
+{
+	package FakeMusicApp;
+	sub routes { return bless {}, 'FakeMusicRoutes' }
+	package FakeMusicRoutes;
+	sub get { return 1 }
+	sub post { return 1 }
+	package main;
+}
+{
+	no warnings 'redefine';
+	local *Manager::app = sub { return bless {}, 'FakeMusicApp' };
+	require "$root/perl/Music/09_remote_control.pl";
+}
+{
+	no warnings 'redefine';
+	my $mao = { me => 'on', srv => 'off', 'laptop.jonathanferwerda.com' => 'off', '127.0.0.1' => 'off' };
+	local *subs::settings_grabber = sub { return { mao => Mojo::JSON::encode_json($mao) } };
+	local *subs::remote_machine_lister = sub { return [
+		{ uuid => 'u1', hostname => 'Laptop', fqdn => 'laptop.jonathanferwerda.com', ip => '1.2.3.4', connection => 'active', device => 'computer' },
+		{ uuid => 'u2', hostname => 'hub', fqdn => 'hub.jonathanferwerda.com', ip => '1.2.3.5', connection => 'active', device => 'server' },
+		{ uuid => 'u3', hostname => 'me', ip => '127.0.0.1' },
+	] };
+	local *subs::signatorial_designer = sub { return 'SELF' };
+	local *subs::machine_name = sub { return 'Table' };
+	local *subs::device_hostname_better = sub { return $_[0] };
+	local *subs::ui = sub { return $_[0] };
+	my $catalogue = &Manager::music_output_catalogue();
+	is($catalogue->{'current'}, 'me', 'the output in use is the first one on');
+	is_deeply([ map { $_->{'key'} } @{$catalogue->{'outputs'}} ],
+		[ 'me', 'srv', 'laptop.jonathanferwerda.com', 'hub.jonathanferwerda.com' ],
+		'the catalogue is this machine, the server, and the reachable peers, never the synthetic self row');
+	is($catalogue->{'outputs'}[0]{'label'}, 'Table (internal speaker)', 'the machine output names itself and its speaker');
+	my (@writes, @sent);
+	local *subs::setting_setter = sub { push @writes, $_[0] };
+	local *Websocket::send = sub { push @sent, [ @_ ] };
+	local *Websocket::console_command = sub { return 'cmd(' . join(',', @_) . ')' };
+	ok(&Manager::music_output_pick('laptop.jonathanferwerda.com'), 'a reachable output can be chosen');
+	is(scalar @writes, 1, 'the choice is one setting write');
+	is($writes[0]{'setting'}, 'mao', 'it writes the host mao');
+	my $written = Mojo::JSON::decode_json($writes[0]{'value'});
+	is($written->{'laptop.jonathanferwerda.com'}, 'on', 'the picked output plays');
+	is($written->{'me'}, 'off', 'and the machine speaker goes quiet: this is a choice, not an addition');
+	is($written->{'srv'}, 'off', 'nor is the server left on');
+	is(scalar @sent, 1, 'the host player is told once');
+	like($sent[0][1]{'console'}, qr/musicOutputApply/, 'by the named live-apply instruction');
+	my $before = scalar @writes;
+	ok(!&Manager::music_output_pick('not-an-output'), 'an unknown output is refused');
+	is(scalar @writes, $before, 'and nothing is written');
+}
 
 done_testing();

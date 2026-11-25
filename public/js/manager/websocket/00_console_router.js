@@ -66,6 +66,12 @@ var jawnosConsoleCommands = {
 	musicSettingApply: function (a) {
 		if (typeof musicSettingApply === 'function') { musicSettingApply(String(a[0]), a[1]); }
 	},
+	musicOutputApply: function (a) {
+		if (typeof musicOutputApply === 'function') { musicOutputApply(a[0]); }
+	},
+	musicFullscreenSet: function (a) {
+		if (typeof musicFullscreenSet === 'function') { musicFullscreenSet(a[0]); }
+	},
 	musicPlayTrack: function (a) {
 		if (typeof musicPlayTrack === 'function') { musicPlayTrack(String(a[0] || '')); }
 	},

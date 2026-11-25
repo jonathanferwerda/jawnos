@@ -19,6 +19,7 @@
 #sound .sound_remote_music .taskbar_music_transport button { height: auto; min-height: 48px; padding: 8px 18px; border-radius: 10px; }
 #sound .sound_remote_music .taskbar_music_transport img { width: 30px; height: 30px; object-fit: contain; }
 #sound .sound_remote_music .taskbar_music_select { max-width: 320px; min-width: 220px; text-align: center; }
+#sound .sound_remote_music .taskbar_music_output_label { font-size: 14px; opacity: .72; }
 #sound .sound_remote_music .taskbar_music_now { font-size: 14px; opacity: .72; }
 #sound .sound_remote_tracks { width: 100%; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-top: 6px; text-align: left; }
 #sound .sound_remote_track { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; width: 100%; height: auto; min-height: 44px; padding: 6px 10px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .45); background: var(--panel); color: inherit; font: inherit; text-align: left; cursor: var(--jawnos-cursor-pointer, pointer); }

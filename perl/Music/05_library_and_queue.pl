@@ -424,9 +424,12 @@ sub music_library_label($settings, $c) {
 	return $passed if defined $passed && length $passed;
 	my $library = $settings->{'library'} // '';
 	if ($library eq '' || $library eq 'local') {
-		return &subs::setting_grabber({ app => 'me', setting => 'computer_name' })
-			|| &subs::config_reader()->{'name'}
-			|| &subs::ui('Local');
+		# The name the rest of the app shows for this machine. The mesh-synced
+		# me/computer_name can be a leftover from setup - the laptop's read 'fe',
+		# and a phone can carry another machine's name - which made the local
+		# label look like a remote library. machine_name prefers the config's own
+		# name, then the house domain's first label, and only then that setting.
+		return &subs::machine_name() || &subs::ui('Local');
 	}
 	return &subs::ui('None') if $library eq 'none';
 	my $rm = &subs::db_query('select hostname,fqdn,ip from remote_machines where uuid=?', $library)->hashes->[0];
