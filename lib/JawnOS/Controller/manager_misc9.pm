@@ -3109,16 +3109,18 @@ sub studio_remote_peer($uuid) {
 }
 
 # A relayed Studio request has no session on the target. The app gate proves a
-# pinned peer key when it runs; when app access is off, the route proves the
-# same signature here. Never trust `remoted=yes` alone: a browser can type it,
-# and the answer carries the target's Studio state.
+# pinned peer key when it runs; when it passed on a stored session instead (or
+# app access is off), the route proves the same signature here, against the
+# caller the relay names. Never trust `remoted=yes` alone: a browser can type
+# it, and the answer carries the target's Studio state.
 sub studio_remote_peer_ok($c) {
 	return 1 if $c->stash('peer_verified_key');
-	# The app gate is a Manager part; a controller harness that loads only this
-	# file has no Manager package, and a request with no verified stash is a
-	# browser, not a peer.
-	return 0 unless Manager->can('app_peer_ok');
-	return &Manager::app_peer_ok($c) ? 1 : 0;
+	my $name = $c->param('source_signatorial') || '';
+	$name = '' if ref $name;
+	return 0 unless length $name;
+	my $row = &subs::peer_roster_row($name);
+	return 0 unless $row && length($row->{'pubkey'} || '');
+	return &subs::peer_verify($c, $row) ? 1 : 0;
 }
 
 # A request value may arrive as a form/query parameter (the route the relay

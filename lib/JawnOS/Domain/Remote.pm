@@ -193,6 +193,11 @@ sub remote_relay_request($c, $extra_params = {}) {
 					}
 					if ($remote_uuid) {
 						$extra_params->{'remoted'} = 'yes';
+						# The target resolves the caller from this name. The signature
+						# is still the proof, but a peer that passed its app gate on a
+						# stored session has no peer_verified_key, so the route needs
+						# the name to verify against the roster itself.
+						$extra_params->{'source_signatorial'} = $signatorial if $signatorial;
 					} else {
 						$extra_params->{'dissemination'} = 'yes';
 						$extra_params->{'source_signatorial'} = $signatorial;
@@ -237,6 +242,7 @@ sub remote_relay_request($c, $extra_params = {}) {
 					}
 					if ($remote_uuid) {
 						$extra_params->{'remoted'} = 'yes';
+						$extra_params->{'source_signatorial'} = $signatorial if $signatorial;
 					} else {
 						$extra_params->{'dissemination'} = 'yes';
 						$extra_params->{'source_signatorial'} = $signatorial;

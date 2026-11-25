@@ -35,8 +35,14 @@ like($controller, qr/sub studio_remote_peer_ok\(\$c\)/,
 	'one helper answers whether the caller is a linked machine');
 like($controller, qr/return 1 if \$c->stash\('peer_verified_key'\);/,
 	'it keeps the app gate verdict when the gate ran');
-like($controller, qr/return &Manager::app_peer_ok\(\$c\) \? 1 : 0;/,
-	'and otherwise verifies the pinned key itself');
+like($controller, qr/my \$name = \$c->param\('source_signatorial'\) \|\| '';/,
+	'otherwise it reads the caller the relay named');
+like($controller, qr/my \$row = &subs::peer_roster_row\(\$name\);/,
+	'resolves that name against the roster');
+like($controller, qr/return 0 unless \$row && length\(\$row->\{'pubkey'\} \|\| ''\);/,
+	'and refuses a row with no pinned key');
+like($controller, qr/return &subs::peer_verify\(\$c, \$row\) \? 1 : 0;/,
+	'before verifying the pinned signature itself');
 
 for my $action (qw(action_44040 action_44041 action_44042 action_44043 action_44044)) {
 	my ($body) = $controller =~ /(sub \Q$action\E \{.*?\n\})/s;

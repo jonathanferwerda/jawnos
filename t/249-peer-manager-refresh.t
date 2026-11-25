@@ -401,6 +401,8 @@ is(scalar @{$ok_ua->{'tried'}}, 2, 'the dead route short-circuits at the answer'
 	is($post_ua->{'forms'}->[0]->{'target'}, 'laptop-uuid', 'with the body target');
 	is($post_ua->{'forms'}->[0]->{'output'}, 'stream', 'and the appended query param');
 	is($post_ua->{'forms'}->[0]->{'remoted'}, 'yes', 'the relay marks the request remoted');
+	is($post_ua->{'forms'}->[0]->{'source_signatorial'}, 'this-machine',
+		'and names the caller so the target can verify it against the roster');
 }
 
 done_testing();
