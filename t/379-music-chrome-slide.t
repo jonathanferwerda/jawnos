@@ -67,6 +67,21 @@ like($js, qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\
 like($css, qr/#music \.media_controls\.music_player_bar \{ z-index: 16; \}/,
 	'the bar rides above the picture');
 
+# A narrow bar cannot hold the transport, theatre, shuffle, repeat, tools,
+# title and fullscreen once the 380px step enlarges them: the fullscreen button
+# wrapped to a third row. The compact step is last so it answers the
+# enlargement, and it stops at 560px where the row has room again.
+like($style, qr/\@container \(max-width: 559px\)/, 'a narrow player bar has a compact step');
+like($style, qr/\@container \(max-width: 559px\) \{.*?\.music_player_bar \.medium_thumb \{ height: 36px; max-width: 42px; \}/s,
+	'the transport icons shrink there');
+like($style, qr/\@container \(max-width: 559px\) \{.*?\.music_shuffle,.*?\.little_thumb \{ height: 30px; \}/s,
+	'and so do the small buttons');
+my $compact_at = index($style, '@container (max-width: 559px)');
+my $enlarged_at = index($style, '@container (min-width: 380px)');
+my $widest_at = index($style, '@container (min-width: 760px)');
+ok($compact_at > $enlarged_at && $compact_at > $widest_at,
+	'the compact step comes last, so it wins in a small window');
+
 # The visualization is the one native <select> in the player. A fullscreen
 # popup can be refused or painted behind the top layer, so in a big picture the
 # same control becomes an inline list whose options are ordinary clicks.

@@ -346,6 +346,20 @@
 			.music_player_bar .music_repeat,
 			.music_player_bar .little_thumb { height: 52px; }
 		}
+		/* A narrow player - a phone, or a small window - cannot hold the
+		   transport, theatre, shuffle, repeat, tools, title and fullscreen once
+		   the 380px step has enlarged them: the fullscreen button wrapped to a
+		   third row and fell past the bar's foot. This step is last, so it
+		   answers the enlargement above as well as the base sizes, and 560px is
+		   where the row has room again. */
+		@container (max-width: 559px) {
+			.media_controls.music_player_bar { gap: 0; padding: 0 4px; }
+			.music_player_bar .medium_thumb { height: 36px; max-width: 42px; }
+			.music_player_bar .music_shuffle,
+			.music_player_bar .music_repeat,
+			.music_player_bar .little_thumb { height: 30px; }
+			.music_player_bar #<%= $id %>_full_title { font-size: 14px; }
+		}
 		/* the theatre-mode picture fills the window: the container takes the
 		   media window's whole height, so the video's own 100% resolves and the
 		   browser's subtitle overlay - drawn at the element's foot - lands at the
