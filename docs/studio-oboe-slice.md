@@ -626,8 +626,10 @@ would invite a false latency claim, so there is no button.
 
 ### 11.6 What the person taps
 
-1. Open the app to any page that shows the **Native take** panel (it hides
-   itself on the Studio page).
+1. Open the app's manager shell, then open the **Studio** window: the
+   **Native take** panel appears over it. (The panel is injected on the shell,
+   not on a direct `/manager/studio` URL, and it shows only while the Studio
+   window is visible.)
 2. **Take through** → *Tone + delay fixture*.
 3. **Seconds** → 10, then **Start**; speak or make a short sound, and **Stop**.
 4. The panel's status shows `plan: tone+delay`. The sidecar is
