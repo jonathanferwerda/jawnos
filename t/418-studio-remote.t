@@ -96,4 +96,77 @@ like($controller, qr/Websocket::send\('server'/, 'on the server console channel'
 unlike($controller, qr/Websocket::send\('studio'/, 'never the Studio data channel');
 unlike($controller, qr/remote_relay_request\(\$c, \{.*url/, 'no arbitrary path is relayed');
 
+# --- the publish accepts the page's form field -------------------------------
+# The Studio page posts `state=<json>` as a form field (07_layout.js), not a
+# raw JSON body. The route must read that field first and still accept the raw
+# body shape; a malformed state is one 400 either way.
+{
+	package subs;
+	no warnings 'redefine';
+	our %studio_test_cache;
+	sub rightNow { 1_700_000_000_000 }
+	sub cache_set {
+		my ($key, $value) = @_;
+		$studio_test_cache{ $key->{'context'} } = $value;
+		return 1;
+	}
+}
+{
+	package FakeStudioRequest;
+	sub new { my ($class, %args) = @_; return bless { body => ($args{'body'} // '') }, $class }
+	sub body { return $_[0]->{'body'} }
+
+	package FakeStudioController;
+	sub new { my ($class, %args) = @_; return bless { %args }, $class }
+	sub param {
+		my ($self, $name) = @_;
+		return $self->{'params'}->{$name};
+	}
+	sub req { return $_[0]->{'req'} }
+	sub render {
+		my ($self, %args) = @_;
+		$self->{'status'} = $args{'status'};
+		$self->{'json'} = $args{'json'};
+		return;
+	}
+
+	package main;
+}
+
+require "$root/lib/JawnOS/Controller/manager_misc9.pm";
+{
+	my $c = FakeStudioController->new(
+		params => { state => '{"song":{"name":"form"}}' },
+		req => FakeStudioRequest->new(body => ''),
+	);
+	Manager::action_44039($c);
+	is($c->{'json'}{'ok'}, 1, 'a form-encoded state publishes');
+	is($subs::studio_test_cache{'remote_state'}{'song'}{'name'}, 'form',
+		'and its decoded object is cached');
+
+	my $raw = FakeStudioController->new(
+		params => {},
+		req => FakeStudioRequest->new(body => '{"song":{"name":"raw"}}'),
+	);
+	Manager::action_44039($raw);
+	is($raw->{'json'}{'ok'}, 1, 'a raw JSON body still publishes');
+	is($subs::studio_test_cache{'remote_state'}{'song'}{'name'}, 'raw',
+		'and it is the one cached');
+
+	my $bad = FakeStudioController->new(
+		params => { state => '{"song":' },
+		req => FakeStudioRequest->new(body => ''),
+	);
+	Manager::action_44039($bad);
+	is($bad->{'status'}, 400, 'a malformed form state is still a 400');
+	ok(!$bad->{'json'}{'ok'}, 'and publishes nothing');
+
+	my $scalar = FakeStudioController->new(
+		params => { state => '"just a string"' },
+		req => FakeStudioRequest->new(body => ''),
+	);
+	Manager::action_44039($scalar);
+	is($scalar->{'status'}, 400, 'a non-object state is a 400');
+}
+
 done_testing();

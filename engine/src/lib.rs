@@ -30,6 +30,7 @@ pub mod proto;
 pub mod reverb;
 pub mod sender;
 pub mod session;
+pub mod stream;
 pub mod uplink;
 pub mod wav;
 pub mod wav_read;
@@ -84,6 +85,9 @@ pub use sender::{
     LiveSpec, SendSpec, SenderReport, TakeBlock, TakeSender, ValidatedLive, ValidatedSend,
 };
 pub use session::{align, elect, Candidate, ClockOffset, NodeId};
+pub use stream::{
+    MonitorControl, MonitorTap, TapSource, MONITOR_CHANNELS, MONITOR_RATE, MONITOR_RING_FRAMES,
+};
 pub use uplink::{
     Offer, Uplink, UplinkConfig, UplinkSource, UplinkSourceSpec, UplinkSourceStatus, UplinkStatus,
     PULL_BUFFER_FRAMES, PULL_BUFFER_MAX_MS, PULL_FRAMES, PULL_INTERVAL_MS,

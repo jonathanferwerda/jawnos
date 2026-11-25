@@ -58,6 +58,7 @@ sub routes {
 	[44041, 'post', '/manager/studio/remote_command', 'action_44041'],
 	[44042, 'get', '/manager/studio/remote_devices', 'action_44042'],
 	[44043, 'post', '/manager/studio/remote_device', 'action_44043'],
+	[44044, 'post', '/manager/studio/monitor_stream', 'action_44044'],
 	[44024, 'get', '/manager/games/play', 'action_44024'],
 	[44025, 'get', '/manager/games/dos_bundle', 'action_44025'],
 	[44026, 'get', '/manager/games/peer_library', 'action_44026'],

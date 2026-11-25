@@ -468,6 +468,22 @@ sub music_source_forward($st, $data) {
 	}
 }
 
+# A manager-owned source that has no browser socket: the Studio monitor reads
+# the engine's PCM itself and forwards each block to the same peer receivers the
+# Music window feeds. `music_source_client_open` built the clients and their
+# hello, and this is the binary half those clients already understand. A stalled
+# remote is skipped rather than allowed to grow this worker's buffer.
+sub music_source_broadcast_binary($st, $bytes) {
+	return unless ref $st eq 'HASH' && ref $st->{'clients'} eq 'HASH';
+	return unless defined $bytes && length $bytes;
+	foreach my $key (keys %{$st->{'clients'}}) {
+		my $cl = $st->{'clients'}->{$key};
+		next unless $cl->{'up'} && $cl->{'tx'} && $cl->{'tx'}->is_websocket;
+		next if length($cl->{'tx'}->{'write'} // '') > 1_000_000;
+		eval { $cl->{'tx'}->send({binary => $bytes}); };
+	}
+}
+
 sub music_source_close($st) {
 	foreach my $key (keys %{$st->{'clients'}}) { &music_source_client_close($st, $key); }
 	delete $st->{'started'};

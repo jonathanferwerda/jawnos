@@ -3225,7 +3225,10 @@ sub action_44039 {
 		$c->render(json => { ok => 0, error => 'a relayed request cannot publish Studio state' }, status => 403);
 		return;
 	}
-	my $raw = $c->req->body;
+	my $raw = $c->param('state');
+	if (!defined $raw || ref $raw) {
+		$raw = $c->req->body;
+	}
 	$raw = '' unless defined $raw;
 	if (length($raw) > 65_536) {
 		$c->render(json => { ok => 0, error => 'the Studio state is too large' }, status => 413);
@@ -3404,7 +3407,307 @@ sub action_44043 {
 		return;
 	}
 	my $ok = &studio_remote_device_set($id);
+	# The two monitor modes are exclusive: choosing the machine's own output
+	# ends any stream this target was sending to a controller.
+	&studio_monitor_stream_stop(undef, 1) if $ok;
 	$c->render(json => { ok => $ok ? 1 : 0, id => $id, current => $id });
+}
+
+# ---- the controller's Studio monitor stream --------------------------------
+#
+# A controller that names a peer's Studio can hear that Studio on its own
+# machine. The target's engine taps its final stereo output (after the master
+# rack) onto a loopback TCP port, and this machine forwards those PCM blocks to
+# the controller's existing Music receiver, which already plays them through
+# `pacat`. That is the same transport the Music window uses: the tablet needs no
+# decoder, and no browser is involved.
+#
+# A physical output is the other, exclusive mode and keeps its own routes
+# (`remote_devices` / `remote_device`). `output=stream` means this path. The
+# controller's machine uuid is resolved from the verified peer row, so a peer
+# that is no longer active is never handed a stream.
+
+our $studio_monitor_stream;
+
+# The active peer row the relayed request came from. The app gate or
+# `peer_verify` leaves the caller's uuid (or signatorial) on the stash; a mirror
+# row is matched by either half. Inactive rows are absent from the lister.
+sub studio_monitor_controller($c) {
+	my $key = eval { $c->stash('peer_verified_key') } || '';
+	$key = $c->param('source_signatorial') unless defined $key && length $key;
+	return unless defined $key && !ref $key && length $key;
+	my $rows = &subs::remote_machine_lister({ self => 'no', connection => 'active' }) || [];
+	my ($row) = grep {
+		(($_->{'uuid'} || '') eq $key || ($_->{'signatorial'} || '') eq $key)
+			&& ($_->{'connection'} || '') eq 'active'
+			&& ($_->{'device'} || '') ne 'server'
+	} @{$rows};
+	return $row;
+}
+
+# The name `music_source_row` matches: fqdn, ip or hostname, in that order of
+# preference for this one. The uuid is a last resort so a caller still gets a
+# readable refusal rather than a silent no-op.
+sub studio_monitor_music_key($row) {
+	foreach my $field (qw(hostname ip fqdn uuid)) {
+		my $value = $row->{$field};
+		return $value if defined $value && !ref $value && length $value;
+	}
+	return '';
+}
+
+# The answer every branch speaks: one shape, so the page reads `ok`, then the
+# state, and never has to guess which key carries the failure.
+sub studio_monitor_reply($ok, $streaming, $output, $error) {
+	return {
+		ok => $ok ? 1 : 0,
+		streaming => $streaming ? 1 : 0,
+		output => (defined $output && length $output) ? $output : 'stream',
+		error => defined $error ? $error : '',
+		at => &subs::rightNow(),
+	};
+}
+
+# Start the engine's tap. A port of 0 asks the engine for a free loopback port
+# and the answer names the one it got; the manager dials that, never a port it
+# chose itself.
+sub studio_monitor_engine_start {
+	require JawnOS::Audio::Engine;
+	unless (&JawnOS::Audio::Engine::audio_engine_available()) {
+		return (undef, $JawnOS::Audio::Engine::audio_engine_not_running);
+	}
+	my $answer = &JawnOS::Audio::Engine::audio_engine_monitor('start', 0);
+	$answer = {} unless ref $answer eq 'HASH';
+	unless ($answer->{'ok'}) {
+		return (undef, $answer->{'error'} || 'the engine did not start its monitor stream');
+	}
+	my $port = $answer->{'port'};
+	return (undef, 'the engine did not name its monitor port')
+		unless defined $port && !ref $port && $port =~ /\A\d+\z/ && $port > 0;
+	return ($port + 0, undef);
+}
+
+# Read the engine's PCM and hand each block to the Music source. The stream is
+# non-blocking and the read event is the only loop work; a closed socket means
+# the engine's transport ended (or the tap stopped), so the whole stream is
+# taken down with it.
+sub studio_monitor_pump_start($port, $source) {
+	require IO::Socket::INET;
+	require Mojo::IOLoop::Stream;
+	my $sock = eval {
+		IO::Socket::INET->new(
+			PeerAddr => '127.0.0.1',
+			PeerPort => $port,
+			Proto    => 'tcp',
+			Timeout  => 2,
+		)
+	};
+	return (undef, undef, 'the engine monitor port did not answer') unless $sock;
+	$sock->blocking(0);
+	my $stream = Mojo::IOLoop::Stream->new($sock)->timeout(0);
+	$stream->on(read => sub {
+		my ($stream, $bytes) = @_;
+		return unless defined $bytes && length $bytes;
+		# A Music receiver's write cap is a fraction of the kernel pipe; send
+		# bounded messages so one burst never looks like a backlog it must drop.
+		while (length $bytes) {
+			my $chunk = substr($bytes, 0, 8192, '');
+			&music_source_broadcast_binary($source, $chunk);
+		}
+	});
+	$stream->on(close => sub {
+		&studio_monitor_stream_stop('the engine stream ended', 1);
+	});
+	$stream->start;
+	return ($stream, $sock, undef);
+}
+
+# Stop the local half: the reader, the Music source and (optionally) the engine
+# tap. It is idempotent, so the reader's close event and an explicit Stop cannot
+# fight over the same state.
+sub studio_monitor_stream_stop($reason, $engine_stop) {
+	my $st = $studio_monitor_stream;
+	return 0 unless ref $st eq 'HASH';
+	$studio_monitor_stream = undef;
+	if ($st->{'watch'}) {
+		eval { Mojo::IOLoop->remove($st->{'watch'}) };
+	}
+	if ($st->{'stream'}) {
+		eval { $st->{'stream'}->close };
+	}
+	if ($st->{'sock'}) {
+		eval { close $st->{'sock'} };
+	}
+	if ($st->{'source'}) {
+		eval { &music_source_close($st->{'source'}) };
+	}
+	if ($engine_stop) {
+		require JawnOS::Audio::Engine;
+		eval { &JawnOS::Audio::Engine::audio_engine_monitor('stop') };
+	}
+	$st->{'error'} = $reason if defined $reason && length $reason;
+	return 1;
+}
+
+# A controller that closes its receiver leaves no client behind. Give the
+# first connection time to open, then stop the stream once a client that came
+# up is gone. The engine's own end closes the reader first, so this is the
+# fallback for a silent link.
+sub studio_monitor_watch_start($st) {
+	my $timer;
+	$timer = Mojo::IOLoop->recurring(3 => sub {
+		my $current = $studio_monitor_stream;
+		unless ($current && $current == $st) {
+			eval { Mojo::IOLoop->remove($timer) };
+			return;
+		}
+		my $source = ref $current->{'source'} eq 'HASH' ? $current->{'source'} : {};
+		my $clients = ref $source->{'clients'} eq 'HASH' ? $source->{'clients'} : {};
+		my $up = grep { ref $_ eq 'HASH' && $_->{'up'} } values %{$clients};
+		$current->{'ever_up'} = 1 if $up;
+		my $age = &subs::rightNow() - ($current->{'started'} || 0);
+		if (!$up && ($current->{'ever_up'} || $age > 10_000)) {
+			eval { Mojo::IOLoop->remove($timer) };
+			&studio_monitor_stream_stop('the controller stopped listening', 1);
+		}
+	});
+	$st->{'watch'} = $timer;
+}
+
+# POST /manager/studio/monitor_stream
+# `{ action: start|stop|status, target, output }`. A controller naming a peer is
+# relayed through the signed rail; the target resolves the controller from the
+# verified caller, opens its engine tap and a Music source to that machine. A
+# physical output stays on `remote_device`; `output=stream` is this path, and
+# the two are exclusive.
+sub action_44044 {
+	my $c = shift;
+	my $body = &studio_remote_body($c);
+	my $target = &studio_remote_value($c, $body, 'target');
+	my $action = &studio_remote_value($c, $body, 'action');
+	$action = 'status' unless defined $action && !ref $action && length $action;
+	$action = lc $action;
+	my $output = &studio_remote_value($c, $body, 'output');
+	$output = '' unless defined $output && !ref $output;
+	$output =~ s/\A\s+|\s+\z//g;
+	$output = 'stream' unless length $output;
+	my $remoted = (($c->param('remoted') || '') eq 'yes') ? 1 : 0;
+
+	unless ($action eq 'start' || $action eq 'stop' || $action eq 'status') {
+		$c->render(json => &studio_monitor_reply(0, 0, $output,
+			'choose a monitor action: start, stop or status'), status => 400);
+		return;
+	}
+	if ($action eq 'start' && $output ne 'stream') {
+		$c->render(json => &studio_monitor_reply(0, 0, $output,
+			'a physical output is chosen with /manager/studio/remote_device; the monitor stream is "stream"'), status => 400);
+		return;
+	}
+
+	# The controller: a named peer is relayed once, then the target answers.
+	if (!$remoted && defined $target && !ref $target && length $target && $target ne 'local') {
+		my $peer = &studio_remote_peer($target);
+		unless ($peer) {
+			$c->render(json => &studio_monitor_reply(0, 0, $output,
+				'that machine is not reachable'), status => 409);
+			return;
+		}
+		$c->req->query_params->append(action => $action) unless defined $c->param('action');
+		$c->req->query_params->append(output => $output) unless defined $c->param('output');
+		$c->param('remote_uuid' => $peer->{'uuid'});
+		$c->render(json => &studio_remote_relay($c));
+		return;
+	}
+
+	if ($action eq 'status') {
+		my $streaming = 0;
+		if ($studio_monitor_stream) {
+			require JawnOS::Audio::Engine;
+			my $status = eval { &JawnOS::Audio::Engine::audio_engine_status() } || {};
+			my $stream = (ref $status eq 'HASH' && ref $status->{'stream'} eq 'HASH')
+				? $status->{'stream'} : {};
+			$streaming = $stream->{'streaming'} ? 1 : 0;
+		}
+		$c->render(json => &studio_monitor_reply(1, $streaming, $output, ''));
+		return;
+	}
+
+	if ($action eq 'stop') {
+		&studio_monitor_stream_stop(undef, 1);
+		$c->render(json => &studio_monitor_reply(1, 0, 'stream', ''));
+		return;
+	}
+
+	# start: only the target acts
+	my $controller = &studio_monitor_controller($c);
+	unless ($controller) {
+		$c->render(json => &studio_monitor_reply(0, 0, 'stream',
+			'the controller machine is not an active peer'), status => 409);
+		return;
+	}
+	my $key = &studio_monitor_music_key($controller);
+	unless (length $key) {
+		$c->render(json => &studio_monitor_reply(0, 0, 'stream',
+			'the controller machine has no address'), status => 409);
+		return;
+	}
+
+	# A new request replaces what the previous one started. The engine tap and
+	# its Music clients belong to the request that opened them.
+	&studio_monitor_stream_stop(undef, 1) if $studio_monitor_stream;
+
+	require './perl/Music/02_remote_audio_stream.pl';
+	my ($port, $engine_error) = &studio_monitor_engine_start();
+	if (defined $engine_error) {
+		$c->render(json => &studio_monitor_reply(0, 0, 'stream', $engine_error), status => 503);
+		return;
+	}
+
+	# The source state a browser-owned Music source would have built. The
+	# receiver reads `rate`, `codec` and the `music_data` type from this hello.
+	my $source = {
+		role => 'source',
+		started => 1,
+		clients => {},
+		hello => {
+			type => 'hello',
+			rate => 48000,
+			codec => 'pcm',
+			music_data => { type => 'audio', name => 'studio-monitor' },
+		},
+	};
+	&music_source_client_open($c, $source, $key, 'stereo');
+	unless (ref $source->{'clients'} eq 'HASH' && $source->{'clients'}->{$key}) {
+		require JawnOS::Audio::Engine;
+		eval { &JawnOS::Audio::Engine::audio_engine_monitor('stop') };
+		$c->render(json => &studio_monitor_reply(0, 0, 'stream',
+			'the controller could not accept the stream'), status => 503);
+		return;
+	}
+
+	my ($stream, $sock, $pump_error) = &studio_monitor_pump_start($port, $source);
+	if (defined $pump_error) {
+		eval { &music_source_close($source) };
+		require JawnOS::Audio::Engine;
+		eval { &JawnOS::Audio::Engine::audio_engine_monitor('stop') };
+		$c->render(json => &studio_monitor_reply(0, 0, 'stream', $pump_error), status => 503);
+		return;
+	}
+
+	my $state = {
+		controller_uuid => ($controller->{'uuid'} || ''),
+		controller_key => $key,
+		port => $port,
+		source => $source,
+		stream => $stream,
+		sock => $sock,
+		started => &subs::rightNow(),
+		ever_up => 0,
+		error => '',
+	};
+	$studio_monitor_stream = $state;
+	&studio_monitor_watch_start($state);
+	$c->render(json => &studio_monitor_reply(1, 1, 'stream', ''));
 }
 
 1;

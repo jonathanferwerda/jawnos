@@ -344,6 +344,20 @@ sub audio_engine_patch_source_param {
 	});
 }
 
+# The engine's live monitor stream: `{"cmd":"monitor","action":"start",
+# "port":0}`. `start` binds a loopback TCP port (0 asks the engine for one) and
+# answers the "port" it got; raw interleaved S16LE at 48 kHz stereo arrives on
+# that port, taken from the final output after the master rack. `stop` closes
+# it and `status` answers its `stream` object. It is the same PCM path the Music
+# receiver already plays through `pacat`, so no browser decoder is involved.
+sub audio_engine_monitor {
+	my ($action, $port) = @_;
+	my $request = { cmd => 'monitor', action => $action };
+	$request->{'port'} = int($port)
+		if defined $port && !ref $port && $port =~ /\A\d+\z/;
+	return audio_engine_command($request);
+}
+
 # `unpatch` ends the patchbay and nothing else: the mixer switch's off must not
 # stop a take or a listen that happens to be sharing the engine.
 sub audio_engine_unpatch {

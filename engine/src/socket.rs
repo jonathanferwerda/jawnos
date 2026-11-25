@@ -35,6 +35,18 @@
 //! (SA_RESTART), so the handler writes a byte to a wake pipe that is polled
 //! beside the listener: a TERM takes the same clean path as `quit`.
 //!
+//! # The live monitor
+//!
+//! Studio's controller picker can name another machine's Studio and hear it on
+//! the controller's own Music receiver. `{"cmd":"monitor","action":"start",
+//! "port":0}` binds a loopback TCP listener and answers the port; the transport
+//! pushes every finished block through [`jawn_audio::stream::TapSource`] after the
+//! master rack, and the writer thread sends little-endian S16LE stereo. With no
+//! client attached the writer drains and discards, so a late listener never
+//! starts on stale audio. `monitor stop` closes it and `status` reports the
+//! `stream` object and its `streaming` flag. The engine's control socket stays
+//! one line per request; the stream is the only continuous channel.
+//!
 //! # Recording
 //!
 //! A take runs on its own thread and never writes to disk itself: it hands
@@ -100,6 +112,7 @@ use jawn_synth::{Engine as SynthEngine, Envelope, FilterKind, Patch, Wave};
 use jawn_audio::uplink::{Uplink, UplinkConfig, UplinkSourceSpec, UplinkStatus};
 
 use crate::patchbay::{PatchSummary, Patchbay};
+use jawn_audio::stream::{MonitorControl, MonitorTap};
 use jawn_audio::pipewire_guard::{PlaybackGuard, FEEDBACK_PREFIX};
 use jawn_audio::playback::{RenderSource, StandaloneClick};
 
@@ -1167,6 +1180,11 @@ struct Server {
     /// What the boot restore did with the saved plan, reported on every status
     /// line as `plan` or `plan_error` beside `machine`.
     boot: BootPlan,
+    /// The live monitor tap. It exists for the process's lifetime; `start` and
+    /// `stop` only change what its writer thread serves, so a transport may
+    /// start and stop beneath one stable tap. The audio thread pushes into its
+    /// lock-free ring and never waits on a client.
+    monitor: MonitorTap,
     /// The uplink's published state. One patch at a time owns the binding, but
     /// the status object outlives a patch, so this is the server's. `off` or
     /// `idle` until a patch with a peer source starts the thread.
@@ -1236,6 +1254,7 @@ impl Server {
             gateway: Gateway::off(capable),
             next_take: 1,
             boot: BootPlan::Error("no audio plan file configured".to_string()),
+            monitor: MonitorTap::new(),
             uplink,
         }
     }
@@ -1503,6 +1522,9 @@ impl Server {
         if let Some(session) = &mut self.patch {
             session.finish();
         }
+        // The monitor writer is process state, not a role; a clean quit closes
+        // its listener and client so no controller is left reading silence.
+        self.monitor.finish();
         // A quit is the process's end, so the gateway's child must be reaped
         // here rather than left to init.
         self.gateway.release();
@@ -1670,6 +1692,7 @@ impl Server {
             "listen" => Action::Reply(self.listen(&object)),
             "patch" => Action::Reply(self.patch(&object)),
             "transport" => Action::Reply(self.transport_command(&object)),
+            "monitor" => Action::Reply(self.monitor_command(&object)),
             "synth" => Action::Reply(self.synth_command(&object)),
             "drums" => Action::Reply(self.drums_command(&object)),
             "gateway" => Action::Reply(self.gateway_command(&object)),
@@ -1679,6 +1702,60 @@ impl Server {
             "stop" => Action::Reply(self.stop_line()),
             "quit" => Action::Quit("{\"ok\":true}".to_string()),
             _ => Action::Reply(error_line("unknown command")),
+        }
+    }
+
+    /// `{"cmd":"monitor","action":"start","port":0}`: a live stream of the
+    /// engine's final stereo output over loopback TCP. `start` binds the port,
+    /// answers the one actually granted, and leaves the writer serving; `stop`
+    /// closes it and drops the client; `status` answers the tap's object alone.
+    /// An already-running tap is rebound to the new port rather than refused, so
+    /// the manager can replace a controller without a second command.
+    fn monitor_command(&mut self, object: &Object) -> String {
+        let action = match get(object, "action") {
+            Some(Value::Str(action)) => action.as_str(),
+            _ => return error_line("monitor needs \"action\": start, stop or status"),
+        };
+        match action {
+            "start" => {
+                let port = match get(object, "port") {
+                    None | Some(Value::Null) => 0,
+                    Some(Value::Num(value))
+                        if value.is_finite()
+                            && *value >= 0.0
+                            && value.fract() == 0.0
+                            && *value <= 65_535.0 =>
+                    {
+                        *value as u16
+                    }
+                    _ => return error_line("\"port\" must be 0 or a whole number from 1 to 65535"),
+                };
+                match self.monitor.control().start(port) {
+                    Ok(bound) => format!(
+                        "{{\"ok\":true,\"action\":\"start\",\"stream\":true,\"streaming\":{},\"port\":{},\"rate\":{},\"channels\":{}}}",
+                        self.monitor.control().is_streaming(),
+                        bound,
+                        jawn_audio::stream::MONITOR_RATE,
+                        jawn_audio::stream::MONITOR_CHANNELS
+                    ),
+                    Err(error) => error_line(&format!("cannot start the monitor stream: {error}")),
+                }
+            }
+            "stop" => {
+                self.monitor.control().stop();
+                "{\"ok\":true,\"action\":\"stop\",\"stream\":false,\"streaming\":false,\"port\":0}"
+                    .to_string()
+            }
+            "status" => {
+                let control = self.monitor.control();
+                format!(
+                    "{{\"ok\":true,\"action\":\"status\",\"stream\":{},\"streaming\":{},\"port\":{}}}",
+                    control.status_fragment(),
+                    control.is_streaming(),
+                    control.port()
+                )
+            }
+            _ => error_line("choose a monitor action: start, stop or status"),
         }
     }
 
@@ -3935,6 +4012,10 @@ impl Server {
         let control = Arc::new(TransportControl::new(spec, position, loop_start, loop_end));
         control.set_playing(true);
         let error = Arc::new(Mutex::new(String::new()));
+        // The live monitor tap is attached before the device opens: the
+        // transport pushes every finished block into its ring, and `monitor
+        // start` only has to begin serving that ring.
+        let monitor = self.monitor.control();
         // The control thread sends replacement plans; the render thread receives
         // them at a block edge. Nothing is shared under a lock, so a plan never
         // stalls the device. A take's live input rides its own channel and the
@@ -3965,6 +4046,7 @@ impl Server {
                         live_rx,
                         note_rx,
                         hit_rx,
+                        monitor,
                     )
                 })
         };
@@ -4475,8 +4557,10 @@ impl Server {
         // The configuration describes the process, not the take, so every
         // state carries it: a supervisor compares these with its own flags to
         // tell whether the engine it adopted is the one it asked for. The
-        // boot restore adds `machine` and `plan`/`plan_error` on top.
-        self.add_boot(add_config(line, &self.config))
+        // boot restore adds `machine` and `plan`/`plan_error` on top, and the
+        // monitor adds its `stream` object and `streaming` flag.
+        let control = self.monitor.control();
+        self.add_boot(add_monitor(add_config(line, &self.config), &control))
     }
 
     /// `{"cmd":"unpatch"}`: end the patchbay and nothing else.
@@ -4660,6 +4744,22 @@ fn add_config(line: String, config: &Config) -> String {
         config.buffer,
         config.channels,
         std::process::id()
+    )
+}
+
+/// Append the live monitor's state to a status object. `stream` is the tap's
+/// own object (enabled, streaming, port, rate, frames, dropped); `streaming` is
+/// repeated at the top level so a caller that only wants the boolean does not
+/// have to reach into it.
+fn add_monitor(line: String, monitor: &MonitorControl) -> String {
+    let head = match line.strip_suffix('}') {
+        Some(head) => head,
+        None => return line,
+    };
+    format!(
+        "{head},\"streaming\":{},\"stream\":{}}}",
+        monitor.is_streaming(),
+        monitor.status_fragment()
     )
 }
 
@@ -6635,6 +6735,7 @@ fn run_transport(
     live: std::sync::mpsc::Receiver<TransportLive>,
     notes: std::sync::mpsc::Receiver<TransportNote>,
     hits: std::sync::mpsc::Receiver<TransportHit>,
+    monitor: MonitorControl,
 ) {
     let mut source = TransportSource::new(Arc::clone(&control))
         .with_clips(clips)
@@ -6648,13 +6749,21 @@ fn run_transport(
     if let Some(chart) = drums {
         source = source.with_drums(chart);
     }
+    // The tap wraps the finished source, so it copies the same block the room
+    // hears: the clip mix after the master rack, plus the click. The ring push
+    // is lock-free and never waits for a controller.
+    let mut source = jawn_audio::stream::TapSource::new(source, monitor.producer());
     let outcome = match config.backend {
-        BackendKind::Null => transport_null(&config, source, &control),
+        BackendKind::Null => transport_null(&config, &mut source, &control),
         BackendKind::Alsa | BackendKind::PipeWire => {
             transport_hardware(&config, source, &control)
         }
         BackendKind::Jack => Err(crate::play_support_message()),
     };
+    // The transport owns the output the monitor copied; when it ends, a
+    // connected controller must not keep listening to nothing. The engine's
+    // manager sees the socket close and stops its Music source too.
+    monitor.stop();
     control.set_playing(false);
     if let Err(message) = outcome {
         if !control.is_stopping() {
@@ -6669,9 +6778,9 @@ fn run_transport(
 /// The null transport keeps the same real-time shape a device does: one block
 /// per period, so status and control latency read like the hardware path. It
 /// writes no samples anywhere; the click exists only in the rendered block.
-fn transport_null(
+fn transport_null<S: RenderSource>(
     config: &Config,
-    mut source: TransportSource,
+    source: &mut S,
     control: &TransportControl,
 ) -> Result<(), String> {
     source.prepared(config.rate, config.period)?;
@@ -6685,9 +6794,9 @@ fn transport_null(
 }
 
 #[cfg(feature = "alsa")]
-fn transport_hardware(
+fn transport_hardware<S: RenderSource>(
     config: &Config,
-    source: TransportSource,
+    source: S,
     _control: &TransportControl,
 ) -> Result<(), String> {
     jawn_audio::alsa_device::run_file_playback_guarded(
@@ -6710,9 +6819,9 @@ fn transport_hardware(
 }
 
 #[cfg(not(feature = "alsa"))]
-fn transport_hardware(
+fn transport_hardware<S: RenderSource>(
     config: &Config,
-    source: TransportSource,
+    source: S,
     _control: &TransportControl,
 ) -> Result<(), String> {
     let _ = (config, source);
@@ -8788,6 +8897,74 @@ break"}"#).is_err());
         };
         assert!(matches!(get(uplink, "state"), Some(Value::Str(state)) if state == "off"));
         assert!(matches!(get(uplink, "bind"), Some(Value::Str(bind)) if bind.is_empty()));
+    }
+
+    #[test]
+    fn the_monitor_command_starts_reports_and_stops() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"monitor","action":"start","port":0}"#));
+        assert!(started.contains("\"ok\":true"), "{started}");
+        assert!(started.contains("\"stream\":true"), "{started}");
+        let object = parse_object(&started).expect("the start reply parses");
+        let port = number(&object, "port").expect("a bound port");
+        assert!(port >= 1.0 && port <= 65_535.0, "{started}");
+
+        let status = server.status_line();
+        assert!(status.contains("\"stream\":{"), "{status}");
+        assert!(status.contains("\"streaming\":false"), "{status}");
+        assert!(status.contains("\"rate\":48000"), "{status}");
+
+        let stopped = reply(server.handle(r#"{"cmd":"monitor","action":"stop"}"#));
+        assert!(stopped.contains("\"ok\":true"), "{stopped}");
+        assert!(stopped.contains("\"stream\":false"), "{stopped}");
+        assert!(
+            server.status_line().contains("\"stream\":{\"enabled\":false"),
+            "the status saw the stop"
+        );
+
+        for (line, needle) in [
+            (r#"{"cmd":"monitor","action":"play"}"#, "start, stop or status"),
+            (r#"{"cmd":"monitor"}"#, "action"),
+            (r#"{"cmd":"monitor","action":"start","port":"x"}"#, "port"),
+            (r#"{"cmd":"monitor","action":"start","port":70000}"#, "port"),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+        }
+    }
+
+    #[test]
+    fn a_transport_feeds_the_monitor_and_its_end_stops_the_stream() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"monitor","action":"start","port":0}"#));
+        let object = parse_object(&started).expect("the start reply parses");
+        let port = number(&object, "port").expect("a bound port") as u16;
+
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("read timeout");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !server.monitor.control().is_streaming() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(server.monitor.control().is_streaming(), "the client connected");
+
+        let playing = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(playing.contains("\"state\":\"playing\""), "{playing}");
+        let mut bytes = [0u8; 16];
+        client.read_exact(&mut bytes).expect("the monitor wrote PCM");
+        let status = server.status_line();
+        assert!(status.contains("\"streaming\":true"), "{status}");
+        assert!(status.contains("\"monitor_frames\":"), "{status}");
+
+        // The transport owns the output the tap copied: stopping it closes the
+        // controller's socket, so a listener can see the stream ended.
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+        let status = server.status_line();
+        assert!(status.contains("\"stream\":{\"enabled\":false"), "{status}");
+        assert!(status.contains("\"streaming\":false"), "{status}");
     }
 
     fn take_status(inserts: &str) -> Status {

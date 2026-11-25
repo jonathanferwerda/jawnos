@@ -267,7 +267,7 @@ jawn-audio — the JawnOS audio engine
   --rate HZ       sample rate (default 48000)
   --channels N    capture channels a take asks for (default 2, 1..=32)
 
---serve speaks one JSON object per line: record, play, listen, patch,
+--serve speaks one JSON object per line: record, play, listen, patch, monitor,
 unpatch, param, status, stop, quit. `patch` takes `plan`, the saved sources,
 buses, sinks and routes, and runs the house mixer until `unpatch` or `stop`;
 `status` reports its shape, the frames it has rendered and the nodes this
@@ -302,6 +302,14 @@ samples minus the capture offset given by \"align_samples\" or measured by
 real chain. `param` moves one knob of a running take's strip and answers when
 the change is queued for the next block; `status` reports every track and
 the gain, pan and inserts it was armed with.
+`monitor` is a live copy of the engine's final stereo output over loopback TCP:
+{\"cmd\":\"monitor\",\"action\":\"start\",\"port\":0} binds 127.0.0.1 (0 asks for any
+free port) and answers the \"port\" it got; a connected client receives raw
+interleaved S16LE at the device rate (48 kHz stereo) from after the master rack,
+and frames are dropped while no client is attached. {\"cmd\":\"monitor\",
+\"action\":\"stop\"} closes it, and status carries \"stream\" and \"streaming\".
+The manager's controller picker uses it to forward a peer's Studio monitor to
+the controller's Music receiver.
 The null backend needs no sound card. ALSA and JACK exist only in a build with
 --features alsa and/or --features jack; pipewire uses the ALSA `default` PCM.
 A loopback needs the interface's output patched into its input.
