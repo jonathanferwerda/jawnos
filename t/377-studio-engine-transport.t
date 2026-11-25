@@ -883,8 +883,13 @@ like(
 );
 like(
 	$transport,
-	qr/studioEngineClockSet\(pos, ctx\.currentTime - \(rtt \/ 2\), loopStart, loopEnd, browserLatency - engineLatency\);/,
-	'the socket round trip and the two output latencies are compensated'
+	qr/var latency = \(browserLatency > 0 && engineLatency > 0\) \? \(browserLatency - engineLatency\) : 0;/,
+	'the two output latencies are compensated only when both are known'
+);
+like(
+	$transport,
+	qr/studioEngineClockSet\(pos, ctx\.currentTime - \(rtt \/ 2\), loopStart, loopEnd, latency\);/,
+	'the socket round trip and the output shift reach the clock'
 );
 like(
 	$transport,

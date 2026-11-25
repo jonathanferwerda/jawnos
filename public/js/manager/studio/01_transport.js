@@ -1108,11 +1108,14 @@ function studioEngineTransportApply(transport, rttMs) {
 		// correct for the two output buffers: a sample rendered into a buffer is
 		// heard after that buffer's length, and the browser's is its own latency.
 		var rtt = (isFinite(rttMs) && rttMs > 0) ? (rttMs / 1000) : 0;
-		var browserLatency = isFinite(ctx.outputLatency) ? ctx.outputLatency : 0;
+		var browserLatency = (isFinite(ctx.outputLatency) && ctx.outputLatency > 0) ? ctx.outputLatency : 0;
 		var rate = Number(transport.rate) || ctx.sampleRate || 0;
 		var engineLatency = (Number(transport.buffer) > 0 && rate > 0)
-			? (Number(transport.buffer) / rate) : browserLatency;
-		studioEngineClockSet(pos, ctx.currentTime - (rtt / 2), loopStart, loopEnd, browserLatency - engineLatency);
+			? (Number(transport.buffer) / rate) : 0;
+		// When either output latency is unknown, assume the two streams share one
+		// graph and need no shift; inventing one would be worse than none.
+		var latency = (browserLatency > 0 && engineLatency > 0) ? (browserLatency - engineLatency) : 0;
+		studioEngineClockSet(pos, ctx.currentTime - (rtt / 2), loopStart, loopEnd, latency);
 	}
 	if (Math.abs(drift) > studioEngineTransportDrift && typeof studioClockStart === 'function') {
 		// Re-anchor the segment (and the takes that have not sounded yet) to
