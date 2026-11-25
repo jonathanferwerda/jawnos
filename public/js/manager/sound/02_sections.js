@@ -38,6 +38,7 @@ function soundSectionShow(name, remember) {
 	if (name == 'remote' && typeof jawnosSoundTaskbarMusicLoad === 'function') {
 		jawnosSoundTaskbarMusicLoad();
 		jawnosSoundTaskbarMusicStateLoad();
+		jawnosSoundTaskbarMusicQueueLoad(1);
 	}
 	if (remember) {
 		try { localStorage.setItem(soundSectionKey, name); } catch (e) {}

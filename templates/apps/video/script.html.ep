@@ -660,6 +660,8 @@
 							dataType: 'json',
 							data: { target: musicRemoteTarget(), action: 'seek_percent', percent: percent }
 						});
+						// the thumb and the clock move with the press, not on the next poll
+						if (typeof musicRemoteSeekPercent === 'function') { musicRemoteSeekPercent(percent); }
 					}
 					return;
 				}

@@ -210,6 +210,66 @@ Manager::app->routes->post('/music/transport' => sub ($c) {
 	$c->render(json => { ok => $ok ? 1 : 0, action => $action });
 });
 
+# The host's own queue, compactly, for a controller that wants a short list to
+# pick from. The queue cache is the order its window is showing; the player
+# cache names the row that is playing. A long queue is answered around the
+# current track, capped so one poll stays small.
+sub music_remote_queue {
+	my $queue = &subs::cache_get({ app => 'music', context => 'queue' }) || {};
+	my $player = &subs::cache_get({ app => 'music', context => 'player' }) || {};
+	my $files = (ref $queue->{'files'} eq 'ARRAY') ? $queue->{'files'} : [];
+	my $current = $player->{'file'} || '';
+	my $total = scalar @{$files};
+	my $limit = 300;
+	my $index = -1;
+	if (length $current) {
+		for my $i ( 0 .. $#{$files} ) {
+			if (($files->[$i] // '') eq $current) { $index = $i; last; }
+		}
+	}
+	my $start = 0;
+	$start = $index - int($limit / 2) if $index >= 0;
+	$start = 0 if $start < 0;
+	$start = $total - $limit if $start + $limit > $total;
+	$start = 0 if $start < 0;
+	my $end = $start + $limit - 1;
+	$end = $total - 1 if $end > $total - 1;
+	my @songs;
+	foreach my $file ( @{$files}[$start .. $end] ) {
+		next unless defined $file && length $file;
+		my @parts = split m{/}, $file;
+		my $title = basename($file);
+		$title =~ s/\.[^.\/]+$//;
+		push @songs, {
+			file => $file,
+			title => (&subs::format_name($title) || $title),
+			album => (@parts >= 2 && $parts[-2] ne '') ? &subs::format_name($parts[-2]) : '',
+			artist => (@parts >= 3 && $parts[-3] ne '') ? &subs::format_name($parts[-3]) : '',
+			current => (length $current && $file eq $current) ? 1 : 0
+		};
+	}
+	return { ok => 1, total => $total, start => $start, count => scalar @songs, file => $current, songs => \@songs };
+}
+
+# A short list of the controlled machine's own queue, for the Sound window's
+# Remote pill. A machine that has gone offline answers as the transport does.
+Manager::app->routes->get('/music/remote_queue' => sub ($c) {
+	my $target = $c->param('target') || '';
+	my $remoted = (($c->param('remoted') // '') eq 'yes') ? 1 : 0;
+	if ($target && $target ne 'local' && !$remoted) {
+		my $rm = &music_remote_row($target);
+		unless ($rm) {
+			$c->render(json => { ok => 0, error => 'that machine is not reachable' });
+			return;
+		}
+		$c->param('remote_uuid' => $rm->{'uuid'});
+		$c->param('subprocess' => 'yes');
+		$c->render(json => &music_remote_relay($c));
+		return;
+	}
+	$c->render(json => &music_remote_queue());
+});
+
 # What the target's player is doing. The taskbar widget and the Music window
 # both read this shape, so a remote room looks the same in either place.
 Manager::app->routes->get('/music/transport_state' => sub ($c) {

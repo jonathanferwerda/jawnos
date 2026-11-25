@@ -142,6 +142,10 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 		$misses->{'video'} = &subs::random_string_creator(25,"Aa");
 	}
 	$music_files = eval { return decode_json $c->param('files') } || undef;
+	# A caller that hands a list (the guide, a folder, a remote click) means the
+	# first row to be the one it named; the old now-playing must not be unshifted
+	# ahead of it by song_maker.
+	my $handed_list = ($music_files && ref $music_files eq 'ARRAY' && scalar @{$music_files}) ? 1 : 0;
 	my $same_order = $c->param('same_order');
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	$settings->{'artist'} = eval { return decode_json $settings->{'artist'} } || [];
@@ -210,7 +214,7 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 	# host's own player, not the viewer's, so it is left alone.
 	my $player = &subs::cache_get({ app => 'music', context => 'player' });
 	my $now_playing = {};
-	if (!$remote_render && (($settings->{'library'} || 'local') eq 'local')
+	if (!$remote_render && !$handed_list && (($settings->{'library'} || 'local') eq 'local')
 		&& ref $player eq 'HASH' && ($player->{'file'} // '') =~ /\S/) {
 		$now_playing = $player;
 	}

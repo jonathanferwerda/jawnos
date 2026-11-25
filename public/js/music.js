@@ -2545,7 +2545,9 @@ function musicTransportRun(action, opts) {
 		if (!isFinite(duration) || duration <= 0 || !isFinite(percent)) { return false; }
 		sound.currentTime = Math.max(0, Math.min(duration, duration * (percent / 100)));
 		remoteTrackToggle({ file: (tree.songs[0] ? tree.songs[0].file : ''), toggle: 'seek', seek: sound.currentTime });
-		playerCacheSaver();
+		// the controller reads this cache, and a paused player would otherwise
+		// keep the old position until its next five-second save
+		playerCacheSaver(undefined, true);
 		return true;
 	}
 	var playing = !sound.paused && !sound.ended;
@@ -2589,8 +2591,9 @@ function musicTransportStateLocal() {
 	};
 }
 
-var music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0 };
+var music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0, at: 0, display: 0, seek_at: 0 };
 var music_remote_poll_timer = 0;
+var music_remote_progress_timer = 0;
 var music_remote_level_timer = 0;
 var music_remote_snapshot = null;
 function musicRemoteSnapshotSave() {
@@ -2617,7 +2620,9 @@ function musicRemotePaint() {
 	if (!mode) {
 		clearInterval(music_remote_poll_timer);
 		music_remote_poll_timer = 0;
-		music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0 };
+		clearInterval(music_remote_progress_timer);
+		music_remote_progress_timer = 0;
+		music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0, at: 0, display: 0, seek_at: 0 };
 		$('#music_remote_now').hide().text('');
 		// the bar goes back to this machine's own level and mute
 		$('#music_volume').val(musicVolumeLevel());
@@ -2634,6 +2639,13 @@ function musicRemotePaint() {
 	});
 	musicRemoteSettingsLoad();
 	musicRemoteStateLoad();
+	// The host writes its clock to the cache every few seconds, so a four-second
+	// poll alone leaves the bar and the time frozen between reads. Tick them here
+	// from the last answer and let the poll re-anchor.
+	if (!music_remote_progress_timer) {
+		music_remote_progress_timer = setInterval(musicRemoteProgressPaint, 1000);
+	}
+	musicRemoteProgressPaint();
 	if (!music_remote_poll_timer) {
 		music_remote_poll_timer = setInterval(function() {
 			if (musicRemoteTarget()) { musicRemoteStateLoad(); }
@@ -2675,25 +2687,63 @@ function musicRemoteApplyState(r) {
 	music_remote_state.key = r.key || '';
 	music_remote_state.file = r.file || '';
 	music_remote_state.title = r.title || '';
-	music_remote_state.currentTime = parseFloat(r.currentTime) || 0;
+	var incoming = parseFloat(r.currentTime) || 0;
+	var shown = parseFloat(music_remote_state.display) || 0;
+	// The host saves its clock every few seconds; while it plays, this tick is
+	// ahead of that save. Do not step back over it for a small gap - a real seek,
+	// backwards by more than a couple of seconds, still lands.
+	if (r.playing && shown > incoming && (shown - incoming) <= 3) { incoming = shown; }
+	// A seek just sent is the freshest truth until the host's save answers.
+	if (music_remote_state.seek_at && (Date.now() - music_remote_state.seek_at) < 2500) {
+		incoming = parseFloat(music_remote_state.currentTime) || incoming;
+	}
+	music_remote_state.currentTime = incoming;
 	music_remote_state.duration = parseFloat(r.duration) || 0;
+	music_remote_state.at = Date.now();
 	$('#play_logo').attr('src', r.playing ? jawnosPauseIcon() : jawnosPlayIcon());
 	musicRemoteApplyPlaying(r.key, r.file);
 	$('#music_remote_now').text((r.title || r.file || ''));
-	var bar = $('#video_position');
-	if (bar.length && music_remote_state.duration > 0) {
-		bar.val(Math.max(0, Math.min(100, music_remote_state.currentTime / music_remote_state.duration * 100)));
-	}
-	var clock = function(v) { return (typeof numeral == 'function') ? numeral(v).format('00:00:00') : ''; };
-	$('#elapsed_progress').text(clock(music_remote_state.currentTime));
-	$('#total_progress').text(clock(music_remote_state.duration));
-	$('#video_time_display').text(clock(music_remote_state.currentTime));
+	musicRemoteProgressPaint();
 	$('#video_full_title').text((r.title || ''));
 	if (typeof r.volume != 'undefined' && r.volume !== null) {
 		music_remote_state.volume = musicVolumeClamp(r.volume);
 	}
 	music_remote_state.muted = r.muted ? 1 : 0;
 	musicRemoteLevelPaint();
+}
+// Paint the peer's clock from the last answer plus the time since it arrived.
+// The poll re-anchors it, so a slow host save never freezes the bar.
+function musicRemoteProgressPaint() {
+	var state = music_remote_state;
+	var duration = parseFloat(state.duration) || 0;
+	var now = parseFloat(state.currentTime) || 0;
+	if (state.playing && state.at) {
+		now += Math.max(0, (Date.now() - state.at) / 1000);
+	}
+	if (duration > 0) { now = Math.min(duration, now); }
+	if (now < 0) { now = 0; }
+	state.display = now;
+	var bar = $('#video_position');
+	if (bar.length && duration > 0) {
+		bar.val(Math.max(0, Math.min(100, now / duration * 100)));
+	}
+	var clock = function(v) { return (typeof numeral === 'function') ? numeral(v).format('00:00:00') : ''; };
+	$('#elapsed_progress').text(clock(now));
+	$('#total_progress').text(clock(duration));
+	$('#video_time_display').text(clock(now));
+}
+// A seek in the peer's window moves its thumb now; the host's own save answers
+// on the next poll. Until then the position the person chose is the truth.
+function musicRemoteSeekPercent(percent) {
+	percent = parseFloat(percent);
+	if (!isFinite(percent)) { return; }
+	var duration = parseFloat(music_remote_state.duration) || 0;
+	if (duration > 0) {
+		music_remote_state.currentTime = Math.max(0, Math.min(duration, duration * percent / 100));
+	}
+	music_remote_state.at = Date.now();
+	music_remote_state.seek_at = Date.now();
+	musicRemoteProgressPaint();
 }
 // The bar in a window that shows a peer is the peer's bar: its level and mute,
 // never this machine's. The poll repaints it, and a press paints it at once so

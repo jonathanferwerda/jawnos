@@ -420,8 +420,11 @@ like($js, qr/var playing_row = tree\.songs\[0\] \|\| \{\};/,
 like($musicpl, qr/my \$player = &subs::cache_get\(\{ app => 'music', context => 'player' \}\);/,
 	'the open reads the live player cache');
 like($musicpl, qr/now_playing => \$now_playing/, 'and hands it to the rebuild');
-like($musicpl, qr/if \(!\$remote_render && \(\(\$settings->\{'library'\} \|\| 'local'\) eq 'local'\)/,
+like($musicpl, qr/if \(!\$remote_render && !\$handed_list && \(\(\$settings->\{'library'\} \|\| 'local'\) eq 'local'\)/,
 	'a relayed render keeps the host player out');
+like($musicpl, qr/my \$handed_list = \(\$music_files && ref \$music_files eq 'ARRAY'/,
+	'a handed list is recognised');
+like($musicpl, qr/!\$handed_list &&/, 'and the old track is not pushed ahead of it');
 
 # The arithmetic is pure, so its two shapes are driven with plain numbers: a
 # wrapped title or an open panel must not change the pitch, and a mixed slice

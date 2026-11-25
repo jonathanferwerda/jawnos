@@ -21,7 +21,7 @@ var jawnosSoundTaskbarWheelTimer = {};
 // The Music transport in the panel. The machine list and the remembered remote
 // target are read once and refreshed when the panel opens; the remote player's
 // state is polled only while the panel is on screen.
-var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0 };
+var jawnosSoundTaskbarMusic = { machines: [], widget_target: '', state: null, loaded: 0, volume_timer: 0, queue: null, queue_target: '', queue_at: 0 };
 
 function jawnosSoundTaskbarPercent(value) {
 	var pct = parseFloat(value);
@@ -256,7 +256,11 @@ function jawnosSoundTaskbarMusicLoad() {
 			jawnosSoundTaskbarMusic.machines = r.machines || [];
 			jawnosSoundTaskbarMusic.widget_target = r.widget_target || '';
 			jawnosSoundTaskbarMusic.loaded = 1;
+			if (jawnosSoundTaskbarMusic.queue_target !== jawnosSoundTaskbarMusicTarget()) {
+				jawnosSoundTaskbarMusic.queue = null;
+			}
 			jawnosSoundTaskbarPanelRefresh();
+			jawnosSoundTaskbarMusicQueueLoad(1);
 		}
 	});
 }
@@ -285,6 +289,7 @@ function jawnosSoundTaskbarMusicStateLoad() {
 			if (!r || !r.ok || jawnosSoundTaskbarMusicTarget() !== target) { return; }
 			jawnosSoundTaskbarMusic.state = r;
 			jawnosSoundTaskbarMusicRepaint();
+			jawnosSoundTaskbarMusicQueueLoad();
 		}
 	});
 }
@@ -325,6 +330,7 @@ function jawnosSoundTaskbarMusicRepaint() {
 		}
 		jawnosSoundTaskbarMusicPickerPaint(section);
 	});
+	jawnosSoundTaskbarMusicQueueCurrent();
 }
 // A machine that joined after the copy was built belongs in the picker, and one
 // that left should stop showing. Rebuilding only when the roster changes keeps
@@ -448,8 +454,69 @@ function jawnosSoundTaskbarMusicMount(target) {
 	if (!box.length || box.data('music_mounted')) { return; }
 	box.data('music_mounted', 1);
 	jawnosSoundTaskbarMusicBuild(box);
+	box.append($('<div class="sound_remote_tracks" data-remote-tracks></div>'));
 	jawnosSoundTaskbarMusicLoad();
 	jawnosSoundTaskbarMusicStateLoad();
+	jawnosSoundTaskbarMusicQueueLoad(1);
+}
+// A short list of the controlled machine's own queue, so the Sound window can
+// switch tracks without opening that machine's Music window.
+function jawnosSoundTaskbarMusicQueueLoad(force) {
+	var target = jawnosSoundTaskbarMusicTarget();
+	var box = $('[data-remote-tracks]');
+	if (!target || !box.length) {
+		jawnosSoundTaskbarMusic.queue = null;
+		jawnosSoundTaskbarMusic.queue_target = '';
+		jawnosSoundTaskbarMusicQueuePaint();
+		return;
+	}
+	var now = Date.now();
+	if (!force && jawnosSoundTaskbarMusic.queue_target === target
+		&& (now - (jawnosSoundTaskbarMusic.queue_at || 0)) < 30000) { return; }
+	$.ajax({
+		url: '/music/remote_queue',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		data: { target: target },
+		success: function(r) {
+			if (!r || !r.ok || jawnosSoundTaskbarMusicTarget() !== target) { return; }
+			jawnosSoundTaskbarMusic.queue = r;
+			jawnosSoundTaskbarMusic.queue_target = target;
+			jawnosSoundTaskbarMusic.queue_at = Date.now();
+			jawnosSoundTaskbarMusicQueuePaint();
+		}
+	});
+}
+function jawnosSoundTaskbarMusicQueuePaint() {
+	var box = $('[data-remote-tracks]');
+	if (!box.length) { return; }
+	var q = jawnosSoundTaskbarMusic.queue;
+	box.empty();
+	if (!q || !q.songs || !q.songs.length) {
+		box.append($('<p class="sound_remote_track_note"></p>').text(jawnosT('No list from that machine.')));
+		return;
+	}
+	$.each(q.songs, function(i, song) {
+		if (!song || !song.file) { return; }
+		var row = $('<button type="button" class="sound_remote_track"></button>')
+			.attr('data-remote-track', song.file)
+			.attr('title', song.title || song.file);
+		row.append($('<span class="sound_remote_track_title"></span>').text(song.title || ''));
+		if (song.album) { row.append($('<span class="sound_remote_track_album"></span>').text(song.album)); }
+		box.append(row);
+	});
+	if (q.total > q.count) {
+		box.append($('<p class="sound_remote_track_note"></p>')
+			.text(jawnosT('Showing') + ' ' + q.count + ' ' + jawnosT('of') + ' ' + q.total));
+	}
+	jawnosSoundTaskbarMusicQueueCurrent();
+}
+function jawnosSoundTaskbarMusicQueueCurrent() {
+	var current = (jawnosSoundTaskbarMusic.state && jawnosSoundTaskbarMusic.state.file) || '';
+	$('[data-remote-track]').each(function() {
+		$(this).toggleClass('is-current', !!current && $(this).attr('data-remote-track') === current);
+	});
 }
 
 function jawnosSoundTaskbarPanelFooter() {
@@ -665,6 +732,38 @@ $(document).on('input', '[data-music-section] [data-music-volume]', function() {
 	jawnosSoundTaskbarMusicVolumeSend(pct / 100);
 });
 
+$(document).on('click', '[data-remote-track]', function(e) {
+	e.stopPropagation();
+	var file = $(this).attr('data-remote-track');
+	var target = jawnosSoundTaskbarMusicTarget();
+	if (!file || !target) { return; }
+	// Hand the host the clicked track and the rest of the visible queue, in that
+	// order, so its Next/Previous continues down this list.
+	var q = jawnosSoundTaskbarMusic.queue;
+	var files = [file], seen = false;
+	$.each((q && q.songs) || [], function(i, song) {
+		if (!song || !song.file) { return; }
+		if (song.file === file) { seen = true; return; }
+		if (seen) { files.push(song.file); }
+	});
+	$('[data-remote-track]').removeClass('is-current');
+	$(this).addClass('is-current');
+	$.ajax({
+		url: '/music/transport',
+		type: 'POST',
+		dataType: 'json',
+		data: { target: target, action: 'play_files', files: JSON.stringify(files), same_order: 1, key: file },
+		success: function(r) {
+			if (r && r.ok) {
+				setTimeout(jawnosSoundTaskbarMusicStateLoad, 400);
+				setTimeout(function() { jawnosSoundTaskbarMusicQueueLoad(1); }, 1200);
+			}
+			else { jawnosSoundTaskbarFail((r && r.error) || jawnosT('Could not control that machine.')); }
+		},
+		error: function() { jawnosSoundTaskbarFail(jawnosT('Could not control that machine.')); }
+	});
+});
+
 $(document).on('change', '[data-music-section] [data-music-target]', function() {
 	var target = $(this).val() || '';
 	jawnosSoundTaskbarMusic.widget_target = target;
@@ -682,6 +781,7 @@ $(document).on('change', '[data-music-section] [data-music-target]', function() 
 			}
 			jawnosSoundTaskbarMusicStateLoad();
 			jawnosSoundTaskbarMusicRepaint();
+			jawnosSoundTaskbarMusicQueueLoad(1);
 		},
 		error: function() {
 			jawnosSoundTaskbarFail(jawnosT('Could not remember that machine.'));

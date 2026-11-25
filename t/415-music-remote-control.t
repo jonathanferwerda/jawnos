@@ -1,4 +1,4 @@
-# tests-for: perl/Music/09_remote_control.pl perl/Music.pl perl/Music/05_library_and_queue.pl perl/Music/08_music_routes.pl public/js/music.js public/js/manager/taskbar_sound.js public/js/manager/websocket/00_console_router.js templates/apps/music/music.html.ep templates/apps/music/remote.html.ep templates/apps/video/script.html.ep public/css/music.css public/css/manager.css perl/help/topics_apps.pl
+# tests-for: perl/Music/09_remote_control.pl perl/Music.pl perl/Music/05_library_and_queue.pl perl/Music/08_music_routes.pl public/js/music.js public/js/manager/taskbar_sound.js public/js/manager/websocket/00_console_router.js templates/apps/music/music.html.ep templates/apps/music/remote.html.ep templates/apps/sound.html.ep templates/apps/video/script.html.ep public/css/music.css public/css/manager.css perl/help/topics_apps.pl
 # covers:    A Music window can become another machine's Music app, and the Sound
 #            taskbar widget can start and drive Music (locally or on a peer).
 #            The command crosses as a named console instruction, never as source;
@@ -182,6 +182,21 @@ ok(defined $play_item && length $play_item, 'musicRemotePlayItem is readable as 
 unlike($play_item || '', qr/tree\.current_track\s*=/, 'a remote play does not move the local queue cursor');
 like($video_tpl, qr/if \(typeof musicRemoteTarget === 'function' && musicRemoteTarget\(\)\)/,
 	'the local bar tick stands down while the window controls a peer');
+like($video_tpl, qr/musicRemoteSeekPercent\(percent\)/, 'a seek moves the peer bar at once');
+like($music, qr/function musicRemoteProgressPaint/, 'the peer bar ticks between polls');
+like($music, qr/function musicRemoteSeekPercent/, 'and takes a seek before the next poll');
+my ($seek_hunk) = $music =~ /if \(action == 'seek_percent'\) \{(.*?)\n\t\}/s;
+ok(defined $seek_hunk && length $seek_hunk, 'the seek hunk is readable');
+like($seek_hunk || '', qr/playerCacheSaver\(undefined, true\)/, 'a seek writes its position at once');
+like($music_css, qr/music_remote_glow/, 'the controlled machine glows');
+like($music_css, qr/:not\(\[data-remote-target="local"\]\)/, 'the glow is for a peer, not This machine');
+like($remote, qr{/music/remote_queue}, 'the controlled machine has a queue route');
+like($remote, qr/sub music_remote_queue/, 'which reads the host queue cache');
+like($boot, qr/my \$handed_list/, 'a handed list is recognised on open');
+like($boot, qr/!\$handed_list/, 'and the old now-playing is not pushed ahead of it');
+like($taskbar, qr{/music/remote_queue}, 'the Sound remote reads that queue');
+like($taskbar, qr/data-remote-track/, 'and lists its tracks');
+like($taskbar, qr/action: 'play_files'/, 'a track press hands the peer a list');
 like($music, qr/#music_library_select[\s\S]{0,1600}musicRemoteSnapshotRestore/,
 	'choosing another library leaves the remote-control session');
 like($music, qr/setting == 'normalize'/, 'normalization is applied in the peer player');
