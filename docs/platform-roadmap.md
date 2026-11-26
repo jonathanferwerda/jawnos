@@ -432,6 +432,13 @@ The gate is `JawnOS::Platform::Audio::player_available()`; the client half lives
 `public/js/manager/websocket/01_message_handler.js`. The one cost: with no page open, a Windows box
 has no chime and no voice.
 
+The tools travel in the bundle, not in the tree: `build-portable.ps1` fetches Piper 1.2.0 (with its
+own espeak-ng) and SoX 14.4.2 into `runtime\tools`, checks them against pinned SHA-256s, and copies
+the public-domain default voice into `app\voices`; `install.ps1` and `launch.bat` put both tool
+directories on PATH. SoX's Windows build has no MP3 decoder, so bundling it does not turn the MP3
+chimes into local playback — the browser stays the player, and SoX is there for the synth and any
+WAV work. The house's own Jonathan voice needs the newer Piper and stays a Linux/phone install.
+
 **Next:**
 
 - The restart verdict is written **before** the tree swap, so control is briefly unavailable during

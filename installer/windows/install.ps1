@@ -276,13 +276,22 @@ foreach ($required in @($appDir, $runtimeDir, $perl, (Join-Path $appDir 'scripts
     }
 }
 
+# Piper and SoX are the Windows voice and the house's audio tool. A bundle
+# built with -NoTools lacks them; the house still runs, but speech and the
+# synth chime stay silent, so say so once instead of failing the install.
+foreach ($tool in @('runtime\tools\piper\piper.exe', 'runtime\tools\sox\sox.exe')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $InstallDir $tool))) {
+        Write-Warning "This bundle has no $tool; speech and the synth chime will be silent."
+    }
+}
+
 # The environment every child gets. c\bin is first: Net::SSLeay loads libcrypto
 # and libssl from there, while perl.exe and the pure-Perl tools live in
 # perl\bin. Both directories are required.
 $env:JAWNOS_PORTABLE = '1'
 $env:JAWNOS_TRANSPORT = 'tcp'
 $env:JAWNOS_DIR = $appDir
-$env:PATH = "$InstallDir\runtime\c\bin;$InstallDir\runtime\perl\bin;$env:PATH"
+$env:PATH = "$InstallDir\runtime\c\bin;$InstallDir\runtime\perl\bin;$InstallDir\runtime\tools\piper;$InstallDir\runtime\tools\sox;$env:PATH"
 
 # --- prove the bundled runtime before touching the house --------------------
 
@@ -432,7 +441,7 @@ $bat = @"
 set "JAWNOS_PORTABLE=1"
 set "JAWNOS_TRANSPORT=tcp"
 set "JAWNOS_DIR=$appDir"
-set "PATH=$InstallDir\runtime\c\bin;$InstallDir\runtime\perl\bin;%PATH%"
+set "PATH=$InstallDir\runtime\c\bin;$InstallDir\runtime\perl\bin;$InstallDir\runtime\tools\piper;$InstallDir\runtime\tools\sox;%PATH%"
 cd /d "%JAWNOS_DIR%"
 "%~dp0runtime\perl\bin\perl.exe" jawn >> "$InstallDir\master.log" 2>&1
 "@

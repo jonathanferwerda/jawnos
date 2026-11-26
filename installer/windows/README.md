@@ -35,6 +35,13 @@ prepared Strawberry Perl runtime. Two entry points install the same bundle:
   the install folder, so the install never needs administrator rights. Only the
   optional private-profile firewall rule does, and `firewall.ps1` raises UAC
   for that one step.
+- The house's voice and audio tool. `runtime\tools\piper` is Piper 1.2.0 with
+  its own espeak-ng, and `runtime\tools\sox` is SoX 14.4.2; both are on the
+  app's PATH and carry their source and licence offers. The public-domain
+  default voice (LJSpeech) ships in `app\voices`, so a lone machine can speak
+  before `voice_sync` reaches a peer; the other voices arrive from one. SoX's
+  Windows build has no MP3 decoder, so the house's MP3 chimes and the spoken
+  reply are played by the open page (`docs/platform-roadmap.md`), not by SoX.
 
 Not here yet: the Qt desktop shell (P3; it needs `-PythonDir`). The Windows
 surface is the WebView2 window `webview\JawnOSShell.exe` (built from
@@ -56,6 +63,14 @@ above this folder); `-OutDir` is `<TreeDir>\dist`. The staged payload is
 `dist\JawnOS-<version>\` and the zip is `dist\JawnOS-<version>.zip`; pass
 `-NoZip` to skip the archive. The script prints the version, the payload size
 and the zip size.
+
+The audio tools are fetched during the build into `runtime\tools`: Piper's
+Windows archive and the official SoX Windows archive, each checked against a
+pinned SHA-256. Pass `-ToolsDir C:\downloads` to use pre-downloaded copies
+(named `piper_windows_amd64.zip` and `sox-14.4.2-win32.zip`) instead of the
+network, and `-NoTools` to build without them. The default voice is copied
+from `-VoiceDir` (default `<TreeDir>\voices`); without it the build warns and
+the install starts silent until `voice_sync` pulls a voice from a peer.
 
 `app\` comes from `git archive HEAD` - tracked files only, no `.git`, no local
 `config.json`, no database, no untracked state. `runtime\` is copied from

@@ -97,6 +97,15 @@ sub say_player_command {
 	return join ' ', JawnOS::Platform::Audio::player_argv();
 }
 
+# The piper executable's own directory, on either platform: a Windows bundle
+# names it with backslashes, and the espeak-ng data sits beside it.
+sub say_piper_dir {
+	my ($bin) = @_;
+	return '' unless defined $bin && length $bin && $bin =~ m{[\\/]};
+	(my $dir = $bin) =~ s{[\\/][^\\/]+$}{};
+	return $dir;
+}
+
 # The piper invocation shared by the local player and the streaming reply:
 # (argv, extra args, model path, the model's own sample rate). '' when no piper
 # render is possible on this machine.
@@ -110,8 +119,7 @@ sub say_piper_parts {
 	return () unless scalar @argv && -e $model;
 	# a bundle carries its own espeak-ng data; point piper at it (the glibc
 	# launcher, unlike a native run, does not find it on its own)
-	my $piper_bin = $argv[-1] || '';
-	(my $piper_dir = $piper_bin) =~ s{/[^/]+$}{};
+	my $piper_dir = &subs::say_piper_dir($argv[-1] || '');
 	my @espeak = ($piper_dir && -d "$piper_dir/espeak-ng-data") ? ('--espeak_data', "$piper_dir/espeak-ng-data") : ();
 	# the model's own rate: piper writes raw PCM at it, and ffmpeg needs to know
 	my $rate = 22050;

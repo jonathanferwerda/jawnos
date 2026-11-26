@@ -48,6 +48,8 @@ for my $script (['install.ps1', $install], ['build-portable.ps1', $build], ['uni
 
 like($install, qr/runtime\\c\\bin/, 'install.ps1 puts runtime\c\bin on PATH');
 like($install, qr/runtime\\perl\\bin/, 'install.ps1 puts runtime\perl\bin on PATH');
+like($install, qr/runtime\\tools\\piper/, 'install.ps1 puts the bundled Piper on PATH');
+like($install, qr/runtime\\tools\\sox/, 'install.ps1 puts the bundled SoX on PATH');
 like($install, qr/JAWNOS_PORTABLE/, 'install.ps1 sets JAWNOS_PORTABLE for every child');
 like($install, qr/JAWNOS_TRANSPORT/, 'install.ps1 sets JAWNOS_TRANSPORT for every child');
 like($install, qr/JAWNOS_DIR/, 'install.ps1 sets JAWNOS_DIR for every child');
