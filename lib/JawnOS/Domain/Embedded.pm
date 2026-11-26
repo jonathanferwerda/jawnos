@@ -642,6 +642,25 @@ sub remote_available_announce {
 	return $pulled;
 }
 
+# An action that has just written a row the peers cannot see until the next
+# sync pass asks them to pull now, at most once per request. A relayed copy
+# arrived from a peer that already announced its own write, so it stays quiet.
+sub remote_available_announce_action {
+	my ($c) = @_;
+	return 0 unless ref $c;
+	return 0 if $c->stash('remote_available_announced');
+	$c->stash('remote_available_announced' => 1);
+	return 0 if $c->param('relay_id')
+		|| ($c->param('remoted') || '') eq 'yes'
+		|| ($c->param('dissemination') || '') eq 'yes'
+		|| $c->param('source_signatorial');
+	&subprocessor(sub {
+		Mojo::IOLoop->reset;
+		eval { &remote_available_announce(); };
+	}, { name => 'rows availability' });
+	return 1;
+}
+
 # Note that a peer is reading rows from this machine right now. The scheduled
 # wake checks this before releasing the CPU: a phone must not sleep in the
 # middle of a pull it is serving. The mtime is the signal, and utime updates it

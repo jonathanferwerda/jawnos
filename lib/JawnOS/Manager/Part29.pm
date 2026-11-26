@@ -376,6 +376,11 @@ sub guide_apply_schedule($c, $token, $text) {
 	my $settings = &subs::settings_grabber({ app => $app });
 	my $duration = &subs::time_abbrev_translator($settings->{'duration'});
 	$duration = $duration * -1 if ($row->{'type'} || '') =~ /^(?:start|record)$/;
+	# The type a repeat writes is the source row's, with the retired usual (and
+	# a blank type) read as the stop it became. A stop row has no open session
+	# to close, so it is offered to the writer as a record to insert; otherwise
+	# appointment_writer reads it as a movement and writes nothing.
+	my $type = (($row->{'type'} // '') eq '' || ($row->{'type'} // '') eq 'usual') ? 'stop' : $row->{'type'};
 	my $base_uuid = $row->{'uuid'} || '';
 	my @written;
 	foreach my $next ( @{$dates} ) {
@@ -383,11 +388,12 @@ sub guide_apply_schedule($c, $token, $text) {
 		my $uuid = $base_uuid . md5_sum($next - $start) . '+' . md5_sum($app . ' ' . ($row->{'type'} || ''));
 		next if &subs::db_query('select 1 from appointments where uuid = ? limit 1', $uuid)->hashes->[0];
 		&appointment_writer($c, {
-			app => $app, timestamp => $next, type => ((($row->{'type'} // '') eq '' || ($row->{'type'} // '') eq 'usual') ? 'stop' : $row->{'type'}),
+			app => $app, timestamp => $next, type => $type,
 			project => $settings->{'project'},
 			duration => (defined $duration ? $duration : ''),
 			stop_timestamp => (defined $duration && abs($duration)) ? $next + abs($duration) : undef,
-			source_uuid => $base_uuid, uuid => $uuid
+			source_uuid => $base_uuid, uuid => $uuid,
+			($type eq 'stop' ? (completed_row => 1) : ()),
 		});
 		push @written, $next;
 	}

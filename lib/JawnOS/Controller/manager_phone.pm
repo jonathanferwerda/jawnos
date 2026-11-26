@@ -200,6 +200,8 @@ sub action_24636 {
 		# appointment_writer stamps a row at or before now as seen; a live ring is
 		# the one appointment the Alarm loop must still claim, so put it back.
 		&subs::db_update('appointments', { seen => undef, server_time => &subs::rightNow() }, { uuid => $wrote->{'uuid'} });
+		# The peers have no request to run for this row; ask them to pull it.
+		&subs::remote_available_announce_action($c);
 		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
 		return;
 	}
@@ -228,6 +230,7 @@ sub action_24636 {
 			stop_timestamp => $timestamp,
 			server_time => &subs::rightNow(),
 		}, { uuid => $wrote->{'uuid'} });
+		&subs::remote_available_announce_action($c);
 		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
 		return;
 	}
@@ -281,6 +284,7 @@ sub action_24636 {
 		# the reception's own words for this call, into the number's Chat thread.
 		# A screened call is answered, so only those carry a transcript.
 		&subs::phone_call_transcript_note($number, $started, $ended, $gateway) if $answered;
+		&subs::remote_available_announce_action($c);
 		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
 		return;
 	}
@@ -297,6 +301,7 @@ sub action_24636 {
 				$data->{'duration'} = $timestamp - $row->{'timestamp'};
 			}
 			&subs::db_update('appointments', $data, { uuid => $uuid });
+			&subs::remote_available_announce_action($c);
 		}
 		$c->render(json => { ok => 1, event => $event });
 		return;
