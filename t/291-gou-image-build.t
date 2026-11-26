@@ -1,10 +1,11 @@
-# tests-for: scripts/gou_image_build.sh
+# tests-for: scripts/gou_image_build.sh scripts/gou_boot_ini.pl
 # covers:    The eMMC image builder's contract: it refuses to run without its
 #            inputs, a dry run needs no root and changes nothing, and the three
 #            things a board taught us are in the file - the eMMC bootloader in
 #            the first 16 MiB, the state directory the server unit logs to, and
 #            the USB gadget link - along with the exclusion list, the mmc 0
-#            boot.ini rewrite and the operating-system time zone it installs.
+#            boot.ini rewrite, the removal of the microSD chainload and the
+#            operating-system time zone it installs.
 
 use strict;
 use warnings;
@@ -36,6 +37,8 @@ like($source, qr{s/mmc 1:1/mmc 0:1}, 'boot.ini is rewritten to mmc 0');
 like($source, qr/recovery_stanza/, 'the eMMC carries a boot.ini recovery entry');
 like($source, qr/0x1F000000 RECOVERY/, 'which starts the BIOS when the marker is present');
 like($source, qr/apply_recovery_entry/, 'and it is applied by both build and repair');
+like($source, qr/disable_sd_chainload/, 'the stock microSD boot.ini chainload is removed');
+like($source, qr/gou_boot_ini\.pl/, 'by the shared boot.ini helper');
 
 # The OS clock: a board with no /etc/localtime boots in UTC.
 like($source, qr/--timezone/, 'a zone can be named on the command line');
@@ -99,5 +102,57 @@ like($bad_zone, qr/invalid time zone/, 'and says so');
 
 my $tz_dry = `bash "$script" build --from "$dump" --out "$out" --stock-backup "$stock" --timezone America/Chicago --dry-run 2>&1`;
 is($?, 0, 'a named zone is accepted');
+
+# --- the microSD chainload ---------------------------------------------------
+# The stock boot.ini starts by sourcing a boot.ini from the card in the slot.
+# With a card inserted the board boots the card, or stops at the HardKernel
+# logo, instead of JawnOS. The helper comments that one line out and leaves
+# every other byte alone.
+my $helper = "$root/scripts/gou_boot_ini.pl";
+ok(-f $helper, 'scripts/gou_boot_ini.pl exists');
+my $helper_syntax = `$^X -c "$helper" 2>&1`;
+is($?, 0, 'perl -c accepts the helper') or diag $helper_syntax;
+
+my $chain = "$dir/boot-card.ini";
+write_file($chain, <<'INI');
+ODROIDGOU-UBOOT-CONFIG
+if load mmc 1:1 0x1F000000 boot.ini; then source 0x1F000000; fi
+
+setenv outputmode "panel"
+load mmc 0:1 ${k_addr} Image
+INI
+my $said = `$^X "$helper" --no-sd-chainload "$chain" 2>&1`;
+is($?, 0, 'the helper accepts a boot.ini with the card chainload');
+is($said, "removed\n", 'and says it removed the line');
+my $patched = read_file($chain);
+unlike($patched, qr/^if load mmc 1:1 0x1F000000 boot\.ini/m,
+	'the card chainload is no longer run');
+like($patched, qr/^# if load mmc 1:1 0x1F000000 boot\.ini; then source 0x1F000000; fi$/m,
+	'the line is kept as a comment');
+like($patched, qr/^load mmc 0:1 \$\{k_addr\} Image$/m,
+	'the eMMC kernel load is untouched');
+like($patched, qr/^setenv outputmode "panel"$/m, 'and so is the rest of the file');
+
+$said = `$^X "$helper" --no-sd-chainload "$chain" 2>&1`;
+is($?, 0, 'a second run succeeds');
+is($said, "already\n", 'and does not touch it again');
+
+# The image builder rewrites mmc 1:1 to mmc 0:1 first; the line must still be
+# recognised after that.
+my $emmc = "$dir/boot-emmc.ini";
+write_file($emmc, "if load mmc 0:1 0x1F000000 boot.ini; then source 0x1F000000; fi\n");
+$said = `$^X "$helper" --no-sd-chainload "$emmc" 2>&1`;
+is($said, "removed\n", 'the line is removed when it names the eMMC too');
+unlike(read_file($emmc), qr/^if load mmc 0:1 0x1F000000 boot\.ini/m,
+	'because the rewritten line would source its own boot.ini');
+
+my $plain = "$dir/boot-plain.ini";
+write_file($plain, "setenv outputmode \"panel\"\n");
+$said = `$^X "$helper" --no-sd-chainload "$plain" 2>&1`;
+is($said, "already\n", 'a boot.ini with no chainload is left alone');
+is(read_file($plain), "setenv outputmode \"panel\"\n", 'byte for byte');
+
+$said = `$^X "$helper" --no-sd-chainload "$dir/nope.ini" 2>&1`;
+isnt($?, 0, 'a missing boot.ini is an error');
 
 done_testing();

@@ -647,6 +647,28 @@ sub _card_format {
 	return &_card_adopt($plan, $opts);
 }
 
+# The image's boot.ini may still start by sourcing a boot.ini from a card in
+# the slot. With one inserted the board leaves JawnOS at the HardKernel logo
+# before this pass can run; once it does, remove the look so the next boot
+# stays on the eMMC and the card is only data. A board whose image already
+# carries the fix, or a dev tree with no BOOT partition, is left alone.
+sub _boot_ini_shield {
+	my $ini = $ENV{'JAWNOS_GOU_BOOT_INI'} || '/boot/oem/boot.ini';
+	return { state => 'absent' } unless -f $ini;
+	my $helper = "$Bin/gou_boot_ini.pl";
+	return { state => 'no-helper' } unless -f $helper;
+	my ($said, $status) = &_capture($^X, $helper, '--no-sd-chainload', $ini);
+	if ($status != 0) {
+		$said = '' unless defined $said;
+		$said =~ s/\s+/ /g;
+		_note("the boot.ini microSD chainload could not be removed: $said");
+		return { state => 'failed' };
+	}
+	$said = '' unless defined $said;
+	$said =~ s/\s+$//;
+	return { state => $said };
+}
+
 # ---------------------------------------------------------------------------
 # The join
 
@@ -1274,6 +1296,9 @@ sub _tailnet_join {
 # main
 
 my $report = { ok => 1, dry_run => ($opt{'dry_run'} ? 1 : 0) };
+
+# Keep the eMMC the boot medium even when the archive card is in the slot.
+$report->{'boot_ini'} = &_boot_ini_shield() unless $opt{'dry_run'};
 
 my $token = &_token_read($opt{'token'});
 

@@ -244,6 +244,8 @@ sub insert_token {
 	like($provision, qr/_progress_write\('writing'/, 'and writes the byte count as it goes');
 	like($provision, qr/_progress_write\('verifying'/, 'then verifying');
 	like($provision, qr/_progress_write\('preparing'/, 'then preparing the board');
+	like($provision, qr/sub _disable_sd_chainload/, 'the flash removes the stock microSD boot.ini chainload');
+	like($provision, qr/push \@done, 'sd-chainload'/, 'and reports it as filled in');
 	like($provision, qr/_progress_write\('done'/, 'and done');
 	like($provision, qr/\$SIG\{'TERM'\}/, 'TERM cancels the write');
 	like($provision, qr/return \{ ok => 0, cancelled => 1/, 'a cancelled write is not a write error');

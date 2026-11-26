@@ -636,6 +636,20 @@ sub _install_recovery_entry {
 	return _write_file($path, $fresh) ? 1 : 0;
 }
 
+# The stock boot.ini starts by sourcing a boot.ini from the card in the slot.
+# With a card inserted the board leaves JawnOS for the card (or stops at the
+# HardKernel logo) instead of starting the eMMC. A card is data here, so remove
+# that look with the same helper the image builder uses.
+sub _disable_sd_chainload {
+	my ($path) = @_;
+	return 0 unless defined $path && -f $path;
+	my $helper = File::Basename::dirname(Cwd::abs_path($0)) . '/gou_boot_ini.pl';
+	return 0 unless -f $helper;
+	my $said = _capture($^X, $helper, '--no-sd-chainload', $path);
+	return 0 unless $? == 0;
+	return _trim($said) eq 'removed' ? 1 : 0;
+}
+
 # Put the recovery entry and the reboot-capable BIOS on the BOOT partition, then
 # ask the board to restart. A stock recovery BIOS (a microSD) has no watcher, so
 # the wait ends without a restart and the page says to use F3+F6; a board that
@@ -655,6 +669,7 @@ sub _prepare_boot {
 		$mounted_here = 1;
 	}
 	my (@done, @notes);
+	push @done, 'sd-chainload' if _disable_sd_chainload("$mount/boot.ini");
 	push @done, 'recovery-entry' if _install_recovery_entry("$mount/boot.ini");
 	my $patched = 0;
 	my $patcher = File::Basename::dirname(Cwd::abs_path($0)) . '/gou_bios_patch.pl';
@@ -1155,7 +1170,7 @@ sub _autopopulate {
 		my $source_dir = File::Basename::dirname(Cwd::abs_path($0));
 		my $dir = "$mount/home/jawn/jawnos/scripts";
 		File::Path::make_path($dir) unless -d $dir;
-		for my $name (qw(gou_first_boot.pl gou_recovery.pl gou_splash.pl gou_first_run.py jawnos_game_openssl.pl)) {
+		for my $name (qw(gou_first_boot.pl gou_boot_ini.pl gou_recovery.pl gou_splash.pl gou_first_run.py jawnos_game_openssl.pl)) {
 			my $source = "$source_dir/$name";
 			my $script = -f $source ? _slurp($source) : '';
 			my $path = "$dir/$name";
@@ -1166,6 +1181,7 @@ sub _autopopulate {
 				last;
 			}
 			push @done, $name eq 'gou_first_boot.pl' ? 'first-boot-script'
+				: $name eq 'gou_boot_ini.pl' ? 'boot-ini'
 				: $name eq 'gou_splash.pl' ? 'splash-script'
 				: $name eq 'gou_first_run.py' ? 'first-run-dialog'
 				: $name eq 'jawnos_game_openssl.pl' ? 'openssl-script' : 'recovery-script';

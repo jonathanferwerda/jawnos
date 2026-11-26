@@ -37,6 +37,11 @@
 #      stable download below. Without either, the step warns and skips, and
 #      the board stays a LAN peer; it never carries a credential.
 #
+# The stock boot.ini starts by sourcing a boot.ini on the microSD. That line is
+# removed from the image: with a card in the slot the board would boot the card
+# (or stop at the HardKernel logo) instead of JawnOS. The first-boot pass adopts
+# the card as data and /etc/fstab mounts it.
+#
 # Tailscale needs /dev/net/tun and a kernel with the tun driver. The daemon
 # creates its interface from the binaries below; this script does not build or
 # change the kernel. A board whose kernel does not expose /dev/net/tun still
@@ -57,6 +62,8 @@
 # output is a new file.
 
 set -euo pipefail
+
+BIN="$(cd "$(dirname "$0")" && pwd)"
 
 EMMC_BYTES=15634268160
 P1_START=32768
@@ -440,6 +447,26 @@ apply_recovery_entry() {
 	log "added the recovery entry to boot.ini"
 }
 
+# The stock boot.ini starts by loading a boot.ini from the microSD (mmc 1:1)
+# and sourcing it. With a card in the slot the board then boots the card, or
+# stops at the HardKernel logo, instead of JawnOS on the eMMC. A card here is
+# data: the first-boot pass adopts it and /etc/fstab mounts it, so the look is
+# removed. gou_boot_ini.pl owns the pattern; this only calls it.
+disable_sd_chainload() {
+	local p1="$1"
+	local boot="$p1/boot.ini"
+	[[ -f "$boot" ]] || { log "no boot.ini on the BOOT partition; microSD chainload not removed"; return 0; }
+	local said
+	if ! said=$(perl "$BIN/gou_boot_ini.pl" --no-sd-chainload "$boot"); then
+		log "could not remove the microSD chainload from boot.ini"
+		return 1
+	fi
+	if [[ "$said" == "removed" ]]; then
+		log "removed the microSD boot.ini chainload"
+	fi
+	return 0
+}
+
 # --- helpers -----------------------------------------------------------------
 bootloader_from() {
 	local src="$1" dest="$2"
@@ -507,6 +534,7 @@ do_repair() {
 	MNT_P1="$WORK/p1"
 	mkdir -p "$MNT_P1"
 	mount "${LOOP_OUT}p1" "$MNT_P1"
+	disable_sd_chainload "$MNT_P1"
 	apply_recovery_entry "$MNT_P1"
 	sync
 	umount "$MNT_P1"
@@ -565,6 +593,7 @@ do_build() {
 	rsync -a --no-perms "${LOOP_DUMP}p1"/ "$MNT_P1"/
 	# u-boot on the eMMC is mmc 0; the card's own script says mmc 1.
 	sed -i 's/mmc 1:1/mmc 0:1/g' "$MNT_P1/boot.ini"
+	disable_sd_chainload "$MNT_P1"
 	apply_recovery_entry "$MNT_P1"
 	umount "$MNT_P1"
 	MNT_P1=""
