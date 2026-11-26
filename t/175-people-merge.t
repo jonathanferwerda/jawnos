@@ -3,7 +3,8 @@
 #            column. `people` has none, and the merge used to gate the whole
 #            write path on `timestamp`: every people row was read, reported as
 #            merged, and silently dropped. A table that does have `timestamp`
-#            (notes) keeps merging as before.
+#            (notes) keeps merging as before. A refused insert is also reported
+#            apart from a short read, so a carry stream cannot call it done.
 
 use strict;
 use warnings;
@@ -23,6 +24,9 @@ my $sql = Mojo::SQLite->new('sqlite:' . $dbfile);
 my $db  = $sql->db;
 $db->query('create table people (uuid text, name text, privilege text, status text, '
 	. 'created text, ost text, server_time text, app text)');
+# A natural key the test can collide on, so an insert can be refused the way a
+# damaged index refuses one.
+$db->query('create unique index idx_people_name on people(name)');
 $db->query('create table notes (uuid text, app text, text text, timestamp text, '
 	. 'server_time text, ost text)');
 $db->query('create table settings (setting text, value text, timestamp text, '
@@ -139,6 +143,37 @@ is(scalar @{ count_rows('notes', { uuid => 'note-1' }) }, 1,
 	my @row_frames = grep { ref $_ eq 'HASH' && defined $_->{'yellow'} && $_->{'yellow'} =~ m{ / 3 } } @frames;
 	ok(scalar @row_frames > 0, 'a row stream sends per-row progress frames');
 	ok((grep { defined $_->{'progress'} } @row_frames), 'and each frame carries the ring progress');
+}
+
+# ---- a refused row is reported apart from a short read --------------------
+# The row stream needs the difference: a refused insert on a carry stream is a
+# failed merge and must not be reported as a finished pull, while a short read
+# is the stream moving under the map. merge_table_rows answers both in list
+# context, and scalar callers still get the boolean they always did.
+{
+	my $served = 0;
+	my $next = sub {
+		return $served++ ? undef : {
+			uuid => 'person-2', name => 'Glen', privilege => '', status => 'active',
+			created => '100', server_time => '300', ost => '300', app => 'glen',
+		};
+	};
+	my $ctx = {
+		configuration      => {},
+		misc_settings      => {},
+		device             => $device,
+		deletions          => [],
+		universal_settings => {},
+		updateables        => [],
+		sync_job           => undef,
+		auuid              => 'test-auuid',
+		colour             => '#000000',
+	};
+	my ($short, $errors, $first) = Manager::merge_table_rows($ctx, 'people', $next, 0, 1, 1, 1);
+	ok($short, 'a refused row still makes the table short');
+	is($errors, 1, 'and the merge reports how many rows were refused');
+	like($first, qr/^person-2: /, 'the first refusal names the row');
+	is(scalar @{ count_rows('people', { uuid => 'person-2' }) }, 0, 'and the refused row did not land');
 }
 
 done_testing();

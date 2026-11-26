@@ -1,11 +1,10 @@
-# tests-for: lib/JawnOS/Manager/Part09.pm lib/JawnOS/Domain/Sync.pm
+# tests-for: lib/JawnOS/Manager/Part09.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Domain/Sync.pm
 # covers:    A carry-only stream is written while a pull walks it, so a band
 #            can return fewer rows than the map named. That is the stream
-#            changing, not a lost read, and a row the local schema refuses is
-#            the same kind of best-effort miss: neither may fail the pull, or a
-#            machine stops on "routers: short read" and nothing behind it
-#            merges. A planned table still fails a short band read or a row it
-#            could not merge.
+#            changing, not a lost read, and it may not fail the pull. A row the
+#            local database refuses is different: the merge did not happen, and
+#            the pull must say so instead of logging a skip and reporting
+#            success. A planned table still fails either one.
 
 use strict;
 use warnings;
@@ -32,9 +31,10 @@ sub hash { return $_[0]->{rows}[0]; }
 package main;
 
 sub run_pull {
-	my ($table, $carry, $rows_per_band, $merge_mode) = @_;
+	my ($table, $carry, $rows_per_band, $merge_errors, $whole) = @_;
 	$rows_per_band = 3 unless defined $rows_per_band;
-	$merge_mode = 0 unless defined $merge_mode;
+	$merge_errors = 0 unless defined $merge_errors;
+	$whole = 0 unless defined $whole;
 	my $peer = 'e9ce731a06afcab8f8b4b502637a717d';
 	my $me = 'de3f1c63ba2b3cfe3910ad2742c5a556';
 	my ($band_calls, $merged) = (0, 0);
@@ -65,10 +65,18 @@ sub run_pull {
 	local *subs::sync_bucket_band_for = sub { 7 };
 	local *subs::sync_bucket_normalize = sub { $_[0] };
 	local *subs::sync_table_buckets = sub { { band => 7, buckets => {} } };
-	local *subs::sync_bucket_gaps = sub { [ 1, 2 ] };
-	local *subs::sync_bucket_diff = sub { [ 1, 2 ] };
+	# All four bands moving is more than half, so it reads the table whole; the
+	# default walks two bands so a short band is exercised.
+	local *subs::sync_bucket_gaps = sub { $whole ? [ 1, 2, 3, 4 ] : [ 1, 2 ] };
+	local *subs::sync_bucket_diff = sub { $whole ? [ 1, 2, 3, 4 ] : [ 1, 2 ] };
 	local *subs::sync_bucket_range = sub { ($_[1], $_[1] + 1) };
 	local *subs::sync_job_step = sub { };
+	local *subs::sync_resume_get = sub { undef };
+	local *subs::sync_resume_clear = sub { };
+	local *subs::sync_resume_put = sub { };
+	local *subs::sync_table_complete = sub { 1 };
+	local *subs::db_insert = sub { 1 };
+	local *subs::db_update = sub { 1 };
 	local *subs::sync_backoff_active = sub { 0 };
 	local *subs::sync_backoff_clear = sub { };
 	local *subs::sync_bands_complete = sub { 0 };
@@ -93,18 +101,23 @@ sub run_pull {
 	local *Manager::sync_rows_batch = sub {
 		$band_calls++;
 		# Each band answers with the rows the test asks for: three where the map
-		# named five is a short read, five is a complete band.
+		# named five is a short read, five is a complete band. `total` is only the
+		# whole-table path's count.
 		my @rows = map { { uuid => chr(96 + $_) . $band_calls, server_time => $_ } } 1 .. $rows_per_band;
 		return ({
 			ok => 1,
 			rows => \@rows,
 			next => '', done => 1, wire_bytes => 10,
+			total => ($whole ? $rows_per_band : 0),
 		}, undef);
 	};
 	local *Manager::merge_table_rows = sub {
 		my ($ctx, $q, $next_row) = @_;
 		while (my $row = $next_row->()) { $merged++ }
-		return $merge_mode;
+		# The real merge returns (short, error count, first error); a refused
+		# row means both a short merge and an error count.
+		return (($merge_errors ? 1 : 0), $merge_errors,
+			($merge_errors ? 'duplicate: refused' : undef));
 	};
 
 	my $c = bless {}, 'FakeC';
@@ -133,19 +146,25 @@ is($sync->{state}, 'done', 'the sync job finishes');
 ok($band_calls >= 2, 'the pull still walked the carry table\'s bands');
 is($merged, 6, 'every row that arrived was merged');
 
-($status, $sync, $band_calls, $merged) = run_pull('routers', 1, 5, 1);
-is($status, 'done', 'a refused row on a carry table does not fail the pull either');
-is($sync->{state}, 'done', 'the job still finishes as done');
-is($merged, 10, 'the rows that could merge did');
+($status, $sync, $band_calls, $merged) = run_pull('routers', 1, 5, 4);
+is($status, 'failed', 'a refused row on a carry table fails the pull, not a skip');
+is($sync->{state}, 'failed', 'the sync job reports the failure');
+like($sync->{note}, qr/^routers: 4 row errors$/, 'and the note names the table and the refused rows');
+is($merged, 10, 'the rows that could merge still did');
+
+($status, $sync, $band_calls, $merged) = run_pull('routers', 1, 5, 4, 1);
+is($status, 'failed', 'a refused row in a whole-table carry read fails too');
+like($sync->{note}, qr/^routers: 4 row errors$/, 'with the same honest note');
+is($merged, 5, 'the whole read was still attempted');
 
 ($status, $sync, $band_calls, $merged) = run_pull('appointments', 0);
 is($status, 'failed', 'a short band read on a planned table still fails');
 like($sync->{note}, qr/^appointments: short band read: 6 of 10/,
 	'and names the table and the count it fell short of');
 
-($status, $sync, $band_calls, $merged) = run_pull('appointments', 0, 5, 1);
+($status, $sync, $band_calls, $merged) = run_pull('appointments', 0, 5, 4);
 is($status, 'failed', 'a refused row on a planned table still fails');
-like($sync->{note}, qr/^appointments: short read$/,
-	'and the note names the table');
+like($sync->{note}, qr/^appointments: 4 row errors$/,
+	'and the note names the refused rows, not a short read');
 
 done_testing();

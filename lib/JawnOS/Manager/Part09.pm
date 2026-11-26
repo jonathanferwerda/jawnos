@@ -359,17 +359,21 @@ sub sync_rows_pull {
 			# `0` leaves the merge unbounded: a band can grow between the map and the
 			# read, and bounding by the map's count would drop the extra rows. The
 			# closure below names a short read instead (fetched < expected).
-			my $short = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total, $expected);
+			my ($short, $merge_errors) = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total, $expected);
 			if ($short || $fetch_error) {
+				my $why = $fetch_error || ($merge_errors ? $merge_errors . ' row error' . ($merge_errors == 1 ? '' : 's') : 'short read');
 				if ($carry{$table}) {
-					# A carry stream is best effort: a row the local schema refuses
-					# (two peers see the same router under different uuids) or a band
-					# that moved under the map must not fail the whole pull and hold
-					# every table behind it. Leave it for the next pass.
-					&subs::log_writer('sync carry skipped ' . $table . ': ' . ($fetch_error || 'refused rows'));
+					# A carry stream is written while it is read, so a band that moved
+					# under the map is not damage: the short-read guard above exempts
+					# carry and never sets $fetch_error for it. Anything reaching this
+					# branch is a refused row or a failed read, and saying "skipped"
+					# made a failed merge look like a finished pull. Name it and fail
+					# the pull, but keep walking the other tables rather than holding
+					# them behind one stream.
+					$failed = $table . ': ' . $why;
 					next;
 				}
-				$failed = $table . ': ' . ($fetch_error || 'short read');
+				$failed = $table . ': ' . $why;
 				last;
 			}
 			next;
@@ -448,18 +452,20 @@ sub sync_rows_pull {
 		};
 		# `$total` is the first batch's own count: it keeps the panel's bar honest
 		# while a streamed read (no snapshot size) is merging.
-		my $short = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total, $total);
+		my ($short, $merge_errors) = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total, $total);
 		if ($short || $fetch_error) {
+			my $why = $fetch_error || ($merge_errors ? $merge_errors . ' row error' . ($merge_errors == 1 ? '' : 's') : 'short read');
 			if ($carry{$table}) {
-				# A carry stream is best effort: the rows that arrived are merged,
-				# a refused one is left for the next pass, and the pull carries on
-				# rather than reporting a failure that stops every later table.
-				&subs::log_writer('sync carry skipped ' . $table . ': ' . ($fetch_error || 'refused rows'));
+				# The rows that arrived are merged. A refused row is still a failed
+				# merge: record it and fail the pull, but do not stop the tables
+				# behind this one - the old "skipped" line reported a success that
+				# was not one.
+				$failed = $table . ': ' . $why;
 				next;
 			}
 			# Leave the marker at the last fully merged batch: the next pass picks
 			# the table up there instead of at row one.
-			$failed = $table . ': ' . ($fetch_error || 'short read');
+			$failed = $table . ': ' . $why;
 			last;
 		}
 		&subs::sync_resume_clear($remote_signatorial, $table);

@@ -768,7 +768,7 @@ sub merge_table_rows {
 	foreach my $ta ( sort keys %toggle_changed ) {
 		&subs::watch_toggle_pusher({ app => $ta, value => $toggle_changed{$ta} });
 	}
-	return $merge_short;
+	return wantarray ? ($merge_short, $merge_errors, (defined $insert_errors[0] ? $insert_errors[0] : undef)) : $merge_short;
 }
 
 # The post-merge work shared by the snapshot path and the row-stream path: refresh
