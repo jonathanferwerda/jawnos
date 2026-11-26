@@ -113,4 +113,22 @@ like($video, qr/\$\('#interface'\)\.fadeOut\('slow'\)/,
 unlike($markup, qr/class="media_controls[^>]*style="[^"]*opacity:1/,
 	'the player bar carries no inline opacity to fight the slide');
 
+# A resting pointer over a bar is still chrome: once it stops, the bars leave
+# with the picture, so a room watching from across the screen does not need a
+# mouse move to clear them.
+like($video, qr/var idle = \(mouse\.lastX == mouse\.x && mouse\.lastY == mouse\.y\);/,
+	'the idle test asks whether the pointer moved');
+like($video, qr/if \(!idle\) \{ seen = 1; \}/, 'a bar under a resting pointer no longer keeps the chrome');
+
+# Leaving the big picture gives both bars back; the idle timer may have left
+# them off the edges.
+my ($off) = $js =~ /(function musicFullscreenOff\(\)\s*\{.*?\n\})/s;
+ok(defined $off, 'musicFullscreenOff is found');
+like($off || '', qr/musicChromeShow\(\$\('#interface'\)\);/, 'leaving full screen shows the interface');
+like($off || '', qr/musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\);/, 'and the player bar');
+my ($change) = $js =~ /(\$\(document\)\.on\('fullscreenchange webkitfullscreenchange'.*?\n\}\);)/s;
+ok(defined $change, 'the fullscreenchange handler is found');
+like($change || '', qr/else if \(musicWasFullscreen\)[\s\S]*?musicChromeShow\(\$\('#interface'\)\);/, 'a real leave shows the interface');
+like($change || '', qr/else if \(musicWasFullscreen\)[\s\S]*?musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\);/, 'and the player bar');
+
 done_testing();

@@ -218,11 +218,17 @@ like($music, qr/function musicRemoteApplyPlaying/, 'the remote row has its own m
 my ($play_item) = $music =~ /function musicRemotePlayItem\(item\) \{(.*?)\n\}/s;
 ok(defined $play_item && length $play_item, 'musicRemotePlayItem is readable as a hunk');
 unlike($play_item || '', qr/tree\.current_track\s*=/, 'a remote play does not move the local queue cursor');
-like($play_item || '', qr/musicRemoteSend\('play_track', \{ file: file \}\)/, 'a remote click names one file');
+like($play_item || '', qr/musicRemoteSend\('play_track', data\)/, 'a remote click names the row and hands its queue');
+like($play_item || '', qr/data\.files = JSON\.stringify\(files\)/, 'the mirrored queue rides along');
+like($music, qr/function musicPlayTrack\(file, files, same_order\)/, 'the host takes the row, its queue and the order');
+like($music, qr/music_play_track_queue/, 'and remembers the queue while a window opens');
+like($music, qr/musicToggle\(files, order, file\)/, 'opening on that queue at the row when its own lacks it');
+like($remote, qr/console_command\(\s*'musicPlayTrack',\s*\$file,\s*\$files/s, 'the queue crosses as data');
+like($router, qr/musicPlayTrack\(String\(a\[0\] \|\| ''\), a\[1\] \|\| \[\], a\[2\] \? 1 : 0\)/, 'the router carries the queue and order');
 like($music, qr/function musicPlayTrack\(/, 'the host can start a named row');
 like($music, qr/function musicPlayTrackFlush/, 'and waits for a window that is opening');
 like($router, qr/musicPlayTrack: function/, 'the browser router whitelists the row');
-like($remote, qr/console_command\('musicPlayTrack'/, 'the row crosses as a named instruction');
+like($remote, qr/console_command\(\s*'musicPlayTrack'/, 'the row crosses as a named instruction');
 like($remote, qr/\$action eq 'play_track'/, 'the transport action exists');
 like($video_tpl, qr/if \(typeof musicRemoteTarget === 'function' && musicRemoteTarget\(\)\)/,
 	'the local bar tick stands down while the window controls a peer');

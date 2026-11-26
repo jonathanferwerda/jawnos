@@ -140,7 +140,19 @@ sub music_transport_local($action, $opts = {}) {
 	if ($action eq 'play_track') {
 		my $file = $opts->{'file'};
 		return 0 unless defined $file && length $file;
-		&Websocket::send('server', { console => &Websocket::console_command('musicPlayTrack', $file) });
+		# The controller's queue rides along: when the host's own queue does not
+		# hold this row (its window was closed or showing another list), the host
+		# opens this queue at the row instead of a one-track list that stops
+		# when the row ends.
+		my $files = (ref $opts->{'files'} eq 'ARRAY') ? $opts->{'files'} : [];
+		&Websocket::send('server', {
+			console => &Websocket::console_command(
+				'musicPlayTrack',
+				$file,
+				$files,
+				($opts->{'same_order'} ? 1 : 0)
+			)
+		});
 		return 1;
 	}
 	# Mute keeps the level for the next play, so it is a switch of its own, not a

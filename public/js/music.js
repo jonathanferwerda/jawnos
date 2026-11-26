@@ -3114,25 +3114,43 @@ function musicRemoteChoose(target) {
 function musicRemotePlayItem(item) {
 	var file = item.attr('file') || '';
 	if (!file) { return; }
-	// One file, not a list: the host keeps its own queue (the tracks already
-	// played included) and simply starts this row.
+	// One file, not a list: the host keeps its own queue when it already holds
+	// this row. The mirrored queue rides along for the case it does not (a
+	// closed window or another list on screen), so the row starts inside the
+	// queue rather than alone and still advances at its end.
+	var files = [];
+	if (typeof tree == 'object' && tree && tree.all_songs) {
+		for (var i = 0; i < tree.all_songs.length; i++) {
+			var entry = tree.all_songs[i];
+			if (entry && entry.file) { files.push(entry.file); }
+		}
+	}
 	musicRemoteApplyPlaying(musicKey(item), file);
-	musicRemoteSend('play_track', { file: file });
+	var data = { file: file };
+	if (files.length) { data.files = JSON.stringify(files); data.same_order = 1; }
+	musicRemoteSend('play_track', data);
 }
 // A track named from a controller. The host's queue is already on screen (or is
 // the remembered queue an open rebuilds), so only the row is named; nothing is
-// replaced and the history above it stays. A window that is not open is opened
-// first and the row waits for its player.
+// replaced and the history above it stays. When that queue does not hold the
+// row, the controller's mirrored queue rides along and the window opens on it
+// at the row, so the list still advances instead of stopping after one track.
 var music_play_track_pending = '';
-function musicPlayTrack(file) {
+var music_play_track_queue = null;
+var music_play_track_order = 0;
+function musicPlayTrack(file, files, same_order) {
 	file = String(file || '');
 	if (!file) { return false; }
 	if (musicTransportReady() && musicEntryByFile(file)) {
+		music_play_track_pending = '';
+		music_play_track_queue = null;
 		thisTrack(file);
 		mediaMaker();
 		return true;
 	}
 	music_play_track_pending = file;
+	music_play_track_queue = (files && files.length) ? files : null;
+	music_play_track_order = same_order ? 1 : 0;
 	if (!$('#music').length && typeof musicToggle === 'function') { musicToggle(); }
 	musicPlayTrackFlush();
 	return true;
@@ -3141,13 +3159,18 @@ function musicPlayTrackFlush() {
 	if (!music_play_track_pending || !musicTransportReady()) { return; }
 	var file = music_play_track_pending;
 	if (!musicEntryByFile(file)) {
-		// the queue on screen no longer holds this row; open on it alone rather
-		// than doing nothing
+		// the queue on screen no longer holds this row; open on the controller's
+		// queue at it rather than doing nothing or starting it alone
+		var files = music_play_track_queue;
+		var order = music_play_track_order;
 		music_play_track_pending = '';
+		music_play_track_queue = null;
+		if (files && files.length) { musicToggle(files, order, file); return; }
 		musicToggle([file], 1);
 		return;
 	}
 	music_play_track_pending = '';
+	music_play_track_queue = null;
 	thisTrack(file);
 	mediaMaker();
 }
@@ -5062,6 +5085,10 @@ $(document).on('fullscreenchange webkitfullscreenchange', function() {
 			}, 1200);
 		}
 		musicFullscreenAsking = false;
+		// a real leave puts the bars back too, in case the idle timer had
+		// slid them off the edges
+		musicChromeShow($('#interface'));
+		musicChromeShow($('#music .media_controls.music_player_bar'));
 	}
 	musicPicturePlace();
 	musicVisualSelectSize();
@@ -7426,6 +7453,10 @@ function musicFullscreenOff() {
 	musicFullscreenWindow(false);
 	musicFullscreenRestoreDisarm();
 	musicFullscreenGestureRemove();
+	// the full-screen picture is over: windowed mode has no reason to keep
+	// the bars off the edges, so give both back
+	musicChromeShow($('#interface'));
+	musicChromeShow($('#music .media_controls.music_player_bar'));
 	musicPicturePlace();
 	musicVisualSelectSize();
 	musicChaptersRefresh();

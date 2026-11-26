@@ -73,7 +73,7 @@ var jawnosConsoleCommands = {
 		if (typeof musicFullscreenSet === 'function') { musicFullscreenSet(a[0]); }
 	},
 	musicPlayTrack: function (a) {
-		if (typeof musicPlayTrack === 'function') { musicPlayTrack(String(a[0] || '')); }
+		if (typeof musicPlayTrack === 'function') { musicPlayTrack(String(a[0] || ''), a[1] || [], a[2] ? 1 : 0); }
 	},
 	musicVolumeSet: function (a) {
 		// a level aimed at this machine never forwards to a machine this window

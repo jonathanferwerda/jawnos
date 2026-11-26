@@ -167,15 +167,20 @@
 			function <%= $miss %>ChromeIdle() {
 				if ($('#<%= $id %>').attr('theatre_mode') == 'on' || document.fullscreenElement || $('#<%= $id %>').closest('.music_fullscreen').length || '<%= $id %>' != 'video') {
 					var mouse = mouse_position();
+					// The pointer has not moved since the last beat: a bar under a
+					// resting pointer is still chrome, and a person watching across
+					// the room should not have to move the mouse to clear it. A real
+					// move re-arms this timer through the handler below.
+					var idle = (mouse.lastX == mouse.x && mouse.lastY == mouse.y);
 					var el = document.elementsFromPoint(mouse.x,mouse.y);	
 					var seen = 0;
 					$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'none'});
 					$.each(el, function(i,v) {
 						if (<% if ($id eq 'video') { %> $(v).attr('id') == 'interface' || <% } %> $(v).attr('id') == '<%= $miss %>_controls' || $(v).attr('id') == '<%= $miss %>_tools_panel') {
-							seen = 1;
+							if (!idle) { seen = 1; }
 						}
 						else if ($(v).attr('id') == '<%= $id %>' && seen == 0) {
-							if (mouse.lastX == mouse.x && mouse.lastY == mouse.y &&  $(v).attr('id') != '<%= $miss %>_controls') {
+							if (idle &&  $(v).attr('id') != '<%= $miss %>_controls') {
 								seen = 0;
 								$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'none'});
 							}
@@ -203,6 +208,9 @@
 			}
 			function <%= $miss %>ChromeArm() {
 				clearInterval(<%= $miss %>Tools['toolbarTimeout']);
+				// Anchor the rest test to this arm: the next beat should measure
+				// the pointer's rest since now, not since an earlier check.
+				mouse_position();
 				<%= $miss %>Tools['toolbarTimeout'] = setInterval(<%= $miss %>ChromeIdle, <%= $miss %>HideAfter);
 			}
 			<% if ($source eq 'music') { %>

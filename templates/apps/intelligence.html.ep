@@ -42,7 +42,7 @@
 #intelligence .intelligence_days_cell[hidden] { display: none; }
 #intelligence .intelligence_day { flex: 0 0 auto; min-width: 30px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; font-size: 12px; cursor: var(--jawnos-cursor-pointer, pointer); opacity: .5; }
 #intelligence .intelligence_day.is-on { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; opacity: 1; }
-#intelligence .intelligence_day:disabled { cursor: default; opacity: .3; }
+#intelligence .intelligence_day:disabled { cursor: var(--jawnos-cursor-default, default); opacity: .3; }
 #intelligence .currency_amount { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 #intelligence .currency_amount .currency_value { font-variant-numeric: tabular-nums; }
 #intelligence .currency_picker { font: inherit; font-size: 12px; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px; }
