@@ -37,6 +37,9 @@ like($source, qr{s/mmc 1:1/mmc 0:1}, 'boot.ini is rewritten to mmc 0');
 like($source, qr/recovery_stanza/, 'the eMMC carries a boot.ini recovery entry');
 like($source, qr/0x1F000000 RECOVERY/, 'which starts the BIOS when the marker is present');
 like($source, qr/apply_recovery_entry/, 'and it is applied by both build and repair');
+like($source, qr/gou-rotate\.service\.d/, 'the image carries the rotation presenter drop-in');
+like($source, qr/^Requires=$/m, 'which drops the hard dependency on X');
+like($source, qr/^Wants=gou-x\.service$/m, 'and starts when X is ready instead');
 like($source, qr/disable_sd_chainload/, 'the stock microSD boot.ini chainload is removed');
 like($source, qr/gou_boot_ini\.pl/, 'by the shared boot.ini helper');
 

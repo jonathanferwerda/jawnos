@@ -383,6 +383,20 @@ UUID=$root_uuid / ext4 rw,relatime,x-systemd.growfs 0 1
 FSTAB
 	chmod 644 "$root/etc/fstab"
 
+	# The panel's rotation presenter. X can fail its first start while the
+	# display is coming up; the stock unit's Requires= then killed gou-rotate
+	# for the whole boot and the panel stayed on the kernel console. A drop-in
+	# drops that hard dependency: Wants= starts the presenter anyway, and its
+	# own Restart=always waits for X and paints once it is up.
+	install -d -m 755 "$root/etc/systemd/system/gou-rotate.service.d"
+	cat > "$root/etc/systemd/system/gou-rotate.service.d/20-wants.conf" <<'UNIT'
+[Unit]
+Requires=
+Wants=gou-x.service
+UNIT
+	chmod 644 "$root/etc/systemd/system/gou-rotate.service.d/20-wants.conf"
+	chown 0:0 "$root/etc/systemd/system/gou-rotate.service.d/20-wants.conf"
+
 	# 5. tailscale, so the first boot can join the tailnet. Its absence is a
 	# warning, not a failed build; a tarball supplied by hand is checked.
 	install_tailscale "$root"

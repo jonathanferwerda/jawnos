@@ -981,6 +981,19 @@ WantedBy=multi-user.target
 UNIT
 }
 
+# The panel's rotation presenter is the stock unit, which requires X. X can
+# fail its first start while the display is coming up, and a failed dependency
+# then killed the presenter for the whole boot; the panel stayed on the kernel
+# console. The drop-in drops the hard dependency, so the presenter starts
+# anyway and its own Restart=always waits for X.
+sub _rotate_dropin {
+	return <<'UNIT';
+[Unit]
+Requires=
+Wants=gou-x.service
+UNIT
+}
+
 # The panel is 480x854 on a 2 GB board, and Qt WebEngine is the largest thing
 # on it. These flags are Chromium's own low-memory mode: one renderer, the
 # small-heap profile, and shared memory in /tmp (the tiny /dev/shm fills first).
@@ -1217,6 +1230,17 @@ sub _autopopulate {
 		}
 		else {
 			$error = 'could not write the splash unit';
+		}
+	}
+	if (!length $error) {
+		my $dir = "$etc/systemd/system/gou-rotate.service.d";
+		File::Path::make_path($dir) unless -d $dir;
+		my $dropin = "$dir/20-wants.conf";
+		if (_write_file($dropin, _rotate_dropin()) && chmod(0644, $dropin) && chown(0, 0, $dropin)) {
+			push @done, 'rotate-presenter';
+		}
+		else {
+			$error = 'could not write the rotation presenter drop-in';
 		}
 	}
 	if (!length $error) {
