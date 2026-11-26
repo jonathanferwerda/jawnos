@@ -1311,11 +1311,30 @@ function studioMonitorBackendRender() {
 	var keep = options.some(function (option) { return option.id === current; });
 	select.val(keep ? current : 'auto');
 	var note = $('#studio_monitor_backend_note');
-	if (note.length) {
-		var device = studioUsbAudioDevice();
-		var row = device && device.device ? device.device : null;
-		note.text(row && row.name ? String(row.name) : '');
-	}
+	if (note.length) { note.text(studioMonitorBackendNote()); }
+}
+
+// Why a path is or is not in the list. A phone whose interface is still plugged
+// into the laptop shows only Auto, which otherwise reads as a missing feature;
+// the row says what it is waiting for instead.
+function studioMonitorBackendNote() {
+	var device = studioUsbAudioDevice();
+	if (device) { return studioUsbDeviceLabel(device.device); }
+	if (studioUsbAudioBridge()) { return studioListenText('no USB audio interface is attached'); }
+	return '';
+}
+
+// The one line that names the interface the direct path would claim, e.g.
+// `USB 08bb:2902` for the UM2. The id is the device's own, so the row cannot
+// guess wrong about which card is about to be taken.
+function studioUsbDeviceLabel(row) {
+	if (!row || row.vendorId === undefined || row.productId === undefined) { return ''; }
+	var hex = function (value) {
+		var text = (Number(value) >>> 0).toString(16);
+		while (text.length < 4) { text = '0' + text; }
+		return text;
+	};
+	return 'USB ' + hex(row.vendorId) + ':' + hex(row.productId);
 }
 
 // The plan a direct-USB listen runs: one input, the selected track's rack, and

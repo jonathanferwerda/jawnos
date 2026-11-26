@@ -563,6 +563,8 @@ like($controls_js, qr/if \(backend === 'oboe' && studioNativeAudio\(\)\) \{ stud
 	'Listen prefers the phone\'s native stream when the picker says Oboe');
 like($controls_js, qr/if \(backend === 'usb'\) \{ studioUsbListenStart\(/,
 	'and the direct USB path when the picker says Direct USB');
+like($controls_js, qr/no USB audio interface is attached/,
+	'and the picker says why Direct USB is missing rather than looking empty');
 like($controls_js, qr/bridge\.start\(String\(rate\), '192', String\(gain\)\)/,
 	'the native stream opens at the house rate, a 4 ms burst and the Listen gain');
 like($controls_js, qr/if \(studioNativeListening\) \{ studioNativeStatus\(\); return; \}/,
