@@ -39,6 +39,55 @@ either find the control and ordering the UM2 accepts, or resample the monitor
 endpoint running at 32 kHz overruns it and distorts independently of buffer
 depth.
 
+### 2.1 The PCM2902 rate sequence (next session's checklist)
+
+The part is a TI PCM2902 (08bb:2902). `GET_CUR` works and returns `00 7d 00`, so
+the control transport is fine; the stall is the chip's state machine refusing
+`SET_CUR` at that moment. The strict UAC1 request is an **endpoint** request:
+
+| field | value |
+| --- | --- |
+| bmRequestType | `0x22` (class, host to device, endpoint) |
+| bRequest | `0x01` (SET_CUR) |
+| wValue | `0x0100` (SAMPLING_FREQ_CONTROL selector in the high byte) |
+| wIndex | `0x0002` (the playback OUT endpoint address, not interface 1) |
+| wLength | `3` |
+| data | `80 bb 00` (48,000, 24-bit little-endian) |
+
+An interface recipient (`0x21`) or a zero `wValue` always stalls on this part.
+The 1363 probe already sent the endpoint form at alt 1 with no ISO in flight and
+got `-1`, so the remaining variables are the alternate setting and the exact
+order. Work through it in this order:
+
+1. **Pick the right alternate.** Dump interface 1's alternates and choose the one
+   with `bNrChannels = 2`, `bSubframeSize = 2`, `bBitResolution = 16` and
+   `wMaxPacketSize = 192` (48 frames x 4 bytes in one 1 ms frame). A 128-byte or
+   96-byte alternate cannot carry 48 frames and will reject 48,000 Hz.
+2. **Quiesce the endpoint.** No ISO OUT URBs in flight or scheduled: cancel,
+   discard and reap them before the control transfer. The PCM2902's SpAct PLL
+   locks to the ISO cadence, and a `SET_CUR` while the schedule is live is
+   refused.
+3. **Set the alternate, then the rate, then read it back.** `SET_INTERFACE`
+   (bmRequestType `0x01`, bRequest `0x0B`, `wValue` = the chosen alternate,
+   `wIndex` = 1), then immediately the `SET_CUR` above, then `GET_CUR`
+   (bmRequestType `0xA2`, bRequest `0x81`, same `wValue`/`wIndex`/length) and
+   require `80 bb 00` **before** submitting any 192-byte/ms stream. Do not claim
+   the rate was set without that readback.
+
+If that still stalls, the chip is going to stay at its current setting; take the
+fallback below rather than burning another session on it.
+
+### 2.2 Fallback: monitor at the endpoint's current rate
+
+If the playback endpoint remains at 32 kHz, resample the monitor 48 -> 32 (an
+exact 3:2 decimation; a linear or polyphase resampler is sufficient for a
+monitor) and send **128-byte packets = 32 stereo 16-bit frames per 1 ms**. The
+capture and the engine DSP stay at 48 kHz; only the monitor output leg changes
+rate. Pass 128 as the output packet size through the depth and round-trip
+arguments (the engine already derives `frames_per_packet = packet / 4`). This
+removes the overrun/wrap distortion immediately at the cost of a 16 kHz monitor
+bandwidth; the capture is unaffected.
+
 ## 3. The engine
 
 `engine/src/usb_device.rs` (Android-only, raw usbfs ioctls, no libusb):
@@ -146,8 +195,9 @@ backend assumes full-speed 1 ms frames.
 
 ## 8. Next
 
-1. **Playback rate**: set 48 kHz correctly, or resample 48 -> 32 and send 128-byte
-   packets; re-run the cable round trip and the sweep.
+1. **Playback rate**: follow the strict PCM2902 sequence in Sec. 2.1; if it still
+   stalls, implement the 48 -> 32 monitor resample in Sec. 2.2, then re-run the
+   cable round trip and the sweep.
 2. The 4×2 / 8×1 output shape with an 8×2 input at the same 8 ms runway.
 3. A per-device latency preset in the Studio configuration (Safe 16 / Balanced 8
    / Low 4 / Ultra 2), storing the measured floor and the last take's health; Auto
