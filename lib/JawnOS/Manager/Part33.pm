@@ -237,6 +237,49 @@ sub dingaling_is_news($c, $visitor, $authentication, $peer_call) {
 	return 1;
 }
 
+# A linked machine is the house's own, even when a particular request cannot
+# show its key. A peer session that was minted over the signed rail is still
+# that machine after its warranty lapses, and a relay whose stored cookie has
+# gone stale still names a roster row by the address that row pins. Matching a
+# rostered address is not authentication and grants nothing - the Dingaling is
+# only an alert - but ringing the house for a machine it already enrolled is the
+# false positive this test removes. An address no enrolled row knows, or a peer
+# row with no pinned key, is still news.
+sub dingaling_known_machine($c, $visitor) {
+	$visitor = '' unless defined $visitor;
+	return 0 unless length $visitor;
+	# A peer session was authenticated when it was minted; an expired warranty
+	# is not the machine becoming a stranger.
+	if ($c && ($c->session('peer') || '') eq '1') {
+		my $sig = $c->session('peer_signatorial') || '';
+		if (length $sig) {
+			my $self = eval { &subs::db_select('remote_machines', undef, { signatorial => $sig })->hash };
+			return 1 if $self;
+		}
+	}
+	my $rows = eval { &subs::db_select('remote_machines')->hashes } || [];
+	foreach my $rm ( @{$rows} ) {
+		# A row with no pinned key is a name the house has not enrolled, so its
+		# address proves nothing.
+		next unless length($rm->{'pubkey'} || '');
+		return 1 if ($rm->{'ip'} || '') eq $visitor;
+		return 1 if ($rm->{'tailnet_ip'} || '') eq $visitor;
+		return 1 if ($rm->{'manager_file'} || '') eq $visitor;
+		# The handshake carries every interface the peer last reported. Read the
+		# row's own ip/ip6 only: a gateway or broadcast address in the same blob
+		# belongs to the network, not to the machine that sent the request.
+		next unless $rm->{'network'};
+		my $nets = eval { decode_json $rm->{'network'} } || {};
+		next unless ref $nets eq 'HASH';
+		foreach my $nic ( values %{$nets} ) {
+			next unless ref $nic eq 'HASH';
+			return 1 if ($nic->{'ip'} || '') eq $visitor;
+			return 1 if ($nic->{'ip6'} || '') eq $visitor;
+		}
+	}
+	return 0;
+}
+
 sub authentication_passer($c) {
 	my $server_time = &subs::rightNow();
 
@@ -408,15 +451,18 @@ sub authentication_passer($c) {
 
 	my $visitor = $c->tx->local_address eq $c->tx->remote_address ? 'Me' : ($c->param('manager_file') || $c->tx->remote_address);
 	my $string = $app_path;
-	# A linked machine that proved itself on the signed peer rail is a house call,
-	# whatever its stored session says. app_peer_ok is memoised on the stash after
-	# the app gate, so this asks a second time only when the gate was off.
+	# A linked machine that proved itself on the signed peer rail is a house
+	# call, whatever its stored session says. app_peer_ok is memoised on the stash
+	# after the app gate, so this asks a second time only when the gate was off.
+	# A roster machine whose proof is missing - an expired peer session, a stale
+	# relay cookie - is placed by dingaling_known_machine below.
 	my $peer_call = $c->stash('peer_verified_key') || ($app_peer // &app_peer_ok($c));
 	# The Dingaling is for a visitor at the door, not the person at the machine:
 	# a local session's own WebSocket and media-lock polls would otherwise ring
 	# the house every few minutes. Remote visitors still get the throttled alert
 	# below; a request that already carries its tab and session is not news.
-	if (&dingaling_is_news($c, $visitor, $authentication, $peer_call)) {
+	if (&dingaling_is_news($c, $visitor, $authentication, $peer_call)
+		&& !&dingaling_known_machine($c, $visitor)) {
 		# Not every retry deserves a Dingaling: a browser reconnecting after a
 		# network change hammers this, so alert at most once per visitor per
 		# few minutes. The cache row is the throttle stamp (local, unsynced).

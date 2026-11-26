@@ -120,6 +120,7 @@ our %SUB = (
 	'device_session_mint'                    => 'JawnOS/Manager/Part30.pm',
 	'device_store_pubkey'                    => 'JawnOS/Manager/Part30.pm',
 	'dingaling_is_news'                      => 'JawnOS/Manager/Part33.pm',
+	'dingaling_known_machine'                 => 'JawnOS/Manager/Part33.pm',
 	'duration_read'                          => 'JawnOS/Manager/Part01.pm',
 	'editor_maker'                           => 'JawnOS/Manager/Part08.pm',
 	'email_extra_folders'                    => 'JawnOS/Manager/Part24.pm',

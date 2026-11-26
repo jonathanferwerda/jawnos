@@ -603,6 +603,7 @@ sub lock_screen;
 sub unlock_screen;
 sub app_gate_shadow_log;
 sub dingaling_is_news;
+sub dingaling_known_machine;
 sub authentication_passer;
 sub embedded_grabber;
 sub embedded_device_query;
