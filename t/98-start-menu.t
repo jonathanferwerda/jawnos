@@ -230,6 +230,7 @@ like($start_menu_help, qr/Apps, Running, Upcoming, Expiring and System/,
 	'the guide names the labelled pages');
 like($start_menu_help, qr/search bar in the header/, 'the guide describes the app search');
 like($start_menu_help, qr/rides every page/, 'and says it is on every page');
+like($start_menu_help, qr/searches the house/, 'and that another page searches the house');
 like($start_menu_help, qr/Configure, the wrench, holds the header/, 'and that Configure holds the right edge');
 like($start_menu_help, qr/Recent group/, 'the guide describes the Recent group');
 like($start_menu_help, qr/All apps/, 'and the All apps list');
@@ -283,12 +284,19 @@ like($css, qr/#start_menu\.start_menu_sheet\.start_menu_sheet_top\s*\{[^}]*top:[
 	'the stylesheet carries the top sheet as well');
 like($css, qr/#start_menu \.start_menu_header #main_logo\s*\{[^}]*margin-left:\s*auto/s,
 	'Configure holds the header right edge');
-# The search bar rides every page: a page with no catalogue asks for Apps and
-# carries the query across the fetch.
-like($menu_js, qr/if \(!\$\('\.start_menu_main_display'\)\.length\)/,
-	'typing on a page with no catalogue asks for the Apps page');
-like($menu_js, qr/startMenuPendingQuery = value;/, 'and keeps the typed query');
-like($menu_js, qr/startMenuQuery = startMenuPendingQuery;/, 'so the catalogue renders filtered');
+# The search bar rides every page: on Apps it filters the catalogue, and
+# elsewhere it searches the house through the global search's own index,
+# ranking, openers and dropdown placement.
+like($menu_js, qr/if \(\$\('\.start_menu_main_display'\)\.length\)/,
+	'the Apps page keeps the catalogue filter');
+like($menu_js, qr/function startMenuSearchShow\(query\)/,
+	'a page with no catalogue searches the house instead');
+like($menu_js, qr/jawnosSearchMatches\(query\)/, 'using the global search\'s ranking');
+like($menu_js, qr/jawnosSearchOpen\(row\.attr\('app'\)\)/, 'and its openers');
+like($menu_js, qr/function startMenuSearchMove\(direction\)/, 'the arrows walk the results');
+like($menu_js, qr/jawnosSearchResultsPlace\(\$\('#start_menu_filter'\), box\)/,
+	'and the dropdown hugs the header filter');
+like($css, qr/#start_menu_search_results\s*\{/, 'the dropdown has its own face');
 like($css, qr/\@media \(max-width: 620px\)\s*\{\s*#start_menu\s*\{/,
 	'and the stylesheet draws the same sheet at the 620px breakpoint');
 like($css, qr/\@media \(max-height: 520px\)\s*\{\s*#start_menu\s*\{/,

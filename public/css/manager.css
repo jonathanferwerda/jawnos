@@ -1061,6 +1061,23 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	text-overflow: ellipsis;
 }
 .manager_search_result.search_selected { background-color: var(--accent-soft, #e6effb); }
+/* The start menu's house search draws the global search's rows in its own box
+   under the header's filter: the same face as #search_results, made on demand so
+   a menu page swap cannot take it down. jawnosSearchResultsPlace() gives it the
+   filter's width and the side with room. */
+#start_menu_search_results {
+	box-sizing: border-box;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	background-color: var(--panel);
+	border: 2px solid var(--line);
+	border-radius: 12px;
+	box-shadow: 0 16px 40px rgba(0,0,0,.30);
+}
+#start_menu_search_results .manager_search_results_list {
+	display: flex;
+	flex-direction: column;
+}
 #top_right_buttons {
 	height: 46px;
 	width: 320px;

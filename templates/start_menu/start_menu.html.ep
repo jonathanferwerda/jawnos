@@ -27,9 +27,9 @@
 	<div class="start_menu_header">
 		<span class="start_menu_title"><%= &subs::lang('start_menu.start') %></span>
 		<span class="start_menu_search_slot"></span>
-		<%# The search bar rides every page, not just Apps: a page with no catalogue
-		    still offers it, and a press there takes the person to Apps to see the
-		    results. The global search replaces it when its own home is the menu. %>
+		<%# The search bar rides every page. On the Apps page it narrows the
+		    catalogue; elsewhere it searches the house like the global search box.
+		    The global search replaces it when its own home is the menu. %>
 		<input type="search" id="start_menu_filter" class="start_menu_filter"
 		       placeholder="<%= &subs::lang('start_menu.search_apps') %>"
 		       aria-label="<%= &subs::lang('start_menu.search_apps') %>"

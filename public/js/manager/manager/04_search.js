@@ -214,10 +214,11 @@ function jawnosSearchMatches(query) {
 // The dropdown hugs the search box: same width, just above or below it. It is
 // pulled out to the body because a transformed ancestor (an auto-hidden
 // taskbar, a sliding dock) turns position:fixed into a child of that bar, which
-// is what put the list off the top of the screen.
-function jawnosSearchResultsPlace() {
-	var box = $('#search_results');
-	var input = $('#search');
+// is what put the list off the top of the screen. The start menu's house search
+// reuses it with its own input and box.
+function jawnosSearchResultsPlace(input, box) {
+	input = (input && input.length) ? input.first() : $('#search');
+	box = (box && box.length) ? box.first() : $('#search_results');
 	if (!box.length || !input.length || !box.is(':visible')) { return; }
 	var rect = input[0].getBoundingClientRect();
 	var vw = window.innerWidth || $(window).width();
@@ -248,12 +249,12 @@ function jawnosSearchResultsPlace() {
 	var gap = 6;
 	var width = Math.max(0, rect.width);
 	var left = Math.max(4, Math.min(rect.left, vw - width - 4));
-	var content = $('#manager_search_results').outerHeight() || 0;
+	var content = box.children().first().outerHeight() || box.outerHeight() || 0;
 	// The dock's own body is not free page: with the dock on the bottom edge the
 	// search rides its top and the pseudonym row (or the box's own backing) sits
 	// below it, so a list placed below the box would be laid across the dock.
 	// The room above is the page's, so a bottom dock always opens upward.
-	var in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
+	var in_dock = input.closest('#pseudonym_home').length > 0;
 	var dock_bottom = in_dock
 		&& !(typeof jawnosDockTop == 'function' && jawnosDockTop())
 		&& !(typeof jawnosSideDock == 'function' && jawnosSideDock())
@@ -294,6 +295,9 @@ function jawnosSearchResultsPlace() {
 // has to follow the visual viewport as well.
 function jawnosSearchResultsReposition() {
 	if ($('#search_results').is(':visible')) { jawnosSearchResultsPlace(); }
+	if ($('#start_menu_search_results').is(':visible')) {
+		jawnosSearchResultsPlace($('#start_menu_filter'), $('#start_menu_search_results'));
+	}
 }
 
 $(window).on('resize orientationchange', jawnosSearchResultsReposition);
@@ -558,7 +562,7 @@ $(document).on('mouseenter', '.manager_search_result', function() {
 	var i = parseInt($(this).attr('index'), 10);
 	if (isNaN(i)) { return; }
 	jawnosSearchSelected = i;
-	$('#manager_search_results .manager_search_result').removeClass('search_selected');
+	$(this).closest('#search_results, #start_menu_search_results').find('.manager_search_result').removeClass('search_selected');
 	$(this).addClass('search_selected');
 });
 

@@ -109,7 +109,7 @@ function fuck_you() {
 	$.each(['#left_view','.wind', '.cord', '.manager_search_result'],function(i,v) {
 		$(v).remove();
 	});
-	$.each(['#configure_balloon','#mail_sidebar_container', '#soundroom_sidebar_container', '#grapple', '#search_results'],function(i,v) {
+	$.each(['#configure_balloon','#mail_sidebar_container', '#soundroom_sidebar_container', '#grapple', '#search_results', '#start_menu_search_results'],function(i,v) {
 		$(v).hide();
 	});
 	$('.typewriter').remove();
@@ -237,10 +237,6 @@ function startMenuToggle(data) {
 					startMenuRender(response.html, st);
 					if (keyboard) { startMenuFocusInitial(); }
 				}
-			},
-			// a page switch that failed must not leave the filter waiting forever
-			complete: function() {
-				startMenuPageSwitchBusy = false;
 			}
 		});
 	}
@@ -267,17 +263,13 @@ function startMenuRender(html, st) {
 	var search = $('#search_entanglement').closest('#start_menu').length ? $('#search_entanglement').detach() : null;
 	$('#start_menu').replaceWith(html);
 	$('#start_menu').show();
+	// The house search's dropdown lives on the body; a fresh menu body puts the
+	// list away with the page it was drawn over.
+	startMenuSearchHide();
 	// a fresh body means a fresh filter: the query cannot narrow a list it was
-	// not typed against - unless the person typed on another page, when the same
-	// text carried into the catalogue the switch asked for
+	// not typed against
 	startMenuQuery = '';
 	$('#start_menu_filter').val('');
-	if (startMenuPendingQuery !== null) {
-		startMenuQuery = startMenuPendingQuery;
-		$('#start_menu_filter').val(startMenuPendingQuery);
-		startMenuPendingQuery = null;
-	}
-	startMenuPageSwitchBusy = false;
 	if (search) {
 		// the search rides the menu's own header slot, not the panel's foot
 		var slot = $('#start_menu .start_menu_search_slot').first();
@@ -306,12 +298,12 @@ function startMenuHtmlFlush() {
 	startMenuHtml = {};
 }
 
-// A press anywhere but the menu - or the button that opens it - puts the menu
-// away.
+// A press anywhere but the menu - the button that opens it, or the house
+// search's own dropdown - puts the menu away.
 $(document).on('click', function (e) {
 	var menu = $('#start_menu');
 	if (!jawnosStartMenuOpen(menu)) { return; }
-	if ($(e.target).closest('#start_menu, #start_menu_toggle, .start_menu_toggle_copy').length > 0) { return; }
+	if ($(e.target).closest('#start_menu, #start_menu_toggle, .start_menu_toggle_copy, #start_menu_search_results').length > 0) { return; }
 	$('#start_menu_toggle').attr('toggled', 'closed');
 	startMenuCloser(0);
 });
@@ -495,11 +487,6 @@ function startMenuForget(key) {
 // its own, and the filter narrows it by name; either one drops both group
 // labels and the recent X. The open page is the choice, so All is the default.
 var startMenuQuery = '';
-// The search bar rides every page, so a press on Running or System still
-// searches: the typed text waits here across the fetch to the Apps page and
-// lands in the catalogue when it renders.
-var startMenuPendingQuery = null;
-var startMenuPageSwitchBusy = false;
 
 // What the view means by visible: the rows it hides itself carry display:none,
 // and that is what decides both the empty note and the keyboard's walk.
@@ -587,23 +574,114 @@ $(document).on('click', '.start_menu_category', function () {
 	startMenuView();
 });
 
-// The filter narrows the catalogue by name as the person types. The bar rides
-// every page, so typing where no catalogue is drawn asks for the Apps page and
-// carries the text across; a fresh menu body resets both the field and the
-// query.
+// The filter narrows the catalogue by name on the Apps page. The bar rides every
+// page, and a page that draws no catalogue searches the house instead: the same
+// index, ranking and openers as the global #search box, with the results in a
+// dropdown beside the bar.
 $(document).on('input', '#start_menu_filter', function () {
 	var value = $(this).val() || '';
-	if (!$('.start_menu_main_display').length) {
-		startMenuPendingQuery = value;
-		if (startMenuPageSwitchBusy) { return; }
-		startMenuPageSwitchBusy = true;
-		localStorage.setItem('start_menu_menu', 'app');
-		$('#start_menu').attr('toggled', 'closed');
-		startMenuToggle({ source: 'menu' });
+	if ($('.start_menu_main_display').length) {
+		startMenuQuery = value;
+		startMenuView();
 		return;
 	}
-	startMenuQuery = value;
-	startMenuView();
+	startMenuSearchShow(value);
+});
+
+// The dropdown the house search draws under the bar. It is made once and kept on
+// the body, like #search_results, so a menu re-render cannot take it down
+// mid-search and a transformed bar cannot trap it.
+function startMenuSearchBox() {
+	var box = $('#start_menu_search_results');
+	if (box.length) { return box; }
+	box = $('<div id="start_menu_search_results" class="start_menu_search_dropdown"></div>');
+	box.appendTo(document.body);
+	return box;
+}
+
+function startMenuSearchHide() {
+	$('#start_menu_search_results').hide();
+}
+
+// The index warms on load; paint at once when it is here, otherwise wait for it
+// and drop a result a later keystroke has replaced.
+function startMenuSearchShow(query) {
+	var box = startMenuSearchBox();
+	query = query || '';
+	if (!$.trim(query) || typeof jawnosSearchMatches != 'function') { box.html('').hide(); return; }
+	var paint = function () {
+		if ($('#start_menu_filter').val() !== query) { return; }
+		startMenuSearchPaint(query, box);
+	};
+	if (typeof jawnosSearchApps != 'undefined' && jawnosSearchApps) { paint(); return; }
+	if (typeof jawnosSearchIndex == 'function') { jawnosSearchIndex().then(paint); }
+}
+
+function startMenuSearchPaint(query, box) {
+	var matches = jawnosSearchMatches(query);
+	if (!matches.length) { box.html('').hide(); return; }
+	var list = $('<div class="manager_search_results_list"></div>');
+	matches.forEach(function (match, i) {
+		var row = $('<div class="hover manager_search_result"></div>').attr('app', match.app.app).attr('index', i);
+		row.append($('<img class="manager_search_icon" alt="">').attr('src', match.app.icon || ''));
+		row.append($('<span class="manager_search_label"></span>').text(jawnosSearchLabel(match)));
+		list.append(row);
+	});
+	box.html(list).show();
+	jawnosSearchResultsPlace($('#start_menu_filter'), box);
+}
+
+function startMenuSearchMove(direction) {
+	var box = $('#start_menu_search_results');
+	var rows = box.find('.manager_search_result');
+	if (!rows.length) { return; }
+	var current = parseInt(box.find('.manager_search_result.search_selected').first().attr('index'), 10);
+	if (isNaN(current)) { current = direction > 0 ? -1 : rows.length; }
+	var next = (current + direction + rows.length) % rows.length;
+	rows.removeClass('search_selected');
+	var chosen = rows.eq(next).addClass('search_selected');
+	var top = chosen.position().top + box.scrollTop();
+	var bottom = top + chosen.outerHeight();
+	if (top < box.scrollTop()) { box.scrollTop(top); }
+	else if (bottom > box.scrollTop() + box.height()) { box.scrollTop(bottom - box.height()); }
+}
+
+// The arrows walk the house search's rows, Enter opens the chosen one, and
+// Escape puts the list away before the menu itself; the menu's own keydown
+// handler must not see these while the list is up.
+$(document).on('keydown', '#start_menu_filter', function (e) {
+	if ($('.start_menu_main_display').length) { return; }
+	var code = e.keyCode || e.which;
+	var box = $('#start_menu_search_results');
+	var shown = box.is(':visible');
+	if (code == 40 || code == 38) {
+		if (!shown) { startMenuSearchShow($(this).val()); shown = box.is(':visible'); }
+		if (!shown) { return; }
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		startMenuSearchMove(code == 40 ? 1 : -1);
+	}
+	else if (code == 13) {
+		if (!shown) { return; }
+		var row = box.find('.manager_search_result.search_selected').first();
+		if (!row.length) { return; }
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		startMenuSearchHide();
+		jawnosSearchOpen(row.attr('app'));
+	}
+	else if (code == 27) {
+		if (!shown) { return; }
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		startMenuSearchHide();
+	}
+});
+
+// A press on a result opens it through the global search's own handler; the
+// dropdown goes with the choice.
+$(document).on('click', '#start_menu_search_results .manager_search_result', function () {
+	startMenuSearchHide();
 });
 
 // What to put the keyboard back on after a swap. A menu body is replaced whole,
@@ -919,6 +997,7 @@ function startMenuCloser(wait) {
 			if (wait == 0 || !((m.x > left && m.x < (left + width)) && (m.y > top && m.y < (top + height)))) {
 				var st = $('#start_menu_toggle');
 				st.attr('toggled', 'closed');
+				startMenuSearchHide();
 				jawnosStartMenuFold(start_menu, st);
 			}
 			else {
