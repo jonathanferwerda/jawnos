@@ -1416,10 +1416,35 @@ function studioUsbListenStart(quiet, channel, ch, fallback) {
 		if (!quiet) { studioListenShowError(studioListenText('the app build has no direct USB audio')); }
 		return;
 	}
-	var answer = {};
-	try { answer = JSON.parse(bridge.usbTake('0', JSON.stringify(studioUsbListenPlan(listen_channel, ch)))); }
-	catch (e) { answer = { ok: false, error: studioListenText('the native audio bridge did not answer') }; }
+	// Build the plan before touching the running take. A pedal added to the
+	// track re-arms the Listen, and if the new plan cannot be built the old
+	// monitor must keep playing rather than stop and leave nothing.
+	var plan;
+	try { plan = JSON.stringify(studioUsbListenPlan(listen_channel, ch)); }
+	catch (e) {
+		studioListenShowError(studioListenText('the monitor plan could not be built') + ': ' + e);
+		if (fallback && typeof studioMonitorEngineFallback === 'function') { studioMonitorEngineFallback(); }
+		return;
+	}
+	console.log('studio: usb listen plan', plan);
+	// One USB take owns the interface: a re-arm starts a new plan, so the old
+	// take is stopped only once the new plan is in hand, and a take this page
+	// no longer knows about is cleared too.
+	if (studioUsbListening) {
+		try { bridge.usbTakeStop(); } catch (e) {}
+		studioUsbListening = false;
+	}
+	var answer = studioUsbTake(bridge, plan);
+	if (answer && answer.ok !== true && /already running/i.test(String(answer.error || ''))) {
+		// A take from before a reload (or one the page gave up on) still holds
+		// the interface: clear it once and retry the same plan.
+		try { bridge.usbTakeStop(); } catch (e) {}
+		answer = studioUsbTake(bridge, plan);
+	}
+	console.log('studio: usb listen answer', answer);
 	if (!answer || answer.ok !== true) {
+		studioUsbListening = false;
+		studioListenPollStop();
 		studioListenSetActive(false);
 		if (fallback && typeof studioMonitorEngineFallback === 'function') { studioMonitorEngineFallback(); }
 		if (!(quiet && studioListenNotRunning(answer && answer.error))) {
@@ -1435,6 +1460,13 @@ function studioUsbListenStart(quiet, channel, ch, fallback) {
 	if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
 	studioListenRender({ state: (answer.state || 'detecting'), channel: studioUsbListenChannel, frames: 0, usb: answer });
 	studioListenPollStart();
+}
+
+// One start call, with the bridge's own failures turned into the answer shape
+// the callers already read.
+function studioUsbTake(bridge, plan) {
+	try { return JSON.parse(bridge.usbTake('0', plan)); }
+	catch (e) { return { ok: false, error: studioListenText('the native audio bridge did not answer') }; }
 }
 
 function studioUsbStatus() {
@@ -1660,7 +1692,12 @@ function studioListenStart(quiet, channel, ch, fallback) {
 // `next_channel`/`ch` let Monitor move the one Listen to another track's input
 // after the engine has stopped the old one; the Configure control passes none.
 function studioListenStop(next_channel, ch) {
-	if (studioUsbListening) {
+	// The direct-USB take is stopped whenever that is the chosen path, not only
+	// when this page believes it is running: a take that outlived a reload (or a
+	// half-finished re-arm) would otherwise keep the interface and every new
+	// Listen would be refused with "already running". Stopping an idle holder is
+	// a no-op, so this is safe on a path with no take.
+	if (studioUsbListening || studioMonitorBackend() === 'usb') {
 		var usb = studioUsbAudioBridge();
 		studioUsbListening = false;
 		studioEngineListening = false;

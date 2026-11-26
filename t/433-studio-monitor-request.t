@@ -7,8 +7,10 @@
 #            listen's plan: the input channel, the track's pedals with their
 #            values, a bypassed pedal and the song's master rack (always the
 #            five slots, each with its footswitch), that the picker answers
-#            `usb` only when the app bridge and a device are there, and that the
-#            house-engine Listen carries the same rack.
+#            `usb` only when the app bridge and a device are there, that the
+#            house-engine Listen carries the same rack, and that a re-arm builds
+#            the new plan before stopping the running take, clears a stale one
+#            and retries once.
 
 use strict;
 use warnings;
@@ -185,6 +187,33 @@ ok(listen.master_json && JSON.parse(listen.master_json).length === 5,
 ok(listen.master_values_json && JSON.parse(listen.master_values_json).length === 6,
 	'with its footswitches and knobs (got ' + listen.master_values_json + ')');
 
+// A re-arm: the new plan is built before the running take is stopped, and a
+// stale take that answers "already running" is cleared and the start retried.
+values['#studio_monitor_backend'] = 'usb';
+var starts = 0, stops = 0;
+sandbox.JawnAudioEngine = {
+	usbTake: function (seconds, json) {
+		starts++;
+		if (starts === 1) { return '{"ok":false,"error":"a USB take is already running; stop it first"}'; }
+		return '{"ok":true,"state":"detecting"}';
+	},
+	usbTakeStop: function () { stops++; return '{"ok":true}'; },
+	usbTakeStatus: function () { return '{"ok":true,"state":"started"}'; },
+	usbAudioDevice: function () { return '{"ok":true,"device":{"vendorId":2235,"productId":10498}}'; }
+};
+sandbox.studioUsbListening = false;
+sandbox.studioUsbListenStart(false, '1');
+ok(starts === 2, 'a stale take is cleared and the start retried (got ' + starts + ')');
+ok(stops === 1, 'and the retry stops it exactly once (got ' + stops + ')');
+
+// A plan that cannot be built leaves the monitor that is already running alone.
+var wasStops = stops;
+sandbox.studioUsbListenPlan = function () { throw new Error('boom'); };
+sandbox.studioUsbListening = true;
+sandbox.studioUsbListenStart(false, '1');
+ok(stops === wasStops, 'a plan that cannot be built stops nothing (got ' + stops + ')');
+sandbox.studioUsbListening = false;
+
 console.log('ok');
 JS
 close $fh;
@@ -192,6 +221,6 @@ close $fh;
 my $out = `$node $script $studio $controls 2>&1`;
 my $rc = $? >> 8;
 is($rc, 0, 'the take request runs') or diag($out);
-like($out, qr/^ok$/m, 'both Monitor states, the USB plan and the engine Listen send the right request');
+like($out, qr/^ok$/m, 'both Monitor states, the USB plan, the re-arm and the engine Listen send the right request');
 
 done_testing();
