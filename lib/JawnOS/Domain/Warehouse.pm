@@ -420,6 +420,9 @@ sub task_writer {
 					# A child write: the press that started the usual already drew
 					# the window, so this row must not fork its own render.
 					quiet_child => $data->{'quiet_child'},
+					# A completion is a finished record, not a movement: the writer must
+					# insert it even though its type is stop.
+					completed_row => 1,
 					uuid => $timestamp . '-' . $md5_uuid,
 					server_time => $server_time
 				};

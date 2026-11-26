@@ -62,9 +62,15 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 sub appointment_writer($c,$app) {
 	my ($appt_header,$db_written);
 	$c = &subs::controller_builder() unless $c;
+	# A task completion (and any other finished point record) is a row to write,
+	# not a press that closes a session: it names its own moment and has no open
+	# session behind it, even though its type is stop. The flag is not a column.
+	my $completed_row = $app->{'completed_row'};
+	delete $app->{'completed_row'};
 	# remembered before the stop/record branches rewrite type: only a start or a
-	# stop can change which appointment (if any) owns the desktop theme
-	my $theme_movement = $app->{'type'};
+	# stop can change which appointment (if any) owns the desktop theme. A
+	# completed row is neither: it must not repaint the desk or move silence.
+	my $theme_movement = $completed_row ? '' : $app->{'type'};
 #	&subs::cache_delete({ app => $app->{'app'}, context => 'template' });
 	$app->{'server_time'} = $app->{'server_time'} || $c->param('server_time') || &subs::rightNow();
 	# A timestamp is a positive epoch or it is nothing. A clockless board used to
@@ -226,7 +232,14 @@ sub appointment_writer($c,$app) {
 			$db_written = 1;
 		}
 	}
-	if ($app->{'type'} eq 'stop') {
+	if ($app->{'type'} eq 'stop' && $completed_row) {
+		# A finished record offered as a stop - a task completion's own row, or a
+		# replay of one. Insert it at its own moment; there is no session to close
+		# and no child to settle.
+		&subs::db_insert('appointments', $app);
+		$appt_header = &subs::appt_header_printer({ app => $app->{'app'}, timestamp => $app->{'timestamp'} });
+	}
+	elsif ($app->{'type'} eq 'stop') {
 		# A stop's own timestamp is the moment it was pressed. One that is hours old
 		# is not a press - it is a machine coming back and flushing actions it queued
 		# while it was away, and applying it re-closes sessions the person stopped
@@ -493,7 +506,8 @@ sub appointment_writer($c,$app) {
 	# A start or stop can change who is present. If that begins or ends a
 	# lockdown, close the windows the rule no longer allows at once rather than
 	# waiting for the next poll.
-	eval { &subs::visibility_cache_clear(); &subs::lockdown_sweep({ force => 1 }) } if (($app->{'type'} || '') =~ /^(?:start|stop)$/);
+	eval { &subs::visibility_cache_clear(); &subs::lockdown_sweep({ force => 1 }) }
+		if !$completed_row && (($app->{'type'} || '') =~ /^(?:start|stop)$/);
 
 	# An appointment that carries the Silence box takes the whole house quiet
 	# when it starts and gives it back when it stops. The movement is the one

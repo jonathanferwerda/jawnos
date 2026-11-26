@@ -94,6 +94,7 @@ my $running;
 	is($appt{'washing'}{'source'}, 'task', 'and still says a task wrote it');
 	is($appt{'washing'}{'timestamp'}, 1_700_000_100_000, 'the row keeps its own moment');
 	ok($appt{'washing'}{'quiet_child'}, 'the row is written as a quiet child');
+	ok($appt{'washing'}{'completed_row'}, 'and is named a finished record, not a movement');
 
 	my ($washing) = grep { $_->{'uuid'} eq 'tw' } @{$result};
 	is($washing->{'completed'}, 'on', 'the checklist entry is completed');
