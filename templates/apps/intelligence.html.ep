@@ -37,6 +37,8 @@
 #intelligence .intelligence_filter_pills > *, #intelligence .intelligence_history_ranges > * { flex: 0 0 auto; }
 #intelligence .intelligence_filter_pill { padding: 3px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); }
 #intelligence .intelligence_filter_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; }
+#intelligence .intelligence_spread_button { padding: 3px 12px; border: 1px solid var(--accent, #3b7ddd); border-radius: 999px; background: transparent; color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); }
+#intelligence .intelligence_spread_button:disabled { opacity: .5; cursor: var(--jawnos-cursor-default, default); }
 #intelligence .intelligence_cadence { font: inherit; font-size: 13px; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .4); padding: 3px 6px; }
 #intelligence .intelligence_days_cell { min-width: 120px; max-width: 240px; }
 #intelligence .intelligence_days_button[hidden], #intelligence .intelligence_days_none[hidden] { display: none; }
@@ -196,27 +198,28 @@
 		</div>
 	</section>
 
-	<section id="intelligence_section_evaluations" class="intelligence_section" data-section="evaluations" role="tabpanel" hidden data-day-labels="<%= join('|', map { &subs::ui($day_names[$_]) } 0 .. 6) %>">
+	<section id="intelligence_section_evaluations" class="intelligence_section" data-section="evaluations" role="tabpanel" hidden data-day-labels="<%= join('|', map { &subs::ui($day_names[$_]) } 0 .. 6) %>" data-every-day="<%= &subs::ui('Every day') %>">
 		<div class="intelligence_filter_pills" role="group" aria-label="<%= &subs::ui('Evaluation filter') %>">
 			<button type="button" class="intelligence_filter_pill is-active" data-eval-filter="all"><%= &subs::ui('All') %></button>
 			<button type="button" class="intelligence_filter_pill" data-eval-filter="active"><%= $state_label{'active'} %></button>
 			<button type="button" class="intelligence_filter_pill" data-eval-filter="scheduled"><%= $state_label{'scheduled'} %></button>
 			<button type="button" class="intelligence_filter_pill" data-eval-filter="on_demand"><%= $state_label{'on_demand'} %></button>
 			<button type="button" class="intelligence_filter_pill" data-eval-filter="idle"><%= $state_label{'idle'} %></button>
+			<button type="button" class="intelligence_spread_button" hint="<%= &subs::ui('Give every timed evaluation its own day and time, heaviest first') %>"><%= &subs::ui('Spread') %></button>
 		</div>
 		<div class="intelligence_note" aria-live="polite"></div>
 		<div class="intelligence_scroll">
 			<table>
 				<thead><tr>
-					<th class="intelligence_sort" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Scope') %></th>
-					<th class="intelligence_sort" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Cadence') %></th>
-					<th class="intelligence_sort" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Days') %></th>
-					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Next run') %></th>
-					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Last run') %></th>
-					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Tokens 7d') %></th>
-					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Tokens 30d') %></th>
-					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Last run tokens') %></th>
-					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Average per run') %></th>
+					<th class="intelligence_sort" data-sort-key="scope" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Scope') %></th>
+					<th class="intelligence_sort" data-sort-key="cadence" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Cadence') %></th>
+					<th class="intelligence_sort" data-sort-key="days" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Days') %></th>
+					<th class="intelligence_sort" data-sort-key="next" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Next run') %></th>
+					<th class="intelligence_sort" data-sort-key="last" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Last run') %></th>
+					<th class="intelligence_sort" data-sort-key="tokens7" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Tokens 7d') %></th>
+					<th class="intelligence_sort" data-sort-key="tokens30" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Tokens 30d') %></th>
+					<th class="intelligence_sort" data-sort-key="lasttokens" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Last run tokens') %></th>
+					<th class="intelligence_sort" data-sort-key="avg" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Average per run') %></th>
 				</tr></thead>
 				<tbody>
 				<% my $evaluations = (ref $d->{'evaluations'} eq 'ARRAY') ? $d->{'evaluations'} : []; %>
@@ -231,10 +234,11 @@
 								<% } %>
 							</select>
 						</td>
-						<td class="intelligence_days_cell" data-scope="<%= $row->{'scope'} %>" hint="<%= &subs::ui('The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs') %>" data-sort="<%= ($row->{'cadence'} eq 'daily' || $row->{'cadence'} eq 'weekly') ? join(', ', map { substr(&subs::ui($day_names[$_]), 0, 3) } grep { defined $day_names[$_] } @{ $row->{'days'} || [] }) : '—' %>">
-							<% my $days_on = ($row->{'cadence'} eq 'daily' || $row->{'cadence'} eq 'weekly'); %>
-							<% my @shown_days = @{ $row->{'days'} || [] }; %>
-							<button type="button" class="intelligence_days_button" data-scope="<%= $row->{'scope'} %>" data-days="<%= join(',', @shown_days) %>" aria-haspopup="true" aria-expanded="false" hint="<%= &subs::ui('The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs') %>"<% if (!$days_on) { %> disabled hidden<% } %>><%= @shown_days ? join(', ', map { substr(&subs::ui($day_names[$_]), 0, 3) } grep { defined $day_names[$_] } @shown_days) : '—' %></button>
+						<% my $days_on = ($row->{'cadence'} eq 'daily' || $row->{'cadence'} eq 'weekly'); %>
+						<% my @shown_days = @{ $row->{'days'} || [] }; %>
+						<% my $days_text = (scalar(@shown_days) == 7) ? &subs::ui('Every day') : (@shown_days ? join(', ', map { substr(&subs::ui($day_names[$_]), 0, 3) } grep { defined $day_names[$_] } @shown_days) : '—'); %>
+						<td class="intelligence_days_cell" data-scope="<%= $row->{'scope'} %>" hint="<%= &subs::ui('The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs') %>" data-sort="<%= $days_on ? lc($days_text) : '—' %>">
+							<button type="button" class="intelligence_days_button" data-scope="<%= $row->{'scope'} %>" data-days="<%= join(',', @shown_days) %>" aria-haspopup="true" aria-expanded="false" hint="<%= &subs::ui('The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs') %>"<% if (!$days_on) { %> disabled hidden<% } %>><%= $days_text %></button>
 							<span class="intelligence_days_none"<% if ($days_on) { %> hidden<% } %>>—</span>
 						</td>
 						<td data-sort="<%= defined $row->{'next_run'} ? $row->{'next_run'} : 9999999999999 %>"><span class="intelligence_next_run" data-scope="<%= $row->{'scope'} %>"><%= length($row->{'next_run_text'} // '') ? $row->{'next_run_text'} : '—' %></span></td>

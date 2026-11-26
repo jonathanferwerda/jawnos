@@ -185,6 +185,7 @@ $(document).on('change', '#intelligence .intelligence_cadence', function() {
 // the rebuilt schedule stay one. The menu is fixed-positioned inside the app,
 // so the table's scroll box cannot clip it.
 var intelligenceDayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+var intelligenceEveryDayLabel = 'Every day';
 var intelligenceDaysMenu = null;
 var intelligenceDaysOwner = null;
 
@@ -194,15 +195,19 @@ function intelligenceDayShort(index) {
 }
 
 function intelligenceDayLabelsLoad() {
-	var raw = $('#intelligence_section_evaluations').attr('data-day-labels') || '';
+	var section = $('#intelligence_section_evaluations');
+	var raw = section.attr('data-day-labels') || '';
 	if (raw) {
 		var labels = raw.split('|');
 		if (labels.length === 7) { intelligenceDayLabels = labels; }
 	}
+	var every = section.attr('data-every-day') || '';
+	if (every) { intelligenceEveryDayLabel = every; }
 }
 
 function intelligenceDaysText(days) {
 	if (!days || !days.length) { return '—'; }
+	if (days.length === 7) { return intelligenceEveryDayLabel; }
 	return $.map(days.slice().sort(function(a, b) { return a - b; }), function(d) {
 		return intelligenceDayShort(parseInt(d, 10));
 	}).join(', ');
@@ -285,14 +290,31 @@ $(window).on('resize', function() { intelligenceDaysClose(); });
 // server puts data-sort on each cell (a lowercased label, an epoch, or a raw
 // number), so a token count sorts as a number and a next-run sorts by the
 // moment it will happen rather than by its printed text.
-function intelligenceSort(th) {
+var intelligenceSortKey = 'intelligence_sort';
+function intelligenceSortState() {
+	try { var raw = localStorage.getItem(intelligenceSortKey); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+}
+function intelligenceSortSave(key, direction) {
+	if (!key) { return; }
+	try { localStorage.setItem(intelligenceSortKey, JSON.stringify({ key: key, dir: direction })); } catch (e) {}
+}
+function intelligenceSortRestore() {
+	var state = intelligenceSortState();
+	if (!state || !state.key) { return; }
+	var th = $('#intelligence_section_evaluations th[data-sort-key="' + state.key + '"]').first();
+	if (!th.length) { return; }
+	intelligenceSort(th, state.dir === 'desc' ? 'desc' : 'asc');
+}
+function intelligenceSort(th, direction) {
 	var table = th.closest('table');
 	var body = table.find('tbody');
 	var column = th[0].cellIndex;
 	var type = th.attr('data-sort-type') || 'text';
-	var direction = th.attr('data-sort-dir') === 'asc' ? 'desc' : 'asc';
+	var previous = th.attr('data-sort-dir');
+	direction = (direction === 'asc' || direction === 'desc') ? direction : (previous === 'asc' ? 'desc' : 'asc');
 	table.find('th').removeAttr('data-sort-dir');
 	th.attr('data-sort-dir', direction);
+	intelligenceSortSave(th.attr('data-sort-key'), direction);
 	var rows = body.children('tr').get();
 	rows.sort(function(a, b) {
 		var aCell = $(a).children('td').eq(column);
@@ -329,12 +351,53 @@ $(document).on('keydown', '#intelligence_section_evaluations th.intelligence_sor
 	}
 });
 
+// --- spreading the schedules ---------------------------------------------
+// The button asks the server to give every timed scope its own day and time,
+// weighted by the tokens it spends. The window refreshes with its own stamp, so
+// the place it was put, the remembered pill and the remembered sort stay put.
+var intelligenceSpreadPending = '';
+
+function intelligenceSpreadNoteShow() {
+	if (!intelligenceSpreadPending) { return; }
+	intelligenceNote(intelligenceSpreadPending);
+	intelligenceSpreadPending = '';
+}
+
+$(document).on('click', '#intelligence .intelligence_spread_button', function() {
+	var button = $(this);
+	if (button.prop('disabled')) { return; }
+	button.prop('disabled', true);
+	intelligenceNote(jawnosT('Spreading the evaluations...'));
+	$.ajax({
+		url: '/manager/intelligence/spread',
+		type: 'POST',
+		dataType: 'json',
+		success: function(response) {
+			button.prop('disabled', false);
+			if (response && (response.ok === 0 || response.ok === 'no')) {
+				intelligenceNote(response.error || jawnosT('Could not spread the evaluations.'));
+				return;
+			}
+			intelligenceSpreadPending = (response && response.summary) ? response.summary : '';
+			var wind = $('#intelligence').closest('.wind');
+			var stamp = wind.length ? parseInt(wind.attr('timestamp'), 10) : NaN;
+			intelligenceOpener(isFinite(stamp) ? stamp : Date.now());
+		},
+		error: function() {
+			button.prop('disabled', false);
+			intelligenceNote(jawnosT('Could not spread the evaluations.'));
+		}
+	});
+});
+
 function intelligenceRestore() {
 	intelligenceSectionRestore();
 	intelligenceHistoryRestore();
 	intelligenceEvalFilter('all');
 	intelligenceDayLabelsLoad();
 	intelligenceDaysClose();
+	intelligenceSortRestore();
+	intelligenceSpreadNoteShow();
 }
 
 // --- provider balances in the chosen currency --------------------------------

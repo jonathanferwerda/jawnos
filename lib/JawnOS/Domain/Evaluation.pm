@@ -254,6 +254,14 @@ sub evaluation_cadence {
 	return 'off';
 }
 
+# A per-scope clock setting, bounded, or its fallback. The Spread button writes
+# these; a house that never spread keeps the old fixed hour and name minute.
+my $_clock_setting = sub {
+	my ($app, $setting, $lo, $hi, $fallback) = @_;
+	my $v = eval { &subs::setting_grabber({ app => $app, setting => $setting }) };
+	return (defined $v && $v =~ /^\d+$/ && $v >= $lo && $v <= $hi) ? ($v + 0) : $fallback;
+};
+
 # Minion reads cron in UTC, and 0 7 * * ... is the small hours of the house
 # (3am EDT, 2am EST). The days select narrows daily and weekly; nothing picked
 # means every night for daily and Sunday for weekly. Each scope gets its own
@@ -270,16 +278,22 @@ sub evaluation_schedule_cron {
 	my $days_setting = &subs::setting_grabber({ app => $scope, setting => 'nightly_evaluation_days' });
 	return undef if defined $days_setting && $days_setting =~ /^\s*none\s*$/i && ($cadence eq 'daily' || $cadence eq 'weekly');
 	my @days = @{ &subs::nightly_evaluation_days($app) };
-	my $minute = 0;
-	if ($scope ne '__president') {
-		$minute += ord($_) for split //, $scope;
-		$minute %= 60;
+	my $minute = $_clock_setting->($scope, 'evaluation_run_minute', 0, 59, undef);
+	if (!defined $minute) {
+		$minute = 0;
+		if ($scope ne '__president') {
+			$minute += ord($_) for split //, $scope;
+			$minute %= 60;
+		}
 	}
+	my $hour = $_clock_setting->($scope, 'evaluation_run_hour', 0, 23, 7);
 	return "$minute * * * *" if $cadence eq 'hourly';
-	return "$minute 7 * * " . (scalar @days ? join(',', @days) : '*') if $cadence eq 'daily';
-	return "$minute 7 * * " . (scalar @days ? join(',', @days) : '0') if $cadence eq 'weekly';
-	return "$minute 7 1 * *" if $cadence eq 'monthly';
-	return "$minute 7 1 1 *" if $cadence eq 'yearly';
+	return "$minute $hour * * " . (scalar @days ? join(',', @days) : '*') if $cadence eq 'daily';
+	return "$minute $hour * * " . (scalar @days ? join(',', @days) : '0') if $cadence eq 'weekly';
+	my $month_day = $_clock_setting->($scope, 'evaluation_month_day', 1, 28, 1);
+	return "$minute $hour $month_day * *" if $cadence eq 'monthly';
+	my $year_month = $_clock_setting->($scope, 'evaluation_year_month', 1, 12, 1);
+	return "$minute $hour $month_day $year_month *" if $cadence eq 'yearly';
 	return undef;
 }
 

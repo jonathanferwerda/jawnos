@@ -246,4 +246,35 @@ my $root = root();
 		'and a note that cannot be written cannot cost the report';
 }
 
+# ---- the spread's clock settings shape the cron ----------------------------
+{
+	no warnings 'redefine';
+	my %set;
+	local *subs::setting_grabber = sub {
+		my ($args) = @_;
+		my $s = $args->{'setting'} // '';
+		return $set{$s} if exists $set{$s};
+		return undef;
+	};
+	local *subs::evaluation_manual_only = sub { 0 };
+	local *subs::nightly_evaluation_days = sub { [ 1, 3 ] };
+
+	is(&subs::evaluation_schedule_cron('scope', 'daily'), '58 7 * * 1,3',
+		'a house that never spread keeps hour 7 and the name minute');
+	%set = ( evaluation_run_hour => 8, evaluation_run_minute => 42 );
+	is(&subs::evaluation_schedule_cron('scope', 'daily'), '42 8 * * 1,3',
+		'the spread hour and minute reach the daily cron');
+	is(&subs::evaluation_schedule_cron('scope', 'hourly'), '42 * * * *',
+		'an hourly scope uses the minute only');
+	$set{'evaluation_month_day'} = 17;
+	is(&subs::evaluation_schedule_cron('scope', 'monthly'), '42 8 17 * *',
+		'a monthly scope uses the spread day of the month');
+	$set{'evaluation_year_month'} = 5;
+	is(&subs::evaluation_schedule_cron('scope', 'yearly'), '42 8 17 5 *',
+		'a yearly scope uses the spread month and day');
+	%set = ( evaluation_run_hour => 99, evaluation_run_minute => 99, evaluation_month_day => 40 );
+	is(&subs::evaluation_schedule_cron('scope', 'daily'), '58 7 * * 1,3',
+		'an out-of-range clock falls back to the old hour and minute');
+}
+
 done_testing();

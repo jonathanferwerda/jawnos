@@ -12,9 +12,10 @@ package subs;
 # list rather than taking the window down. The daily rollup is the long-lived
 # source for History; older days fall back to the house's daily ai_budget total.
 #
-# Loaded on demand by lib/JawnOS/Domain/Loader.pm. Only the six panel entry
-# points are named subs; the shared helpers are anonymous so the loader map and
-# t/91 stay a one-to-one list of things another module can call by name.
+# Loaded on demand by lib/JawnOS/Domain/Loader.pm. Only the seven entry points
+# (six panels and the Spread action) are named subs; the shared helpers are
+# anonymous so the loader map and t/91 stay a one-to-one list of things another
+# module can call by name.
 
 use strict;
 use warnings;
@@ -53,6 +54,12 @@ my %KNOWN_PROVIDER_LABEL = map { $_->[0] => $_->[1] } @KNOWN_PROVIDERS;
 
 # How far back each History range reaches, in days. "all" has no fixed span.
 my $RANGE_DAYS = { '24h' => 2, '7d' => 7, '30d' => 30, '90d' => 90, '1y' => 365, 'all' => 0 };
+
+# The quiet window the Spread button schedules inside, in UTC hours: 6..10 is
+# 2am-6am EDT (1am-5am EST), the small hours the nightly used, now wide enough
+# to give every scope a slot of its own.
+my $SPREAD_FIRST_HOUR = 6;
+my $SPREAD_HOURS = 5;
 
 # A number from a database row, or zero.
 my $_num = sub {
@@ -416,6 +423,91 @@ sub intelligence_evaluations {
 			|| $a->{'scope'} cmp $b->{'scope'}
 	} @out;
 	return \@out;
+}
+
+# The Evaluations panel's Spread button: give every timed scope a slot so the
+# batch is not asked for on one day and one minute. Weekly scopes take one
+# weekday each, monthly one day of the month, yearly one month and day, and
+# every scope an hour and minute in the quiet window. Scopes are ordered by the
+# tokens their evaluation spent over thirty days, heaviest first, so the costly
+# runs are the ones separated; an unmeasured house falls back to the name. The
+# assignment is written to the scope's settings and its schedule is rebuilt, so
+# the spread survives a restart and a peer.
+sub intelligence_spread {
+	my ($now) = @_;
+	$now = &subs::rightNow() unless defined $now && $now =~ /^\d+$/;
+	my $since = $_minute_key->($now - 30 * 86400000);
+
+	# Every scope with a timed cadence. A legacy nightly checkbox reads as daily.
+	my $scope_rows = $_rows->(
+		"select distinct app from settings where setting in ('evaluation_cadence', 'nightly_evaluation')"
+	);
+	my %cadence;
+	foreach my $r ( @{$scope_rows} ) {
+		my $app = $r->{'app'} // '';
+		next unless length $app;
+		my $c = eval { &subs::evaluation_cadence($app) } || 'off';
+		next unless grep { $_ eq $c } qw/hourly daily weekly monthly yearly/;
+		$cadence{$app} = $c;
+	}
+
+	# The weight is the evaluation traffic the ledger attributed to the scope in
+	# the last thirty days. It is zero until those per-app rows exist, and a zero
+	# only means the order is the name.
+	my %weight;
+	my $weight_rows = $_rows->(
+		'select app, sum(tokens_in + tokens_out) as tokens from ai_spend'
+		. ' where role = ? and app is not null and app != ? and minute >= ? group by app',
+		'eval_assistant', '', $since,
+	);
+	foreach my $r ( @{$weight_rows} ) {
+		my $app = $r->{'app'} // '';
+		$weight{$app} = $_num->($r->{'tokens'}) if length $app;
+	}
+
+	# A run recorded before the per-app ledger row existed still carries its token
+	# total in evaluation_runs. Use that when the ledger has no weight yet, so the
+	# spread starts weighing what the house has already measured.
+	my $run_rows = $_rows->("select app, value from settings where setting = 'evaluation_runs'");
+	foreach my $r ( @{$run_rows} ) {
+		my $app = $r->{'app'} // '';
+		next unless length $app;
+		next if ($weight{$app} || 0) > 0;
+		my $runs = eval { decode_json($r->{'value'} || '') };
+		next unless ref $runs eq 'ARRAY' && ref $runs->[0] eq 'HASH';
+		my $tokens = $_num->($runs->[0]->{'tokens'});
+		$weight{$app} = $tokens if $tokens > 0;
+	}
+
+	my %group;
+	push @{ $group{ $cadence{$_} } }, $_ for keys %cadence;
+	my $spread = 0;
+	my $slot = 0;
+	foreach my $c ( sort keys %group ) {
+		my @apps = sort { ($weight{$b} || 0) <=> ($weight{$a} || 0) || $a cmp $b } @{ $group{$c} };
+		my $i = 0;
+		foreach my $app ( @apps ) {
+			my $hour = $SPREAD_FIRST_HOUR + ($slot % $SPREAD_HOURS);
+			my $minute = (13 * $slot) % 60;
+			if ($c eq 'weekly') {
+				&subs::setting_setter({ app => $app, setting => 'nightly_evaluation_days', value => ($i % 7) });
+			}
+			elsif ($c eq 'monthly') {
+				&subs::setting_setter({ app => $app, setting => 'evaluation_month_day', value => (($i % 28) + 1) });
+			}
+			elsif ($c eq 'yearly') {
+				&subs::setting_setter({ app => $app, setting => 'evaluation_year_month', value => (($i % 12) + 1) });
+				&subs::setting_setter({ app => $app, setting => 'evaluation_month_day', value => (1 + int($i / 12) % 28) });
+			}
+			&subs::setting_setter({ app => $app, setting => 'evaluation_run_hour', value => $hour });
+			&subs::setting_setter({ app => $app, setting => 'evaluation_run_minute', value => $minute });
+			eval { &subs::evaluation_schedule_arrange($app) };
+			$spread++;
+			$slot++;
+			$i++;
+		}
+	}
+	return { spread => $spread };
 }
 
 # The Providers panel: every provider the ledger names, the five known ones

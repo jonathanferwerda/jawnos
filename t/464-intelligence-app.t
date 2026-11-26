@@ -21,7 +21,7 @@ use RepoSource;
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace a stub mid-test.
 subs::preload($_) for qw(
-	intelligence_summary intelligence_agents intelligence_evaluations
+	intelligence_summary intelligence_agents intelligence_evaluations intelligence_spread
 	intelligence_providers intelligence_history intelligence_recent
 );
 
@@ -180,6 +180,57 @@ subs::preload($_) for qw(
 	is($by{'__president'}->{'state'}, 'on_demand', 'each_run is On demand');
 	is($by{'notes'}->{'state'}, 'idle', 'an off scope with no run is Idle');
 }
+# ------------------------------------------------------- spreading the schedules
+{
+	local *subs::evaluation_cadence = sub {
+		my ($app) = @_;
+		my %c = (
+			a_weekly => 'weekly', b_weekly => 'weekly', a_monthly => 'monthly',
+			a_daily => 'daily', b_daily => 'daily', a_hourly => 'hourly', a_off => 'off',
+		);
+		return $c{$app} || 'off';
+	};
+	local *subs::db_query = sub {
+		my ($sql) = @_;
+		if ($sql =~ /select distinct app from settings where setting in/) {
+			return FakeRows->new([ map { { app => $_ } } qw(a_weekly b_weekly a_monthly a_daily b_daily a_hourly a_off) ]);
+		}
+		if ($sql =~ /from settings where setting = 'evaluation_runs'/) {
+			return FakeRows->new([ { app => 'a_daily', value => encode_json([ { tokens => 5000 } ]) } ]);
+		}
+		if ($sql =~ /from ai_spend/) {
+			return FakeRows->new([
+				{ app => 'a_weekly',  tokens => 900 },
+				{ app => 'b_weekly',  tokens => 100 },
+				{ app => 'a_monthly', tokens => 50 },
+				{ app => 'b_daily',   tokens => 10 },
+			]);
+		}
+		return FakeRows->new([]);
+	};
+	my (%set, @arranged);
+	local *subs::setting_setter = sub {
+		my ($args) = @_;
+		$set{ $args->{'app'} }->{ $args->{'setting'} } = $args->{'value'};
+		return 1;
+	};
+	local *subs::evaluation_schedule_arrange = sub { push @arranged, $_[0]; return 1 };
+
+	my $result = &subs::intelligence_spread(1700000000000);
+	is($result->{'spread'}, 6, 'off scopes are left out of the spread');
+	is($set{'a_weekly'}->{'nightly_evaluation_days'}, 0, 'the heaviest weekly gets the first weekday');
+	is($set{'b_weekly'}->{'nightly_evaluation_days'}, 1, 'the next weekly gets a different weekday');
+	is($set{'a_monthly'}->{'evaluation_month_day'}, 1, 'a monthly gets a day of the month');
+	isnt($set{'a_weekly'}->{'evaluation_run_minute'}, $set{'b_weekly'}->{'evaluation_run_minute'},
+		'two scopes get different minutes');
+	ok(!exists $set{'a_off'}, 'an off scope is not written');
+	is(scalar @arranged, 6, 'every spread scope has its schedule rebuilt');
+	ok(exists $set{'a_hourly'}->{'evaluation_run_minute'}, 'hourly scopes get their own minute');
+	ok(exists $set{'a_daily'}->{'evaluation_run_hour'}, 'daily scopes get an hour');
+	is($set{'a_daily'}->{'evaluation_run_minute'}, 0, 'a run-log weight orders the daily scope first');
+	is($set{'b_daily'}->{'evaluation_run_minute'}, 13, 'and the next daily follows it');
+}
+
 
 # ------------------------------------------------------------ history and fallback
 {
@@ -231,6 +282,10 @@ subs::preload($_) for qw(
 	my $controller = read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_intelligence.pm");
 	like($controller, qr/sub\s+action_92001\b/, 'the controller defines action_92001');
 	like($controller, qr/sub\s+action_92002\b/, 'the controller defines the cadence action');
+	like($routes, qr/\[\s*92003\s*,\s*'post'\s*,\s*'\/manager\/intelligence\/spread'\s*,\s*'action_92003'\s*\]/,
+		'the spread is 92003 POST /manager/intelligence/spread');
+	like($controller, qr/sub\s+action_92003\b/, 'the controller defines the spread action');
+	like($controller, qr/intelligence_spread\(\)/, 'the spread action calls the domain spread');
 	like($controller, qr/evaluation_cadence_apply\(\$app, \$cadence\)/, 'the cadence action uses the schedule arranger');
 	like($controller, qr/nightly_evaluation_days/, 'the cadence action saves the weekdays');
 	like($controller, qr/intel\s*=>\s*\$data/, 'the panels use a non-reserved stash name');
@@ -257,7 +312,10 @@ subs::preload($_) for qw(
 	like($tpl, qr/class="intelligence_cadence" data-scope=/, 'each evaluation row carries an editable cadence picker');
 	like($tpl, qr/class="intelligence_days_button"/, 'each evaluation row carries an editable weekday dropdown');
 	like($tpl, qr/data-day-labels=/, 'the weekday dropdown carries the translated day names');
-	like($tpl, qr/class="intelligence_sort" data-sort-type="num"/, 'the evaluation columns are sortable');
+	like($tpl, qr/class="intelligence_sort"[^>]*data-sort-type="num"/, 'the evaluation columns are sortable');
+	like($tpl, qr/data-sort-key="next"/, 'the sortable headers have stable keys');
+	like($tpl, qr/data-every-day=/, 'the weekday dropdown has an Every day label');
+	like($tpl, qr/class="intelligence_spread_button"/, 'the evaluations carry the Spread button');
 	like($tpl, qr/class="intelligence_days_cell"/, 'the weekday cell stays in the table so columns line up');
 	like($tpl, qr/class="intelligence_days_none"/, 'a scope without weekdays shows a dash');
 	like($tpl, qr/include 'configure\/currency_amount'/, 'the provider balance reuses the currency picker');
@@ -272,6 +330,9 @@ subs::preload($_) for qw(
 	like($js, qr/payload\.days/, 'the weekday picker sends days in the cadence request');
 	like($js, qr/function intelligenceDaysOpen/, 'the weekday picker opens a multiselect menu');
 	like($js, qr/function intelligenceSort/, 'a clicked evaluation column sorts the table');
+	like($js, qr/intelligenceSortKey/, 'the evaluation sort is remembered');
+	like($js, qr/function intelligenceSpreadNoteShow/, 'the spread answer is shown after the refresh');
+	like($js, qr/intelligenceEveryDayLabel/, 'the weekday trigger says Every day');
 	like($js, qr/currency_picker/, 'the Intelligence window converts a picked currency');
 	unlike($js, qr/settingSetter/, 'the weekdays are not a second request');
 

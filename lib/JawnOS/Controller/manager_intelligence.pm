@@ -113,4 +113,25 @@ sub action_92002 {
 	});
 }
 
+# POST /manager/intelligence/spread
+#
+# The Evaluations panel's Spread button: give every timed scope its own slot
+# across the week, the month and the quiet window. The domain writes the
+# settings and rebuilds each scope's Minion schedule, so the answer is a count
+# rather than a second read: the window the button runs in refreshes itself.
+sub action_92003 {
+	my $c = shift;
+	my $result = eval { &subs::intelligence_spread() };
+	if ($@) {
+		$c->render(json => { ok => 0, error => &subs::ui('Could not spread the evaluations.') });
+		return;
+	}
+	my $n = (ref $result eq 'HASH' && defined $result->{'spread'}) ? $result->{'spread'} : 0;
+	$c->render(json => {
+		ok      => 'yes',
+		spread  => $n,
+		summary => &subs::ui('Spread') . ' ' . $n . ' ' . &subs::ui('evaluations'),
+	});
+}
+
 1;
