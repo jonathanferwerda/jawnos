@@ -482,9 +482,9 @@ feature-on build loads on the device: `jawn-audio --backends --json` reports
 | --- | --- |
 | 1. Ten minutes of 48 kHz mono, zero unreported xruns, a WAV that opens and matches its declared length | **PASS** with findings (a) and (b) — 599.956 s WAV, xruns 0 |
 | 2. `oboe: true` on the phone; `oboe: false` and `t/428` green on Linux | **PASS** — `{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}` |
-| 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **RUNNABLE, on-device take pending** — the plan-carrying ABI and the fixture test exist (§11); the phone take needs the panel's fixture choice |
+| 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **RUNNABLE, not claimed passed** — the strip is unit-tested on Linux and the on-device take now names `plan:"tone+delay"`; a direct same-input Linux/phone comparison is still a follow-up |
 | 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
-| 5. The mobile-audio §6 round trip recorded | **PROBE EXPOSED, NUMBER PENDING** — the C export and the panel button exist (§11.7); item 5 is **not passed** until the UM2 patch-cable number is recorded |
+| 5. The mobile-audio §6 round trip recorded | **MEASURED** — UM2 patch cable 13.111 / 12.959 / 15.702 ms (median **13.111 ms**); phone speaker/mic 59.098 / 58.001 ms (median **58.55 ms**); input Exclusive, output Shared; full table in `docs/studio-mobile-audio.md` §6 |
 
 - **(a) The loss is in-take overflow, not the stop-path tail.** 0 frames on the 10 s smoke,
 480 frames / 10.0 ms on the 60 s USB take, 1,152 frames / 24.0 ms on the 10 min take — each an
@@ -498,12 +498,14 @@ blocks (§11.7).
 - **(b) The 10 min built-in-mic take clipped** at 1.000 (0.0 dBFS); the USB take did not (peak
 0.195862, −14.2 dBFS).
 - **(c) The granted buffer is 2,976 frames / 62.0 ms** (burst 96 frames / 2.0 ms) on every run —
-the leading indicator for the unmeasured round trip and the number to settle next.
+the leading indicator flagged for the round trip; measured, it is a ceiling (the wired UM2 round
+trip is 13.1 ms), not the effective latency.
 
-Gate 3 is blocked on the take ABI, not on the strip: the capture path writes raw S16 and the
-`Channel`/plan shape stops at the JNI boundary. Gate 5's probe is now exported and has a panel
-button (§11.7); the gate itself stays open because no UM2 patch-cable number has been recorded.
-Per-run numbers and the full finding text are in `docs/studio-mobile-audio.md` §6.
+Gate 3 is runnable, not a claim of passing: the strip is unit-tested on Linux, the plan-carrying
+ABI reaches the phone, and the on-device take names `plan:"tone+delay"`, but the two sides still
+need a same-input take-to-take comparison. Gate 5 is **measured** — the UM2 patch cable is
+13.1 ms and the phone's own speaker/mic is 58.0–59.1 ms (`docs/studio-mobile-audio.md` §6).
+Per-run numbers and the full finding text are in the mobile-audio doc.
 
 ## 10. Landing checklist (once the cache has the crate)
 
@@ -700,10 +702,10 @@ engine's report, so a number cannot be attributed to the wrong path. The phone
 row leaves both selects on *default*; the UM2 patch-cable row selects the USB
 input (176 on the tablet) and the matching USB output.
 
-**Not claimed:** item 5 is **not passed**. The probe is exposed and the panel
-can record the number, but no round trip has been measured on the tablet yet.
-The UM2 patch-cable run must land before §6 records a latency and before the
-native engine is described as a monitoring path.
+**Now measured:** item 5 was open when this slice landed; the probe is exposed and the panel
+records the number. The UM2 patch-cable and default speaker/mic runs landed on 2026-11-25 — see
+`docs/studio-mobile-audio.md` §6 ("Round trip measured") and §9 above. The wired UM2
+(**13.111 ms** median) is a monitoring path; the phone's own speaker (**58.55 ms** median) is not.
 
 ### 11.8 What the person taps for the two proofs
 
@@ -714,9 +716,10 @@ native engine is described as a monitoring path.
    Report any residual in frames and blocks; do not round it.
 2. **UM2 patch cable.** Cable the UM2's headphone out to its instrument input
    (gain as for the `table` measurement). In *Round trip*, choose the USB input
-   (id 176 on the tablet) and the matching USB output. **Measure round trip**,
-   three times per granted sharing mode. Record `round_trip_ms`, both ids, both
-   sharing/performance modes, the buffers and xruns from the result line and
+   (233 in the 2026-11-25 duplex run; 176 in the earlier capture) and the
+   matching USB output (229). **Measure round trip**, three times per granted
+   sharing mode. Record `round_trip_ms`, both ids, both sharing/performance
+   modes, the buffers and xruns from the result line and
    `/sdcard/Download/jawnos-native-roundtrip-<stamp>.json`.
 3. **Phone speaker/mic.** Leave both selects on *default* and measure again.
    This row may fail the 0.35 correlation floor (AGC, the 62 ms buffer); a
@@ -740,5 +743,6 @@ native engine is described as a monitoring path.
 - Tablet install: `adb connect 192.168.1.84:45491` was refused twice (the host answers and the
   port is open, so the wireless-debug pairing, not the network, is the blocker). The build is
   published for the in-app updater; installation is the person's step, or a fresh pairing.
-- On-device disk-queue and round-trip runs: **pending the person's tap** (§11.8). Item 5 is not
-  passed, and no latency number is recorded, until the UM2 patch-cable run returns a report.
+- On-device runs: the disk-queue take and both round-trip rows landed on 2026-11-25 (§11.8) —
+  UM2 patch cable **13.111 ms** median, phone speaker/mic **58.55 ms** median; item 5 is
+  **measured** and recorded in `docs/studio-mobile-audio.md` §6.

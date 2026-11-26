@@ -950,7 +950,7 @@ converter can replace. The tag now lives in one module (`auth.rs`), and `pull_at
 whose whole span ended a datagram before the caller's master position, so a sender that stops no
 longer stalls a block. No device opens in the bearer: wiring capture and the patchbay is P4.
 
-### P4 — Sources that are late (2 weeks) — **engine code complete; bus take landed; gate runnable, needs a person and the hardware**
+### P4 — Sources that are late (2 weeks) — **engine code complete; bus take landed; phone round trip measured; gate runnable, needs a person and the hardware**
 
 The uplink proper, with compensation: the phone (C) and the T-Deck (D) become channels on the master,
 each placed by its declared latency, so a take played 30 ms late is recorded in time. Each peer
@@ -959,6 +959,12 @@ writes its own take locally first (D14), so the master places it rather than own
 **Gate:** guitar through the UM2 and voice on the phone in one session, both in time with the click,
 both on the same take, ten minutes without a lost take. Then the same from the T-Deck's live
 16 kHz microphone.
+
+**The phone's declared latency, measured (2026-11-25):** the Oboe duplex round trip on the tablet
+`SM-X400` (app 1359 / 0.118.361) is **13.111 ms** median over the UM2 patch cable — inside class C
+— and **58.55 ms** median on the phone's own speaker/mic, above it. The wired UM2 is a monitoring
+path; the phone's own speaker/mic is a source whose latency is now a measured number rather than a
+declared guess. Details: `docs/studio-mobile-audio.md` §6.
 
 **Master uplink (2026-11-21, in the tree):** a plan's `peer` source — a kind the manager already
 accepts — binds on the machine that mixes it. `--serve --uplink ADDR` with the session key starts a

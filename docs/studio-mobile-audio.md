@@ -8,8 +8,10 @@
 **Status:** plan, 2026-11-18; first native slice built and measured, 2026-11-25. The browser
 path and the Linux engine are in the tree, and the `oboe` slice of §4 now records on a real
 tablet (`SM-X400`, app 1356 / 0.118.358): 48 kHz mono capture, Exclusive/LowLatency, zero xruns,
-from the built-in mic and from the UM2 over USB. Open: the `Channel` fixture comparison and the
-duplex round trip — §6 is **not** measured (see "First slice result" there).
+from the built-in mic and from the UM2 over USB. The duplex round trip is **measured** (§6,
+"Round trip measured"): the UM2 patch cable is 13.1 ms (class C) and the phone's own speaker/mic
+is 58.0–59.1 ms, so the wired UM2 is a monitoring path and the phone's own speaker is not. Open:
+the `Channel` fixture comparison — a direct same-input Linux/phone take is still a follow-up.
 
 **How to read the numbers.** Every figure carries one of three marks:
 
@@ -518,7 +520,7 @@ loads and opens Oboe on the device.
 | 2. `oboe: true` on the phone; `oboe: false` and `t/428` green on Linux | **PASS** — `{"alsa":false,"pipewire":false,"jack":false,"oboe":true,"null":true}` |
 | 3. The `Channel` fixture agrees with the Linux null build within a stated tolerance | **RUNNABLE, on-device take pending** — the engine and the app carry one plan (§6, "Second slice") |
 | 4. Sharing and performance mode for the built-in mic and the UM2 over USB | **PASS** — both Exclusive / LowLatency; UM2 device id 176, input 0 |
-| 5. This section's round trip recorded | **PROBE EXPOSED, NUMBER PENDING** — the probe and its detector are unit-tested and the panel has a *Round trip* button; no device number yet |
+| 5. This section's round trip recorded | **MEASURED** — UM2 patch cable 13.111 / 12.959 / 15.702 ms (median **13.111 ms**); phone speaker/mic 59.098 / 58.001 ms (median **58.55 ms**); method and per-run detail in "Round trip measured" below |
 
 Three findings, none of them a reason to argue with the numbers:
 
@@ -537,12 +539,12 @@ engine's S16 path, is where to look.
 - **(c) The granted buffer is 2,976 frames / 62.0 ms** (burst 96 frames / 2.0 ms). It is the
 leading indicator for the round trip below.
 
-**The round trip is NOT measured.** The first slice opened an input stream and no output, so
-there was no click to hear and no duplex stream to time. A round trip cannot come in under one
-input buffer plus one output buffer, so the number to settle next is the granted **2,976 frames
-/ 62.0 ms**: if a duplex stream is granted the same buffer, the round trip starts at 62 ms before
-any scheduling, USB or acoustic time. The probe is now exported and has a panel button (see
-"Third slice"); measure it before the §3 latency table is used to argue for a monitoring half.
+**The round trip was not measured in this first slice.** It opened an input stream and no output,
+so there was no click to hear and no duplex stream to time. That gap is closed now: the probe and
+its panel button (see "Third slice") measured it on 2026-11-25 — the results are in "Round trip
+measured" below. The granted **2,976 frames / 62.0 ms** input buffer turned out **not** to be the
+effective latency: the UM2 patch cable's round trip is 13.1 ms, so 62.0 ms is a ceiling, not the
+measured number, and the §3 latency table can now be read against a real figure.
 
 ### Second slice — the strip plan and the probe (2026-11-25)
 
@@ -592,8 +594,63 @@ method, and the Studio panel has *Round trip input*, *Round trip output*, *Measu
 and a result line. Results are written to
 `/sdcard/Download/jawnos-native-roundtrip-<timestamp>.json` (best effort).
 
-**Item 5 is not passed.** No round trip has been measured on the tablet. The UM2 patch-cable row
-(input 176, the matching USB output, instrument gain as for the `table` measurement) is the run
-that records it; three runs per granted sharing mode, then the median and the panel's granted
-buffers/xruns fill this section. The built-in speaker/mic row follows and may be refused by the
-0.35 correlation floor — a refusal is recorded as a result, not as a latency.
+**Item 5 is measured.** The UM2 patch-cable row (input 233, output 229 on the tablet, instrument
+gain as for the `table` measurement) and the default speaker/mic row were both run on 2026-11-25;
+"Round trip measured" below records the medians, the granted buffers and the xruns. The built-in
+speaker/mic row did **not** fail the 0.35 correlation floor — it cleared it at 0.737–0.752 — but
+its 58 ms is the acoustic speaker→mic path, not a monitoring figure.
+
+### Round trip measured — 2026-11-25
+
+Tablet `SM-X400`, app **1359 / 0.118.361**, engine landed with the change. The probe is the
+duplex click the native path exports (`docs/studio-oboe-slice.md` §11.7): a 6 ms chirp, a
+normalized cross-correlation, and the difference of the two streams'
+`getTimestamp(CLOCK_MONOTONIC)` readings. The media volume was raised from 0 to 15/15 before the
+first run — the six attempts before that all refused with "heard no click" because `STREAM_MUSIC`
+was 0. That is the probe needing an audible path, not a probe defect.
+
+**UM2 patch cable** — the interface's headphone out into its instrument input, instrument gain as
+for the `table` measurement. Input device **233**, output device **229**. Three runs, each above
+the 0.35 correlation floor:
+
+| Run | Round trip | Frames | Correlation | Input frames | Output frames | Heard frame |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | **13.111 ms** | 629.3 | 0.431 | 72,096 | 73,152 | 13,112 |
+| 2 | 12.959 ms | 622.0 | 0.379 | 72,288 | 72,384 | 13,880 |
+| 3 | 15.702 ms | 753.7 | 0.431 | 72,000 | 72,192 | 13,928 |
+| **Median** | **13.111 ms** | | | | | |
+
+Input **Exclusive / LowLatency**, buffer 2,976 / burst 96; output **Shared / LowLatency**,
+buffer 384 / burst 192; xruns 0 on both; click frame 12,000.
+
+**Default phone speaker/mic** — both selects on default (input/output −1). Two runs:
+
+| Run | Round trip | Frames | Correlation | Input frames | Output frames | Heard frame |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | **59.098 ms** | 2,836.7 | 0.752 | 72,096 | 72,000 | 15,761 |
+| 2 | 58.001 ms | 2,784.0 | 0.737 | 72,000 | 71,136 | 16,566 |
+| **Median** | **58.55 ms** | | | | | |
+
+Input **Exclusive / LowLatency**, buffer 2,976 / burst 96; output **Shared / LowLatency**,
+buffer 192 / burst 96; xruns 0 on both; click frame 12,000.
+
+What the numbers say:
+
+- **The wired UM2 is a monitoring path.** The 13.1 ms median is inside the §3 expected band for
+  AAudio/Oboe `LowLatency` + `Exclusive` (roughly 8–20 ms) and inside the roadmap's class C
+  promise (≤ 20 ms on a wire), and it lands essentially on the `table` **Pro Audio** path's
+  **14.0 ms** (`docs/studio-audio-roadmap.md` §2). A guitar through the UM2 on the phone is a
+  usable source, not only a capture.
+- **The phone's own speaker is not.** 58.0–59.1 ms is far above the class C band; the
+  speaker→microphone acoustic path is a capture route with a declared latency, not a near-zero
+  monitoring path. The phone's own mic is a source placed by that declared number (§4, class
+  B/C) — it is not heard back.
+- **Output was Shared in every run; input was Exclusive.** Exclusive was requested first on both
+  sides, but only the input was granted it. The output sharing is the open tuning point — it is
+  what stands between 13.1 ms and a lower number, not the input buffer.
+- **The 2,976-frame input buffer is a ceiling, not the latency.** At 62.0 ms it is the leading
+  indicator the first slice flagged (finding (c)), yet the wired round trip is 13.1 ms: the
+  buffer bounds the worst case, it does not set the measured path.
+
+The default row has two consistent runs (58.0 and 59.1 ms); a third is optional and would only
+tighten a median that already sits well above the class C band.
