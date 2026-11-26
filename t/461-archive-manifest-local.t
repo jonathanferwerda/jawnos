@@ -269,7 +269,7 @@ is(subs::archive_manifest_local_read({ remote_uuid => 'peer-2', location => 'mus
 	local *subs::archive_manifest_fetch = sub {
 		return { status => 'ok', unchanged => 1, digest => 'digest-1', manifest_digest => 'manifest-1', folder => '/mnt/archive/Music', hostname => 'Studio' };
 	};
-	my $stale = subs::rightNow() - 20 * 60 * 1000;
+	my $stale = subs::rightNow() - 70 * 60 * 1000;
 	subs::archive_manifest_local_write({ %{$local}, checked => $stale });
 	my $row_key = {
 		app => 'archive', context => 'manifest',
@@ -318,7 +318,7 @@ is(subs::archive_manifest_local_read({ remote_uuid => 'peer-2', location => 'mus
 	local *subs::archive_manifest_fetch = sub {
 		return { status => 'ok', unchanged => 1, media_changed => 1, rescan => 1, digest => 'digest-new', manifest_digest => 'manifest-2' };
 	};
-	my $stale = subs::rightNow() - 20 * 60 * 1000;
+	my $stale = subs::rightNow() - 70 * 60 * 1000;
 	subs::archive_manifest_local_write({ %{$local}, digest => 'digest-2', manifest_digest => 'manifest-2', checked => $stale });
 	my $job = FakeJob->new;
 	subs::archive_manifest_refresh_job($job, { remote_uuid => 'peer-1', location => 'music', digest => 'digest-2' });
@@ -354,7 +354,7 @@ is(subs::archive_manifest_local_read({ remote_uuid => 'peer-2', location => 'mus
 	local *subs::archive_manifest_fetch = sub {
 		return { error => 'the archive machine did not answer' };
 	};
-	my $stale = subs::rightNow() - 20 * 60 * 1000;
+	my $stale = subs::rightNow() - 70 * 60 * 1000;
 	my $before = subs::archive_manifest_local_write({ %{$local}, digest => 'digest-2', checked => $stale });
 	my $job = FakeJob->new;
 	subs::archive_manifest_refresh_job($job, { remote_uuid => 'peer-1', location => 'music', digest => 'digest-2' });
@@ -368,7 +368,7 @@ is(subs::archive_manifest_local_read({ remote_uuid => 'peer-2', location => 'mus
 
 {
 	clear_memos();
-	my $stale = subs::rightNow() - 20 * 60 * 1000;
+	my $stale = subs::rightNow() - 70 * 60 * 1000;
 	subs::archive_manifest_local_write({
 		remote_uuid => 'peer-1',
 		location => 'music',
@@ -390,10 +390,10 @@ is(subs::archive_manifest_local_read({ remote_uuid => 'peer-2', location => 'mus
 	is($started, 1, 'a copy older than the interval starts one background check');
 }
 
-# Ten minutes is inside the interval; a fresh copy starts no check at all.
+# Fifty minutes is inside the hour; a fresh copy starts no check at all.
 {
 	clear_memos();
-	my $recent = subs::rightNow() - 10 * 60 * 1000;
+	my $recent = subs::rightNow() - 50 * 60 * 1000;
 	subs::archive_manifest_local_write({
 		remote_uuid => 'peer-1',
 		location => 'music',
@@ -408,7 +408,7 @@ is(subs::archive_manifest_local_read({ remote_uuid => 'peer-2', location => 'mus
 	local *subs::archive_manifest_refresh_start = sub { $started++; return 1 };
 	local *subs::archive_manifest_fetch = sub { die "the search must not fetch\n" };
 	subs::archive_manifest_cached({ remote_uuid => 'peer-1', location => 'music' });
-	is($started, 0, 'a copy checked ten minutes ago waits for the next interval');
+	is($started, 0, 'a copy checked fifty minutes ago waits for the next interval');
 }
 
 {

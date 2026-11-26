@@ -49,8 +49,8 @@ our %archive_manifest_media_memo;
 our %archive_manifest_refresh_memo;
 # How old a local copy may be before a search asks for a check. The media sweep
 # is the expensive half, and a drive change is noticed on the next check; the
-# archive machine then rescans itself, so a quarter of an hour is plenty.
-our $archive_manifest_check_ms = 15 * 60 * 1000;
+# archive machine then rescans itself, so an hour is plenty.
+our $archive_manifest_check_ms = 60 * 60 * 1000;
 our $device;
 our %m;
 # The queue for work that has to outlive the request that asked for it: its own
