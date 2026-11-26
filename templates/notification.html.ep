@@ -1,9 +1,13 @@
-
 <div id="notification_<%= $n->{'timestamp'} %>" tag="<%= $n->{'tag'} %>" app="<%= $n->{'app'} %>" timestamp="<%= $n->{'timestamp'} %>" uuid="<%= $n->{'uuid'} %>" server_time="<%= $n->{'server_time'} %>" class="notification" role="button" tabindex="0">
-	<span class="hover" style="float:left;border:solid;border-radius:2px;border-width:3px;">
+	<span class="hover" style="border:solid;border-radius:2px;border-width:3px;">
 		<% if ($n->{'image'}) { %><img class="little_thumb" src="<%= $n->{'image'} %>">
 		<% } else { %><%== &subs::main_icon_maker({ app => &subs::unformat_name($n->{'app'} || $n->{'title'}), timestamp => &subs::rightNow(), size => 'medium' }) %>
 		<% } %>
+	</span>
+	<span class="notification_text">
+		<b><%= $n->{'title'} %></b>
+		<span class="notification_message"><%= $n->{'message'} || $n->{'tag'} %></span>
+		<span class="time" timestamp="<%= $n->{'timestamp'} %>"><%= $n->{'timestamp'} %></span>
 	</span>
 
 	<% if ($n->{'key'} && $n->{'key'} =~ /com\.termux\.api/) { %> 
@@ -11,11 +15,4 @@
 	<% }  else { %>
 		<button style="float:right;" id="notification_<%= $n->{'timestamp'} %>_remove" scope="single" hint="<%= &subs::ui('Remove this notice') %>" uuid="<%= $n->{'uuid'} %>" class="notification_remove" timestamp="<%= $n->{'timestamp'} %>" title="<%= $n->{'title'} %>">X</button>
 	<% } %>
-	<b><%= $n->{'title'} %></b><br>
-
-	<%= $n->{'message'} || $n->{'tag'} %><br>
-
-	<span class="time" timestamp="<%= $n->{'timestamp'} %>"><%= $n->{'timestamp'} %></span><br>
-	<br>
 </div>
-

@@ -58,18 +58,18 @@ like($panel, qr/setting="budget_notification_statuses"/, 'it carries the status 
 like($panel, qr/setting="budget_notification_types"/, 'and the type picker');
 like($panel, qr/app_notification_sound_upload/, 'and the custom sound upload');
 
-# A notification is a float beside the text, so each line next to the picture is
-# shortened. The picture must fit in the title's line and that line must clear
-# the wrapper's 3px frame, or the message is squeezed into the column beside it.
+# The picture is its own column, centred against the text that runs to its
+# right. It is a little larger than the old 22px line-share, so a row reads at
+# a glance without squeezing the message beside it.
 my ($icon_size) = $template =~ /--notification_icon:\s*(\d+)px/;
-my ($line_size) = $template =~ /--notification_line:\s*(\d+)px/;
-is($icon_size, 22, 'the row picture is the window-icon size');
-cmp_ok(($line_size || 0), '>=', ($icon_size || 0) + 6, 'the title line clears the picture and its 3px frame');
-like($template, qr/#notifications_app \.notification b \{[^}]*line-height:\s*var\(--notification_line\)/,
-	'the title wears that line height');
+is($icon_size, 32, 'the row picture is larger than the old window-icon size');
+like($template, qr/#notifications_app \.notification \{[^}]*display:\s*flex;[^}]*align-items:\s*center/s,
+	'the picture and the text sit on one centred row');
+like($template, qr/#notifications_app \.notification \.notification_text \{[^}]*flex:\s*1 1 auto/s,
+	'the text takes the space to the right of the picture');
 like($template, qr/#notifications_app \.notification img\.window_icon,\s*#notifications_app \.notification img\.little_thumb \{[^}]*box-sizing:\s*border-box/s,
 	'both kinds of picture share one border-box size');
-like($template, qr/#notifications_app \.notification \.hover \{ line-height: 0; \}/,
+like($template, qr/#notifications_app \.notification \.hover \{ flex:\s*0 0 auto; line-height: 0; \}/,
 	'the picture wrapper adds no text line of its own');
 
 my $row = source('templates/notification.html.ep');
@@ -77,6 +77,7 @@ like($row, qr/timestamp="<%=\s*\$n->\{'timestamp'\}/, 'the row carries the time 
 like($row, qr/role="button"/, 'the row is a press');
 like($row, qr/tabindex="0"/, 'and can be reached from the keyboard');
 unlike($row, qr/onclick=/, 'it carries no click script of its own');
+like($row, qr/<span class="hover"[^>]*>.*<span class="notification_text">/s, 'the picture comes first, with the text beside it');
 like($template, qr/#notifications_app \.notification \{[^}]*cursor: var\(--jawnos-cursor-pointer/,
 	'the row looks pressable');
 
