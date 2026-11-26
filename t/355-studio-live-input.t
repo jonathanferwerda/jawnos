@@ -472,7 +472,7 @@ like($studio_js, qr/c\.recSplit\.connect\(c\.recAnalyserR, 1\);/, 'and the right
 like($inputs_js, qr/if \(typeof studioDrawTracks === 'function'\) \{ studioDrawTracks\(\); \}/,
 	'a take handed over after the recorder stops repaints the lane');
 
-like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1 && !studioMonitorEngineFailed/,
+like($studio_js, qr/var engine = !!\(device && listen_channel <= 1\s*&& \(picked_native \|\|/,
 	'a device on a native backend is the engine Listen');
 like($studio_js, qr/&& \(typeof studioEngineAvailable === 'undefined' \|\| studioEngineAvailable !== false\)/,
 	'only while the engine is known to be available');

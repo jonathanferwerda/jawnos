@@ -1176,7 +1176,14 @@ function studioAudioBackendReset() {
 var studioNativeBridge;
 var studioNativeListening = false;
 
-$(document).on('change', '#studio_monitor_backend', function () { studioMonitorBackendRender(); });
+$(document).on('change', '#studio_monitor_backend', function () {
+	// The choice is a device setting, not a song one: a reload (or the app being
+	// updated) must not quietly drop the monitor back to Auto, which on a phone
+	// is Oboe and carries no pedals.
+	var value = String($(this).val() || 'auto');
+	try { window.localStorage.setItem('jawnos.studio.monitor_backend', value); } catch (e) {}
+	studioMonitorBackendRender();
+});
 $(function () { studioMonitorBackendRender(); });
 
 function studioNativeAudio() {
@@ -1323,8 +1330,17 @@ function studioMonitorBackendRender() {
 	var note = $('#studio_monitor_backend_note');
 	if (note.length) { note.text(studioMonitorBackendNote()); }
 	if (select.attr('data-options') === ids) { return; }
+	var first = (select.attr('data-options') === undefined);
 	select.attr('data-options', ids);
 	var current = String(select.val() || 'auto');
+	if (first) {
+		// The saved choice wins the first build, so the monitor keeps the path the
+		// person picked before a reload.
+		try {
+			var saved = window.localStorage.getItem('jawnos.studio.monitor_backend');
+			if (saved) { current = String(saved); }
+		} catch (e) {}
+	}
 	select.empty();
 	options.forEach(function (option) {
 		select.append($('<option>').attr('value', option.id).text(studioListenText(option.label)));
@@ -1368,8 +1384,10 @@ function studioUsbDeviceLabel(row) {
 // The plan a direct-USB listen runs: one input, the selected track's rack, and
 // the song's master rack. It is the same plan a take records through, so the
 // monitor hears the trim, the pedals and the mastering pass the take belongs
-// to. Values are the engine's own units (studioEffectNatural); a bypassed
-// insert rides as `bypass`, exactly as the transport's value list does.
+// to. Values are the engine's own units (studioEffectNatural). A switched-off
+// pedal is omitted, exactly as the take plan omits it: a track insert has no
+// footswitch in the plan (only the master rack carries `bypass`), and sending
+// one made the whole plan invalid.
 function studioUsbListenPlan(listen_channel, ch) {
 	var plan = { channel: Number(listen_channel) === 1 ? 1 : 0 };
 	var gain = parseFloat($('#studio_listen_gain').val());
@@ -1377,18 +1395,15 @@ function studioUsbListenPlan(listen_channel, ch) {
 	var strip = studioAudio.channels[(ch === undefined || ch === null) ? studioSelectedChannel : ch];
 	if (strip && strip.inserts) {
 		strip.inserts.forEach(function (ins) {
-			if (!ins || !ins.name) { return; }
+			if (!ins || !ins.name || ins.bypassed) { return; }
 			if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
 			var kind = studioEffectKind(ins.name);
 			var knobs = {};
-			if (!ins.bypassed) {
-				$.each(ins.values || {}, function (control, value) {
-					if (control === 'sync' || typeof studioEffectNatural !== 'function') { return; }
-					var natural = studioEffectNatural(kind, control, value);
-					if (typeof natural === 'number' && isFinite(natural)) { knobs[control] = natural; }
-				});
-			}
-			if (ins.bypassed) { knobs.bypass = 1; }
+			$.each(ins.values || {}, function (control, value) {
+				if (control === 'sync' || typeof studioEffectNatural !== 'function') { return; }
+				var natural = studioEffectNatural(kind, control, value);
+				if (typeof natural === 'number' && isFinite(natural)) { knobs[control] = natural; }
+			});
 			plan[kind] = knobs;
 		});
 	}
@@ -1433,6 +1448,12 @@ function studioUsbListenStart(quiet, channel, ch, fallback) {
 	if (studioUsbListening) {
 		try { bridge.usbTakeStop(); } catch (e) {}
 		studioUsbListening = false;
+	}
+	// The monitor's depth: 2 ms capture batches instead of the default 8, so the
+	// first audio is not up to 8 ms late; the 8 ms OUT runway is the one that
+	// measured clean. The engine clamps and answers what it applied.
+	if (typeof bridge.usbDepth === 'function') {
+		try { console.log('studio: usb depth', bridge.usbDepth('8', '2', '4', '2')); } catch (e) {}
 	}
 	var answer = studioUsbTake(bridge, plan);
 	if (answer && answer.ok !== true && /already running/i.test(String(answer.error || ''))) {

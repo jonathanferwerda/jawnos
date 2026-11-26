@@ -497,6 +497,12 @@ like($controls_js, qr/function studioSetMonitor/, 'one track is monitored at a t
 like($controls_js, qr/function studioMonitoredChannel/, 'the monitored track is readable');
 like($controls_js, qr/setting="monitor"/, 'and drives the monitor setting the config panel owns');
 like($controls_js, qr/function studioMonitorButtonRender/, 'one renderer keeps the button and the setting in step');
+like($studio_js, qr/var picked = \(typeof studioMonitorBackend === 'function'\)/,
+	'a track Monitor honours the Monitor through picker');
+like($studio_js, qr/var picked_native = \(picked === 'usb' \|\| picked === 'oboe'\)/,
+	'so Direct USB reaches Monitor with no house engine');
+like($controls_js, qr/window\.localStorage\.setItem\('jawnos\.studio\.monitor_backend'/,
+	'and the chosen path survives a reload');
 like($controls_js, qr/if \(studioEngineRecording\) \{[\s\S]*?studioEngineMonitorGain\(on \? 1 : 0\)/,
 	'a recording engine take arms or silences the live input from the Monitor button');
 unlike($controls_js, qr/studioEngineRecording && studioEngineMonitorArmed/,
@@ -544,7 +550,7 @@ like($controls_js, qr/studioEngineInstalled/, 'then the house engine');
 like($controls_js, qr/studioInputReleaseForMonitor/, 'the browser capture is released while a native stream monitors');
 like($controls_js, qr/function studioListenStart\(quiet, channel, ch, fallback\)/, 'Listen can start quietly, name its input and rack, and take the browser fallback flag');
 like($controls_js, qr/function studioListenNotRunning/, 'and knows the not-running sentence');
-like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1 && !studioMonitorEngineFailed/,
+like($studio_js, qr/var engine = !!\(device && listen_channel <= 1\s*&& \(picked_native \|\| \(nativeish && !studioMonitorEngineFailed/,
 	'a real device on a native backend is the engine Listen while its socket is live');
 like($studio_js, qr/var listening = \(engine && \(studioListenActive \|\| from_user\)\)/,
 	'a restored Monitor stays on the tap until the engine Listen runs');

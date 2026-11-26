@@ -753,11 +753,17 @@ function studioApplyMonitor(from_user, force_tap_device) {
 	var listen_channel = (device && typeof studioInputListenChannel === 'function')
 		? studioInputListenChannel(input) : 0;
 	// The engine's Listen names one of its two interface inputs; a device past
-	// them has no Listen, so its browser tap stays the only path. A device is
-	// only routed there while the engine says it is available and its last
-	// attempt did not fail; otherwise the browser tap is the monitor.
-	var engine = !!(device && nativeish && listen_channel <= 1 && !studioMonitorEngineFailed
-		&& (typeof studioEngineAvailable === 'undefined' || studioEngineAvailable !== false));
+	// them has no Listen, so its browser tap stays the only path. The person's
+	// own choice (Monitor through) outranks the browser's guess: choosing Direct
+	// USB or Oboe must reach Monitor on a machine with no house engine, which is
+	// exactly the phone case, or Monitor quietly opens the browser capture and
+	// the pedals never arrive. Without a choice, the house engine's availability
+	// decides as it always did.
+	var picked = (typeof studioMonitorBackend === 'function') ? studioMonitorBackend() : 'engine';
+	var picked_native = (picked === 'usb' || picked === 'oboe');
+	var engine = !!(device && listen_channel <= 1
+		&& (picked_native || (nativeish && !studioMonitorEngineFailed
+			&& (typeof studioEngineAvailable === 'undefined' || studioEngineAvailable !== false))));
 	// An unarmed app track has no graph yet. Monitor builds one for the track it
 	// hears and removes it when it lets go; an armed track's input belongs to
 	// the arm button. Only an app is ever attached here: a device is the engine's
@@ -788,7 +794,7 @@ function studioApplyMonitor(from_user, force_tap_device) {
 		var on = active !== null && String(ch) === String(active);
 		var ch_input = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
 		var ch_app = !!(ch_input && typeof studioInputIsApp === 'function' && studioInputIsApp(ch_input));
-		var engine_path = !!(device && nativeish && listen_channel <= 1);
+		var engine_path = !!(device && (picked_native || nativeish) && listen_channel <= 1);
 		var listening = (engine && (studioListenActive || from_user))
 			|| (engine_path && studioEngineListening);
 		// An app is live through the channel output while it is patched; Monitor

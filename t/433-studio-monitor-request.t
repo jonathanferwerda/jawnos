@@ -165,8 +165,8 @@ var plan = sandbox.studioUsbListenPlan('1', '1');
 ok(plan.channel === 1, 'the plan names the instrument channel (got ' + plan.channel + ')');
 ok(plan.gain === 2, 'the plan carries the listen trim (got ' + plan.gain + ')');
 ok(plan.fuzz && plan.fuzz.gain === 50 && plan.fuzz.level === 50, 'the fuzz travels with its knobs');
-ok(plan.delay && plan.delay.bypass === 1 && plan.delay.time === undefined,
-	'a bypassed pedal travels as a bypass, without its knobs (got ' + JSON.stringify(plan.delay) + ')');
+ok(plan.delay === undefined,
+	'a switched-off pedal is left out, exactly as the take plan leaves it (got ' + JSON.stringify(plan.delay) + ')');
 ok(plan.stereowidener === undefined, 'the browser-only widener is left out');
 ok(Array.isArray(plan.master) && plan.master.length === 5,
 	'the rack is always the five slots (got ' + JSON.stringify(plan.master) + ')');
@@ -191,7 +191,7 @@ ok(listen.master_values_json && JSON.parse(listen.master_values_json).length ===
 // A re-arm: the new plan is built before the running take is stopped, and a
 // stale take that answers "already running" is cleared and the start retried.
 values['#studio_monitor_backend'] = 'usb';
-var starts = 0, stops = 0;
+var starts = 0, stops = 0, depth = [];
 sandbox.JawnAudioEngine = {
 	usbTake: function (seconds, json) {
 		starts++;
@@ -200,12 +200,15 @@ sandbox.JawnAudioEngine = {
 	},
 	usbTakeStop: function () { stops++; return '{"ok":true}'; },
 	usbTakeStatus: function () { return '{"ok":true,"state":"started"}'; },
+	usbDepth: function (a, b, c, d) { depth.push([a, b, c, d].join(',')); return '{"ok":true}'; },
 	usbAudioDevice: function () { return '{"ok":true,"device":{"vendorId":2235,"productId":10498}}'; }
 };
 sandbox.studioUsbListening = false;
 sandbox.studioUsbListenStart(false, '1');
 ok(starts === 2, 'a stale take is cleared and the start retried (got ' + starts + ')');
 ok(stops === 1, 'and the retry stops it exactly once (got ' + stops + ')');
+ok(depth.length === 1 && depth[0] === '8,2,4,2',
+	'the monitor asks for 2 ms capture batches before the 8 ms runway (got ' + JSON.stringify(depth) + ')');
 
 // A plan that cannot be built leaves the monitor that is already running alone.
 var wasStops = stops;
