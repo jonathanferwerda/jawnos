@@ -1,8 +1,8 @@
 # tests-for: lib/JawnOS/Domain/Intelligence.pm lib/JawnOS/Controller/manager_intelligence.pm lib/JawnOS/Routes/manager_intelligence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Loader.pm templates/apps/intelligence.html.ep public/js/manager/intelligence.js templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js lib/JawnOS/Manager/Core1_tables_hooks.pm perl/gb/02_labels_and_collectives.pl perl/help/topics_apps.pl public/icons/sets/build.js public/icons/intelligence.svg t/460-icon-sets-generation.t
-# covers:    The read-only Intelligence app: its six domain panels, the role
-#            grouping, empty-database tolerance, evaluation scope/cadence and
-#            history range shaping, the route and controller wiring, the pill
-#            markup, and the generated icon.
+# covers:    The Intelligence app: its six domain panels, the role grouping,
+#            empty-database tolerance, evaluation scope/cadence and history range
+#            shaping, the editable cadence/days controls, the route and
+#            controller wiring, the pill markup, and the generated icon.
 
 use strict;
 use warnings;
@@ -222,8 +222,12 @@ subs::preload($_) for qw(
 	my $routes = read_file("$FindBin::Bin/../lib/JawnOS/Routes/manager_intelligence.pm");
 	like($routes, qr/\[\s*92001\s*,\s*'get'\s*,\s*'\/manager\/intelligence'\s*,\s*'action_92001'\s*\]/,
 		'the intelligence route is 92001 GET /manager/intelligence');
+	like($routes, qr/\[\s*92002\s*,\s*'post'\s*,\s*'\/manager\/intelligence\/cadence'\s*,\s*'action_92002'\s*\]/,
+		'the cadence change is 92002 POST /manager/intelligence/cadence');
 	my $controller = read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_intelligence.pm");
 	like($controller, qr/sub\s+action_92001\b/, 'the controller defines action_92001');
+	like($controller, qr/sub\s+action_92002\b/, 'the controller defines the cadence action');
+	like($controller, qr/evaluation_cadence_apply\(\$app, \$cadence\)/, 'the cadence action uses the schedule arranger');
 	like($controller, qr/app\s*=>\s*'intelligence'/, 'the controller opens the intelligence window');
 	my $names = read_file("$FindBin::Bin/../lib/JawnOS/Routes.pm");
 	like($names, qr/\bmanager_intelligence\b/, 'the route module is registered in @NAMES');
@@ -238,11 +242,16 @@ subs::preload($_) for qw(
 	}
 	like($tpl, qr/data-eval-filter="active"/, 'the evaluation filter pills are present');
 	like($tpl, qr/data-history-range="7d"/, 'the history range pills are present');
+	like($tpl, qr/class="intelligence_cadence" data-scope=/, 'each evaluation row carries an editable cadence picker');
+	like($tpl, qr/class="intelligence_days" data-scope=/, 'each evaluation row carries an editable weekday picker');
+	like($tpl, qr/class="intelligence_next_run" data-scope=/, 'the row names the next-run span the picker updates');
 
 	my $js = read_file("$FindBin::Bin/../public/js/manager/intelligence.js");
 	like($js, qr/function\s+intelligenceOpener\b/, 'the lazy entry function exists');
 	like($js, qr/localStorage\.setItem\(intelligenceSectionKey/, 'the section pill is remembered');
 	like($js, qr/localStorage\.setItem\(intelligenceHistoryKey/, 'the history range is remembered');
+	like($js, qr/url:\s*'\/manager\/intelligence\/cadence'/, 'the cadence picker posts to the app route');
+	like($js, qr/setting:\s*'nightly_evaluation_days'/, 'the weekday picker saves the days setting');
 
 	my $menu = read_file("$FindBin::Bin/../templates/start_menu/start_menu.html.ep");
 	like($menu, qr/id="intelligence_toggle"/, 'the start menu carries the intelligence icon');

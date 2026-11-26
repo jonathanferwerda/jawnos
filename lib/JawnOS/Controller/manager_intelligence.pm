@@ -2,9 +2,11 @@ package Manager;
 
 # GET /manager/intelligence
 #
-# The Intelligence app: a read-only view of the AI token ledger, the daily
-# rollup, the house's daily purse, the cached provider balances and the
-# evaluation schedule. It reads; it has no write route and writes no row. The
+# The Intelligence app: the AI token ledger, the daily rollup, the house's daily
+# purse, the cached provider balances and the evaluation schedule. It reads the
+# panels and writes only the evaluation cadence a person changes here; the
+# cadence route is the only POST and it calls the same schedule arranger the
+# app's own controls use, so the setting and the queue cannot drift. The
 # window draws all five pills at once - the browser swaps panels - so one
 # request answers the whole window, and the History ranges are each drawn
 # server-side rather than asked for again per pill.
@@ -44,6 +46,28 @@ sub action_92001 {
 		contents => $content,
 	}, $c->param('timestamp'));
 	$c->render(json => { window => $contents });
+}
+
+# POST /manager/intelligence/cadence
+#
+# Change one scope's frequency from the Evaluations table. The setting is the
+# wish and the schedule is the mechanism, so this calls evaluation_cadence_apply
+# (the same arranger the app's own controls use) and answers with what now
+# exists rather than what was asked for. The weekdays are a plain setting and
+# ride the core settings rail; the client re-applies the cadence after saving
+# them so the cron is rebuilt with the new days.
+sub action_92002 {
+	my $c = shift;
+	my $app = &subs::unformat_name($c->param('app')) || '__president';
+	my $cadence = $c->param('cadence');
+	$cadence = 'off' unless defined $cadence && length $cadence;
+	my $schedule = &subs::evaluation_cadence_apply($app, $cadence);
+	$c->render(json => {
+		ok       => 'yes',
+		app      => $app,
+		cadence  => &subs::evaluation_cadence($app),
+		next_run => $schedule ? $schedule->{'next_run'} : undef,
+	});
 }
 
 1;

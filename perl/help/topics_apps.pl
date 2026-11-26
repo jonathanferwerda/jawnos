@@ -446,22 +446,22 @@ $topic{'notifications'} = {
 $topic{'intelligence'} = {
 		title => 'Intelligence', category => 'apps', app => 'intelligence',
 		templates => [ 'templates/apps/intelligence.html.ep', 'public/js/manager/intelligence.js', 'templates/start_menu/start_menu.html.ep', 'public/icons/intelligence.svg' ],
-		controls => [ 'Show this section', 'Evaluation filter', 'History range' ],
+		controls => [ 'Show this section', 'Evaluation filter', 'History range', 'How often this evaluation runs on its own', 'The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs' ],
 		verified => '2026-11-26',
 		summary => 'The house\'s AI token ledger: what was spent today, by which agent, evaluation or provider, and over time.',
 		body => [
-			'Intelligence is read-only. It reads the per-call ledger of AI token use, the daily rollup, the house\'s daily token purse and the cached provider balances, and writes nothing.',
+			'Intelligence reads the per-call ledger of AI token use, the daily rollup, the house\'s daily token purse and the cached provider balances. It changes one thing: the frequency of an evaluation, from the Evaluations table.',
 			'The window is five pills - Overview, Agents, Evaluations, Providers and History - and shows one at a time; the pills scroll sideways on a narrow window, and the pill and History range a person leaves are remembered in this browser.',
 			'Overview totals the tokens and calls for today, the last seven days and the last thirty, shows how much of the house daily budget is used, splits the thirty days by provider, and names the loudest agents and evaluations with the newest calls beneath. The budget is the same purse the error watch obeys: today\'s tokens against the daily cap.',
 			'Agents groups the roles the AI settings use: Pen (the chatbot model), the Coding agent, the Guide and its associates (the help, visual, transcription, text, image, audio and video assistants), Evaluations, and Other for everything else. Each card shows tokens in and out, calls, sessions, active minutes, when the group was last used and the provider mix.',
-			'Evaluations lists one row per scope - each app that has evaluation settings, plus the whole house. A row shows its cadence (off, hourly, daily, weekly, monthly, yearly or each run), the weekdays for a daily or weekly run, the next queued run, the last run\'s outcome, machine, model and time, the tokens over seven and thirty days, the last run\'s tokens and the average per run. The filter pills narrow the table to Active, Scheduled, On demand or Idle; All shows every row.',
+			'Evaluations lists one row per scope - each app that has evaluation settings, plus the whole house. A row shows its cadence (off, hourly, daily, weekly, monthly, yearly or each run), the weekdays for a daily or weekly run, the next queued run, the last run\'s outcome, machine, model and time, the tokens over seven and thirty days, the last run\'s tokens and the average per run. The filter pills narrow the table to Active, Scheduled, On demand or Idle; All shows every row. Change the cadence in the row itself; for daily or weekly, choose the weekdays there too. The change is applied to the setting and the queue together, so the next run the row shows is the one that will actually happen.',
 			'Providers lists Cloudflare, DeepSeek, OpenCode, this machine\'s Ollama and a peer\'s Ollama, every other provider the ledger names, and the total. Each row has its tokens in and out, calls, share, models and the balance left where the provider reports one. The Outside JawnOS (inferred) line is the balance chart\'s own reading: money that left an account with no tokens recorded against it, so the house knows some spend happened elsewhere.',
 			'History shows a day at a time over 24h, 7d, 30d, 90d, 1y or All, with each day\'s tokens, calls, top agent and top provider. It reads the long-lived daily rollup, and a day older than the rollup falls back to the house\'s daily token total.',
 		],
 		steps => [
 			'Open Intelligence from the start menu.',
 			'Press a pill to move between Overview, Agents, Evaluations, Providers and History; the window remembers the pill you leave.',
-			'In Evaluations, press Active, Scheduled, On demand or Idle to filter the scopes; All returns every row.',
+			'In Evaluations, press Active, Scheduled, On demand or Idle to filter the scopes; All returns every row. Change a scope\'s cadence in its row, and choose the weekdays for a daily or weekly run.',
 			'In History, press 24h, 7d, 30d, 90d, 1y or All to choose the range.',
 		],
 		related => [ 'start_menu', 'configure', 'budget' ]

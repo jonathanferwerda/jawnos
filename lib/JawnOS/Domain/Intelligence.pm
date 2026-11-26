@@ -1,9 +1,11 @@
 package subs;
 
-# Intelligence: the read-only token and spend view. It reads the per-call
-# ledger (ai_spend), the long-lived daily rollup (ai_spend_daily), the house
-# daily purse (ai_budget) and the cached provider balances, and shapes them for
-# the five panels of the start-menu app. It writes nothing.
+# Intelligence: the token and spend view. It reads the per-call ledger
+# (ai_spend), the long-lived daily rollup (ai_spend_daily), the house's daily
+# purse (ai_budget) and the cached provider balances, and shapes them for the
+# five panels of the start-menu app. It writes no ledger row; the cadence POST
+# in the controller is the only write, and it goes through the existing
+# evaluation schedule arranger.
 #
 # The ledger is newer than some databases: a column or a table may not exist
 # yet, so every read is guarded and a missing thing answers zero or an empty

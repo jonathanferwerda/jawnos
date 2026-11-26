@@ -1,8 +1,9 @@
-// The Intelligence app: the house's AI token ledger, read-only, as five pills
-// in one window - Overview, Agents, Evaluations, Providers and History. The
-// server draws every panel and every History range in the one request; this
-// script swaps what is shown, filters the evaluation rows and remembers the
-// pill and range a person left, per browser. Nothing here writes.
+// The Intelligence app: the house's AI token ledger, read-only except for the
+// evaluation cadence and weekdays, as five pills in one window - Overview,
+// Agents, Evaluations, Providers and History. The server draws every panel and
+// every History range in the one request; this script swaps what is shown,
+// filters the evaluation rows, remembers the pill and range a person left, and
+// sends a frequency change through the app's cadence route.
 var intelligenceSectionKey = 'intelligence_section';
 var intelligenceSectionDefault = 'overview';
 var intelligenceHistoryKey = 'intelligence_history_range';
@@ -106,6 +107,70 @@ function intelligenceEvalFilter(state) {
 		$(this).toggle(state == 'all' || $(this).attr('data-eval-state') == state);
 	});
 }
+
+// --- changing a scope's frequency -------------------------------------------
+// The cadence setting and its Minion schedule are one thing: the route calls
+// evaluation_cadence_apply and answers with what now exists, not what was
+// asked for. The weekdays ride the core settings rail; after they save, the
+// cadence is applied again so the cron is rebuilt with the new days.
+function intelligenceNote(text) {
+	var note = $('#intelligence .intelligence_note').first();
+	if (!note.length) { return; }
+	note.text(text || '');
+}
+
+function intelligenceCadenceSave(scope, cadence) {
+	if (!scope) { return; }
+	intelligenceNote('');
+	$.ajax({
+		url: '/manager/intelligence/cadence',
+		type: 'POST',
+		dataType: 'json',
+		data: { app: scope, cadence: cadence },
+		success: function(response) {
+			var now = (response && response.cadence) ? response.cadence : cadence;
+			var row = $('#intelligence .intelligence_cadence').filter(function() {
+				return $(this).attr('data-scope') === scope;
+			}).first().closest('tr');
+			row.find('.intelligence_cadence').val(now);
+			row.find('.intelligence_days').prop('disabled', !(now === 'daily' || now === 'weekly'));
+			var next = row.find('.intelligence_next_run').first();
+			if (response && response.next_run) {
+				next.text(new Date(response.next_run * 1000).toLocaleString());
+			}
+			else {
+				next.text('—');
+			}
+			var state = (now === 'off') ? 'idle' : ((now === 'each_run') ? 'on_demand' : 'scheduled');
+			row.attr('data-eval-state', state);
+			var active = $('#intelligence .intelligence_filter_pill[data-eval-filter].is-active').attr('data-eval-filter') || 'all';
+			intelligenceEvalFilter(active);
+		},
+		error: function() {
+			intelligenceNote(jawnosT('Could not change the evaluation frequency.'));
+		}
+	});
+}
+
+$(document).on('change', '#intelligence .intelligence_cadence', function() {
+	var pick = $(this);
+	intelligenceCadenceSave(pick.attr('data-scope'), pick.val());
+});
+
+$(document).on('change', '#intelligence .intelligence_days', function() {
+	var pick = $(this);
+	var scope = pick.attr('data-scope');
+	var nights = pick.val() || [];
+	var value = nights.length ? nights.join(',') : 'none';
+	var cadence = pick.closest('tr').find('.intelligence_cadence').val() || 'off';
+	if (typeof settingSetter !== 'function') {
+		intelligenceCadenceSave(scope, cadence);
+		return;
+	}
+	Promise.resolve(settingSetter({ app: scope, setting: 'nightly_evaluation_days', value: value }))
+		.then(function() { intelligenceCadenceSave(scope, cadence); },
+			function() { intelligenceNote(jawnosT('Could not save the evaluation days.')); });
+});
 
 function intelligenceRestore() {
 	intelligenceSectionRestore();

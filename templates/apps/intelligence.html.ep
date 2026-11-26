@@ -36,6 +36,10 @@
 #intelligence .intelligence_filter_pills { display: flex; flex-wrap: wrap; gap: 6px; }
 #intelligence .intelligence_filter_pill { padding: 3px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); }
 #intelligence .intelligence_filter_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; }
+#intelligence .intelligence_cadence, #intelligence .intelligence_days { font: inherit; font-size: 13px; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .4); padding: 3px 6px; }
+#intelligence .intelligence_days { height: 58px; min-width: 92px; }
+#intelligence .intelligence_days:disabled { opacity: .45; }
+#intelligence .intelligence_note { min-height: 1.2em; opacity: .8; }
 #intelligence table { width: 100%; border-collapse: collapse; font-size: 14px; }
 #intelligence th, #intelligence td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 #intelligence th { font-weight: 600; opacity: .8; white-space: nowrap; }
@@ -186,6 +190,7 @@
 			<button type="button" class="intelligence_filter_pill" data-eval-filter="on_demand"><%= $state_label{'on_demand'} %></button>
 			<button type="button" class="intelligence_filter_pill" data-eval-filter="idle"><%= $state_label{'idle'} %></button>
 		</div>
+		<div class="intelligence_note" aria-live="polite"></div>
 		<div class="intelligence_scroll">
 			<table>
 				<thead><tr>
@@ -205,9 +210,22 @@
 					<% my $last = (ref $row->{'last_run'} eq 'HASH') ? $row->{'last_run'} : {}; %>
 					<tr data-eval-state="<%= $row->{'state'} %>">
 						<td><%= $scope_label->($row->{'scope'}) %></td>
-						<td><%= $cadence_label{ $row->{'cadence'} } || $row->{'cadence'} %></td>
-						<td><%= length($days_text->($row->{'days'}) // '') ? $days_text->($row->{'days'}) : '—' %></td>
-						<td><%= length($row->{'next_run_text'} // '') ? $row->{'next_run_text'} : '—' %></td>
+						<td>
+							<select class="intelligence_cadence" data-scope="<%= $row->{'scope'} %>" hint="<%= &subs::ui('How often this evaluation runs on its own') %>">
+								<% foreach my $c ( qw/off hourly daily weekly monthly yearly each_run/ ) { %>
+									<option value="<%= $c %>" <% if ($row->{'cadence'} eq $c) { %>selected<% } %>><%= $c eq 'each_run' ? &subs::ui('Each run') : ($cadence_label{$c} || $c) %></option>
+								<% } %>
+							</select>
+						</td>
+						<td>
+							<% my $days_on = ($row->{'cadence'} eq 'daily' || $row->{'cadence'} eq 'weekly'); %>
+							<select multiple class="intelligence_days" data-scope="<%= $row->{'scope'} %>" hint="<%= &subs::ui('The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs') %>"<% if (!$days_on) { %> disabled<% } %>>
+								<% foreach my $d ( 0 .. 6 ) { %>
+									<option value="<%= $d %>" <% if (grep { $_ == $d } @{ $row->{'days'} || [] }) { %>selected<% } %>><%= &subs::format_name($day_names[$d]) %></option>
+								<% } %>
+							</select>
+						</td>
+						<td><span class="intelligence_next_run" data-scope="<%= $row->{'scope'} %>"><%= length($row->{'next_run_text'} // '') ? $row->{'next_run_text'} : '—' %></span></td>
 						<td>
 							<%= length($last->{'outcome'} // '') ? $last->{'outcome'} : '—' %>
 							<% if (length($last->{'machine'} // '')) { %> · <%= $last->{'machine'} %><% } %>
