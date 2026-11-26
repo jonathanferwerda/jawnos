@@ -13,6 +13,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
 use Mojo::JSON qw(encode_json);
+use Mojo::Collection;
 use Time::Piece;
 use JawnOSTest;
 use RepoSource;
@@ -28,7 +29,7 @@ subs::preload($_) for qw(
 {
 	package FakeRows;
 	sub new    { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
-	sub hashes { return $_[0]->{'rows'} }
+	sub hashes { return Mojo::Collection->new(@{ $_[0]->{'rows'} }) }
 }
 
 {
@@ -164,6 +165,9 @@ subs::preload($_) for qw(
 	my $rows = &subs::intelligence_evaluations();
 	my %by = map { $_->{'scope'} => $_ } @{$rows};
 	ok($by{'__president'} && $by{'mail'} && $by{'notes'}, 'every settings scope and the house is enumerated');
+	is($rows->[0]->{'scope'}, '__president', 'the whole house is the first row');
+	my @app_scopes = map { $_->{'scope'} } grep { $_->{'scope'} ne '__president' } @{$rows};
+	is_deeply(\@app_scopes, [ 'mail', 'notes' ], 'the app scopes are alphabetical');
 	is($by{'mail'}->{'cadence'}, 'daily', 'the cadence is read per scope');
 	is_deeply($by{'mail'}->{'days'}, [ 1, 3 ], 'the daily weekdays are carried');
 	is($by{'mail'}->{'tokens_30d'}, 3000, 'the scope token split comes from the eval ledger');
@@ -236,6 +240,9 @@ subs::preload($_) for qw(
 	my $names = read_file("$FindBin::Bin/../lib/JawnOS/Routes.pm");
 	like($names, qr/\bmanager_intelligence\b/, 'the route module is registered in @NAMES');
 
+	my $domain = read_file("$FindBin::Bin/../lib/JawnOS/Domain/Intelligence.pm");
+	like($domain, qr/setting like 'evaluation%'/, 'the scope list includes every app with an evaluation setting');
+
 	my $tpl = read_file("$FindBin::Bin/../templates/apps/intelligence.html.ep");
 	like($tpl, qr/ref \$intel eq 'HASH'/, 'the template reads the intel stash');
 	like($tpl, qr/display:flex; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; white-space:nowrap/,
@@ -248,7 +255,10 @@ subs::preload($_) for qw(
 	like($tpl, qr/data-eval-filter="active"/, 'the evaluation filter pills are present');
 	like($tpl, qr/data-history-range="7d"/, 'the history range pills are present');
 	like($tpl, qr/class="intelligence_cadence" data-scope=/, 'each evaluation row carries an editable cadence picker');
-	like($tpl, qr/class="intelligence_days" data-scope=/, 'each evaluation row carries an editable weekday picker');
+	like($tpl, qr/class="intelligence_day[^"]*" data-day=/, 'each evaluation row carries an editable weekday picker');
+	like($tpl, qr/class="intelligence_days_cell"/, 'the weekday cell can be hidden when cadence does not use days');
+	like($tpl, qr/include 'configure\/currency_amount'/, 'the provider balance reuses the currency picker');
+	like($tpl, qr/intelligence_history_ranges \{[^}]*overflow-x: auto/, 'the filter and history pill rows scroll sideways');
 	like($tpl, qr/class="intelligence_next_run" data-scope=/, 'the row names the next-run span the picker updates');
 
 	my $js = read_file("$FindBin::Bin/../public/js/manager/intelligence.js");
@@ -257,6 +267,7 @@ subs::preload($_) for qw(
 	like($js, qr/localStorage\.setItem\(intelligenceHistoryKey/, 'the history range is remembered');
 	like($js, qr/url:\s*'\/manager\/intelligence\/cadence'/, 'the cadence picker posts to the app route');
 	like($js, qr/payload\.days/, 'the weekday picker sends days in the cadence request');
+	like($js, qr/currency_picker/, 'the Intelligence window converts a picked currency');
 	unlike($js, qr/settingSetter/, 'the weekdays are not a second request');
 
 	my $menu = read_file("$FindBin::Bin/../templates/start_menu/start_menu.html.ep");

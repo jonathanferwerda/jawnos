@@ -85,12 +85,17 @@ my $_time_text = sub {
 };
 
 # Rows from one query, or an empty list when the table or column is not there.
+# Mojo::SQLite answers ->hashes with a Mojo::Collection, which is a blessed
+# arrayref rather than a plain ARRAY: a ref test alone would discard every row
+# the ledger has. Accept either and hand back a plain list.
 my $_rows = sub {
 	my ($sql, @bind) = @_;
 	my $results = eval { &subs::db_query($sql, @bind) };
 	return [] unless $results;
 	my $rows = eval { $results->hashes };
-	return (ref $rows eq 'ARRAY') ? $rows : [];
+	return [] unless defined $rows;
+	return [ @{$rows} ] if ref $rows eq 'ARRAY' || (ref $rows && eval { $rows->isa('Mojo::Collection') });
+	return [];
 };
 
 # One provider row, with its share of the whole and the models it served.
@@ -259,17 +264,20 @@ sub intelligence_agents {
 	return \@out;
 }
 
-# The Evaluations panel: one row per scope the settings name, plus the whole
-# house. It reads the schedules once for every scope rather than asking Minion
-# once per app, and takes the last-run record from the scope's evaluation_runs.
+# The Evaluations panel: one row per app that carries any evaluation setting
+# (a cadence, a run, headlines, a report or a depth), plus the whole house first.
+# It reads the schedules once for every scope rather than asking Minion once per
+# app, and takes the last-run record from the scope's evaluation_runs. The table
+# is alphabetical after the house row, which is where a person looks for an app.
 sub intelligence_evaluations {
 	my $now = &subs::rightNow();
 	my $key7 = $_minute_key->($now - 7 * 86400000);
 	my $key30 = $_minute_key->($now - 30 * 86400000);
 
 	my $setting_rows = $_rows->(
-		"select distinct app from settings where setting in "
-		. "('evaluation_cadence', 'nightly_evaluation', 'evaluation_runs', 'evaluation_depth')"
+		"select distinct app from settings where "
+		. "(setting like 'evaluation%' or setting like 'nightly_evaluation%')"
+		. " and app is not null and app != '' and app != 'global'"
 	);
 	my %scope = ( '__president' => 1 );
 	foreach my $r ( @{$setting_rows} ) {
@@ -375,6 +383,7 @@ sub intelligence_evaluations {
 		push @out, {
 			scope          => $app,
 			label          => ($app eq '__president') ? 'Whole house' : $app,
+			sort_name      => ($app eq '__president') ? '' : lc(&subs::format_name($app)),
 			cadence        => $cadence,
 			days           => \@day_list,
 			days_all       => $days_all,
@@ -399,7 +408,13 @@ sub intelligence_evaluations {
 		};
 	}
 
-	@out = sort { ($b->{'tokens_30d'} || 0) <=> ($a->{'tokens_30d'} || 0) || $a->{'scope'} cmp $b->{'scope'} } @out;
+	# Whole house first, then the apps alphabetically by the name a person reads -
+	# not by spend, so the row does not move when one evaluation runs.
+	@out = sort {
+		($a->{'scope'} eq '__president' ? 0 : 1) <=> ($b->{'scope'} eq '__president' ? 0 : 1)
+			|| $a->{'sort_name'} cmp $b->{'sort_name'}
+			|| $a->{'scope'} cmp $b->{'scope'}
+	} @out;
 	return \@out;
 }
 

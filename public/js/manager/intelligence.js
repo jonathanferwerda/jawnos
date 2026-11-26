@@ -134,8 +134,9 @@ function intelligenceCadenceSave(scope, cadence, days) {
 			}).first().closest('tr');
 			if (response && typeof response.days !== 'undefined') {
 				var keep = String(response.days).split(',').filter(function(v) { return v !== '' && v !== 'none'; });
-				row.find('.intelligence_days option').each(function() {
-					$(this).prop('selected', keep.indexOf($(this).val()) >= 0);
+				row.find('.intelligence_day').each(function() {
+					var on = keep.indexOf(String($(this).attr('data-day'))) >= 0;
+					$(this).toggleClass('is-on', on).attr('aria-pressed', on ? 'true' : 'false');
 				});
 			}
 			if (response && (response.ok === 0 || response.ok === 'no')) {
@@ -145,7 +146,11 @@ function intelligenceCadenceSave(scope, cadence, days) {
 			}
 			var now = (response && response.cadence) ? response.cadence : cadence;
 			row.find('.intelligence_cadence').val(now);
-			row.find('.intelligence_days').prop('disabled', !(now === 'daily' || now === 'weekly'));
+			var daysOn = (now === 'daily' || now === 'weekly');
+			row.find('.intelligence_day').prop('disabled', !daysOn);
+			// The weekday picker is only a second control when it applies: an off,
+			// hourly or monthly scope cannot have weekdays, so its cell stays hidden.
+			row.find('.intelligence_days_cell').prop('hidden', !daysOn);
 			var next = row.find('.intelligence_next_run').first();
 			if (response && response.next_run) {
 				next.text(new Date(response.next_run * 1000).toLocaleString());
@@ -169,13 +174,20 @@ $(document).on('change', '#intelligence .intelligence_cadence', function() {
 	intelligenceCadenceSave(pick.attr('data-scope'), pick.val());
 });
 
-$(document).on('change', '#intelligence .intelligence_days', function() {
-	var pick = $(this);
-	var scope = pick.attr('data-scope');
-	var nights = pick.val() || [];
+// Each day is a toggle, not a second dropdown: pressing one sends the whole
+// set in the same cadence request, so the saved weekdays and the schedule
+// stay one.
+$(document).on('click', '#intelligence .intelligence_day', function() {
+	var btn = $(this);
+	if (btn.prop('disabled')) { return; }
+	var cell = btn.closest('.intelligence_days_cell');
+	var on = btn.toggleClass('is-on').hasClass('is-on');
+	btn.attr('aria-pressed', on ? 'true' : 'false');
+	var nights = [];
+	cell.find('.intelligence_day.is-on').each(function() { nights.push($(this).attr('data-day')); });
 	var value = nights.length ? nights.join(',') : 'none';
-	var cadence = pick.closest('tr').find('.intelligence_cadence').val() || 'off';
-	intelligenceCadenceSave(scope, cadence, value);
+	var cadence = cell.closest('tr').find('.intelligence_cadence').val() || 'off';
+	intelligenceCadenceSave(cell.attr('data-scope'), cadence, value);
 });
 
 function intelligenceRestore() {
@@ -183,6 +195,27 @@ function intelligenceRestore() {
 	intelligenceHistoryRestore();
 	intelligenceEvalFilter('all');
 }
+
+// --- provider balances in the chosen currency --------------------------------
+// The Providers panel reuses Configure's currency_amount include, so each
+// balance carries its house-currency figure and a picker of the loaded rates.
+// Configure's own handler is only bound once that app has been opened, so the
+// Intelligence window converts from the same data itself.
+function intelligenceCurrencyValue(value) {
+	if (!isFinite(value)) { return ''; }
+	var abs = Math.abs(value);
+	return (abs > 0 && abs < 0.1) ? value.toFixed(4) : value.toFixed(2);
+}
+
+$(document).on('change', '#intelligence .currency_picker', function() {
+	var select = this;
+	var option = select.options[select.selectedIndex];
+	var rate = option ? parseFloat(option.getAttribute('data-rate')) : NaN;
+	var amount = $(select).closest('.currency_amount');
+	var base = parseFloat(amount.attr('data-base-amount'));
+	if (!isFinite(rate) || !isFinite(base)) { return; }
+	amount.find('.currency_value').text(intelligenceCurrencyValue(base * rate));
+});
 
 $(document).on('click', '#intelligence .intelligence_section_pill', function() {
 	intelligenceSectionShow($(this).attr('data-section'), true);
