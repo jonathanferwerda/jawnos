@@ -504,13 +504,25 @@ function studioSetInsert(ch, name, on, chain) {
 //
 // One re-arm after the last change: a song restore rebuilds its inserts one at
 // a time, and a burst of stop/start on the engine would be worse than the wait.
+//
+// A track's Monitor names its own channel; the Configure Listen has no track
+// behind it, so its chosen input (`studioListenChannel`) is the one to re-arm.
+// Without that fallback a pedal added while listening from Configure was never
+// heard until Listen was pressed again.
 var studioListenRearmTimer = null;
 function studioListenRearm(ch, chain) {
 	if (studioListenRearmTimer) { clearTimeout(studioListenRearmTimer); studioListenRearmTimer = null; }
 	if (chain === 'out') { return; }
 	if (typeof studioListenActive === 'undefined' || !studioListenActive) { return; }
 	if (typeof studioMonitoredChannel !== 'function' || typeof studioListenStop !== 'function') { return; }
-	var monitored = studioMonitoredChannel();
+	var arming = function () {
+		var now = studioMonitoredChannel();
+		if (now === null || typeof now === 'undefined') {
+			now = (typeof studioListenChannel !== 'undefined') ? studioListenChannel : null;
+		}
+		return now;
+	};
+	var monitored = arming();
 	if (monitored === null || typeof monitored === 'undefined') { return; }
 	if (String(monitored) !== String(ch)) { return; }
 	studioListenRearmTimer = setTimeout(function () {
@@ -518,7 +530,7 @@ function studioListenRearm(ch, chain) {
 		// The person may have stopped Monitor, or moved it, inside the wait.
 		if (typeof studioListenActive === 'undefined' || !studioListenActive) { return; }
 		if (typeof studioMonitoredChannel !== 'function') { return; }
-		var now = studioMonitoredChannel();
+		var now = arming();
 		if (now === null || typeof now === 'undefined' || String(now) !== String(ch)) { return; }
 		studioListenStop(Number(ch), ch);
 	}, 300);

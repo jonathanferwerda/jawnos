@@ -8,9 +8,10 @@
 #            values, a bypassed pedal and the song's master rack (always the
 #            five slots, each with its footswitch), that the picker answers
 #            `usb` only when the app bridge and a device are there, that the
-#            house-engine Listen carries the same rack, and that a re-arm builds
+#            house-engine Listen carries the same rack, that a re-arm builds
 #            the new plan before stopping the running take, clears a stale one
-#            and retries once.
+#            and retries once, and that the Configure Listen re-arms on its own
+#            input while an Out pedal does not.
 
 use strict;
 use warnings;
@@ -213,6 +214,27 @@ sandbox.studioUsbListening = true;
 sandbox.studioUsbListenStart(false, '1');
 ok(stops === wasStops, 'a plan that cannot be built stops nothing (got ' + stops + ')');
 sandbox.studioUsbListening = false;
+
+// A pedal added while the Configure Listen (no track Monitor) is live re-arms
+// that listen too, using its own chosen input.
+var rearmed = [];
+var realStop = sandbox.studioListenStop;
+sandbox.studioListenStop = function (next_channel, ch) { rearmed.push(String(next_channel)); };
+sandbox.mixer = { admin: { master: [] } };
+sandbox.studioListenActive = true;
+sandbox.studioListenChannel = 1;
+var realTimeout = sandbox.setTimeout;
+sandbox.setTimeout = function (fn) { fn(); return 0; };
+sandbox.studioListenRearm('1', 'in');
+sandbox.setTimeout = realTimeout;
+ok(rearmed.length === 1 && rearmed[0] === '1',
+	'the standalone Listen re-arms on its own input (got ' + JSON.stringify(rearmed) + ')');
+rearmed.length = 0;
+sandbox.setTimeout = function (fn) { fn(); return 0; };
+sandbox.studioListenRearm('1', 'out');
+sandbox.setTimeout = realTimeout;
+ok(rearmed.length === 0, 'an Out pedal is playback, not the monitor');
+sandbox.studioListenStop = realStop;
 
 console.log('ok');
 JS
