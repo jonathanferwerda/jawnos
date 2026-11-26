@@ -727,6 +727,21 @@ sub action_17913 {
 	# and hand the page the headline and the chunks the text splits into so its
 	# app names can be links
 	my $evaluation_report = &subs::evaluation_agent($app || '__president', $period);
+	# A manual evaluation is a run like the nightly one, so it leaves the same
+	# note: which machine asked, the model, whether it answered or failed, and (when
+	# the report carries them) the run id and the tokens the ledger banked under it.
+	# A note that cannot be written must not cost the person the report.
+	my %run_entry = (
+		timestamp => &subs::rightNow(),
+		machine => &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '',
+		model => $evaluation_report->{'model'} || '',
+		outcome => $evaluation_report->{'error'} ? 'failed' : 'ran',
+	);
+	$run_entry{'note'} = substr($evaluation_report->{'error'}, 0, 120) if $evaluation_report->{'error'};
+	foreach my $k ( qw(run tokens tokens_in tokens_out) ) {
+		$run_entry{$k} = $evaluation_report->{$k} if defined $evaluation_report->{$k};
+	}
+	eval { &subs::evaluation_run_record($app || '__president', \%run_entry) };
 	my $returner = { ok => 'yes', app => $app, evaluation_report => $evaluation_report, pieces => &subs::evaluation_report_pieces($evaluation_report) };
 	$c->render(json => $returner);
 }

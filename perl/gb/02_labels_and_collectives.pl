@@ -191,5 +191,6 @@ our $known_appts = {
 	email => { icon => '/images/decipherable/envelope.png' },
 	chat => { icon => "/images/make believe/phone_sms.png" },
 	search => { icon => '/images/make believe/search_button.png' },
-	help => { icon => "/images/decipherable/question mark.png" }
+	help => { icon => "/images/decipherable/question mark.png" },
+	intelligence => { icon => '/icons/intelligence.svg' }
 };

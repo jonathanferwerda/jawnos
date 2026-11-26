@@ -50,6 +50,7 @@ our %ACCESS_APP = (
 	travel       => [qw(travel continent)],
 	notes        => [qw(notes note_delete note_header note_retriever note_save note_to_appt notes_categories tasks)],
 	clock        => [qw(clock time_jump time_preview)],
+	intelligence => [qw(intelligence)],
 );
 
 # Shared rails and the desktop shell: reachable by any resident who passes the

@@ -42,6 +42,13 @@ our %Y;
 # Memoised for a minute so the heartbeat and a job do not probe twice.
 our $ai_eval_ready_memo;
 our $ai_ledger_ready;
+# Whether this process has seen the day rollup table. Set on the first write,
+# so a process that starts before the migration does not attempt (or log) a
+# write against a table that is not there yet.
+our $ai_spend_daily_ready;
+# Whether this process has tried the one-time ai_spend -> ai_spend_daily
+# backfill. The setting beside it makes the same guard hold across restarts.
+our $ai_spend_daily_backfilled;
 our $backfills_running;
 our $database;
 our $device;
@@ -695,6 +702,12 @@ sub ai_house_heartbeat {
 		$ai_ledger_ready = 1;
 	}
 	&ai_house_publish();
+	# The day rollup arrived after the per-call ledger had already been running,
+	# so the older calls have no daily row. Fold them in once; the helper's own
+	# setting guard keeps a second process or a later heartbeat from adding them
+	# again. It is called outside the ledger-ready block so a heartbeat that ran
+	# before the daily table existed simply tries again next time.
+	&ai_spend_daily_backfill();
 }
 
 # The machines that can take AI work: those that published a model and were seen
@@ -1113,32 +1126,152 @@ sub ai_spend_minute_key {
 	return ref $t ? $t->strftime('%Y-%m-%d %H:%M') : '';
 }
 
-# Every model call banks its usage here as its own row: the minute it ran, the
-# model and the role that asked for it. One row per call - a second call in the
-# same minute is a new row, because the chart's job is to show the traffic that
-# caused a fall, not to merge it away. The ledger carries server_time, so it
-# rides the ordinary sync: the balance an account falls by is the house's spend,
-# and the tokens beside it must be the house's too. A call that reports no usage
-# writes nothing rather than a zero. A database problem must never take an AI
-# call down, so the write is guarded and only a failure is logged.
-sub ai_spend_note {
-	my ($provider, $in, $out, $model, $role) = @_;
-	$in = (defined $in && $in =~ /^\d+$/) ? ($in + 0) : 0;
-	$out = (defined $out && $out =~ /^\d+$/) ? ($out + 0) : 0;
-	return 0 unless $in || $out;
+# The day rollup's natural key: one machine's day, provider, model, role and app.
+# The uuid is derived from that key rather than random, so a peer's sync updates
+# the row it already holds instead of colliding with the unique natural key.
+sub ai_spend_daily_uuid {
+	my ($machine, $day, $provider, $model, $role, $app) = @_;
+	return 'ai_spend_daily_' . md5_sum(join('|', map { defined $_ ? $_ : '' } ($machine, $day, $provider, $model, $role, $app)));
+}
+
+# Add one call (or a backfill group) to the day rollup. The insert is the upsert:
+# SQLite adds to the row already holding the same natural key, so concurrent
+# callers cannot lose one another's tokens the way a read-then-write would. The
+# columns are the day's totals; `unmetered` counts calls that reported no usage,
+# so a zero-token day can still be told apart from a free one. A failure is
+# logged and swallowed - the per-call row is already banked, and a ledger write
+# must never take an AI call down.
+sub ai_spend_daily_add {
+	my ($machine, $day, $provider, $model, $role, $app, $in, $out, $calls, $unmetered) = @_;
+	$machine = '' unless defined $machine;
+	$day = '' unless defined $day;
 	$provider = '' unless defined $provider;
 	$model = '' unless defined $model;
 	$role = '' unless defined $role;
+	$app = '' unless defined $app;
+	$in = (defined $in && $in =~ /^\d+$/) ? ($in + 0) : 0;
+	$out = (defined $out && $out =~ /^\d+$/) ? ($out + 0) : 0;
+	$calls = (defined $calls && $calls =~ /^\d+$/) ? ($calls + 0) : 0;
+	$unmetered = (defined $unmetered && $unmetered =~ /^\d+$/) ? ($unmetered + 0) : 0;
+	# A process that starts before the migration has no rollup table to write.
+	# Ask once (then remember) instead of failing - and logging - for every call
+	# on a database that has not migrated yet.
+	unless ($ai_spend_daily_ready) {
+		my $exists = eval {
+			&subs::db_query("select 1 from sqlite_master where type = 'table' and name = 'ai_spend_daily'")->hashes->[0];
+		};
+		return 0 unless $exists;
+		$ai_spend_daily_ready = 1;
+	}
+	my $uuid = &ai_spend_daily_uuid($machine, $day, $provider, $model, $role, $app);
+	my $now = &subs::rightNow();
+	my $ok = eval {
+		&subs::db_query(
+			'insert into ai_spend_daily'
+			. ' (uuid, machine, day, provider, model, role, app, tokens_in, tokens_out, calls, unmetered, ost, server_time)'
+			. ' values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+			. ' on conflict(machine, day, provider, model, role, app) do update set'
+			. ' tokens_in = coalesce(ai_spend_daily.tokens_in, 0) + excluded.tokens_in,'
+			. ' tokens_out = coalesce(ai_spend_daily.tokens_out, 0) + excluded.tokens_out,'
+			. ' calls = coalesce(ai_spend_daily.calls, 0) + excluded.calls,'
+			. ' unmetered = coalesce(ai_spend_daily.unmetered, 0) + excluded.unmetered,'
+			. ' server_time = excluded.server_time,'
+			. ' ost = excluded.ost',
+			$uuid, $machine, $day, $provider, $model, $role, $app,
+			$in, $out, $calls, $unmetered, $now, $now,
+		);
+	};
+	unless ($ok) {
+		my $why = $@ ? ($@ =~ s/\s+/ /gr) : 'the row was not written';
+		eval { &subs::log_writer('ai_spend daily failed: ' . $why) };
+		return 0;
+	}
+	return 1;
+}
+
+# Fold the per-call ledger that predates the rollup into it, once. The setting
+# is the durable guard; the package variable keeps the heartbeat from even
+# reading it twice in one process. A daily row that already exists means this
+# build (or a peer that synced one) is already writing the rollup, so nothing is
+# added - an undercount is preferable to counting the same call twice. If the
+# table is not there yet the helper returns 0 without marking the work done, so
+# the next heartbeat can try again.
+sub ai_spend_daily_backfill {
+	return 0 if $ai_spend_daily_backfilled;
+	my $done = eval { &subs::setting_grabber({ app => '__president', setting => 'ai_spend_daily_backfilled' }) };
+	if (defined $done && length $done && $done ne '0') {
+		$ai_spend_daily_backfilled = 1;
+		return 0;
+	}
+	my $have = eval { &subs::db_query('select count(*) as c from ai_spend_daily')->hashes->[0] };
+	return 0 unless $have;
+	if (($have->{'c'} || 0) > 0) {
+		eval { &subs::setting_setter({ app => '__president', setting => 'ai_spend_daily_backfilled', value => '1' }) };
+		$ai_spend_daily_backfilled = 1;
+		return 0;
+	}
+	my $rows = eval {
+		&subs::db_query(
+			"select coalesce(machine, '') as machine, substr(minute, 1, 10) as day,"
+			. " coalesce(provider, '') as provider, coalesce(model, '') as model,"
+			. " coalesce(role, '') as role, coalesce(app, '') as app,"
+			. ' sum(coalesce(tokens_in, 0)) as tokens_in,'
+			. ' sum(coalesce(tokens_out, 0)) as tokens_out,'
+			. ' count(*) as calls,'
+			. ' sum(case when coalesce(metered, 1) = 0 then 1 else 0 end) as unmetered'
+			. " from ai_spend where minute is not null and minute != ''"
+			. ' group by machine, day, provider, model, role, app')->hashes;
+	};
+	return 0 unless $rows;
+	foreach my $r ( @{$rows} ) {
+		&ai_spend_daily_add(
+			$r->{'machine'}, $r->{'day'}, $r->{'provider'}, $r->{'model'}, $r->{'role'}, $r->{'app'},
+			$r->{'tokens_in'}, $r->{'tokens_out'}, $r->{'calls'}, $r->{'unmetered'},
+		);
+	}
+	eval { &subs::setting_setter({ app => '__president', setting => 'ai_spend_daily_backfilled', value => '1' }) };
+	$ai_spend_daily_backfilled = 1;
+	return 1;
+}
+
+# Every model call banks its usage here as its own row: the minute it ran, the
+# model and the role that asked for it, and now the app/run it served. One row
+# per call - a second call in the same minute is a new row, because the chart's
+# job is to show the traffic that caused a fall, not to merge it away. The
+# ledger carries server_time, so it rides the ordinary sync: the balance an
+# account falls by is the house's spend, and the tokens beside it must be the
+# house's too. A call that reports no usage writes nothing rather than a zero,
+# unless the caller explicitly asks for unmetered calls to be counted (then the
+# row still carries `metered = 0`). The same call is folded into the day rollup.
+# A database problem must never take an AI call down, so each write is guarded
+# and only a failure is logged.
+sub ai_spend_note {
+	my ($provider, $in, $out, $model, $role, $opt) = @_;
+	$opt = {} unless ref $opt eq 'HASH';
+	$in = (defined $in && $in =~ /^\d+$/) ? ($in + 0) : 0;
+	$out = (defined $out && $out =~ /^\d+$/) ? ($out + 0) : 0;
+	my $metered = ($in || $out) ? 1 : 0;
+	return 0 unless $metered || $opt->{'count_unmetered'};
+	$provider = '' unless defined $provider;
+	$model = '' unless defined $model;
+	$role = '' unless defined $role;
+	my $app = (defined $opt->{'app'} && length $opt->{'app'}) ? $opt->{'app'} : '';
+	my $run = (defined $opt->{'run'} && length $opt->{'run'}) ? $opt->{'run'} : '';
+	my $machine = &ai_house_me() || 'me';
+	my $minute = &ai_spend_minute_key();
 	my $ok = eval {
 		&subs::db_insert('ai_spend', {
-			machine => (&ai_house_me() || 'me'),
+			machine => $machine,
 			provider => $provider,
 			model => $model,
 			role => $role,
-			minute => &ai_spend_minute_key(),
+			app => $app,
+			run => $run,
+			minute => $minute,
 			tokens_in => $in,
 			tokens_out => $out,
 			calls => 1,
+			metered => $metered,
 			server_time => &subs::rightNow(),
 		});
 	};
@@ -1147,6 +1280,12 @@ sub ai_spend_note {
 		eval { &subs::log_writer('ai_spend note failed: ' . $why) };
 		return 0;
 	}
+	# The rollup is derived: a failure here is logged inside the helper and does
+	# not retract the per-call row that already landed.
+	&ai_spend_daily_add(
+		$machine, substr($minute, 0, 10), $provider, $model, $role, $app,
+		$in, $out, 1, ($metered ? 0 : 1),
+	);
 	return 1;
 }
 

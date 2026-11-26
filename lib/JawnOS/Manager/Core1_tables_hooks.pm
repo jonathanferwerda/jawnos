@@ -197,6 +197,7 @@ our @manager_bundle_files = qw(
 	/js/manager/desk.js
 	/js/manager/notes.js
 	/js/manager/notifications.js
+	/js/manager/intelligence.js
 	/js/manager/weather.js
 	/js/manager/weather_history.js
 	/js/manager/weather_automation.js
@@ -247,6 +248,7 @@ our %manager_app_scripts = (
 	people          => [qw(/js/manager/people.js)],
 	notes           => [qw(/js/manager/notes.js)],
 	notifications   => [qw(/js/manager/notifications.js)],
+	intelligence    => [qw(/js/manager/intelligence.js)],
 	weather          => [qw(/js/manager/weather.js /js/manager/weather_history.js /js/manager/weather_automation.js /js/manager/weather_map.js /js/manager/weather_sources.js /js/manager/weather_radar.js)],
 	power            => [qw(/js/manager/power.js)],
 	sound            => [qw(/js/manager/sound.js)],
@@ -286,6 +288,7 @@ our %manager_app_entry = (
 	sound           => [qw(soundOpener)],
 	scan            => [qw(scanOpener)],
 	packages        => [qw(packagesOpener)],
+	intelligence    => [qw(intelligenceOpener)],
 );
 
 # The start-menu icons are drawn by the server, but each app used to register
@@ -307,6 +310,7 @@ our %manager_toggle_apps = (
 	power_toggle => 'power',
 	sound_toggle => 'sound',
 	packages_toggle => 'packages',
+	intelligence_toggle => 'intelligence',
 );
 
 # The canvas layouts' printers. The desk is a wallpaper plus a layer of items,

@@ -485,6 +485,10 @@ sub update_database($data) {
 			provider VARCHAR(100),
 			model VARCHAR(100),
 			role VARCHAR(100),
+			-- the app and run that asked, so a spend can be attributed to a job
+			-- rather than only to the broad role name
+			app VARCHAR(100),
+			run VARCHAR(100),
 			minute VARCHAR(25),
 			-- kept although nothing writes it now: the earlier hourly ledger put its
 			-- timestamp here, and ai_spend_prune ages those rows out by it
@@ -492,6 +496,9 @@ sub update_database($data) {
 			tokens_in INT,
 			tokens_out INT,
 			calls INT,
+			-- 1 when the provider reported usage, 0 for a call that could not
+			-- report it, so a zero-token row is never mistaken for a free call
+			metered INT,
 			ost VARCHAR(255),
 			server_time VARCHAR(255)
 		)',
@@ -512,9 +519,34 @@ sub update_database($data) {
 		'alter table ai_spend add column minute VARCHAR(25)',
 		'alter table ai_spend add column model VARCHAR(100)',
 		'alter table ai_spend add column role VARCHAR(100)',
+		'alter table ai_spend add column app VARCHAR(100)',
+		'alter table ai_spend add column run VARCHAR(100)',
+		'alter table ai_spend add column metered INT',
 		'drop index if exists idx_ai_spend',
 		'create index if not exists idx_ai_spend_minute on ai_spend (minute)',
 		'create index if not exists idx_ai_spend_provider on ai_spend (provider, minute)',
+		'create index if not exists idx_ai_spend_app on ai_spend (app, minute)',
+		'create index if not exists idx_ai_spend_role on ai_spend (role, minute)',
+		# The ledger's day rollup: one row per natural key, so a panel can read a
+		# day's spend without scanning every call. The uuid is derived from that
+		# key (ai_spend_daily_uuid), so a peer's sync updates the row it already
+		# holds instead of colliding with the unique natural key.
+		'create table if not exists ai_spend_daily (
+			uuid VARCHAR(255),
+			machine VARCHAR(255),
+			day VARCHAR(25),
+			provider VARCHAR(100),
+			model VARCHAR(100),
+			role VARCHAR(100),
+			app VARCHAR(100),
+			tokens_in INT,
+			tokens_out INT,
+			calls INT,
+			unmetered INT,
+			ost VARCHAR(255),
+			server_time VARCHAR(255)
+		)',
+		'create unique index if not exists idx_ai_spend_daily on ai_spend_daily (machine, day, provider, model, role, app)',
 		# The locator's own ledger: one row per name where.pl was asked about. A miss
 		# is the row that matters - it is the lookup that sends an agent back to
 		# grep - so Configure -> System can show the rate rather than guess it.

@@ -905,15 +905,35 @@ sub evaluation_agent {
 		: ($measure_app ? $measure_instructions : 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. Say first what this appointment is for - what the activity is - reading it from its name, its constructs and its kinds. Where the appointment measures something consumed or done (water drunk, teeth brushed, cigarettes), the windows\' quantity and its amount_per_day (and volume_ml when the unit converts) are how much actually happened: give the generally recommended or typical daily figure for a person (for water, several glasses to a few litres a day; for coffee, a few cups), then say where the logged amount sits against it - a plain guide, not medical advice. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Where the app logs measurements, say where each reading is going - the latest reading against the average and the min and max for that window - and hold the range the app is set to expect against it. Where a window carries continent, say how far the app went and how fast, and whether that is rising or falling across the windows. Read trends too: say whether the recent periods are rising or falling, not only what the aggregate windows show, and name the period a turn began at. Where episodes ride along, give the typical onset hour and the median and longest episode, and say whether the episodes are getting longer, shorter, earlier or later. The newest period is still running - its count carries the percent elapsed - so do not read a part-run period as a fall: call it in progress and judge its pace against the percent. Where budget_pace rides along, say plainly whether the app is on track for its budget - read on_track and progress_percent against value and due_by_now, and give the projected figure - and never call a young period behind. Under Correlations weigh related (a Pearson r of the daily series) and around (things that happened at the same time of day, by lift) together: say what r means here and whether the lag suggests one follows the other, say what around says - what consistently runs beside this app and which way, reading offset_minutes - and treat a measure in different as a suspect even when no pair clears the bar; name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.');
 	$instructions .= ' For the whole house, lead with the categories and the few apps that moved, then the environmental conditions. Do not enumerate the tail, and do not call a condition a cause.' if $global;
 	my $user = $instructions . "\n\n" . encode_json($briefing);
+	# The run id ties the model's ledger rows to this report: the call banks its
+	# usage under it and the report carries it back, so a run's cost stays
+	# readable even when several scopes ran in the same minute. It need only be
+	# unique per call, not repeatable, so the clock plus a random tail is enough.
+	my $run = 'eval_' . md5_sum($app . '|' . $now . '|' . rand());
 	my ($text, $error);
 	if ($model && &evaluation_agent_ready()) {
-		($text, $error) = &evaluation_model_call_role('eval_assistant', $system, $user, &subs::ai_role_thinking_effective('eval_assistant'));
+		($text, $error) = &evaluation_model_call_role('eval_assistant', $system, $user, &subs::ai_role_thinking_effective('eval_assistant'), { app => $app, run => $run });
 	}
 	elsif ($model) {
 		$error = 'no evaluation agent is reachable from this machine';
 	}
 	else {
 		$error = 'no evaluation model is chosen - pick one in the mailbox configuration';
+	}
+	# What the ledger banked under this run. The call may have failed, fallen back
+	# to another model, or gone unmetered, so the query is guarded and an absent
+	# or unreadable row reads as zero: a report is never taken down by its own
+	# accounting.
+	my ($tokens_in, $tokens_out) = (0, 0);
+	my $spent = eval {
+		&subs::db_query(
+			'select coalesce(sum(tokens_in), 0) as tokens_in, coalesce(sum(tokens_out), 0) as tokens_out from ai_spend where run = ?',
+			$run,
+		)->hash;
+	};
+	if (ref $spent eq 'HASH') {
+		$tokens_in = ($spent->{'tokens_in'} || 0) + 0;
+		$tokens_out = ($spent->{'tokens_out'} || 0) + 0;
 	}
 	my %mentions;
 	$mentions{$app} = 1 unless $global;
@@ -977,6 +997,10 @@ sub evaluation_agent {
 		text => $text || ('The evaluation could not run: ' . $error),
 		model => $model,
 		machine => $machine,
+		run => $run,
+		tokens_in => $tokens_in,
+		tokens_out => $tokens_out,
+		tokens => $tokens_in + $tokens_out,
 		depth => $depth,
 		windows => [ map { $_->{'name'} } @window_defs ],
 		error => $error,

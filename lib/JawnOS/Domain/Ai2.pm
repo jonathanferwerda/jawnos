@@ -509,13 +509,72 @@ sub ai_stream_frame {
 	return @out;
 }
 
+# The token counts a streaming frame carries, as it arrives. A streamed reply is
+# not one JSON body, so ai_usage_tokens has nothing to read when the call ends:
+# each provider states its usage somewhere else in the stream. An
+# OpenAI-compatible reply puts the whole usage object in one final chunk (only
+# when the request asked for it), Anthropic splits it over message_start (the
+# input) and message_delta (the output), Gemini repeats usageMetadata as the
+# counts grow, and Ollama stamps prompt_eval_count/eval_count on its last chunk.
+# Returns (in, out), either undef where the frame does not carry it, so the
+# caller can merge the halves the way each provider sends them.
+sub ai_stream_usage {
+	my ($provider, $obj) = @_;
+	return () unless ref $obj eq 'HASH';
+	$provider = '' unless defined $provider;
+	if ($provider eq 'anthropic') {
+		my $type = $obj->{'type'} || '';
+		if ($type eq 'message_start') {
+			my $usage = $obj->{'message'}->{'usage'};
+			return () unless ref $usage eq 'HASH';
+			my $in = $usage->{'input_tokens'};
+			return () unless defined $in;
+			# cached prompt work is input work too, exactly as ai_usage_tokens reads it
+			$in += ($usage->{'cache_creation_input_tokens'} // 0) + ($usage->{'cache_read_input_tokens'} // 0);
+			return ($in, $usage->{'output_tokens'});
+		}
+		if ($type eq 'message_delta') {
+			my $usage = $obj->{'usage'};
+			return () unless ref $usage eq 'HASH';
+			return (undef, $usage->{'output_tokens'}) if defined $usage->{'output_tokens'};
+		}
+		return ();
+	}
+	if ($provider eq 'google') {
+		my $usage = $obj->{'usageMetadata'};
+		return () unless ref $usage eq 'HASH';
+		# promptTokenCount already includes cachedContentTokenCount, so the cached
+		# count is a fallback for a reply that reports only that half - never added
+		my $in = $usage->{'promptTokenCount'};
+		$in = $usage->{'cachedContentTokenCount'} unless defined $in;
+		return ($in, $usage->{'candidatesTokenCount'});
+	}
+	if ($provider eq 'ollama') {
+		my $in = $obj->{'prompt_eval_count'};
+		my $out = $obj->{'eval_count'};
+		return () unless defined $in || defined $out;
+		return ($in, $out);
+	}
+	# the OpenAI-compatible crowd states it once, in the final chunk
+	my $usage = $obj->{'usage'};
+	return () unless ref $usage eq 'HASH';
+	my $in = $usage->{'prompt_tokens'};
+	$in = $usage->{'input_tokens'} unless defined $in;
+	my $out = $usage->{'completion_tokens'};
+	$out = $usage->{'output_tokens'} unless defined $out;
+	return () unless defined $in || defined $out;
+	return ($in, $out);
+}
+
 # Feed one chunk of a streaming reply into the provider's framing and return the
 # deltas it completed. The incomplete tail stays in the buffer, so a frame split
 # across two reads is reassembled rather than lost. SSE providers separate frames
 # with a blank line and carry one JSON payload in one or more data: lines; Ollama
 # sends one JSON object per line. A malformed frame is skipped, not fatal.
+# $on_frame, when given, sees each decoded frame before its deltas are returned,
+# which is how a streamed reply's scattered usage is collected.
 sub ai_stream_feed {
-	my ($provider, $buffer_ref, $chunk) = @_;
+	my ($provider, $buffer_ref, $chunk, $on_frame) = @_;
 	return () unless ref $buffer_ref eq 'SCALAR';
 	$$buffer_ref .= defined $chunk ? $chunk : '';
 	my @out;
@@ -526,6 +585,7 @@ sub ai_stream_feed {
 			next unless length $line;
 			my $obj = eval { decode_json($line) };
 			next unless ref $obj eq 'HASH';
+			$on_frame->($obj) if ref $on_frame eq 'CODE';
 			push @out, &ai_stream_frame('ollama', $obj);
 		}
 		return @out;
@@ -541,6 +601,7 @@ sub ai_stream_feed {
 		next if $payload =~ /^\s*\[DONE\]\s*\z/;
 		my $obj = eval { decode_json($payload) };
 		next unless ref $obj eq 'HASH';
+		$on_frame->($obj) if ref $on_frame eq 'CODE';
 		push @out, &ai_stream_frame($provider, $obj);
 	}
 	return @out;
@@ -599,9 +660,10 @@ sub ai_chat_raw {
 			# eval_count, not a usage object. Bank it here, where the role is known,
 			# or the traffic that a shared model serves would have no token count
 			# anywhere. The peer does not record this call itself, so it is not
-			# counted twice.
+			# counted twice. The ledger names the full @device/model id, so a peer's
+			# machine stays visible; the reply's own model name is for display.
 			my ($in, $out) = &ai_usage_tokens($rbody);
-			eval { &subs::ai_spend_note('ollama_remote', $in, $out, ($rbody->{'model'} || $real), $role) };
+			eval { &subs::ai_spend_note('ollama_remote', $in, $out, $model, $role, $opt) };
 			return ($rbody, undef);
 		}
 		return (undef, 'the remote Ollama returned nothing');
@@ -671,6 +733,14 @@ sub ai_chat_raw {
 	# Ask for the stream only after the retry snapshot is taken, so a model that
 	# rejects the thinking knob is retried as the plain, non-streaming request.
 	$payload->{'stream'} = Mojo::JSON::true() if $wants_stream && $provider ne 'google';
+	# Ask the OpenAI-compatible providers that accept it to state the usage in one
+	# final chunk of the stream. Only the four known to take the field: it is a
+	# streaming-only option, and an unknown one is a 400 that would cost the call.
+	# It is added after the snapshot too, for the same reason as the stream flag:
+	# the retry is one plain body, where ai_usage_tokens reads the usage.
+	if ($wants_stream && $provider =~ /\A(?:openai|deepseek|openrouter|opencode)\z/) {
+		$payload->{'stream_options'} = { include_usage => Mojo::JSON::true() };
+	}
 	if (length $level) {
 		if ($provider eq 'anthropic') {
 			# the budget must sit under max_tokens, and 1024 is the floor
@@ -714,6 +784,17 @@ sub ai_chat_raw {
 			$sink->($kind, $piece);
 		}
 	};
+	# A streamed reply never lands as one body, so its usage is picked out of the
+	# frames as they pass: each frame carries one half (Anthropic), the running
+	# total (Gemini), or the only copy at the very end (OpenAI and Ollama). The
+	# newest defined value of each half wins; nothing else about the deltas moves.
+	my ($stream_in, $stream_out);
+	my $usage_take = sub {
+		my ($obj) = @_;
+		my ($in, $out) = &ai_stream_usage($provider, $obj);
+		$stream_in = $in if defined $in;
+		$stream_out = $out if defined $out;
+	};
 	if ($wants_stream) {
 		# Mojo parses text/event-stream before the generic body path, so for SSE
 		# its own event is the per-chunk feed; `read` covers Ollama's NDJSON and
@@ -726,7 +807,10 @@ sub ai_chat_raw {
 			# feed the JSON straight to the provider delta reader; handing it back
 			# as a synthetic `data:` line would break a multi-line payload.
 			my $obj = eval { decode_json($event->{'text'} // '') };
-			$take->(&ai_stream_frame($provider, $obj)) if ref $obj eq 'HASH';
+			if (ref $obj eq 'HASH') {
+				$usage_take->($obj);
+				$take->(&ai_stream_frame($provider, $obj));
+			}
 		});
 		$tx->res->content->on(read => sub {
 			my ($content, $bytes) = @_;
@@ -734,7 +818,7 @@ sub ai_chat_raw {
 			my $ctype = lc($tx->res->headers->content_type // '');
 			if ($ctype =~ m{^text/event-stream} || $ctype =~ m{ndjson}) {
 				$streamed = 1;
-				$take->(&ai_stream_feed($provider, \$stream_buffer, $bytes));
+				$take->(&ai_stream_feed($provider, \$stream_buffer, $bytes, $usage_take));
 			}
 			else { $stream_raw .= $bytes }
 		});
@@ -744,7 +828,7 @@ sub ai_chat_raw {
 	# A provider that closes without the final blank line would leave its last
 	# frame in the buffer; flush it once before reading the result.
 	if ($streamed && length $stream_buffer) {
-		$take->(&ai_stream_feed($provider, \$stream_buffer, $provider eq 'ollama' ? "\n" : "\n\n"));
+		$take->(&ai_stream_feed($provider, \$stream_buffer, $provider eq 'ollama' ? "\n" : "\n\n", $usage_take));
 	}
 	my $res = $tx->res;
 	# A model that does not understand the thinking knob (an older local model, a
@@ -753,8 +837,10 @@ sub ai_chat_raw {
 	if (length $level && !$res->is_success && $res->code == 400 && ($res->body || '') =~ /reason|think|unknown|unrecognized|unsupported|invalid/i) {
 		my $tx2 = $ua->build_tx(POST => $url => $headers => json => $payload_plain);
 		$ua->start($tx2);
-		# The retry is a fresh plain reply; forget whatever the first attempt fed.
+		# The retry is a fresh plain reply; forget whatever the first attempt fed,
+		# usage included, or its half-counted frame would be banked beside this one.
 		($streamed, $stream_sse, $stream_raw, $stream_text, $stream_reasoning, $stream_buffer) = (0, 0, '', '', '', '');
+		($stream_in, $stream_out) = (undef, undef);
 		$res = $tx2->res unless $tx2->error;
 		$log->info('AI: ' . $model . ' answered 400 to the thinking knob (' . $level . '); the call was retried without it') if defined $log;
 	}
@@ -785,10 +871,18 @@ sub ai_chat_raw {
 		$body = eval { return $res->json } || {};
 	}
 	# Account what the call cost, so the error watch can log its spend and stop
-	# when the day's purse is empty. Providers differ in shape - an OpenAI-style
-	# usage, Cloudflare's own, a bare Ollama's counters - so the parse lives in
-	# one place that knows all of them.
-	my ($in, $out) = &ai_usage_tokens($body);
+	# when the day's purse is empty. A streamed reply has no final body, so its
+	# usage came out of the frames above; a whole reply is read from the body.
+	# Providers differ in shape - an OpenAI-style usage, Cloudflare's own, a bare
+	# Ollama's counters - so the parse lives in one place that knows all of them.
+	my ($in, $out);
+	if ($streamed) {
+		($in, $out) = ($stream_in, $stream_out);
+		my ($body_in, $body_out) = &ai_usage_tokens($body);
+		$in = $body_in unless defined $in;
+		$out = $body_out unless defined $out;
+	}
+	else { ($in, $out) = &ai_usage_tokens($body); }
 	$ai_tokens->{'calls'}++;
 	$ai_tokens->{'in'} += ($in // 0);
 	$ai_tokens->{'out'} += ($out // 0);
@@ -797,7 +891,9 @@ sub ai_chat_raw {
 	# can put a token count against the minute an account fell in and say which
 	# model and role spent it. A provider that reported no usage is skipped rather
 	# than banked as zero, so "no tokens" stays distinguishable from "not metered".
-	&subs::ai_spend_note($provider, $in, $out, $real, $role);
+	# The caller's $opt names the app and run this call served (and may carry a
+	# sink), so a streamed turn's usage is filed under the same case.
+	&subs::ai_spend_note($provider, $in, $out, $real, $role, $opt);
 	return ($body, undef);
 }
 
@@ -1218,16 +1314,16 @@ sub ai_chat_parts_role {
 }
 
 sub ai_chat_role {
-	my ($role, $messages, $thinking) = @_;
-	my ($parts, $err) = &ai_chat_parts_role($role, $messages, $thinking);
+	my ($role, $messages, $thinking, $opt) = @_;
+	my ($parts, $err) = &ai_chat_parts_role($role, $messages, $thinking, $opt);
 	return (undef, $err) if $err;
 	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
 }
 
 sub evaluation_model_call_role {
-	my ($role, $system, $user, $thinking) = @_;
-	return &ai_chat_role($role, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
+	my ($role, $system, $user, $thinking, $opt) = @_;
+	return &ai_chat_role($role, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking, $opt);
 }
 
 # The same retry, for a caller that already holds its primary (the Guide's

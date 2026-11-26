@@ -1,4 +1,4 @@
-# tests-for: public/icons/sets/build.js public/icons/sets/*/desktop.svg public/icons/sets/*/network.svg public/icons/sets/*/notifications.svg public/icons/sets/*/power.svg public/icons/sets/*/sound.svg public/icons/sets/*/workspaces.svg public/icons/sets/*/star.svg public/icons/sets/*/face.svg public/icons/sets/*/fingerprint.svg public/icons/sets/*/wallet.svg public/icons/sets/*/routing.svg public/icons/sets/*/sessions.svg
+# tests-for: public/icons/sets/build.js public/icons/sets/*/desktop.svg public/icons/sets/*/network.svg public/icons/sets/*/notifications.svg public/icons/sets/*/power.svg public/icons/sets/*/sound.svg public/icons/sets/*/workspaces.svg public/icons/sets/*/star.svg public/icons/sets/*/face.svg public/icons/sets/*/fingerprint.svg public/icons/sets/*/wallet.svg public/icons/sets/*/routing.svg public/icons/sets/*/sessions.svg public/icons/sets/*/intelligence.svg
 # covers:    The last hand-drawn pictures that no set could dress. Each one is
 #            reached by its source basename - icon_for/icon_path for a template,
 #            or a widget's own img - so build.js routes that basename to a glyph
@@ -34,6 +34,7 @@ my @generated = (
 	{ name => 'wallet',        glyph => 'wallet' },
 	{ name => 'routing',       glyph => 'detour' },
 	{ name => 'sessions',      glyph => 'apps' },
+	{ name => 'intelligence',  glyph => 'intelligence' },
 );
 
 opendir(my $sets_dh, "$root/public/icons/sets") or die "cannot read the icon sets: $!";

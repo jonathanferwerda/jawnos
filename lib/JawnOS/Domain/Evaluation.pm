@@ -579,13 +579,17 @@ sub appointment_evaluation_job {
 	# whichever device happened to carry it.
 	local $subs::say_quiet = 1;
 	my $report = &subs::evaluation_agent($app);
+	# What the ledger banked under this run, when the report carries it. The keys
+	# are added beside the existing ones rather than replacing them, so an older
+	# entry (or a report from before the run id existed) still reads the same.
+	my %spend = map { defined $report->{$_} ? ($_ => $report->{$_}) : () } qw(run tokens tokens_in tokens_out);
 	if ($report->{'error'}) {
 		&ai_job_settle($key, $me, $dispatch_mode, 'failed');
-		&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'failed', note => substr($report->{'error'}, 0, 120) });
+		&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'failed', note => substr($report->{'error'}, 0, 120), %spend });
 		$job->fail($report->{'error'});
 		return;
 	}
-	&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'ran' });
+	&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'ran', %spend });
 	&ai_job_note($key);
 	$job->finish({ app => $app, timestamp => $report->{'timestamp'} });
 }

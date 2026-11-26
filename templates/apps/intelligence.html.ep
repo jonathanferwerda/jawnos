@@ -1,0 +1,333 @@
+<% my $d = (ref $data eq 'HASH') ? $data : {}; %>
+<% my $num = sub { my ($n) = @_; $n = 0 unless defined $n && $n =~ /^-?\d+(?:\.\d+)?$/; my $s = sprintf('%.0f', $n); $s =~ s/(\d)(?=(\d{3})+(?!\d))/$1,/g; return $s; }; %>
+<% my $pct = sub { my ($n) = @_; $n = 0 unless defined $n && $n =~ /^-?\d+(?:\.\d+)?$/; return sprintf('%.1f', $n); }; %>
+<% my $money = sub { my ($v, $currency) = @_; return '' unless defined $v && $v =~ /^-?\d+(?:\.\d+)?$/; return sprintf('%.2f %s', $v, defined $currency ? $currency : ''); }; %>
+<% my @day_names = qw(Sunday Monday Tuesday Wednesday Thursday Friday Saturday); %>
+<% my $days_text = sub { my ($days) = @_; return '' unless ref $days eq 'ARRAY' && @{$days}; return join(', ', map { &subs::ui($day_names[$_]) } grep { defined $day_names[$_] } @{$days}); }; %>
+<% my $scope_label = sub { my ($scope) = @_; return ($scope eq '__president') ? &subs::ui('Whole house') : &subs::format_name($scope); }; %>
+<% my %cadence_label = ( off => &subs::ui('Off'), hourly => &subs::ui('Hourly'), daily => &subs::ui('Daily'), weekly => &subs::ui('Weekly'), monthly => &subs::ui('Monthly'), yearly => &subs::ui('Yearly'), each_run => &subs::ui('Each run') ); %>
+<% my %state_label = ( active => &subs::ui('Active'), scheduled => &subs::ui('Scheduled'), on_demand => &subs::ui('On demand'), idle => &subs::ui('Idle') ); %>
+<style>
+#intelligence { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px; overflow: hidden; font-size: 15px; }
+#intelligence .intelligence_tabs { display:flex; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; white-space:nowrap; gap: 8px; padding-bottom: 4px; }
+#intelligence .intelligence_section_pill { flex: 0 0 auto; padding: 5px 14px; border: 1px solid var(--line); border-radius:999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); white-space: nowrap; opacity: .85; }
+#intelligence .intelligence_section_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; opacity: 1; }
+#intelligence .intelligence_section { display: none; }
+#intelligence .intelligence_section[hidden] { display: none !important; }
+#intelligence .intelligence_section.is-active { flex:1 1 auto; min-height:0; overflow-y:auto; display: flex; flex-direction: column; gap: 12px; }
+#intelligence .intelligence_grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+#intelligence .intelligence_card { border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); padding: 10px 12px; background: var(--panel-2, var(--panel)); min-width: 0; }
+#intelligence .intelligence_card h4 { margin: 0 0 6px; font-size: 14px; opacity: .8; }
+#intelligence .intelligence_value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+#intelligence .intelligence_sub { font-size: 13px; opacity: .72; }
+#intelligence .intelligence_columns { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+#intelligence .intelligence_columns > .intelligence_card { flex: 1 1 240px; }
+#intelligence .intelligence_bar { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 8px 0 4px; }
+#intelligence .intelligence_bar > span { display: block; height: 100%; background: var(--accent, #3b7ddd); }
+#intelligence .intelligence_list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+#intelligence .intelligence_list li { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding: 3px 0; }
+#intelligence .intelligence_list li:last-child { border-bottom: 0; }
+#intelligence .intelligence_list .intelligence_name { min-width: 0; overflow-wrap: anywhere; }
+#intelligence .intelligence_agent_grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+#intelligence .intelligence_metric_row { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0; }
+#intelligence .intelligence_metric { display: flex; flex-direction: column; }
+#intelligence .intelligence_metric b { font-size: 18px; font-variant-numeric: tabular-nums; }
+#intelligence .intelligence_metric span { font-size: 12px; opacity: .7; }
+#intelligence .intelligence_filter_pills { display: flex; flex-wrap: wrap; gap: 6px; }
+#intelligence .intelligence_filter_pill { padding: 3px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); }
+#intelligence .intelligence_filter_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; }
+#intelligence table { width: 100%; border-collapse: collapse; font-size: 14px; }
+#intelligence th, #intelligence td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+#intelligence th { font-weight: 600; opacity: .8; white-space: nowrap; }
+#intelligence td.intelligence_num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#intelligence .intelligence_empty { opacity: .7; margin: 4px 0 10px; }
+#intelligence .intelligence_external { border: 1px dashed var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); padding: 8px 12px; }
+#intelligence .intelligence_history_ranges { display: flex; flex-wrap: wrap; gap: 6px; }
+#intelligence .intelligence_history_panel { display: none; }
+#intelligence .intelligence_history_panel.is-active { display: block; }
+#intelligence .intelligence_scroll { min-width: 0; overflow-x: auto; }
+</style>
+<div id="intelligence" app="intelligence">
+	<div class="intelligence_tabs" role="tablist" aria-label="<%= &subs::ui('Intelligence sections') %>">
+		<button type="button" class="intelligence_section_pill is-active" role="tab" data-section="overview" aria-selected="true" aria-controls="intelligence_section_overview" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Overview') %></button>
+		<button type="button" class="intelligence_section_pill" role="tab" data-section="agents" aria-selected="false" aria-controls="intelligence_section_agents" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Agents') %></button>
+		<button type="button" class="intelligence_section_pill" role="tab" data-section="evaluations" aria-selected="false" aria-controls="intelligence_section_evaluations" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Evaluations') %></button>
+		<button type="button" class="intelligence_section_pill" role="tab" data-section="providers" aria-selected="false" aria-controls="intelligence_section_providers" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Providers') %></button>
+		<button type="button" class="intelligence_section_pill" role="tab" data-section="history" aria-selected="false" aria-controls="intelligence_section_history" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('History') %></button>
+	</div>
+
+	<section id="intelligence_section_overview" class="intelligence_section is-active" data-section="overview" role="tabpanel">
+		<% my $summary = (ref $d->{'summary'} eq 'HASH') ? $d->{'summary'} : {}; %>
+		<div class="intelligence_grid">
+			<div class="intelligence_card">
+				<h4><%= &subs::ui('Tokens today') %></h4>
+				<div class="intelligence_value"><%= $num->($summary->{'today'} ? $summary->{'today'}->{'tokens'} : 0) %></div>
+				<div class="intelligence_sub"><%= $num->($summary->{'today'} ? $summary->{'today'}->{'calls'} : 0) %> <%= &subs::ui('calls') %></div>
+			</div>
+			<div class="intelligence_card">
+				<h4><%= &subs::ui('Tokens, 7 days') %></h4>
+				<div class="intelligence_value"><%= $num->($summary->{'week'} ? $summary->{'week'}->{'tokens'} : 0) %></div>
+				<div class="intelligence_sub"><%= $num->($summary->{'week'} ? $summary->{'week'}->{'calls'} : 0) %> <%= &subs::ui('calls') %></div>
+			</div>
+			<div class="intelligence_card">
+				<h4><%= &subs::ui('Tokens, 30 days') %></h4>
+				<div class="intelligence_value"><%= $num->($summary->{'month'} ? $summary->{'month'}->{'tokens'} : 0) %></div>
+				<div class="intelligence_sub"><%= $num->($summary->{'month'} ? $summary->{'month'}->{'calls'} : 0) %> <%= &subs::ui('calls') %></div>
+			</div>
+			<div class="intelligence_card">
+				<h4><%= &subs::ui('House daily budget') %></h4>
+				<% my $budget = (ref $summary->{'budget'} eq 'HASH') ? $summary->{'budget'} : {}; %>
+				<div class="intelligence_value"><%= $num->($budget->{'spent'}) %></div>
+				<div class="intelligence_sub"><%= &subs::ui('of') %> <%= $num->($budget->{'cap'}) %> (<%= $pct->($budget->{'percent'}) %>%)</div>
+				<div class="intelligence_bar"><span style="width:<%= $pct->($budget->{'percent'}) %>%"></span></div>
+			</div>
+		</div>
+
+		<div class="intelligence_columns">
+			<div class="intelligence_card">
+				<h4><%= &subs::ui('Provider split, 30 days') %></h4>
+				<% my $providers = (ref $summary->{'providers'} eq 'ARRAY') ? $summary->{'providers'} : []; %>
+				<% if (@{$providers}) { %>
+					<ul class="intelligence_list">
+					<% foreach my $p ( @{$providers} ) { %>
+						<li><span class="intelligence_name"><%= $p->{'label'} || $p->{'provider'} || &subs::ui('Unknown') %></span><span><%= $num->($p->{'tokens'}) %></span></li>
+					<% } %>
+					</ul>
+				<% } else { %>
+					<p class="intelligence_empty"><%= &subs::ui('No calls recorded in this window.') %></p>
+				<% } %>
+			</div>
+			<div class="intelligence_card">
+				<h4><%= &subs::ui('Top agents') %></h4>
+				<% my $top_agents = (ref $summary->{'top_agents'} eq 'ARRAY') ? $summary->{'top_agents'} : []; %>
+				<% if (@{$top_agents}) { %>
+					<ul class="intelligence_list">
+					<% foreach my $a ( @{$top_agents} ) { %>
+						<li><span class="intelligence_name"><%= $a->{'name'} %></span><span><%= $num->($a->{'tokens'}) %></span></li>
+					<% } %>
+					</ul>
+				<% } else { %>
+					<p class="intelligence_empty"><%= &subs::ui('No agent has spent tokens in this window.') %></p>
+				<% } %>
+			</div>
+			<div class="intelligence_card">
+				<h4><%= &subs::ui('Top evaluations') %></h4>
+				<% my $top_evals = (ref $summary->{'top_evaluations'} eq 'ARRAY') ? $summary->{'top_evaluations'} : []; %>
+				<% if (@{$top_evals}) { %>
+					<ul class="intelligence_list">
+					<% foreach my $e ( @{$top_evals} ) { %>
+						<li><span class="intelligence_name"><%= $scope_label->($e->{'scope'}) %></span><span><%= $num->($e->{'tokens'}) %></span></li>
+					<% } %>
+					</ul>
+				<% } else { %>
+					<p class="intelligence_empty"><%= &subs::ui('No evaluation has spent tokens in this window.') %></p>
+				<% } %>
+			</div>
+		</div>
+
+		<div class="intelligence_card intelligence_scroll">
+			<h4><%= &subs::ui('Recent calls') %></h4>
+			<% my $recent = (ref $summary->{'recent'} eq 'ARRAY' && @{ $summary->{'recent'} }) ? $summary->{'recent'} : ((ref $d->{'recent'} eq 'ARRAY') ? $d->{'recent'} : []); %>
+			<% if (@{$recent}) { %>
+				<table>
+					<thead><tr><th><%= &subs::ui('When') %></th><th><%= &subs::ui('Provider') %></th><th><%= &subs::ui('Model') %></th><th><%= &subs::ui('Role') %></th><th><%= &subs::ui('In') %></th><th><%= &subs::ui('Out') %></th></tr></thead>
+					<tbody>
+					<% foreach my $r ( @{$recent} ) { %>
+						<tr>
+							<td><%= $r->{'minute'} %></td>
+							<td><%= $r->{'provider_label'} || $r->{'provider'} %></td>
+							<td><%= $r->{'model'} %></td>
+							<td><%= $r->{'role_label'} || $r->{'role'} %></td>
+							<td class="intelligence_num"><%= $num->($r->{'tokens_in'}) %></td>
+							<td class="intelligence_num"><%= $num->($r->{'tokens_out'}) %></td>
+						</tr>
+					<% } %>
+					</tbody>
+				</table>
+			<% } else { %>
+				<p class="intelligence_empty"><%= &subs::ui('No calls recorded yet.') %></p>
+			<% } %>
+		</div>
+	</section>
+
+	<section id="intelligence_section_agents" class="intelligence_section" data-section="agents" role="tabpanel" hidden>
+		<p class="intelligence_sub"><%= &subs::ui('These are the token counts JawnOS recorded. Spend on the same provider account from another tool - an editor, a script, a second machine - has no JawnOS token row; it appears under Providers as Outside JawnOS (inferred).') %></p>
+		<div class="intelligence_agent_grid">
+		<% my $agents = (ref $d->{'agents'} eq 'ARRAY') ? $d->{'agents'} : []; %>
+		<% foreach my $g ( @{$agents} ) { %>
+			<div class="intelligence_card">
+				<h4><%= $g->{'name'} %></h4>
+				<div class="intelligence_metric_row">
+					<div class="intelligence_metric"><b><%= $num->($g->{'tokens_in'}) %></b><span><%= &subs::ui('tokens in') %></span></div>
+					<div class="intelligence_metric"><b><%= $num->($g->{'tokens_out'}) %></b><span><%= &subs::ui('tokens out') %></span></div>
+					<div class="intelligence_metric"><b><%= $num->($g->{'calls'}) %></b><span><%= &subs::ui('calls') %></span></div>
+					<div class="intelligence_metric"><b><%= $num->($g->{'sessions'}) %></b><span><%= &subs::ui('sessions') %></span></div>
+					<div class="intelligence_metric"><b><%= $num->($g->{'active_minutes'}) %></b><span><%= &subs::ui('active minutes') %></span></div>
+				</div>
+				<div class="intelligence_sub"><%= &subs::ui('Last used') %>: <%= length($g->{'last_used'} // '') ? $g->{'last_used'} : '—' %></div>
+				<% my @provs = sort { ($g->{'providers'}->{$b} || 0) <=> ($g->{'providers'}->{$a} || 0) } grep { length } keys %{ $g->{'providers'} || {} }; %>
+				<% if (@provs) { %>
+					<ul class="intelligence_list">
+					<% foreach my $p ( @provs ) { %>
+						<li><span class="intelligence_name"><%= $g->{'provider_labels'}->{$p} || (length($p) ? $p : &subs::ui('Unknown')) %></span><span><%= $num->($g->{'providers'}->{$p}) %></span></li>
+					<% } %>
+					</ul>
+				<% } %>
+			</div>
+		<% } %>
+		</div>
+	</section>
+
+	<section id="intelligence_section_evaluations" class="intelligence_section" data-section="evaluations" role="tabpanel" hidden>
+		<div class="intelligence_filter_pills" role="group" aria-label="<%= &subs::ui('Evaluation filter') %>">
+			<button type="button" class="intelligence_filter_pill is-active" data-eval-filter="all"><%= &subs::ui('All') %></button>
+			<button type="button" class="intelligence_filter_pill" data-eval-filter="active"><%= $state_label{'active'} %></button>
+			<button type="button" class="intelligence_filter_pill" data-eval-filter="scheduled"><%= $state_label{'scheduled'} %></button>
+			<button type="button" class="intelligence_filter_pill" data-eval-filter="on_demand"><%= $state_label{'on_demand'} %></button>
+			<button type="button" class="intelligence_filter_pill" data-eval-filter="idle"><%= $state_label{'idle'} %></button>
+		</div>
+		<div class="intelligence_scroll">
+			<table>
+				<thead><tr>
+					<th><%= &subs::ui('Scope') %></th>
+					<th><%= &subs::ui('Cadence') %></th>
+					<th><%= &subs::ui('Days') %></th>
+					<th><%= &subs::ui('Next run') %></th>
+					<th><%= &subs::ui('Last run') %></th>
+					<th><%= &subs::ui('Tokens 7d') %></th>
+					<th><%= &subs::ui('Tokens 30d') %></th>
+					<th><%= &subs::ui('Last run tokens') %></th>
+					<th><%= &subs::ui('Average per run') %></th>
+				</tr></thead>
+				<tbody>
+				<% my $evaluations = (ref $d->{'evaluations'} eq 'ARRAY') ? $d->{'evaluations'} : []; %>
+				<% foreach my $row ( @{$evaluations} ) { %>
+					<% my $last = (ref $row->{'last_run'} eq 'HASH') ? $row->{'last_run'} : {}; %>
+					<tr data-eval-state="<%= $row->{'state'} %>">
+						<td><%= $scope_label->($row->{'scope'}) %></td>
+						<td><%= $cadence_label{ $row->{'cadence'} } || $row->{'cadence'} %></td>
+						<td><%= length($days_text->($row->{'days'}) // '') ? $days_text->($row->{'days'}) : '—' %></td>
+						<td><%= length($row->{'next_run_text'} // '') ? $row->{'next_run_text'} : '—' %></td>
+						<td>
+							<%= length($last->{'outcome'} // '') ? $last->{'outcome'} : '—' %>
+							<% if (length($last->{'machine'} // '')) { %> · <%= $last->{'machine'} %><% } %>
+							<% if (length($last->{'model'} // '')) { %> · <%= $last->{'model'} %><% } %>
+							<% if (length($last->{'at_text'} // '')) { %> · <%= $last->{'at_text'} %><% } %>
+						</td>
+						<td class="intelligence_num"><%= $num->($row->{'tokens_7d'}) %></td>
+						<td class="intelligence_num"><%= $num->($row->{'tokens_30d'}) %></td>
+						<td class="intelligence_num"><%= $num->($row->{'last_run_tokens'}) %></td>
+						<td class="intelligence_num"><%= $num->($row->{'avg_per_run'}) %></td>
+					</tr>
+				<% } %>
+				</tbody>
+			</table>
+		</div>
+	</section>
+
+	<section id="intelligence_section_providers" class="intelligence_section" data-section="providers" role="tabpanel" hidden>
+		<% my $provider_data = (ref $d->{'providers'} eq 'HASH') ? $d->{'providers'} : {}; %>
+		<% my $provider_rows = (ref $provider_data->{'rows'} eq 'ARRAY') ? $provider_data->{'rows'} : []; %>
+		<div class="intelligence_scroll">
+			<table>
+				<thead><tr>
+					<th><%= &subs::ui('Provider') %></th>
+					<th><%= &subs::ui('Tokens in') %></th>
+					<th><%= &subs::ui('Tokens out') %></th>
+					<th><%= &subs::ui('Tokens') %></th>
+					<th><%= &subs::ui('Calls') %></th>
+					<th><%= &subs::ui('Share') %></th>
+					<th><%= &subs::ui('Models') %></th>
+					<th><%= &subs::ui('Balance left') %></th>
+				</tr></thead>
+				<tbody>
+				<% foreach my $row ( @{$provider_rows} ) { %>
+					<tr<% if ($row->{'all'}) { %> class="intelligence_all_providers"<% } %>>
+						<td><%= $row->{'all'} ? &subs::ui('All providers') : $row->{'label'} %></td>
+						<td class="intelligence_num"><%= $num->($row->{'tokens_in'}) %></td>
+						<td class="intelligence_num"><%= $num->($row->{'tokens_out'}) %></td>
+						<td class="intelligence_num"><%= $num->($row->{'tokens'}) %></td>
+						<td class="intelligence_num"><%= $num->($row->{'calls'}) %></td>
+						<td class="intelligence_num"><%= $pct->($row->{'share'}) %>%</td>
+						<td><%= join(', ', @{ $row->{'models'} || [] }) %></td>
+						<td>
+							<% my $bal = (ref $row->{'balance'} eq 'HASH') ? $row->{'balance'} : {}; %>
+							<% if (defined $bal->{'available'} && $bal->{'available'} =~ /^-?\d+(?:\.\d+)?$/) { %>
+								<%= $money->($bal->{'available'}, $bal->{'currency'}) %>
+							<% } elsif (length($bal->{'note'} // '')) { %>
+								<%= $bal->{'note'} %>
+							<% } else { %>
+								—
+							<% } %>
+						</td>
+					</tr>
+				<% } %>
+				</tbody>
+			</table>
+		</div>
+		<% my $external = (ref $provider_data->{'external'} eq 'HASH') ? $provider_data->{'external'} : undef; %>
+		<% if ($external) { %>
+			<div class="intelligence_external">
+				<strong><%= &subs::ui('Outside JawnOS (inferred)') %></strong>
+				<div class="intelligence_sub">
+					<% if (defined $external->{'consumption'} && $external->{'consumption'} =~ /^-?\d+(?:\.\d+)?$/) { %>
+						<%= $money->($external->{'consumption'}, $external->{'currency'}) %> <%= &subs::ui('in the last day') %>
+					<% } %>
+					<% if (defined $external->{'per_day'} && $external->{'per_day'} =~ /^-?\d+(?:\.\d+)?$/) { %>
+						· <%= $money->($external->{'per_day'}, $external->{'currency'}) %> <%= &subs::ui('per day') %>
+					<% } %>
+					<% if (defined $external->{'tokens'} && $external->{'tokens'}) { %>
+						· <%= $num->($external->{'tokens'}) %> <%= &subs::ui('tokens recorded') %>
+					<% } %>
+				</div>
+			</div>
+		<% } else { %>
+			<p class="intelligence_empty"><%= &subs::ui('No inferred outside spend is on the balance chart.') %></p>
+		<% } %>
+	</section>
+
+	<section id="intelligence_section_history" class="intelligence_section" data-section="history" role="tabpanel" hidden>
+		<div class="intelligence_history_ranges" role="tablist" aria-label="<%= &subs::ui('History range') %>">
+			<button type="button" class="intelligence_filter_pill" data-history-range="24h">24h</button>
+			<button type="button" class="intelligence_filter_pill is-active" data-history-range="7d">7d</button>
+			<button type="button" class="intelligence_filter_pill" data-history-range="30d">30d</button>
+			<button type="button" class="intelligence_filter_pill" data-history-range="90d">90d</button>
+			<button type="button" class="intelligence_filter_pill" data-history-range="1y">1y</button>
+			<button type="button" class="intelligence_filter_pill" data-history-range="all"><%= &subs::ui('All') %></button>
+		</div>
+		<% my $history = (ref $d->{'history'} eq 'HASH') ? $d->{'history'} : {}; %>
+		<% foreach my $range (qw(24h 7d 30d 90d 1y all)) { %>
+			<% my $panel = (ref $history->{$range} eq 'HASH') ? $history->{$range} : {}; %>
+			<% my $rows = (ref $panel->{'days'} eq 'ARRAY') ? $panel->{'days'} : []; %>
+			<% my $totals = (ref $panel->{'totals'} eq 'HASH') ? $panel->{'totals'} : {}; %>
+			<div class="intelligence_history_panel<% if ($range eq '7d') { %> is-active<% } %>" data-history-range-panel="<%= $range %>">
+				<div class="intelligence_scroll">
+					<table>
+						<thead><tr>
+							<th><%= &subs::ui('Day') %></th>
+							<th><%= &subs::ui('Tokens') %></th>
+							<th><%= &subs::ui('Calls') %></th>
+							<th><%= &subs::ui('Top agent') %></th>
+							<th><%= &subs::ui('Top provider') %></th>
+						</tr></thead>
+						<tbody>
+						<% foreach my $row ( @{$rows} ) { %>
+							<tr>
+								<td><%= $row->{'day'} %></td>
+								<td class="intelligence_num"><%= $num->($row->{'tokens'}) %></td>
+								<td class="intelligence_num"><%= $num->($row->{'calls'}) %></td>
+								<td><%= length($row->{'top_agent'} // '') ? $row->{'top_agent'} : '—' %></td>
+								<td><%= length($row->{'top_provider'} // '') ? $row->{'top_provider'} : '—' %></td>
+							</tr>
+						<% } %>
+						<% if (!@{$rows}) { %>
+							<tr><td colspan="5"><%= &subs::ui('No days recorded in this range.') %></td></tr>
+						<% } %>
+						</tbody>
+					</table>
+				</div>
+				<p class="intelligence_sub"><%= &subs::ui('Total') %>: <%= $num->($totals->{'tokens'}) %> <%= &subs::ui('tokens') %> · <%= $num->($totals->{'calls'}) %> <%= &subs::ui('calls') %></p>
+			</div>
+		<% } %>
+	</section>
+</div>

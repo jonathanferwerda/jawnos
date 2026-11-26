@@ -361,8 +361,13 @@ sub mail_checker($c) {
 	}
 	elsif ($settings->{'subsection'} eq 'pen') {
 
-	  $chatbot_models = &subs::pen_model_list();
-		push @{$chatbot_models}, @{&subs::cloudflare_model_list()};
+	  # Every chat-capable model from every configured provider, not just the
+	  # local Ollama and Cloudflare probes: pen_model_choices flattens the shared
+	  # catalogue (bare Ollama, @cf/..., @device/model, provider:model) to the
+	  # picker's rows. Load Domain::Sent by its mapped sibling first, since the
+	  # chooser is a plain helper beside pen_model_list rather than its own entry.
+	  &subs::preload('pen_model_list');
+	  $chatbot_models = &subs::pen_model_choices(&subs::ai_model_catalogue('chat'));
 		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? and conversation_uuid = ? order by timestamp desc LIMIT 30', $timestamp, 'pen', $settings->{'chatbot_conversation'});
 		&subs::db_query('delete from mailbox where contact = ? and conversation_uuid is null', 'pen');
 		$main_title = 'Pen';

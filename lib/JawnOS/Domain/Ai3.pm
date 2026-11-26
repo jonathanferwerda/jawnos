@@ -629,6 +629,52 @@ sub ai_balance_buckets {
 	};
 }
 
+# How much of a provider's fall the JawnOS ledger does not explain. Every
+# consecutive pair of balance readings is one interval: the fall between them is
+# the money that left the account, and the ledger's tokens in the same interval
+# say whether the house caused it. A fall with no JawnOS tokens beside it is
+# outside the house - another tool, another device, a subscription renewal - and
+# is reported as external. A fall with any tokens is credited to JawnOS whole:
+# the ledger cannot split a mixed interval, and under-claiming external spend is
+# the safer error. A rise is a top-up, not a negative fall, so it is ignored.
+# `$tokens_by_minute` is a hash from the ledger's local minute key
+# ('YYYY-MM-DD HH:MM') to the tokens banked in that minute. Pure, so a test can
+# pin the arithmetic without a provider call or a database.
+sub ai_balance_external {
+	my ($points, $tokens_by_minute) = @_;
+	my @p = sort { $a->{'t'} <=> $b->{'t'} }
+		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} }
+		@{ ref $points eq 'ARRAY' ? $points : [] };
+	my $rows = ref $tokens_by_minute eq 'HASH' ? $tokens_by_minute : {};
+	my ($external, $tokens_total) = (0, 0);
+	my @intervals;
+	for my $i ( 1 .. $#p ) {
+		my ($t0, $v0) = ($p[ $i - 1 ]{'t'}, $p[ $i - 1 ]{'v'});
+		my ($t1, $v1) = ($p[$i]{'t'}, $p[$i]{'v'});
+		my $fall = $v0 - $v1;
+		$fall = 0 if $fall < 0;    # a rise is a top-up, not a spend
+		my $k0 = &subs::ai_spend_minute_key($t0);
+		my $k1 = &subs::ai_spend_minute_key($t1);
+		my $tokens = 0;
+		foreach my $k ( keys %{$rows} ) {
+			next unless defined $k && length $k;
+			# Tokens after the earlier reading and up to the later one are what
+			# caused the fall. Consecutive intervals then share no minute. When
+			# both readings sit in one minute, that minute's tokens are the only
+			# candidates the ledger could offer.
+			my $inside = ($k0 eq $k1) ? ($k eq $k0) : ($k gt $k0 && $k le $k1);
+			$tokens += $rows->{$k} || 0 if $inside;
+		}
+		$tokens_total += $tokens;
+		my $out = $tokens > 0 ? 0 : $fall;
+		$external += $out;
+		push @intervals, {
+			from => $t0, to => $t1, fall => $fall, tokens => $tokens, external => $out,
+		};
+	}
+	return { external => $external, intervals => \@intervals, tokens => $tokens_total };
+}
+
 # The line under the pace that says how long the agents were actually in use,
 # and what an hour of that cost. The time is a duration and never changes with
 # the currency; the money carries its own base figure so the picker converts it
@@ -1025,8 +1071,41 @@ sub ai_balance_chart {
 			# covers the whole window: a fall it did not see divided by the tokens
 			# it did would read as an inflated price.
 			my $tracked = (@{ $bars->{'buckets'} } && $bars->{'buckets'}->[0]{'tracked'}) ? 1 : 0;
+			# How much of the fall the ledger cannot account for. The ledger is
+			# read by minute for this provider and window, once, and the pure
+			# inference walks it beside the balance points. Only a window whose
+			# ledger is complete can tell an external fall from one the ledger
+			# simply had not started recording yet, so an untracked window says
+			# nothing rather than accusing the person's other tools.
+			my $external = 0;
+			if (!$projected && $tracked) {
+				my $since_key = &subs::ai_spend_minute_key($line->{'start'});
+				my $until_key = &subs::ai_spend_minute_key($line->{'now'});
+				my $minute_rows = eval {
+					&subs::db_query(
+						'select minute, sum(coalesce(tokens_in, 0) + coalesce(tokens_out, 0)) as tokens'
+						. ' from ai_spend where provider = ? and minute >= ? and minute <= ? group by minute',
+						$provider, $since_key, $until_key)->hashes;
+				};
+				# A read that failed is not an empty ledger: leave the external
+				# figure unknown rather than blame the whole fall on other tools.
+				if (ref $minute_rows eq 'ARRAY') {
+					my %tokens_by_minute;
+					foreach my $r ( @{$minute_rows} ) {
+						my $k = $r->{'minute'};
+						next unless defined $k && length $k;
+						$tokens_by_minute{$k} = ($tokens_by_minute{$k} || 0) + ($r->{'tokens'} || 0);
+					}
+					my $split = &ai_balance_external($line->{'points'}, \%tokens_by_minute);
+					$external = $split->{'external'} || 0;
+				}
+			}
+			# The money the house can claim is the fall minus what the ledger did
+			# not explain; a float rounding can push it a hair below zero.
+			my $jawnos_total = $bars->{'total'} - $external;
+			$jawnos_total = 0 if $jawnos_total < 0;
 			my $per_k = ($bars->{'tokens'} > 0 && $tracked)
-				? ($bars->{'total'} / $bars->{'tokens'}) * 1000
+				? ($jawnos_total / $bars->{'tokens'}) * 1000
 				: undef;
 			# Time in use, from the same ledger: the spans of the sessions the
 			# calls make, so money can be read against the hour a person actually
@@ -1053,8 +1132,34 @@ sub ai_balance_chart {
 					? $role->{'cost'} / ($role->{'active_ms'} / 3600000)
 					: undef;
 			}
+			# A named row for spend the ledger cannot place, so the panel can say
+			# what left the account outside JawnOS instead of silently widening
+			# an agent's share. Its tokens are zero by definition; its money is
+			# the inferred external total.
+			if ($external > 0.000001) {
+				push @roles, {
+					role      => '__external',
+					label     => &subs::ui('Outside JawnOS (inferred)'),
+					tokens    => 0,
+					cost      => $external,
+					share     => ($bars->{'total'} > 0 ? ($external / $bars->{'total'}) * 100 : 0),
+					active_ms => 0,
+					sessions  => 0,
+				};
+			}
+			# When there is a price and real consumption, split by money so the
+			# named roles and the external row add up to the whole fall. With no
+			# price (a free or untracked provider) the token share set above is
+			# the only split the ledger can support, and it is left alone.
+			if (defined $per_k && $bars->{'total'} > 0) {
+				foreach my $role ( @roles ) {
+					next unless defined $role->{'cost'};
+					$role->{'share'} = ($role->{'cost'} / $bars->{'total'}) * 100;
+				}
+			}
 			$windows{$window} = {
 				line => $line, bars => $bars, roles => \@roles, per_k => $per_k,
+				external => $external, jawnos_total => $jawnos_total,
 				house_tokens => $house_tokens{$window},
 				active_ms => $active_ms, sessions => ($active->{'sessions'} || 0),
 				per_active_hour => $per_active_hour, tokens_per_hour => $tokens_per_hour,

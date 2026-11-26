@@ -397,13 +397,6 @@ sub pen_message {
 
 
 	my $ua = Mojo::UserAgent->new;
-	# Define your model and messages (including system prompt)
-	my $nproc = 4; # Safe fallback default
-	if (open(my $fh, "-|", "nproc")) {
-		  $nproc = <$fh>;
-		  chomp($nproc);
-		  close($fh);
-	}
 	# Tell the model, in code, how to ask for media: an explicit JSON action,
 	# rather than a magic marker it may or may not emit. Only added when a
 	# generation agent is configured.
@@ -411,100 +404,91 @@ sub pen_message {
 	if (my $gen_hint = &ai_generation_instruction($settings)) {
 		$system_message .= $gen_hint;
 	}
-	my %chat_seen;
-	my @chat_candidates = grep { !$chat_seen{$_}++ } grep { defined $_ && length $_ } ($model, $settings->{'chatbot_model_fallback'});
-	my $buffer = '';
+
+	# The wire is the shared AI layer, so a conversation may name any model the
+	# house can reach - a bare Ollama id, @cf/..., @device/model, or
+	# provider:model - and the ledger records the call there, not here.
+	my $role = ($data->{'images'} && $settings->{'visual_assistant'}) ? 'visual_assistant' : 'chatbot_model';
+	my $thinking = &subs::ai_role_thinking_effective($role);
+	my $messages = [ { role => 'system', content => $system_message }, @{$history} ];
 	my $accumulated_text = '';
-	my $tx;
-	foreach my $try_model ( @chat_candidates ) {
-		$buffer = '';
-		$accumulated_text = '';
-		$response_text = '';
-		my $payload = {
-			  model    => $try_model, # Replace with your installed model
-			  messages => [
-			      { role => 'system', content => $system_message },
-			     	@{$history}
-			  ],
-			  stream   => \1 # Tells Ollama to stream the response (JSON true)
-		};
-		# Ollama Chat API Endpoint
-		my ($key,$url);
-		if ($try_model =~ /^\@cf/ && $settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) {
-			$url = 'https://api.cloudflare.com/client/v4/accounts/'. $settings->{'cloudflare_account'} . '/ai/run/' . $try_model;
-			$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'cloudflare_token'});
-		} else {
-			$url = 'http://localhost:11434/api/chat';
-			$key = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'ollama_key'});
-			$payload->{'options'} = {
-				num_thread => $nproc - 2,
-				num_ctx    => 32768
-			},
-			# thinking, where the chat model is a local one that reasons (Ollama's own
-			# think field); Cloudflare's endpoint takes none
-			my $lvl = &subs::ai_thinking_level(&subs::ai_role_thinking_effective(($data->{'images'} && $settings->{'visual_assistant'}) ? 'visual_assistant' : 'chatbot_model'));
-			$payload->{'think'} = ($lvl eq 'max' ? 'high' : $lvl) if length $lvl && &subs::ai_model_thinks($try_model);
+	my $streamed = 0;
+	# Every delta is the same visible update the old direct-Ollama loop sent:
+	# escaped for the mail window, newlines as <br>, appended to the reply. The
+	# raw text is kept beside it, because the media action is read from what the
+	# model actually wrote, not from its HTML. Reasoning is not shown here, the
+	# same as the old loop, which read only message.content.
+	my $sink = sub {
+		my ($kind, $piece) = @_;
+		return unless defined $piece && length $piece;
+		return unless $kind eq 'text';
+		$streamed = 1;
+		my $text = unidecode($piece);
+		$accumulated_text .= $text;
+		unless ($data->{'type'} eq 'assistant') {
+			# The reply is HTML in the mail window: escape it there too, or a model answer carrying a tag runs it in WebEngine.
+			$text = &subs::html_text($text);
+			$text =~ s/\n/<br>/gi;
+			$response_text .= $text;
+			&Websocket::mail_send({
+				type => 'writing',
+				uuid => $msg_data->{'uuid'} || $data->{'uuid'},
+				new_text => $text,
+				all_text => $response_text,
+				mail_contact => 'pen'
+			});
 		}
-
-		$log->info($url);
-		$tx = $ua->build_tx(POST => $url => {
-				'Authorization' => "Bearer $key",
-				'Content-Type'  => 'application/json'
-			} => json => $payload);
-
-		# 2. Maintain a tiny string buffer for incomplete stream chunks
-		# 3. UNSUBSCRIBE the default parser, then attach your custom reader
-		$tx->res->content->unsubscribe('read')->on(read => sub {
-			  my ($content, $bytes) = @_;
-
-			  $buffer .= $bytes;
-
-			  # Process full lines out of our buffer
-			  while ($buffer =~ s/^([^\n]*)\n//) {
-			      my $line = $1;
-			      next unless $line;
-
-			      my $adata = eval { decode_json($line) };
-			      next if $@;
-	    			if (my $text = unidecode($adata->{message}{content})) {
-						$accumulated_text .= $text;
-
-
-							unless ($data->{'type'} eq 'assistant') {
-								# The reply is HTML in the mail window: escape it there too,
-								# or a model answer carrying a tag runs it in WebEngine.
-								$text = &subs::html_text($text);
-								$text =~ s/\n/<br>/gi;
-								$response_text .= $text;
-								&Websocket::mail_send({
-									type => 'writing',
-									uuid => $msg_data->{'uuid'} || $data->{'uuid'},
-									new_text => $text,
-									all_text => $response_text,
-									mail_contact => 'pen'
-								});
-							} else {
-								$text = &subs::html_text($text);
-								$text =~ s/\n/<br>/gi;
-								$response_text .= $text;
-								&Websocket::send('tab', {
-									console => &Websocket::console_command('setHtml', $data->{'uuid'}, $response_text)
-								});
-							}
-		          *STDOUT->flush;
-			      }
-			  }
-		});
-
-		# 3. Perform the transaction synchronously
-		$ua->start($tx);
-
-		# a call that never answered falls through to the next model; one that
-		# streamed anything is kept, so a retry never doubles the reply
-		last unless $tx && $tx->error;
-		last if length $response_text;
-		next if $try_model eq $chat_candidates[-1];
-		&subs::say_it('AI: ' . $try_model . ' failed (' . (($tx->error && $tx->error->{'message'}) || 'no answer') . '); trying the fallback');
+		else {
+			$text = &subs::html_text($text);
+			$text =~ s/\n/<br>/gi;
+			$response_text .= $text;
+			&Websocket::send('tab', {
+				console => &Websocket::console_command('setHtml', $data->{'uuid'}, $response_text)
+			});
+		}
+		*STDOUT->flush;
+	};
+	# The helper already tries the conversation's model and then the configured
+	# fallback, so an outage costs one answer, not a hand-rolled retry loop.
+	# count_unmetered is the contract with the ledger: a provider that reports no
+	# usage still records the call (and the app that made it).
+	my ($parts, $wire_error) = &subs::ai_chat_parts_with_fallback(
+		$model,
+		$settings->{'chatbot_model_fallback'},
+		$messages,
+		$thinking,
+		$role,
+		{ on_delta => $sink, app => 'pen', count_unmetered => 1 }
+	);
+	if ($wire_error) {
+		# Both the conversation's model and its fallback were tried inside the
+		# helper; there is no third model to guess at, so the window keeps what it
+		# already showed and the caller gets that.
+		$log->info('Pen: ' . $model . ' and its fallback failed: ' . $wire_error);
+	}
+	elsif (!$streamed) {
+		# Cloudflare and a peer's Ollama answer whole, and a provider that ignores
+		# the stream flag sends one JSON body; the reply is sent once instead.
+		my $wire_text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
+		if (length $wire_text) {
+			$accumulated_text = unidecode($wire_text);
+			$response_text = &subs::html_text($accumulated_text);
+			$response_text =~ s/\n/<br>/gi;
+			if ($data->{'type'} eq 'assistant') {
+				&Websocket::send('tab', {
+					console => &Websocket::console_command('setHtml', $data->{'uuid'}, $response_text)
+				});
+			}
+			else {
+				&Websocket::mail_send({
+					type => 'writing',
+					uuid => $msg_data->{'uuid'} || $data->{'uuid'},
+					new_text => $response_text,
+					all_text => $response_text,
+					mail_contact => 'pen'
+				});
+			}
+		}
 	}
 	my $attachments = [];
 	# Read the reply for a media request: the explicit JSON action the system
@@ -570,6 +554,37 @@ sub pen_message {
 	}
 	return ($response_text,$attachments);
 
+}
+
+# Pen's picker rows, from the shared catalogue: every chat-capable model from
+# every configured provider, peer Ollamas included. The catalogue is grouped by
+# provider and the picker wants one flat list, so a group's label rides beside
+# each model it offers. The value is the id the wire reads back - a bare Ollama
+# name, @cf/..., @device/model, or provider:model - left exactly as the
+# catalogue stamped it; the first of a repeated id wins, so a model both a
+# provider list and a peer advertises appears once.
+sub pen_model_choices {
+	my ($catalogue) = @_;
+	return [] unless ref $catalogue eq 'ARRAY';
+	my (@choices, %seen);
+	foreach my $group ( @{$catalogue} ) {
+		next unless ref $group eq 'HASH' && ref $group->{'models'} eq 'ARRAY';
+		my $label = $group->{'label'} || $group->{'id'} || '';
+		# Ai2 writes a peer's label with the middle dot as a literal \x{00b7}
+		# escape; a picker row shows the character, not the escape.
+		$label =~ s/\\x\{00b7\}/\x{00b7}/g;
+		foreach my $m ( @{ $group->{'models'} } ) {
+			next unless ref $m eq 'HASH';
+			my $value = $m->{'value'};
+			next unless defined $value && length $value;
+			next if $seen{$value}++;
+			my $name = $m->{'name'};
+			$name = $value unless defined $name && length $name;
+			my $full = ($label && $label ne $name) ? $label . " \x{00b7} " . $name : $name;
+			push @choices, { model => $value, name => $full };
+		}
+	}
+	return \@choices;
 }
 
 sub pen_model_list {

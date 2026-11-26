@@ -228,6 +228,7 @@ const GLYPHS = {
 	return_arrow: '<path d="M14.6 7H8.9a5.4 5.4 0 0 0 0 10.8H21" fill="none" stroke="{G}" stroke-width="2.4" stroke-linecap="round"/><path d="M9.2 3.6 4.8 7l4.4 3.4z" fill="{G}"/>',
 	assign: '<circle cx="9.4" cy="8" r="3.5" fill="{G}"/><path d="M3.2 19.8c0-3.3 2.8-5.6 6.2-5.6s6.2 2.3 6.2 5.6z" fill="{G}"/><path d="M15.6 12.4h5.8m0 0-2.5-2.5m2.5 2.5-2.5 2.5" fill="none" stroke="{D}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
 	beacon: '<circle cx="12" cy="12.6" r="2.9" fill="{G}"/><path d="M6.4 7a8.4 8.4 0 0 0 0 11.2M17.6 7a8.4 8.4 0 0 1 0 11.2" fill="none" stroke="{G}" stroke-width="2" stroke-linecap="round"/><path d="M3.6 4.2a12.4 12.4 0 0 0 0 16.8M20.4 4.2a12.4 12.4 0 0 1 0 16.8" fill="none" stroke="{D}" stroke-width="1.6" stroke-linecap="round"/>',
+	intelligence: '<circle cx="5.5" cy="12" r="2.6" fill="{G}"/><circle cx="18.5" cy="6.5" r="2.6" fill="{G}"/><circle cx="18.5" cy="17.5" r="2.6" fill="{G}"/><path d="M7.8 10.9 16.3 7.2M7.8 13.1l8.5 3.7" fill="none" stroke="{G}" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="2.2" fill="{D}"/>',
 	reset: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/><path d="M4 3.5v5h5z" fill="{G}"/>',
 };
 
@@ -535,6 +536,7 @@ const ICONS = {
 	'wallet': 'wallet',
 	'routing': 'detour',
 	'sessions': 'apps',
+	'intelligence': 'intelligence',
 };
 
 // --- styles --------------------------------------------------------------------
@@ -1456,6 +1458,7 @@ function hashHue(str) {
 const HUE_OVERRIDES = {
 	// the Clock app's faces keep one hue each, the same family as their plain
 	// fallback pictures: alarm red, stopwatch green, timer amber, world blue
+	intelligence: 270,
 	clock: 210,
 	alarm: 6,
 	stopwatch: 152,

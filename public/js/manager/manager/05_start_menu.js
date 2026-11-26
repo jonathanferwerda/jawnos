@@ -331,7 +331,7 @@ var startMenuIconApps = {
 	// needs an app to match its origin to; without an entry the press has no
 	// app key and the press-time preview cannot claim the window. stop_all and
 	// upload are actions, not apps, and are deliberately absent.
-	handbook_toggle: 'handbook', help_toggle: 'help', notifications_toggle: 'notifications',
+	handbook_toggle: 'handbook', help_toggle: 'help', notifications_toggle: 'notifications', intelligence_toggle: 'intelligence',
 	power_toggle: 'power', sound_toggle: 'sound', packages_toggle: 'packages',
 	keyboard_toggle: 'keyboard', calculator_toggle: 'calculator', weather_toggle: 'weather',
 	twirl_toggle: 'twirl', pipedream_toggle: 'pipedream', minesweeper_toggle: 'minesweeper',
