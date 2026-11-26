@@ -176,17 +176,17 @@ for my $key (qw(start_menu.upcoming start_menu.expiring start_menu.all start_men
 
 # --- what the panel does ----------------------------------------------------
 # startMenuView() sorts the catalogue and keeps the All chip's catalogue: the
-# unfiltered view lifts up to five recent apps into the Recent group and sorts
-# the rest into All apps; a shelf or a typed query narrows the same rows and
-# drops both group labels. The filter feeds the query as the person types.
-like($menu_js, qr/var startMenuQuery = '';/, 'the app filter has its query state');
+# view lifts up to five recent apps into the Recent group and sorts the rest into
+# All apps; a shelf narrows the same rows and drops both group labels. The header
+# search is the house search on every page, so it no longer narrows the catalogue.
 like($menu_js, qr/function startMenuView\(\)/, 'startMenuView draws the catalogue');
 like($menu_js, qr/category === 'all'/, "startMenuView treats the All chip as the whole catalogue");
 like($menu_js, qr/\.start_menu_recent_group/, 'the view moves recent apps into the Recent group');
 like($menu_js, qr/\.start_menu_all_group/, 'and the rest into All apps');
-like($menu_js, qr/\$\('#start_menu_filter'\)/, 'the view resets the filter field');
+like($menu_js, qr/\$\('#start_menu_filter'\)/, 'a fresh body resets the search field');
 like($menu_js, qr/on\('input', '#start_menu_filter'/,
-	'the filter redraws the view as the person types');
+	'the header search answers as the person types');
+unlike($menu_js, qr/startMenuQuery/, 'the search no longer narrows the catalogue');
 like($menu_js, qr/function startMenuSelectCategory\(category\)/,
 	'startMenuSelectCategory keeps exactly one chip selected');
 like($menu_js, qr/function startMenuMoreToggle\(open\)/,
@@ -221,7 +221,7 @@ like($taskbar_js, qr/sheet\['bottom'\] = Math\.round\(h - t\.top \+ sheet_gap\)/
 
 # --- the guide's start-menu topic -------------------------------------------
 # Tier-1 help is hand-written and has to keep up with the panel: the guide names
-# the labelled pages and the app filter, the Recent/All groups, Leave/Site/More,
+# the labelled pages and the house search, the Recent/All groups, Leave/Site/More,
 # and that Help lives in the Apps list rather than at the foot.
 my ($start_menu_help) = $help_features =~ /\$topic\{'start_menu'\} = \{(.*?)\n\t\};/s;
 ok(defined $start_menu_help, 'the start_menu help topic is readable');
@@ -229,8 +229,8 @@ like($start_menu_help, qr/2026-11-26/, 'the topic was verified against this rebu
 like($start_menu_help, qr/Apps, Running, Upcoming, Expiring and System/,
 	'the guide names the labelled pages');
 like($start_menu_help, qr/search bar in the header/, 'the guide describes the app search');
-like($start_menu_help, qr/rides every page/, 'and says it is on every page');
-like($start_menu_help, qr/searches the house/, 'and that another page searches the house');
+like($start_menu_help, qr/searches the house/, 'and says it searches the house');
+like($start_menu_help, qr/on every page/, 'on every page');
 like($start_menu_help, qr/Configure, the wrench, holds the header/, 'and that Configure holds the right edge');
 like($start_menu_help, qr/Recent group/, 'the guide describes the Recent group');
 like($start_menu_help, qr/All apps/, 'and the All apps list');
@@ -284,13 +284,14 @@ like($css, qr/#start_menu\.start_menu_sheet\.start_menu_sheet_top\s*\{[^}]*top:[
 	'the stylesheet carries the top sheet as well');
 like($css, qr/#start_menu \.start_menu_header #main_logo\s*\{[^}]*margin-left:\s*auto/s,
 	'Configure holds the header right edge');
-# The search bar rides every page: on Apps it filters the catalogue, and
-# elsewhere it searches the house through the global search's own index,
-# ranking, openers and dropdown placement.
-like($menu_js, qr/if \(\$\('\.start_menu_main_display'\)\.length\)/,
-	'the Apps page keeps the catalogue filter');
+# The search bar is the house search on every page, through the global search's
+# own index, ranking, openers and dropdown placement.
 like($menu_js, qr/function startMenuSearchShow\(query\)/,
-	'a page with no catalogue searches the house instead');
+	'every page searches the house');
+like($menu_js, qr/startMenuSearchShow\(\$\(this\)\.val\(\) \|\| ''\)/,
+	'typing always asks the house search');
+unlike($menu_js, qr/if \(\$\('\.start_menu_main_display'\)\.length\)/,
+	'the search is not gated to the Apps page');
 like($menu_js, qr/jawnosSearchMatches\(query\)/, 'using the global search\'s ranking');
 like($menu_js, qr/jawnosSearchOpen\(row\.attr\('app'\)\)/, 'and its openers');
 like($menu_js, qr/function startMenuSearchMove\(direction\)/, 'the arrows walk the results');

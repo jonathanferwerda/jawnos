@@ -266,9 +266,8 @@ function startMenuRender(html, st) {
 	// The house search's dropdown lives on the body; a fresh menu body puts the
 	// list away with the page it was drawn over.
 	startMenuSearchHide();
-	// a fresh body means a fresh filter: the query cannot narrow a list it was
-	// not typed against
-	startMenuQuery = '';
+	// a fresh body means a fresh field: the box no longer carries a query for the
+	// catalogue it was typed against
 	$('#start_menu_filter').val('');
 	if (search) {
 		// the search rides the menu's own header slot, not the panel's foot
@@ -484,9 +483,8 @@ function startMenuForget(key) {
 
 // The app page opens on the whole catalogue: the recent apps first, freshest
 // first, then everything else alphabetically. A shelf narrows the catalogue to
-// its own, and the filter narrows it by name; either one drops both group
-// labels and the recent X. The open page is the choice, so All is the default.
-var startMenuQuery = '';
+// its own and drops both group labels and the recent X. The open page is the
+// choice, so All is the default.
 
 // What the view means by visible: the rows it hides itself carry display:none,
 // and that is what decides both the empty note and the keyboard's walk.
@@ -511,9 +509,8 @@ function startMenuView() {
 	rows.appendTo(all_group);
 	startMenuSort(main);
 	var category = $('.start_menu_category.selected').attr('category') || 'all';
-	var q = (typeof startMenuQuery == 'string' ? startMenuQuery : '').trim().toLowerCase();
-	// only the unfiltered catalogue has a recent section
-	var show_recent = (category === 'all' && !q);
+	// only the whole catalogue has a recent section
+	var show_recent = (category === 'all');
 	if (show_recent && recent_group.length) {
 		var seen = {};
 		var moved = 0;
@@ -528,12 +525,10 @@ function startMenuView() {
 			moved++;
 		});
 	}
-	// a row stays when it is in the chosen shelf and its name matches the filter
+	// a row stays when it is in the chosen shelf
 	rows.each(function () {
 		var row = $(this);
-		var visible = true;
-		if (category !== 'all' && startMenuRowCategory(row) !== category) { visible = false; }
-		if (visible && q && startMenuRowLabel(row).toLowerCase().indexOf(q) < 0) { visible = false; }
+		var visible = (category === 'all' || startMenuRowCategory(row) === category);
 		row.toggle(visible);
 	});
 	// the X is the recents' own: a catalogue row or a shelf's rows do not wear it
@@ -574,18 +569,11 @@ $(document).on('click', '.start_menu_category', function () {
 	startMenuView();
 });
 
-// The filter narrows the catalogue by name on the Apps page. The bar rides every
-// page, and a page that draws no catalogue searches the house instead: the same
-// index, ranking and openers as the global #search box, with the results in a
-// dropdown beside the bar.
+// The search bar searches the house on every page, the same as the global #search
+// box: the same index, ranking and openers, with the results in a dropdown beside
+// the bar. The category chips below narrow the catalogue.
 $(document).on('input', '#start_menu_filter', function () {
-	var value = $(this).val() || '';
-	if ($('.start_menu_main_display').length) {
-		startMenuQuery = value;
-		startMenuView();
-		return;
-	}
-	startMenuSearchShow(value);
+	startMenuSearchShow($(this).val() || '');
 });
 
 // The dropdown the house search draws under the bar. It is made once and kept on
@@ -650,7 +638,6 @@ function startMenuSearchMove(direction) {
 // Escape puts the list away before the menu itself; the menu's own keydown
 // handler must not see these while the list is up.
 $(document).on('keydown', '#start_menu_filter', function (e) {
-	if ($('.start_menu_main_display').length) { return; }
 	var code = e.keyCode || e.which;
 	var box = $('#start_menu_search_results');
 	var shown = box.is(':visible');
