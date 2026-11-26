@@ -507,6 +507,10 @@ like($markup, qr/id="studio_monitor_buffer"/, 'the monitor buffer sits beside th
 like($controls_js, qr/var studioMonitorDepths = \{/, 'each buffer is an engine depth');
 like($controls_js, qr/var depth = studioMonitorDepth\(\);/, 'and the listen asks for the chosen one');
 like($controls_js, qr/'jawnos\.studio\.monitor_buffer'/, 'the buffer survives a reload and re-arms on a change');
+like($markup, qr/<option value="auto" selected>/, 'Auto is the buffer picker\'s default');
+like($controls_js, qr/function studioAutoBufferBegin/, 'Auto sweeps the buffer at start');
+like($controls_js, qr/\(dropped - studioUsbAuto\.base\.dropped\)/, 'on the counters the engine already reports');
+like($controls_js, qr/'jawnos\.studio\.monitor_settled'/, 'and remembers what it settled on');
 like($controls_js, qr/if \(studioEngineRecording\) \{[\s\S]*?studioEngineMonitorGain\(on \? 1 : 0\)/,
 	'a recording engine take arms or silences the live input from the Monitor button');
 unlike($controls_js, qr/studioEngineRecording && studioEngineMonitorArmed/,

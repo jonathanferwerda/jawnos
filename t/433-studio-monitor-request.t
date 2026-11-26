@@ -97,6 +97,14 @@ var sandbox = {
 };
 sandbox.window = sandbox;
 
+// The WebView's device storage, which remembers the path and the buffer.
+var store = {};
+sandbox.localStorage = {
+	getItem: function (key) { return store[key] === undefined ? null : store[key]; },
+	setItem: function (key, value) { store[key] = String(value); },
+	removeItem: function (key) { delete store[key]; }
+};
+
 // The app bridge the page sees in the WebView. `usbTake` answers the same
 // shape the Java side does: accepted, with the interface still opening.
 sandbox.JawnAudioEngine = {
@@ -223,6 +231,7 @@ ok(depth.length === 1 && depth[0] === '8,2,2,2',
 
 // A plan that cannot be built leaves the monitor that is already running alone.
 var wasStops = stops;
+var realPlan = sandbox.studioUsbListenPlan;
 sandbox.studioUsbListenPlan = function () { throw new Error('boom'); };
 sandbox.studioUsbListening = true;
 sandbox.studioUsbListenStart(false, '1');
@@ -249,6 +258,41 @@ sandbox.studioListenRearm('1', 'out');
 sandbox.setTimeout = realTimeout;
 ok(rearmed.length === 0, 'an Out pedal is playback, not the monitor');
 sandbox.studioListenStop = realStop;
+
+// Auto at start: sweep from the shortest, step up when the window dropped, and
+// settle where the counters stayed clean. The settled value is remembered.
+sandbox.studioUsbListenPlan = realPlan;
+values['#studio_monitor_buffer'] = 'auto';
+delete store['jawnos.studio.monitor_settled'];
+var autoDepth = [], autoStops = 0;
+sandbox.JawnAudioEngine = {
+	usbTake: function () { return '{"ok":true,"state":"detecting"}'; },
+	usbTakeStop: function () { autoStops++; return '{"ok":true}'; },
+	usbTakeStatus: function () { return '{"ok":true,"state":"started"}'; },
+	usbDepth: function (a, b, c, d) { autoDepth.push([a, b, c, d].join(',')); return '{"ok":true}'; },
+	usbAudioDevice: function () { return '{"ok":true,"device":{"vendorId":2235,"productId":10498}}'; }
+};
+sandbox.studioUsbListening = false;
+sandbox.studioUsbListenStart(false, '1');
+ok(autoDepth[0] === '8,2,2,2', 'Auto starts at the shortest buffer (got ' + autoDepth[0] + ')');
+var dirty = { ok: true, frames_in: 500, dropped_out: 10, underruns_out: 0 };
+sandbox.studioAutoBufferTick(dirty);
+sandbox.studioAutoBufferTick({ ok: true, frames_in: 700, dropped_out: 12, underruns_out: 0 });
+sandbox.studioAutoBufferTick({ ok: true, frames_in: 900, dropped_out: 15, underruns_out: 0 });
+ok(autoDepth[1] === '8,2,2,4', 'a window that dropped steps up to 8 ms (got ' + autoDepth[1] + ')');
+ok(autoStops >= 1, 'and the step-up restarts the take');
+var clean = { ok: true, frames_in: 900, dropped_out: 15, underruns_out: 0 };
+sandbox.studioAutoBufferTick(clean);
+sandbox.studioAutoBufferTick(clean);
+sandbox.studioAutoBufferTick(clean);
+ok(store['jawnos.studio.monitor_settled'] === '8',
+	'a clean window settles and is remembered (got ' + store['jawnos.studio.monitor_settled'] + ')');
+ok(sandbox.studioMonitorBuffer() === '8', 'and the next start uses it');
+
+// A remembered value skips the sweep entirely.
+autoDepth.length = 0;
+sandbox.studioUsbListenStart(false, '1');
+ok(autoDepth[0] === '8,2,2,4', 'a remembered buffer is used directly (got ' + autoDepth[0] + ')');
 
 console.log('ok');
 JS

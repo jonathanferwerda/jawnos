@@ -1187,6 +1187,12 @@ $(document).on('change', '#studio_monitor_backend', function () {
 $(document).on('change', '#studio_monitor_buffer', function () {
 	var value = String($(this).val() || '');
 	try { window.localStorage.setItem('jawnos.studio.monitor_buffer', value); } catch (e) {}
+	// Choosing Auto is a request to sweep again: forget the value the last sweep
+	// settled on, so the shortest buffer is tried once more.
+	if (value === 'auto') {
+		studioUsbAuto = null;
+		try { window.localStorage.removeItem('jawnos.studio.monitor_settled'); } catch (e) {}
+	}
 	// A running take keeps the depth it started with, so the change is only
 	// heard at the next start: re-arm it (the same short dropout a pedal makes).
 	if (studioListenActive) {
@@ -1197,10 +1203,11 @@ $(document).on('change', '#studio_monitor_buffer', function () {
 });
 $(function () {
 	studioMonitorBackendRender();
-	// The last buffer this device used, so a reload keeps the setting.
+	// The last buffer this device used, so a reload keeps the setting ('auto' is
+	// a value too).
 	try {
 		var saved = String(window.localStorage.getItem('jawnos.studio.monitor_buffer') || '');
-		if (studioMonitorDepths[saved]) { $('#studio_monitor_buffer').val(saved); }
+		if (saved === 'auto' || studioMonitorDepths[saved]) { $('#studio_monitor_buffer').val(saved); }
 	} catch (e) {}
 });
 
@@ -1319,18 +1326,104 @@ var studioMonitorDepths = {
 	'2': ['8', '2', '2', '1']
 };
 
-function studioMonitorBuffer() {
+// The control's own value: `auto` or a fixed millisecond setting, remembered
+// per device. A page without the select (a test, an older page) falls back to
+// the stored value, then to Auto.
+function studioMonitorSetting() {
 	var select = $('#studio_monitor_buffer');
 	var value = select.length ? String(select.val() || '') : '';
-	if (!studioMonitorDepths[value]) {
-		try { value = String(window.localStorage.getItem('jawnos.studio.monitor_buffer') || ''); }
-		catch (e) { value = ''; }
-	}
-	return studioMonitorDepths[value] ? value : '8';
+	if (value === 'auto' || studioMonitorDepths[value]) { return value; }
+	try { value = String(window.localStorage.getItem('jawnos.studio.monitor_buffer') || ''); }
+	catch (e) { value = ''; }
+	if (value === 'auto' || studioMonitorDepths[value]) { return value; }
+	return 'auto';
+}
+
+// What Auto settled on here, once it has swept. Empty means it has not run yet.
+function studioMonitorAutoSettled() {
+	try {
+		var value = String(window.localStorage.getItem('jawnos.studio.monitor_settled') || '');
+		return studioMonitorDepths[value] ? value : '';
+	} catch (e) { return ''; }
+}
+
+// The buffer the next start will ask for: the running candidate while Auto is
+// sweeping, else what Auto settled on, else the fixed setting.
+function studioMonitorBuffer() {
+	var setting = studioMonitorSetting();
+	if (setting !== 'auto') { return setting; }
+	if (studioUsbAuto) { return studioUsbAuto.queue[studioUsbAuto.index]; }
+	return studioMonitorAutoSettled() || '8';
 }
 
 function studioMonitorDepth() {
 	return studioMonitorDepths[studioMonitorBuffer()];
+}
+
+// --- Auto, at start ---------------------------------------------------------
+// A running take keeps the depth it started with (the kernel owns its URBs), so
+// the only way to find the shortest buffer that holds is to start at the
+// shortest and step up when the counters say it did not hold. The sweep runs
+// once per device: the value it settles on is remembered, and every later start
+// goes straight there. Picking Auto again forgets it and sweeps once more.
+//
+// The decision uses the counters the engine already reports, once per 750 ms
+// status poll: `dropped_out` (fifo trims) and `underruns_out` (zero-filled
+// packets). Two polls after a baseline is about 1.5 s of running, enough to see
+// a steady fault without making the person wait through every step.
+var studioUsbAuto = null;
+var studioMonitorAutoQueue = ['4', '8', '10', '12', '16'];
+
+function studioAutoBufferBegin() {
+	if (studioMonitorSetting() !== 'auto') { return; }
+	if (studioUsbAuto || studioMonitorAutoSettled()) { return; }
+	studioUsbAuto = { queue: studioMonitorAutoQueue.slice(), index: 0, base: null, ticks: 0 };
+}
+
+function studioAutoBufferTick(data) {
+	if (!studioUsbAuto) { return; }
+	if (!(Number(data.frames_in || 0) > 0)) { return; }
+	var dropped = Number(data.dropped_out || 0);
+	var underruns = Number(data.underruns_out || 0);
+	if (!studioUsbAuto.base) {
+		studioUsbAuto.base = { dropped: dropped, underruns: underruns };
+		studioUsbAuto.ticks = 0;
+		return;
+	}
+	studioUsbAuto.ticks += 1;
+	if (studioUsbAuto.ticks < 2) { return; }
+	var bad = (dropped - studioUsbAuto.base.dropped) > 0
+		|| (underruns - studioUsbAuto.base.underruns) > 0;
+	var candidate = studioUsbAuto.queue[studioUsbAuto.index];
+	if (!bad) {
+		studioAutoBufferSettle(candidate);
+		return;
+	}
+	if (studioUsbAuto.index + 1 < studioUsbAuto.queue.length) {
+		studioUsbAuto.index += 1;
+		studioAutoBufferRestart();
+		return;
+	}
+	// Even the longest setting dropped: keep it and say so, rather than sweeping
+	// forever on a machine that cannot hold any of them.
+	console.log('studio: auto buffer still dropped at ' + candidate + ' ms');
+	studioAutoBufferSettle(candidate);
+}
+
+function studioAutoBufferSettle(ms) {
+	try { window.localStorage.setItem('jawnos.studio.monitor_settled', ms); } catch (e) {}
+	console.log('studio: auto buffer settled at ' + ms + ' ms');
+	studioUsbAuto = null;
+}
+
+function studioAutoBufferRestart() {
+	var bridge = studioUsbAudioBridge();
+	studioUsbAuto.base = null;
+	studioUsbAuto.ticks = 0;
+	try { if (bridge) { bridge.usbTakeStop(); } } catch (e) {}
+	studioUsbListening = false;
+	console.log('studio: auto buffer trying ' + studioUsbAuto.queue[studioUsbAuto.index] + ' ms');
+	studioUsbListenStart(false, studioUsbListenChannel, studioSelectedChannel, false);
 }
 
 function studioUsbAudioBridge() {
@@ -1499,8 +1592,10 @@ function studioUsbListenStart(quiet, channel, ch, fallback) {
 		studioUsbListening = false;
 	}
 	// The depth the buffer selector asks for: 2 ms capture batches in every
-	// setting, and the chosen output runway. The engine clamps and answers what
-	// it applied, so the row's log is the depth the take really runs.
+	// setting, and the chosen output runway. Auto sweeps from the shortest, so
+	// this is also where the sweep begins. The engine clamps and answers what it
+	// applied, so the row's log is the depth the take really runs.
+	studioAutoBufferBegin();
 	if (typeof bridge.usbDepth === 'function') {
 		var depth = studioMonitorDepth();
 		try {
@@ -1532,7 +1627,14 @@ function studioUsbListenStart(quiet, channel, ch, fallback) {
 	studioListenSetActive(true);
 	studioListenChannel = studioUsbListenChannel;
 	if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
-	studioListenRender({ state: (answer.state || 'detecting'), channel: studioUsbListenChannel, frames: 0, usb: answer });
+	studioListenRender({
+		state: (answer.state || 'detecting'),
+		channel: studioUsbListenChannel,
+		frames: 0,
+		buffer: studioMonitorBuffer(),
+		auto: studioMonitorSetting() === 'auto',
+		usb: answer
+	});
 	studioListenPollStart();
 }
 
@@ -1557,10 +1659,13 @@ function studioUsbStatus() {
 		return;
 	}
 	studioListenSetActive(true);
+	studioAutoBufferTick(data);
 	studioListenRender({
 		state: (data.state || 'listening'),
 		channel: studioUsbListenChannel,
 		frames: data.frames_in,
+		buffer: studioMonitorBuffer(),
+		auto: studioMonitorSetting() === 'auto',
 		usb: data
 	});
 }
@@ -1601,6 +1706,9 @@ function studioListenRender(data) {
 		var usb = data.usb;
 		var usbFacts = [studioListenInputText(data.channel)];
 		if (usb.monitor_master) { usbFacts.push(studioListenText('Rack') + ' ' + usb.monitor_master); }
+		if (data.buffer) {
+			usbFacts.push((data.auto ? 'Auto \u2192 ' : '') + data.buffer + ' ms');
+		}
 		if (usb.out_rate && usb.out_rate.hz) { usbFacts.push(usb.out_rate.hz + ' Hz'); }
 		if (typeof usb.dropped_out === 'number') { usbFacts.push(studioListenText('drop') + ' ' + usb.dropped_out); }
 		if (typeof usb.underruns_out === 'number') { usbFacts.push('xrun ' + usb.underruns_out); }
