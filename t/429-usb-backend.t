@@ -3,8 +3,10 @@
 #            match arm64, the pure monitor/histogram/report helpers and their Rust
 #            unit tests run on a host with no phone, the shallow OUT depth and its
 #            priming threshold, the direct on-thread monitor fifo (no cross-thread
-#            ring) with its high-water trim and observed fill counters, the
-#            absorb-before-refill ordering, the poll-driven reap, the configurable
+#            ring) with its high-water trim and observed fill counters, the OUT
+#            pipeline's two-URB floor so a refill never leaves the device unfed,
+#            the absorb-before-refill ordering, the cadence counters (out_frames,
+#            capture_ms, out_ms, out_lag_ms), the poll-driven reap, the configurable
 #            1..=8 depth and its two ABIs (`jawn_audio_set_usb_depth`,
 #            `jawn_audio_roundtrip_usb`), the bus-frame segment table and click
 #            placement of the latency probe, the playback GET_CUR rate probe, the
@@ -63,7 +65,7 @@ sub cargo_available {
 
 # --- the pure logic runs on a machine with no phone --------------------------
 SKIP: {
-	skip 'no cargo toolchain on this machine', 14 unless cargo_available();
+	skip 'no cargo toolchain on this machine', 16 unless cargo_available();
 
 	my $target = tempdir( CLEANUP => 1 );
 	local $ENV{'CARGO_TARGET_DIR'} = $target;
@@ -135,6 +137,16 @@ SKIP: {
 		qr/usb_device::tests::absorbing_the_completed_capture_before_refilling_removes_the_start_underrun/,
 		'absorbing the capture before refilling removes the start underrun'
 	);
+	like(
+		$out,
+		qr/usb_device::tests::the_out_pipeline_primes_and_refills_two_urbs/,
+		'two OUT URBs are primed and the second stays in flight during a refill'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_cadence_counters_expose_a_starved_out_stream/,
+		'and the cadence counters show a starved OUT stream as lag'
+	);
 }
 
 # --- the source carries the device contract --------------------------------
@@ -193,6 +205,11 @@ like(
 	'and the direct-USB round trip has its own blocking ABI'
 );
 like( $usb, qr/const DEPTH_MIN: i32 = 1;/, 'the depth floor is one packet' );
+like( $usb, qr/const OUT_URBS_MIN: i32 = 2;/, 'but the OUT pipeline never runs with one URB in flight' );
+like( $usb, qr/out_urbs: out_urbs\.clamp\(OUT_URBS_MIN, DEPTH_MAX\)/, 'the setter clamps out_urbs to the floor' );
+like( $usb, qr/out_urbs_effective/, 'the setter reports the effective OUT URBs' );
+like( $usb, qr/fn cadence\(/, 'the take measures its OUT cadence' );
+like( $usb, qr/out_lag_ms: capture_ms as i64 - out_ms as i64/, 'as capture time minus playback time' );
 like( $usb, qr/const DEPTH_MAX: i32 = 8;/, 'and its ceiling eight' );
 like( $usb, qr/fn current_depth\(\) -> UsbDepth/, 'a take reads the process-wide depth once at start' );
 like( $usb, qr/fn prime_frames\(self, frames_per_packet: usize\) -> usize/, 'priming follows the configured depth' );
@@ -255,6 +272,10 @@ like( $usb, qr/monitor_fill_max_ms/, 'the report carries the observed maximum fi
 like( $usb, qr/monitor_fill_avg_ms/, 'and the average fill' );
 like( $usb, qr/fifo_capacity_ms/, 'the fifo capacity in ms' );
 like( $usb, qr/high_water_ms/, 'and its high water in ms' );
+like( $usb, qr/out_frames/, 'the report carries the OUT frames submitted' );
+like( $usb, qr/capture_ms/, 'the capture duration' );
+like( $usb, qr/out_ms/, 'the playback duration' );
+like( $usb, qr/out_lag_ms/, 'and the continuity gap between them' );
 like( $usb, qr/\\"packets_in\\":\{\}/, 'the report carries the packet-length histogram' );
 like( $usb, qr/\\"missed_in\\":\{\}/, 'the missed-frame count' );
 like( $usb, qr/\\"underruns_out\\":\{\}/, 'the playback underruns' );

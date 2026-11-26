@@ -69,11 +69,20 @@ pub(crate) const OUT_PACKETS_PER_URB: usize = 4;
 
 /// Every depth dimension is clamped into this inclusive range. It is also the
 /// range a take may be swept over: eight 8-packet URBs is already 64 ms of IN
-/// runway, and one 1-packet OUT URB is the shortest monitor. Values beyond
-/// [`DEPTH_SANE_MAX`] are nonsense rather than something to clamp silently.
+/// runway. The OUT side has the higher floor [`OUT_URBS_MIN`] — two 1-packet
+/// URBs are the shortest monitor that still keeps one URB in flight. Values
+/// beyond [`DEPTH_SANE_MAX`] are nonsense rather than something to clamp
+/// silently.
 pub(crate) const DEPTH_MIN: i32 = 1;
 pub(crate) const DEPTH_MAX: i32 = 8;
 pub(crate) const DEPTH_SANE_MAX: i32 = 64;
+
+/// The monitor needs at least two URBs in flight. With one, the next URB is only
+/// submitted after the previous completes, leaving a scheduling hole of several
+/// hundred microseconds every millisecond; the device hears a discontinuous
+/// stream as static and the fifo backs up and trims. With two, one URB is always
+/// in the host/device pipeline while the other is being refilled.
+pub(crate) const OUT_URBS_MIN: i32 = 2;
 
 /// The four numbers that shape a take. Read once at the start of
 /// [`run_usb_plan`], so a depth change while a take runs applies to the next
@@ -103,7 +112,8 @@ impl UsbDepth {
 
     /// Validate the C ABI's four numbers: a negative value or one past
     /// [`DEPTH_SANE_MAX`] is a refusal, everything else is clamped into
-    /// [`DEPTH_MIN`]..=[`DEPTH_MAX`].
+    /// [`DEPTH_MIN`]..=[`DEPTH_MAX`]. `out_urbs` has its own floor of
+    /// [`OUT_URBS_MIN`]: a single OUT URB in flight leaves a hole every URB.
     fn from_args(in_urbs: i32, in_packets: i32, out_urbs: i32, out_packets: i32) -> Result<Self, String> {
         let values = [
             ("in_urbs", in_urbs),
@@ -124,7 +134,7 @@ impl UsbDepth {
         Ok(UsbDepth {
             in_urbs: in_urbs.clamp(DEPTH_MIN, DEPTH_MAX) as usize,
             in_packets: in_packets.clamp(DEPTH_MIN, DEPTH_MAX) as usize,
-            out_urbs: out_urbs.clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+            out_urbs: out_urbs.clamp(OUT_URBS_MIN, DEPTH_MAX) as usize,
             out_packets: out_packets.clamp(DEPTH_MIN, DEPTH_MAX) as usize,
         })
     }
@@ -160,7 +170,7 @@ fn unpack_depth(bits: u64) -> UsbDepth {
     UsbDepth {
         in_urbs: ((bits & 0xff) as i32).clamp(DEPTH_MIN, DEPTH_MAX) as usize,
         in_packets: (((bits >> 8) & 0xff) as i32).clamp(DEPTH_MIN, DEPTH_MAX) as usize,
-        out_urbs: (((bits >> 16) & 0xff) as i32).clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+        out_urbs: (((bits >> 16) & 0xff) as i32).clamp(OUT_URBS_MIN, DEPTH_MAX) as usize,
         out_packets: (((bits >> 24) & 0xff) as i32).clamp(DEPTH_MIN, DEPTH_MAX) as usize,
     }
 }
@@ -192,9 +202,10 @@ fn out_depth_json(depth: UsbDepth) -> String {
 
 fn depth_status_json(depth: UsbDepth) -> String {
     format!(
-        "{{\"ok\":true,\"in_depth\":{},\"out_depth\":{},\"monitor_ms\":{},\"in_delivery_ms\":{}}}",
+        "{{\"ok\":true,\"in_depth\":{},\"out_depth\":{},\"out_urbs_effective\":{},\"monitor_ms\":{},\"in_delivery_ms\":{}}}",
         depth_json(depth),
         out_depth_json(depth),
+        depth.out_urbs,
         depth.monitor_ms(),
         depth.in_delivery_ms()
     )
@@ -452,6 +463,37 @@ fn frames_to_ms(frames: u64, rate: u32) -> u32 {
         return 0;
     }
     ((frames * 1_000 + u64::from(rate) / 2) / u64::from(rate)) as u32
+}
+
+/// The OUT stream's continuity for one take, measured rather than inferred.
+/// `out_frames` is what the submitted packets actually carry; comparing it with
+/// the captured duration makes a hole in the OUT stream visible as `out_lag_ms`
+/// (capture time minus playback time). A continuous stream that keeps up sits at
+/// zero; a starved one grows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Cadence {
+    pub(crate) out_frames: u64,
+    pub(crate) capture_ms: u64,
+    pub(crate) out_ms: u64,
+    pub(crate) out_lag_ms: i64,
+}
+
+fn cadence(frames_in: u64, out_packets: u64, frames_per_packet: usize, rate: u32) -> Cadence {
+    let out_frames = out_packets * frames_per_packet as u64;
+    let (capture_ms, out_ms) = if rate == 0 {
+        (0, 0)
+    } else {
+        (
+            (frames_in * 1_000 + u64::from(rate) / 2) / u64::from(rate),
+            (out_frames * 1_000 + u64::from(rate) / 2) / u64::from(rate),
+        )
+    };
+    Cadence {
+        out_frames,
+        capture_ms,
+        out_ms,
+        out_lag_ms: capture_ms as i64 - out_ms as i64,
+    }
 }
 
 /// The chirp [`crate::roundtrip::click`] fits in six 1 ms packets at 48 kHz
@@ -880,6 +922,14 @@ pub struct UsbReport {
     /// The fifo's physical capacity and the high water it trims above, in ms.
     pub fifo_capacity_ms: u32,
     pub high_water_ms: u32,
+    /// The OUT cadence: frames the submitted packets carry, the capture and
+    /// playback durations in ms, and their difference. `out_lag_ms` near zero
+    /// means the OUT stream is continuous and keeping up; a positive value is
+    /// the hole the device was fed.
+    pub out_frames: u64,
+    pub capture_ms: u64,
+    pub out_ms: u64,
+    pub out_lag_ms: i64,
     pub out_rate: UsbOutRate,
     pub setinterface: UsbSetInterface,
     pub sched: UsbSched,
@@ -910,6 +960,10 @@ pub(crate) struct UsbIoReport {
     monitor_fill_avg_ms: u32,
     fifo_capacity_ms: u32,
     high_water_ms: u32,
+    out_frames: u64,
+    capture_ms: u64,
+    out_ms: u64,
+    out_lag_ms: i64,
     in_depth: UsbDepth,
     out_depth: UsbDepth,
     out_rate: UsbOutRate,
@@ -953,7 +1007,7 @@ fn histogram_json(rows: &[(u32, u64)]) -> String {
 /// One JSON object, the same status style the Oboe backend emits.
 fn report_json(report: &UsbReport) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"plan\":\"{}\",\"take\":\"{}\"}}",
         report.rate,
         histogram_json(&report.packets_in),
         report.missed_in,
@@ -974,6 +1028,10 @@ fn report_json(report: &UsbReport) -> String {
         report.monitor_fill_avg_ms,
         report.fifo_capacity_ms,
         report.high_water_ms,
+        report.out_frames,
+        report.capture_ms,
+        report.out_ms,
+        report.out_lag_ms,
         report.setinterface.ret,
         report.setinterface.errno,
         report.sched.policy,
@@ -1181,7 +1239,12 @@ pub(crate) fn run_usb_plan(
     // One read for the whole take: buffers, in-flight flags and the priming
     // threshold are all sized from this, and never resized while the kernel owns
     // a URB.
-    let depth = current_depth();
+    let mut depth = current_depth();
+    if have_out {
+        // Defence in depth: the setter and the decoded word both clamp, but a
+        // take must never run the monitor with a single URB in flight.
+        depth.out_urbs = depth.out_urbs.max(OUT_URBS_MIN as usize);
+    }
 
     // Select the alternate settings. Java already did this through
     // `UsbDeviceConnection.setInterface()`; the ioctl is a cross-check, so a
@@ -1647,6 +1710,7 @@ pub(crate) fn run_usb_plan(
         .map_or((0, 0), |fifo| (fifo.capacity(), fifo.high_water()));
     let fifo_capacity_ms = frames_to_ms(fifo_capacity as u64, config.rate);
     let high_water_ms = frames_to_ms(high_water as u64, config.rate);
+    let cadence = cadence(stats.frames_in, out_stats.packets, packet_out / 4, config.rate);
 
     Ok(UsbIoReport {
         packets_in: histogram_rows(&histogram),
@@ -1665,6 +1729,10 @@ pub(crate) fn run_usb_plan(
         monitor_fill_avg_ms,
         fifo_capacity_ms,
         high_water_ms,
+        out_frames: cadence.out_frames,
+        capture_ms: cadence.capture_ms,
+        out_ms: cadence.out_ms,
+        out_lag_ms: cadence.out_lag_ms,
         in_depth: depth,
         out_depth: depth,
         out_rate,
@@ -1741,6 +1809,10 @@ fn run_usb_take(config: UsbConfig, stop: Arc<AtomicBool>) -> Result<UsbReport, S
         monitor_fill_avg_ms: io.monitor_fill_avg_ms,
         fifo_capacity_ms: io.fifo_capacity_ms,
         high_water_ms: io.high_water_ms,
+        out_frames: io.out_frames,
+        capture_ms: io.capture_ms,
+        out_ms: io.out_ms,
+        out_lag_ms: io.out_lag_ms,
         out_rate: io.out_rate,
         setinterface: io.setinterface,
         sched: io.sched,
@@ -1763,12 +1835,14 @@ fn run_usb_take(_config: UsbConfig, _stop: Arc<AtomicBool>) -> Result<UsbReport,
 // --- the plain-C ABI ---------------------------------------------------------
 
 /// Set the process-wide USB depth for the next take. Every value is clamped
-/// into 1..=8; a negative number, or one past 64, is refused with
-/// `{"ok":false,"error":...}`. The default stays four 8-packet IN URBs and two
-/// 4-packet OUT URBs (32 ms capture, 8 ms monitor).
+/// into 1..=8, except `out_urbs`, which is clamped into 2..=8: one OUT URB in
+/// flight leaves a scheduling hole every URB. A negative number, or one past 64,
+/// is refused with `{"ok":false,"error":...}`. The default stays four 8-packet
+/// IN URBs and two 4-packet OUT URBs (32 ms capture, 8 ms monitor).
 ///
-/// On success the answer repeats the applied depth, the OUT runway
-/// (`monitor_ms`, `out_urbs * out_packets`) and the IN delivery window
+/// On success the answer repeats the applied depth, the effective OUT URBs
+/// (`out_urbs_effective`), the OUT runway (`monitor_ms`, `out_urbs *
+/// out_packets`) and the IN delivery window
 /// (`in_delivery_ms`, `in_packets`). A take already in flight keeps the depth it
 /// started with; the next `jawn_audio_start_usb` reads this one.
 ///
@@ -2646,16 +2720,20 @@ mod tests {
         assert_eq!(UsbDepth::DEFAULT.monitor_ms(), 8);
         assert_eq!(UsbDepth::DEFAULT.in_delivery_ms(), 8, "eight 1 ms IN packets");
 
-        // Zero is not negative: it clamps up to the shortest depth.
+        // Zero is not negative: it clamps up to the shortest depth, except the
+        // OUT URBs, which never go below two in flight.
         assert_eq!(
             UsbDepth::from_args(0, 0, 0, 0).unwrap(),
             UsbDepth {
                 in_urbs: 1,
                 in_packets: 1,
-                out_urbs: 1,
+                out_urbs: 2,
                 out_packets: 1,
             }
         );
+        // One OUT URB leaves a hole every URB; the effective depth is two.
+        assert_eq!(UsbDepth::from_args(4, 8, 1, 8).unwrap().out_urbs, 2);
+        assert_eq!(UsbDepth::from_args(4, 8, 2, 8).unwrap().out_urbs, 2);
         // A large but sane value clamps down to eight.
         assert_eq!(
             UsbDepth::from_args(64, 64, 64, 64).unwrap(),
@@ -2680,6 +2758,17 @@ mod tests {
         };
         assert_eq!(unpack_depth(pack_depth(depth)), depth);
         assert_eq!(unpack_depth(pack_depth(UsbDepth::DEFAULT)), UsbDepth::DEFAULT);
+        // Even a stale word carrying one OUT URB decodes to the floor.
+        let one_out = UsbDepth {
+            out_urbs: 1,
+            ..UsbDepth::DEFAULT
+        };
+        assert_eq!(
+            unpack_depth(pack_depth(one_out)).out_urbs,
+            OUT_URBS_MIN as usize
+        );
+        assert!(depth_status_json(UsbDepth::from_args(4, 8, 1, 8).unwrap())
+            .contains("\"out_urbs_effective\":2"));
     }
 
     #[test]
@@ -2946,6 +3035,95 @@ mod tests {
     }
 
     #[test]
+    fn the_out_pipeline_primes_and_refills_two_urbs() {
+        let packet = 192usize;
+        let frames = packet / 4;
+        let out_packets = 4usize;
+        let out_urbs = 2usize;
+        let in_packets = 8usize;
+        let out_burst = out_packets * frames;
+        let in_burst = in_packets * frames;
+        let depth = UsbDepth {
+            in_urbs: 4,
+            in_packets,
+            out_urbs,
+            out_packets,
+        };
+        let prime = depth.prime_frames(frames);
+        let capacity = monitor_fifo_capacity(prime, in_burst, out_burst);
+        let high_water = monitor_high_water(prime, in_burst);
+        assert_eq!(prime, out_urbs * out_burst);
+
+        let mut urbs: Vec<Urb> = (0..out_urbs).map(|_| Urb::new(out_packets)).collect();
+        let mut data = vec![0u8; out_urbs * out_packets * packet];
+        let mut ptrs = Vec::new();
+        for (index, urb) in urbs.iter_mut().enumerate() {
+            let buffer = unsafe {
+                data.as_mut_ptr().add(index * out_packets * packet) as *mut c_void
+            };
+            let pointer = urb.ptr();
+            unsafe { prepare_urb(pointer, 0x02, packet, out_packets, buffer) };
+            ptrs.push(pointer);
+        }
+
+        // Priming fills both URBs; neither is short and the fifo is emptied.
+        let mut fifo = OutFifo::new(capacity, high_water);
+        fifo.push(&vec![0.5f32; prime * 2]);
+        let mut stats = OutStats::default();
+        for &pointer in &ptrs {
+            unsafe { fill_out_urb(pointer, packet, &mut fifo, &mut stats) };
+        }
+        assert_eq!(stats.underruns, 0, "both primed URBs were full");
+        assert_eq!(stats.packets, (out_urbs * out_packets) as u64);
+        assert_eq!(fifo.len(), 0);
+
+        // The first URB completes. The second stays in flight while the capture
+        // burst for the next interval is absorbed and the first is refilled.
+        fifo.push(&vec![0.5f32; in_burst * 2]);
+        unsafe { clear_urb(ptrs[0]); fill_out_urb(ptrs[0], packet, &mut fifo, &mut stats) };
+        assert_eq!(
+            stats.underruns, 0,
+            "with two URBs queued, absorb-then-refill leaves no gap"
+        );
+        assert_eq!(fifo.len(), in_burst - out_burst);
+
+        // The same refill before the absorb would have been short once.
+        let mut fifo = OutFifo::new(capacity, high_water);
+        fifo.push(&vec![0.5f32; prime * 2]);
+        let mut stats = OutStats::default();
+        for &pointer in &ptrs {
+            unsafe { fill_out_urb(pointer, packet, &mut fifo, &mut stats) };
+        }
+        unsafe { clear_urb(ptrs[0]); fill_out_urb(ptrs[0], packet, &mut fifo, &mut stats) };
+        assert_eq!(
+            stats.underruns, out_packets as u64,
+            "refilling ahead of the absorb starves the refill"
+        );
+    }
+
+    #[test]
+    fn the_cadence_counters_expose_a_starved_out_stream() {
+        let frames_per_packet = 48usize;
+        let balanced = cadence(48_000, 1_000, frames_per_packet, 48_000);
+        assert_eq!(balanced.out_frames, 48_000);
+        assert_eq!(balanced.capture_ms, 1_000);
+        assert_eq!(balanced.out_ms, 1_000);
+        assert_eq!(balanced.out_lag_ms, 0, "a continuous OUT stream lags nothing");
+
+        let starved = cadence(48_000, 944, frames_per_packet, 48_000);
+        assert_eq!(starved.out_ms, 944);
+        assert_eq!(starved.out_lag_ms, 56, "the hole is visible as lag");
+
+        // A shorter take rounds both sides to the same whole millisecond.
+        let short = cadence(13_272, 277, frames_per_packet, 48_000);
+        assert_eq!(short.capture_ms, 277);
+        assert_eq!(short.out_ms, 277);
+        assert_eq!(short.out_lag_ms, 0);
+
+        assert_eq!(cadence(48_000, 1_000, frames_per_packet, 0).out_lag_ms, 0);
+    }
+
+    #[test]
     fn absorbing_the_completed_capture_before_refilling_removes_the_start_underrun() {
         let packet = 192usize;
         let frames = packet / 4;
@@ -3038,6 +3216,10 @@ mod tests {
             monitor_fill_avg_ms: 7,
             fifo_capacity_ms: 13,
             high_water_ms: 11,
+            out_frames: 141_312,
+            capture_ms: 3_000,
+            out_ms: 2_944,
+            out_lag_ms: 56,
             out_rate: UsbOutRate {
                 ret: 3,
                 errno: 0,
@@ -3077,6 +3259,10 @@ mod tests {
             "\"monitor_fill_avg_ms\":7",
             "\"fifo_capacity_ms\":13",
             "\"high_water_ms\":11",
+            "\"out_frames\":141312",
+            "\"capture_ms\":3000",
+            "\"out_ms\":2944",
+            "\"out_lag_ms\":56",
             "\"out_rate\":{\"ret\":3,\"errno\":0,\"raw\":\"80bb00\",\"hz\":48000}",
             "\"setinterface\":{\"ret\":0,\"errno\":0}",
             "\"sched\":{\"policy\":1,\"priority\":80,\"errno\":13}",
