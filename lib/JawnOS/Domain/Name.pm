@@ -273,6 +273,39 @@ sub setting_device_is_signatorial($device) {
 	return ($device =~ /^[0-9a-f]{16,64}$/i) ? 1 : 0;
 }
 
+# A person's own name is the key their own records are filed under: step_ingest
+# and every self measure name the app unformat_name(my_name). A new spelling is
+# therefore a rename of that app, not a new person. Walk the rows over with the
+# same name_change the panel's rename uses, so the pedometer's steps and the rest
+# of the history stay one set; a peer learns it from the name_change row this
+# writes. The app the name was on keeps its uuid when it holds the history - the
+# spelling the change gave birth to has a seeded uuid of its own, and two identity
+# rows would let the newer shadow the one relationships point at. A built-in app
+# is never moved.
+sub person_name_rename {
+	my ($from_name, $to_name, $opts) = @_;
+	$opts ||= {};
+	my $from_app = &subs::unformat_name($from_name);
+	my $to_app = &subs::unformat_name($to_name);
+	my %protected = map { $_ => 1 } @gb::protected;
+	return 0 unless length $from_app && length $to_app && $from_app ne $to_app
+		&& !$protected{$from_app} && !$protected{$to_app}
+		&& (&subs::db_query('select 1 from appointments where app = ? limit 1', $from_app)->hashes->[0]
+			|| &subs::db_query('select 1 from settings where app = ? limit 1', $from_app)->hashes->[0]);
+	my $from_rows = &subs::db_query('select count(*) as n from appointments where app = ?', $from_app)->hash->{'n'} || 0;
+	my $to_rows = &subs::db_query('select count(*) as n from appointments where app = ?', $to_app)->hash->{'n'} || 0;
+	&subs::db_query('delete from settings where app = ? and setting = ?', $from_rows >= $to_rows ? $to_app : $from_app, 'uuid');
+	my $pairs = &name_change_pairs($from_app, $to_app);
+	my %choices;
+	foreach my $pair ( @{$pairs} ) {
+		$choices{ $pair->{'setting'} } = $pair->{'natural'} ? 'merge' : ($pair->{'prefer'} || 'new');
+	}
+	&name_change_apply($from_app, $to_app, \%choices) if scalar keys %choices;
+	&setting_setter({ app => $from_app, setting => 'name_change', value => $to_app,
+		timestamp => $opts->{'timestamp'}, source => $opts->{'source'} || 'panel' });
+	return 1;
+}
+
 sub setting_setter {
 	%setting_memo = ();
 	my $settings = shift;
@@ -328,6 +361,15 @@ sub setting_setter {
 	$dev = &warranty_device() if !$sync && (($setting // '') eq 'warranty');
 	my ($db,$database) = &database_grabber();
 	my $server_time = $settings->{'server_time'} || &rightNow();
+
+	# A person's own name is the key their own records are filed under:
+	# step_ingest (and every self measure) names the app unformat_name(my_name),
+	# so retyping the name would start a second app and a second history. Read the
+	# name on record before the write below replaces it, then carry the app over.
+	my $my_name_before;
+	if (!$sync && ($app // '') eq 'me' && ($setting // '') eq 'my_name') {
+		$my_name_before = &setting_grabber({ app => 'me', setting => 'my_name', device => $dev });
+	}
 	if (($setting // '') eq 'toggle') {
 		# Store the event on the manager's clock so the next comparison is honest;
 		# a seconds stamp from an older caller is not a 1970 event.
@@ -486,6 +528,11 @@ sub setting_setter {
 	};
 	$row->{'seed'} = $seed if defined $seed;
 	&db_insert('settings', $row);
+
+	# A new spelling of the person's own name is a rename of the app their
+	# records live under, not a second person.
+	&person_name_rename($my_name_before, $value, { timestamp => $timestamp, source => 'panel' })
+		if defined $my_name_before;
 	if ($setting eq 'colour') {
 		# the dark-theme face follows the colour it belongs to; a peer replay keeps
 		# whatever dark_colour row arrives with its own snapshot instead
