@@ -246,6 +246,8 @@ sub insert_token {
 	like($provision, qr/_progress_write\('preparing'/, 'then preparing the board');
 	like($provision, qr/sub _disable_sd_chainload/, 'the flash removes the stock microSD boot.ini chainload');
 	like($provision, qr/sub _rotate_dropin/, 'the flash installs the rotation presenter drop-in');
+	like($provision, qr/sub _standdown_dropin/, 'the flash installs the stand-down service drop-in');
+	like($provision, qr/push \@done, 'standdown'/, 'and reports it as filled in');
 	like($provision, qr/push \@done, 'rotate-presenter'/, 'and reports it as filled in');
 	like($provision, qr/push \@done, 'sd-chainload'/, 'and reports it as filled in');
 	like($provision, qr/_progress_write\('done'/, 'and done');

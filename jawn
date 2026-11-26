@@ -184,7 +184,9 @@ if ($watch_tcp ? JawnOS::Transport::token() : -S $watch_path) {
 	};
 	if ($watch_live) {
 		print "\nAnother jawn is already running; this one is standing down.\n\n";
-		exit 0;
+		# 3 is the stand-down status: another master is serving, so a
+		# supervisor must not restart this launch into the same answer.
+		exit 3;
 	}
 }
 
@@ -203,7 +205,8 @@ if (-e $boot_pid_file) {
 	$boot_pid =~ s/\s+//g;
 	if ($boot_pid =~ /^[0-9]+$/ && &pid_alive($boot_pid) && &pid_is_jawn($boot_pid)) {
 		print "\nAnother jawn's master (pid $boot_pid) is alive; this one is standing down.\n\n";
-		exit 0;
+		# The same stand-down status as the watch socket above.
+		exit 3;
 	}
 }
 

@@ -397,6 +397,18 @@ UNIT
 	chmod 644 "$root/etc/systemd/system/gou-rotate.service.d/20-wants.conf"
 	chown 0:0 "$root/etc/systemd/system/gou-rotate.service.d/20-wants.conf"
 
+	# jawn exits 3 when another master is already serving. On a controller the
+	# kiosk owns that master, so the unit must accept the status instead of
+	# restarting into the same answer every five seconds.
+	install -d -m 755 "$root/etc/systemd/system/jawnos.service.d"
+	cat > "$root/etc/systemd/system/jawnos.service.d/10-standdown.conf" <<'UNIT'
+[Service]
+SuccessExitStatus=3
+RestartPreventExitStatus=3
+UNIT
+	chmod 644 "$root/etc/systemd/system/jawnos.service.d/10-standdown.conf"
+	chown 0:0 "$root/etc/systemd/system/jawnos.service.d/10-standdown.conf"
+
 	# 5. tailscale, so the first boot can join the tailnet. Its absence is a
 	# warning, not a failed build; a tarball supplied by hand is checked.
 	install_tailscale "$root"

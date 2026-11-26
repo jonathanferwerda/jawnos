@@ -40,6 +40,9 @@ like($source, qr/apply_recovery_entry/, 'and it is applied by both build and rep
 like($source, qr/gou-rotate\.service\.d/, 'the image carries the rotation presenter drop-in');
 like($source, qr/^Requires=$/m, 'which drops the hard dependency on X');
 like($source, qr/^Wants=gou-x\.service$/m, 'and starts when X is ready instead');
+like($source, qr/jawnos\.service\.d/, 'the image carries the stand-down service drop-in');
+like($source, qr/^SuccessExitStatus=3$/m, 'which accepts a second launch standing down');
+like($source, qr/^RestartPreventExitStatus=3$/m, 'and does not restart it');
 like($source, qr/disable_sd_chainload/, 'the stock microSD boot.ini chainload is removed');
 like($source, qr/gou_boot_ini\.pl/, 'by the shared boot.ini helper');
 

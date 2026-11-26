@@ -639,13 +639,23 @@ SH
 	local $subs::power_last_discharge_saved_pct = undef;
 	local *subs::cache_get = sub {
 		my ($p) = @_;
+		my $ctx = $p->{'context'} || '';
 		return { percentage => $memo{'last_discharge'} }
-			if ($p->{'context'} || '') eq 'last_discharge' && defined $memo{'last_discharge'};
+			if $ctx eq 'last_discharge' && defined $memo{'last_discharge'};
+		return $memo{'charging'} if $ctx eq 'charging' && ref $memo{'charging'} eq 'HASH';
 		return undef;
 	};
 	local *subs::cache_set = sub {
 		my ($p, $d) = @_;
-		$memo{ $p->{'context'} } = $d->{'percentage'} if ref $d eq 'HASH' && defined $d->{'percentage'};
+		my $ctx = $p->{'context'} || '';
+		$memo{'last_discharge'} = $d->{'percentage'}
+			if $ctx eq 'last_discharge' && ref $d eq 'HASH' && defined $d->{'percentage'};
+		$memo{'charging'} = { percentage => $d->{'percentage'}, at => $d->{'at'} }
+			if $ctx eq 'charging' && ref $d eq 'HASH' && defined $d->{'percentage'};
+	};
+	local *subs::cache_delete = sub {
+		my ($p) = @_;
+		delete $memo{ $p->{'context'} || '' };
 	};
 	my $charging = {
 		source => 'rk818', status => 'charging', ac => 1, percentage => 96,
@@ -654,17 +664,32 @@ SH
 	};
 	$memo{'last_discharge'} = 40;
 	my $held = subs::power_battery_charging_hold($charging);
-	is($held->{'percentage'}, 40, 'a charging rk818 keeps the last discharge reading');
+	is($held->{'percentage'}, 40, 'a charging rk818 starts at the last discharge reading');
 	is($held->{'percentage_ocv'}, 96, 'the raw voltage estimate is kept');
-	is($held->{'percentage_held'}, 1, 'and the reading says it is held');
-	is($held->{'charge_now'}, 1_600_000, 'the stored charge follows the held percentage');
+	is($held->{'percentage_held'}, 1, 'and the reading says it is an estimate');
+	is($held->{'percentage_charging'}, 1, 'and that it is charging');
+	is($held->{'charge_now'}, 1_600_000, 'the stored charge follows the estimate');
 	ok(abs($held->{'charge_eta'} - ((4_000_000 - 1_600_000) / (0.9 * 1_000_000))) < 0.001,
-		'the charge estimate starts from the held level');
+		'the charge estimate starts from that level');
+
+	# One hour at 0.9 A on a 4 Ah pack adds 22.5 points; the display must move
+	# instead of freezing at the last unplugged reading.
+	$memo{'charging'} = { percentage => 40, at => time() - 3600 };
+	my $risen = subs::power_battery_charging_hold({ %{$charging}, percentage => 96 });
+	is($risen->{'percentage'}, 63, 'the charging estimate rises with the current');
+	is($risen->{'percentage_charging'}, 1, 'and stays marked as an estimate');
+	ok($memo{'charging'}{'percentage'} > 40, 'and the rise is persisted for the next read');
+
 	my $full = { %{$charging}, status => 'full', percentage => 100, percentage_held => 1 };
-	is(subs::power_battery_charging_hold($full)->{'percentage'}, 100, 'a full pack reads full');
+	my $full_result = subs::power_battery_charging_hold($full);
+	is($full_result->{'percentage'}, 100, 'a full pack reads full');
+	is($full_result->{'percentage_charging'}, 0, 'and is no longer a charging estimate');
+	ok(!exists $memo{'charging'}, 'the charging estimate is cleared at full');
+
 	my $out = { %{$charging}, status => 'not charging', ac => 0, percentage => 37, percentage_raw => 37 };
 	subs::power_battery_charging_hold($out);
 	is($memo{'last_discharge'}, 37, 'an unplugged reading is stored for the next charge');
+	ok(!exists $memo{'charging'}, 'and the charging estimate is dropped');
 }
 
 # --- the low-battery guard ---------------------------------------------------
@@ -828,7 +853,8 @@ SH
 	is($topic->{category}, 'apps', 'it lives in the app category');
 	like($topic->{summary}, qr/battery/i, 'the summary names the battery');
 	my $body = join ' ', @{ $topic->{body} || [] };
-	like($body, qr/last reading before charging/, 'the help describes the held charging reading');
+	like($body, qr/charging estimate/, 'the help describes the rising charging estimate');
+	like($body, qr/adds the charge current/, 'and the current it integrates');
 	like($body, qr/ten percent/, 'the help names the warning threshold');
 	like($body, qr/five percent/, 'and the clean-shutdown threshold');
 	like($body, qr/computer or a controller/, 'the help names the machines the guard covers');

@@ -264,10 +264,10 @@ sub power_rk818_read {
 
 # The rk818's percentage is a resting-voltage estimate. With the cable in, the
 # charger holds the terminal near 4.2 V, so the same table would read full while
-# the pack is still nearly empty. Keep the last reading from before the cable
-# went in and use it until the PMIC reports the pack full; the raw estimate is
-# kept as percentage_ocv for the record. The cache is machine-local and survives
-# a reboot, so a boot while plugged in does not invent a full pack.
+# the pack is still nearly empty. The last unplugged reading is the floor; the
+# charging estimate below adds the current over time to that floor. The raw
+# estimate is kept as percentage_ocv for the record. The cache is machine-local
+# and survives a reboot, so a boot while plugged in does not invent a full pack.
 our $power_last_discharge_saved_pct;
 
 sub power_last_discharge {
@@ -288,39 +288,94 @@ sub power_last_discharge_save {
 	};
 }
 
+# The charging estimate. The charger holds the terminal near 4.2 V, so the
+# resting table cannot say how full the pack is; the last unplugged reading is
+# the floor. A real charge still moves the display: the PMIC's current,
+# integrated over the time since the last read, raises that floor. The running
+# estimate is persisted, so a reboot while charging continues from it instead
+# of falling back to the floor. Only the PMIC's full report sets 100%.
+sub power_charging_state {
+	my $memo = eval { &subs::cache_get({ app => 'power', context => 'charging' }) };
+	return ref $memo eq 'HASH' ? $memo : {};
+}
+
+sub power_charging_save {
+	my ($percentage, $at) = @_;
+	return unless defined $percentage;
+	eval {
+		&subs::cache_set(
+			{ app => 'power', context => 'charging', warranty => '-30d' },
+			{ percentage => $percentage + 0, at => ($at // time()) + 0 },
+		);
+	};
+}
+
+sub power_charging_clear {
+	eval { &subs::cache_delete({ app => 'power', context => 'charging' }); };
+}
+
 sub power_battery_charging_hold {
 	my ($battery) = @_;
 	return $battery unless ref $battery eq 'HASH' && ($battery->{'source'} || '') eq 'rk818';
 	my $status = $battery->{'status'} || '';
+	# A PMIC that says charging is on mains even if its plug bit is clear; the
+	# low-battery guard must not shut a pack down while it is being charged.
+	if ($status eq 'charging') {
+		$battery->{'ac'} = 1;
+		$battery->{'cable'} = 1;
+	}
 	if ($status eq 'full') {
 		$battery->{'percentage'} = 100;
 		$battery->{'percentage_held'} = 0;
+		$battery->{'percentage_charging'} = 0;
 		&power_last_discharge_save(100) if $battery->{'ac'};
+		&power_charging_clear();
 		return $battery;
 	}
-	if ($status eq 'charging') {
+	if ($status eq 'charging' || $battery->{'ac'}) {
 		my $last = &power_last_discharge();
 		my $held = $last->{'percentage'};
+		my $ocv = $battery->{'percentage'};
+		$held = $ocv if defined $ocv && (!defined $held || $ocv < $held);
 		if (defined $held) {
-			$held += 0;
-			my $ocv = $battery->{'percentage'};
-			$held = $ocv if defined $ocv && $ocv < $held;
-			$battery->{'percentage_ocv'} = $ocv if defined $ocv;
-			$battery->{'percentage'} = $held;
-			$battery->{'percentage_held'} = 1;
+			my $now = time();
 			my $full = $battery->{'charge_full'} || 4_000_000;
-			my $now = int($full * $held / 100);
-			$battery->{'charge_now'} = $now;
+			my $state = &power_charging_state();
+			my $saved = $state->{'percentage'};
+			my $saved_at = $state->{'at'};
+			if (defined $saved && defined $saved_at && $saved >= $held) {
+				$held = $saved;
+				my $dt = $now - $saved_at;
+				$dt = 0 if $dt < 0 || $dt > 6 * 3600;
+				my $amps = $battery->{'current'} || 0;
+				if ($amps > 0 && $dt > 0 && $full > 0) {
+					my $added = $amps * $dt / 3600 * 1_000_000;
+					$held += $added / $full * 100;
+				}
+			}
+			$held = 100 if $held > 100;
+			$held = $ocv if defined $ocv && $ocv < $held;
+			my $pct = int($held + 0.5);
+			$battery->{'percentage'} = $pct;
+			$battery->{'percentage_ocv'} = $ocv if defined $ocv;
+			$battery->{'percentage_held'} = 1;
+			$battery->{'percentage_charging'} = 1;
+			my $now_charge = int($full * $pct / 100);
+			$battery->{'charge_now'} = $now_charge;
 			delete $battery->{'discharge_eta'};
-			if (($battery->{'current'} || 0) > 0 && $full > $now) {
-				$battery->{'charge_eta'} = ($full - $now) / ($battery->{'current'} * 1_000_000);
+			my $amps = $battery->{'current'} || 0;
+			if ($amps > 0 && $full > $now_charge) {
+				$battery->{'charge_eta'} = ($full - $now_charge) / ($amps * 1_000_000);
 			}
 			else { delete $battery->{'charge_eta'}; }
+			&power_charging_save($held, $now);
 		}
 		return $battery;
 	}
 	&power_last_discharge_save($battery->{'percentage'}) unless $battery->{'ac'};
+	&power_charging_clear() unless $battery->{'ac'};
 	delete $battery->{'percentage_held'};
+	delete $battery->{'percentage_charging'};
 	return $battery;
 }
 

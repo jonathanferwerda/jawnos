@@ -114,7 +114,8 @@
 	my @battery_bits;
 	push @battery_bits, $battery->{'status'} if $battery->{'status'};
 	push @battery_bits, &subs::ui('estimated from voltage') if $battery->{'estimated'};
-	push @battery_bits, &subs::ui('last reading before charging') if $battery->{'percentage_held'};
+	push @battery_bits, &subs::ui('charging estimate') if $battery->{'percentage_charging'};
+	push @battery_bits, &subs::ui('last reading before charging') if $battery->{'percentage_held'} && !$battery->{'percentage_charging'};
 	push @battery_bits, &subs::ui('cable connected') if $battery->{'cable'};
 	my $battery_note = $battery->{'present'}
 		? (@battery_bits ? join(' · ', @battery_bits) : &subs::ui('Battery'))
@@ -314,6 +315,7 @@ function closeControllerPanels(except) {
 	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
 	var estimated_label = <%== encode_json(&subs::ui('estimated from voltage')) %>;
 	var held_label = <%== encode_json(&subs::ui('last reading before charging')) %>;
+	var charging_estimate_label = <%== encode_json(&subs::ui('charging estimate')) %>;
 	var low_label = <%== encode_json(&subs::ui('Battery low')) %>;
 	var plug_label = <%== encode_json(&subs::ui('Plug the controller in.')) %>;
 	var lowNote = document.getElementById('controller_low_battery');
@@ -332,7 +334,8 @@ function closeControllerPanels(except) {
 			if (has) { bits.push(text); }
 			if (b.status) { bits.push(b.status); }
 			if (b.estimated) { bits.push(estimated_label); }
-			if (b.percentage_held) { bits.push(held_label); }
+			if (b.percentage_charging) { bits.push(charging_estimate_label); }
+			else if (b.percentage_held) { bits.push(held_label); }
 			if (b.cable) { bits.push(cable_label); }
 			batt.textContent = has ? bits.join(' · ') : (b.present ? unknown : unavailable);
 		}

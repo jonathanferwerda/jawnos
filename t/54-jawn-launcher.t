@@ -34,6 +34,11 @@ like($src, qr/sub\s+log_seed/, 'the master seeds the ring from the supervisor ta
 like($src, qr/jawn-stdout\.log/, 'the crash record is the supervisor\'s jawn-stdout.log');
 like($src, qr/&log_seed\(\)/, 'and seeds before the tree starts');
 
+# A launch that finds a serving master stands down with a status the service
+# can accept, so it is not restarted into the same answer every five seconds.
+like($src, qr/Another jawn is already running.*?exit 3;/s, 'the watch-socket stand-down uses exit 3');
+like($src, qr{Another jawn's master.*?exit 3;}s, 'the pid-file stand-down uses exit 3');
+
 # The log file is created without a shell. `touch` is Unix-only, and a first
 # start on Windows wrote "'touch' is not recognized" into the log it was making.
 unlike($src, qr/`\s*touch\s+\$logfile\s*`/, 'the log is not created with the Unix touch command');

@@ -994,6 +994,17 @@ Wants=gou-x.service
 UNIT
 }
 
+# jawn exits 3 when another master is already serving. On a controller the
+# kiosk owns that master, so the service must accept the status instead of
+# restarting into the same answer every five seconds.
+sub _standdown_dropin {
+	return <<'UNIT';
+[Service]
+SuccessExitStatus=3
+RestartPreventExitStatus=3
+UNIT
+}
+
 # The panel is 480x854 on a 2 GB board, and Qt WebEngine is the largest thing
 # on it. These flags are Chromium's own low-memory mode: one renderer, the
 # small-heap profile, and shared memory in /tmp (the tiny /dev/shm fills first).
@@ -1241,6 +1252,17 @@ sub _autopopulate {
 		}
 		else {
 			$error = 'could not write the rotation presenter drop-in';
+		}
+	}
+	if (!length $error) {
+		my $dir = "$etc/systemd/system/jawnos.service.d";
+		File::Path::make_path($dir) unless -d $dir;
+		my $dropin = "$dir/10-standdown.conf";
+		if (_write_file($dropin, _standdown_dropin()) && chmod(0644, $dropin) && chown(0, 0, $dropin)) {
+			push @done, 'standdown';
+		}
+		else {
+			$error = 'could not write the stand-down unit drop-in';
 		}
 	}
 	if (!length $error) {
