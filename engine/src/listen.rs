@@ -41,6 +41,9 @@ pub struct ListenPlan {
     pub pan: f32,
     /// The insert chain, in the order the caller gave it.
     pub inserts: Vec<InsertKind>,
+    /// The song's master rack after the strip's pan. Empty is no rack; a
+    /// multi-input listen refuses one, because the rack belongs after the sum.
+    pub master: Vec<PlanInsert>,
 }
 
 impl ListenPlan {
@@ -51,6 +54,15 @@ impl ListenPlan {
             .map(|kind| kind.name())
             .collect::<Vec<&str>>()
             .join(",")
+    }
+
+    /// The master rack's names in chain order, e.g. `master_comp+master_limiter`.
+    pub fn master_list(&self) -> String {
+        self.master
+            .iter()
+            .map(|insert| insert.kind.master_prefix().unwrap_or(insert.kind.name()))
+            .collect::<Vec<&str>>()
+            .join("+")
     }
 }
 
@@ -159,6 +171,12 @@ impl ListenStrip {
         } else {
             self.master = None;
         }
+    }
+
+    /// Arm the master rack that runs after the strip's pan. `prepare` builds
+    /// it, so this is a setup call, exactly like [`ListenStrip::from_plan`].
+    pub fn set_master(&mut self, plan: Vec<PlanInsert>) {
+        self.master_plan = plan;
     }
 
     /// Apply every waiting control change at the top of a block.
@@ -434,13 +452,17 @@ impl ListenUnit {
             ))
         } else {
             let channel = plan.channels.first().copied().unwrap_or(plan.channel);
-            ListenUnit::One(ListenStrip::new(
+            let mut strip = ListenStrip::new(
                 channel,
                 plan.gain,
                 plan.pan,
                 &plan.inserts,
                 params,
-            ))
+            );
+            if !plan.master.is_empty() {
+                strip.set_master(plan.master.clone());
+            }
+            ListenUnit::One(strip)
         }
     }
 }

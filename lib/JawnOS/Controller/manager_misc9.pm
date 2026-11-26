@@ -1520,12 +1520,18 @@ sub action_44023 {
 		return;
 	}
 	if ($action eq 'listen_start') {
+		my $raw_master = $c->param('master_json');
+		$raw_master = $c->param('master') unless defined $raw_master && length $raw_master;
+		my $raw_values = $c->param('master_values_json');
+		$raw_values = $c->param('master_values') unless defined $raw_values && length $raw_values;
 		my ($status, $answer) = &studio_listen_start(
 			$c->param('channel'),
 			$c->param('gain'),
 			$c->param('pan'),
 			$c->param('inserts'),
 			$c->param('system'),
+			$raw_master,
+			$raw_values,
 		);
 		$c->render(json => $answer, status => $status);
 		return;
@@ -2464,9 +2470,11 @@ sub studio_listen_clamp {
 
 # Validate one `listen` request and return [status, engine answer]. A missing
 # gain takes the page's own default; a non-number is refused here so nothing bad
-# reaches the socket. Extra gain is clamped rather than refused.
+# reaches the socket. Extra gain is clamped rather than refused. The master rack
+# rides the same two fields the transport uses (`master_json` and
+# `master_values_json`), so a monitor hears the song's rack, not only its pedals.
 sub studio_listen_start {
-	my ($channel, $gain, $pan, $inserts, $system) = @_;
+	my ($channel, $gain, $pan, $inserts, $system, $master_json, $master_values_json) = @_;
 
 	$channel = '' unless defined $channel;
 	return (400, { ok => 0, error => 'channel must be 0 (microphone) or 1 (instrument)' })
@@ -2511,9 +2519,20 @@ sub studio_listen_start {
 		$system_value = ($system =~ /\A\s*(?:0|false)\s*\z/i) ? 0 : 1;
 	}
 
+	# The rack after the strip's pan: the armed slots and their live values,
+	# validated exactly as the transport's update validates them.
+	my ($master_error, $master) = &studio_master_plan($master_json);
+	return (400, { ok => 0, error => $master_error }) if defined $master_error;
+	my $master_values;
+	if (defined $master_values_json && length $master_values_json) {
+		my ($values_error, $values) = &studio_master_values($master_values_json);
+		return (400, { ok => 0, error => $values_error }) if defined $values_error;
+		$master_values = $values;
+	}
+
 	require JawnOS::Audio::Engine;
 	my $answer = &JawnOS::Audio::Engine::audio_engine_listen(
-		$channel, $gain_value, $pan_value, \@list, $system_value,
+		$channel, $gain_value, $pan_value, \@list, $system_value, $master, $master_values,
 	);
 	$answer = { ok => 0, error => 'the audio engine did not answer' }
 		unless ref $answer eq 'HASH';

@@ -204,6 +204,13 @@ every footswitch. Stop calls `usbTakeStop()` and the poll reads
 `usbTakeStatus()`, so the row under Listen shows the input, the rack, the device
 rate and the drops.
 
+The row is re-read when Configure opens and every two seconds while it stays
+open, and on the window regaining focus: the page outlives a cable being
+plugged in, so a list built once at load would keep saying `Auto` for a device
+that is already attached. A path that is not offered says why in the note beside
+the select (`USB 08bb:2902`, or that no interface is attached), and a desktop
+says nothing because the house engine is its normal path.
+
 The app's own **Take through** select still offers only `raw` and the tone+delay
 fixture, so a test take from the app panel sends no `channel` and no `master`:
 the engine reads the mic and the monitor is dry. That panel is a test harness;

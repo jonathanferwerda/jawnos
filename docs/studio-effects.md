@@ -223,6 +223,10 @@ as `master_<name>.bypass` in the value list, so a unit switched on or off is
 heard at the next block rather than at the next start. A bypassed slot keeps
 its knobs and its place and is simply not run.
 
+The live monitor runs the same rack after the listen strip's pan when it listens
+to one input. A multi-input listen refuses a rack, because the rack is one bus
+after the sum and there is no single sum to run it on.
+
 | name | controls |
 | --- | --- |
 | `master_comp` | `thresh`, `attack`, `mix` |

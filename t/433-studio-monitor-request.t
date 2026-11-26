@@ -6,8 +6,9 @@
 #            request body is checked directly. It also checks the direct-USB
 #            listen's plan: the input channel, the track's pedals with their
 #            values, a bypassed pedal and the song's master rack (always the
-#            five slots, each with its footswitch), and that the picker answers
-#            `usb` only when the app bridge and a device are there.
+#            five slots, each with its footswitch), that the picker answers
+#            `usb` only when the app bridge and a device are there, and that the
+#            house-engine Listen carries the same rack.
 
 use strict;
 use warnings;
@@ -105,6 +106,7 @@ sandbox.JawnAudioEngine = {
 // The effects part's mapping. Identity is enough here: the test is which names
 // and values reach the plan, not how a slider becomes a native unit.
 sandbox.studioEffectKind = function (name) { return String(name); };
+sandbox.studioEffectBuilder = function (name) { return true; };
 sandbox.studioEffectBrowserOnly = function (name) { return String(name) === 'stereowidener'; };
 sandbox.studioEffectNatural = function (kind, control, value) { return value; };
 sandbox.studioEngineMasterValues = function () {
@@ -172,6 +174,17 @@ ok(plan.master_limiter && plan.master_limiter.bypass === 1,
 ok(sandbox.studioMonitorBackend() === 'usb',
 	'the picker answers usb when the bridge and a device are there (got ' + sandbox.studioMonitorBackend() + ')');
 
+// The house-engine Listen carries the same rack the transport does.
+values['#studio_monitor_backend'] = 'engine';
+captured.length = 0;
+sandbox.studioListenStart(false);
+var listen = captured.length ? captured[0] : null;
+ok(listen && listen.action === 'listen_start', 'the engine Listen made a request');
+ok(listen.master_json && JSON.parse(listen.master_json).length === 5,
+	'and carries the rack (got ' + listen.master_json + ')');
+ok(listen.master_values_json && JSON.parse(listen.master_values_json).length === 6,
+	'with its footswitches and knobs (got ' + listen.master_values_json + ')');
+
 console.log('ok');
 JS
 close $fh;
@@ -179,6 +192,6 @@ close $fh;
 my $out = `$node $script $studio $controls 2>&1`;
 my $rc = $? >> 8;
 is($rc, 0, 'the take request runs') or diag($out);
-like($out, qr/^ok$/m, 'both Monitor states send the right request');
+like($out, qr/^ok$/m, 'both Monitor states, the USB plan and the engine Listen send the right request');
 
 done_testing();

@@ -945,6 +945,7 @@ $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', fu
 	var config = $('#studio_config');
 	if (config.is(':visible')) {
 		config.hide();
+		studioMonitorProbeStop();
 		// Removing the class brings the grid back exactly as its own hide
 		// toggles left it; nothing here shows a panel the user hid.
 		studio.removeClass('studio_config_open');
@@ -954,7 +955,17 @@ $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', fu
 		studioUpdateLatencyInfo();
 		studioEngineStatus();
 		studioOutputLoad();
+		// The interface may have been plugged in since the page loaded, so the
+		// monitor picker is re-read now and every couple of seconds while the
+		// sheet stays open.
+		studioMonitorBackendRender();
+		studioMonitorProbeStart();
 	}
+});
+
+$(window).on('focus', function () { studioMonitorBackendRender(); });
+$(document).on('visibilitychange', function () {
+	if (!document.hidden) { studioMonitorBackendRender(); }
 });
 
 // The Monitor control is per track: each strip hears its own live input. Only
@@ -1262,6 +1273,9 @@ var studioListenActive = false;
 // else the house engine).
 var studioUsbListening = false;
 var studioUsbListenChannel = 0;
+/// The picker's probe while Configure is open: a cable plugged in after the page
+/// loaded must appear without a reload.
+var studioMonitorProbeTimer = 0;
 
 function studioUsbAudioBridge() {
 	return (window.JawnAudioEngine && typeof window.JawnAudioEngine.usbTake === 'function')
@@ -1298,11 +1312,18 @@ function studioMonitorBackend() {
 
 // Rebuild the picker from what this device has. A path that disappears (the
 // interface unplugged, the app build without the bridge) leaves the old choice
-// in place only when it is still offered.
+// in place only when it is still offered. An unchanged list is left alone: this
+// runs on a short probe while Configure is open, and rebuilding would close the
+// select under the person's finger.
 function studioMonitorBackendRender() {
 	var select = $('#studio_monitor_backend');
 	if (!select.length || typeof select.empty !== 'function') { return; }
 	var options = studioMonitorOptions();
+	var ids = options.map(function (option) { return option.id; }).join(',');
+	var note = $('#studio_monitor_backend_note');
+	if (note.length) { note.text(studioMonitorBackendNote()); }
+	if (select.attr('data-options') === ids) { return; }
+	select.attr('data-options', ids);
 	var current = String(select.val() || 'auto');
 	select.empty();
 	options.forEach(function (option) {
@@ -1310,8 +1331,15 @@ function studioMonitorBackendRender() {
 	});
 	var keep = options.some(function (option) { return option.id === current; });
 	select.val(keep ? current : 'auto');
-	var note = $('#studio_monitor_backend_note');
-	if (note.length) { note.text(studioMonitorBackendNote()); }
+}
+
+function studioMonitorProbeStart() {
+	if (studioMonitorProbeTimer) { return; }
+	studioMonitorProbeTimer = setInterval(studioMonitorBackendRender, 2000);
+}
+
+function studioMonitorProbeStop() {
+	if (studioMonitorProbeTimer) { clearInterval(studioMonitorProbeTimer); studioMonitorProbeTimer = 0; }
 }
 
 // Why a path is or is not in the list. A phone whose interface is still plugged
@@ -1590,6 +1618,13 @@ function studioListenStart(quiet, channel, ch, fallback) {
 		gain: $('#studio_listen_gain').val(),
 		inserts: studioListenInserts(ch)
 	};
+	// The song's rack after the strip's pan, in the same shape the transport
+	// sends: the engine builds it once and hears each footswitch as a bypass, so
+	// the monitor sounds like the playback.
+	var master = (typeof studioEngineMasterList === 'function') ? studioEngineMasterList() : [];
+	if (master.length) { request.master_json = JSON.stringify(master); }
+	var values = (typeof studioEngineMasterValues === 'function') ? studioEngineMasterValues() : [];
+	if (values.length) { request.master_values_json = JSON.stringify(values); }
 	// Monitor wants its input alone; the standalone Listen keeps the house mix.
 	if (fallback) { request.system = 0; }
 	$.ajax({

@@ -2575,6 +2575,7 @@ fn run_listen(options: &Options) -> Result<ExitCode, String> {
         gain: Channel::clamp_gain(options.gain),
         pan: Channel::clamp_pan(options.pan),
         inserts,
+        master: Vec::new(),
     };
     let stop = signals::install();
     let total = if options.seconds_given {

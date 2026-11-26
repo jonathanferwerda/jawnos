@@ -301,6 +301,28 @@ my @names = qw(
 	is_deeply($request->{'inserts'}, ['tone'], 'the insert chain is the take whitelist');
 	ok($request->{'system'}, 'the standalone Listen keeps the house mix');
 
+	# The song's rack rides after the strip's pan, in the transport's own shape.
+	my $with_rack = run_take(
+		action => 'listen_start', channel => '1', gain => '0.8',
+		master_json => '["master_limiter"]',
+		master_values_json => '[{"name":"master_limiter","control":"bypass","value":1},{"name":"master_limiter","control":"ceiling","value":-3}]',
+	);
+	is($with_rack->{'status'}, 200, 'a listen with the song rack is 200');
+	my $rack = (logged_requests($log))[-1];
+	is_deeply($rack->{'master'}, ['master_limiter'], 'the armed rack travels with the listen');
+	is_deeply(
+		$rack->{'master_values'},
+		[
+			{ name => 'master_limiter.bypass', value => 1 },
+			{ name => 'master_limiter.ceiling', value => -3 },
+		],
+		'and its footswitch and knobs are the flattened engine shape',
+	);
+
+	my $bad_rack = run_take(action => 'listen_start', channel => '1', master_json => '["tone"]');
+	is($bad_rack->{'status'}, 400, 'a track pedal in the rack is a 400');
+	like($bad_rack->{'json'}{'error'}, qr/no such master insert/, 'and names the rack rule');
+
 	my $monitor = run_take(action => 'listen_start', channel => '1', gain => '0.8', system => '0');
 	is($monitor->{'status'}, 200, 'a Monitor listen is 200');
 	ok(!(logged_requests($log))[-1]{'system'}, 'and asks the engine for its input alone');
@@ -464,6 +486,10 @@ like($controls_js, qr/target: 'listen'/, 'the gain is a param addressed to liste
 like($controls_js, qr/setInterval\(studioListenStatus, 750\)/,
 	'listen status is polled while it runs');
 like($controls_js, qr/function studioListenInserts\(/, 'Listen takes the selected track\'s rack');
+like($controls_js, qr/request\.master_json = JSON\.stringify\(master\)/,
+	'and the song\'s master rack rides the engine Listen too');
+like($controls_js, qr/request\.master_values_json = JSON\.stringify\(values\)/,
+	'with its knobs and footswitches');
 like($controls_js, qr/inserts: studioListenInserts\(ch\)/, 'and sends the monitored track\'s chain to the monitor');
 like($markup, qr/class="studio_track_monitor/, 'every track carries a Monitor button');
 like($controls_js, qr/\.studio_track_monitor/, 'the track Monitor buttons are bound');
@@ -565,6 +591,10 @@ like($controls_js, qr/if \(backend === 'usb'\) \{ studioUsbListenStart\(/,
 	'and the direct USB path when the picker says Direct USB');
 like($controls_js, qr/no USB audio interface is attached/,
 	'and the picker says why Direct USB is missing rather than looking empty');
+like($controls_js, qr/studioMonitorProbeStart\(\);/,
+	'opening Configure re-reads the monitor picker, so a late cable appears');
+like($controls_js, qr/setInterval\(studioMonitorBackendRender, 2000\)/,
+	'and it keeps probing while the sheet is open');
 like($controls_js, qr/bridge\.start\(String\(rate\), '192', String\(gain\)\)/,
 	'the native stream opens at the house rate, a 4 ms burst and the Listen gain');
 like($controls_js, qr/if \(studioNativeListening\) \{ studioNativeStatus\(\); return; \}/,

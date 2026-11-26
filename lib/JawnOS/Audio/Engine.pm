@@ -267,15 +267,21 @@ sub audio_engine_param {
 # Live monitoring on one input: `{"cmd":"listen","channel":1,"gain":0.8,
 # "pan":0,"inserts":["tone"]}`. The channel is an input number the route has
 # already narrowed to 0 (microphone) or 1 (instrument); no device name is
-# carried. The engine answers `state:"listening"`, and `stop` ends it.
+# carried. The optional `master` and `master_values` are the song's rack after
+# the strip's pan, in the same shape a transport update uses, so the monitor
+# sounds like the playback. The engine answers `state:"listening"`, and `stop`
+# ends it.
 sub audio_engine_listen {
-	my ($channel, $gain, $pan, $inserts, $system) = @_;
+	my ($channel, $gain, $pan, $inserts, $system, $master, $master_values) = @_;
 	my $request = { cmd => 'listen' };
 	$request->{'channel'} = $channel if defined $channel;
 	$request->{'gain'} = $gain if defined $gain;
 	$request->{'pan'} = $pan if defined $pan;
 	$request->{'inserts'} = $inserts if ref $inserts eq 'ARRAY';
 	$request->{'system'} = $system ? true : false if defined $system;
+	$request->{'master'} = $master if ref $master eq 'ARRAY' && @$master;
+	$request->{'master_values'} = $master_values
+		if ref $master_values eq 'ARRAY' && @$master_values;
 	return audio_engine_command($request);
 }
 

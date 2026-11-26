@@ -103,8 +103,8 @@ use std::time::{Duration, Instant};
 
 use jawn_audio::{
     listen::{self, ListenPlan, ListenUnit},
-    monitor_start, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device, DiskWriter,
-    InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue,
+    monitor_start, plan::PlanInsert, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device,
+    DiskWriter, InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue,
     PlayTrack, Playback, Producer, TransportClip, TransportControl, TransportLive, TransportPlan,
     TransportSource, MASTER_ORDER,
 };
@@ -2502,6 +2502,20 @@ impl Server {
             }
             _ => return error_line("\"inserts\" must be an array of insert names"),
         };
+        let master = match parse_master(get(object, "master")) {
+            Ok(kinds) => kinds,
+            Err(error) => return error_line(&error),
+        };
+        let master_values = match parse_master_values(get(object, "master_values")) {
+            Ok(values) => values.unwrap_or_default(),
+            Err(error) => return error_line(&error),
+        };
+        // The rack is one bus after the sum, so it has no place in a listen
+        // that sums several inputs; refusing is honest, applying it per input
+        // would run it once per channel.
+        if channels.len() > 1 && !master.is_empty() {
+            return error_line("a master rack needs one input: monitor one channel to hear it");
+        }
         // A monitor that folds the machine's system mix into its output can hear
         // the page that is monitoring it, which is a feedback loop on one card.
         // `system` lets Studio's input monitor carry only its own capture; the
@@ -2527,6 +2541,7 @@ impl Server {
             gain,
             pan,
             inserts,
+            master: master_plan(&master, master_values),
         };
         let inserts_text = plan.insert_list();
         // The reply keeps the old single-input shape exactly; a multi listen
@@ -5489,7 +5504,7 @@ fn parse_master_values(value: Option<&Value>) -> Result<Option<Vec<(String, f32)
         let kind = InsertKind::parse(prefix)
             .filter(|kind| kind.master_prefix().is_some())
             .ok_or_else(|| format!("no such master insert: {prefix}"))?;
-        if kind.control_index(control).is_none() {
+        if kind.control_index(control).is_none() && control != "bypass" {
             return Err(format!("no such master control: {name}"));
         }
         let value = match get(fields, "value") {
@@ -5504,6 +5519,32 @@ fn parse_master_values(value: Option<&Value>) -> Result<Option<Vec<(String, f32)
         out.push((name, value));
     }
     Ok(Some(out))
+}
+
+/// The master rack as a listen strip builds it: each armed insert with its
+/// values, in the contract's order. A value for a slot the rack does not hold is
+/// dropped, exactly as the transport's update drops it.
+fn master_plan(kinds: &[InsertKind], values: Vec<(String, f32)>) -> Vec<PlanInsert> {
+    let mut plan: Vec<PlanInsert> = kinds
+        .iter()
+        .map(|kind| PlanInsert {
+            kind: *kind,
+            knobs: Vec::new(),
+        })
+        .collect();
+    for (name, value) in values {
+        let Some((prefix, control)) = name.split_once('.') else {
+            continue;
+        };
+        let Some(slot) = plan
+            .iter_mut()
+            .find(|slot| slot.kind.master_prefix() == Some(prefix))
+        else {
+            continue;
+        };
+        slot.knobs.push((control.to_string(), value));
+    }
+    plan
 }
 
 /// The largest fan-out an app's routing may carry. Each entry is one Studio
@@ -11803,6 +11844,7 @@ break"}"#).is_err());
             gain: 1.0,
             pan: 0.0,
             inserts: Vec::new(),
+            master: Vec::new(),
         };
         let mut unit = ListenUnit::new(&plan, None);
         let status = Arc::new(Mutex::new(ListenStatus {
@@ -11969,6 +12011,18 @@ break"}"#).is_err());
     }
 
     #[test]
+    fn a_master_bypass_is_a_value_the_transport_can_carry() {
+        let object = parse_object(
+            r#"{"master_values":[{"name":"master_limiter.bypass","value":1}]}"#,
+        )
+        .expect("parse");
+        let values = parse_master_values(get(&object, "master_values"))
+            .expect("valid")
+            .expect("a list");
+        assert_eq!(values, vec![("master_limiter.bypass".to_string(), 1.0)]);
+    }
+
+    #[test]
     fn a_multi_input_listen_arms_status_and_refuses_bad_input_sets() {
         let mut server = socket_server();
         server.config.channels = 2;
@@ -11993,6 +12047,28 @@ break"}"#).is_err());
 
         let stopped = reply(server.handle(r#"{"cmd":"stop"}"#));
         assert!(stopped.contains("\"channels\":[0,1]"), "{stopped}");
+    }
+
+    #[test]
+    fn a_listen_arms_the_master_rack_and_refuses_it_with_several_inputs() {
+        let mut server = socket_server();
+
+        // One input: the rack rides the same values the transport uses, so a
+        // switched-off slot is a bypass rather than an absent insert.
+        let started = reply(server.handle(
+            r#"{"cmd":"listen","channel":0,"master":["master_limiter"],"master_values":[{"name":"master_limiter.bypass","value":1}]}"#,
+        ));
+        assert!(started.contains("\"ok\":true"), "{started}");
+        assert!(started.contains("\"state\":\"listening\""), "{started}");
+        let _ = server.handle(r#"{"cmd":"stop"}"#);
+
+        // Several inputs sum before the rack, so it has no one bus to run on.
+        server.config.channels = 2;
+        let refused = reply(
+            server.handle(r#"{"cmd":"listen","channels":[0,1],"master":["master_limiter"]}"#),
+        );
+        assert!(refused.contains("\"ok\":false"), "{refused}");
+        assert!(refused.contains("one input"), "{refused}");
     }
 
     /// Poll until the bus take has written its first block, so the test never
