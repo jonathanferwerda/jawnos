@@ -44,6 +44,9 @@ sub png_size {
 	return ($w, $h);
 }
 
+my ($motif_block) = $build =~ /const PEDAL_MOTIFS = \{(.*?)\n\};/s;
+ok(defined $motif_block, 'the generator carries one motif per pedal');
+
 my @sets = grep { -d } glob("$root/public/icons/sets/*");
 
 for my $p (@pedals) {
@@ -91,6 +94,9 @@ for my $p (@pedals) {
 	like($build, qr/\b$asset: \d+/, "$asset has its own hue");
 	my $svg = "$root/public/icons/sets/cartoon/$asset.svg";
 	like(read_file($svg), qr/>\Q$label\E</, "the generated artwork for $asset letters its name");
+	like($motif_block // '', qr/\b\Q$asset\E: '[^']+'/, "$asset has a motif path");
+	like(read_file($svg), qr/<path d="[^"]+"/, "the generated face for $asset draws its motif");
+	like(read_file($svg), qr/stroke-width="12"/, "the motif of $asset is a marker stroke");
 }
 
 # --- the slider asset is not stolen ----------------------------------------

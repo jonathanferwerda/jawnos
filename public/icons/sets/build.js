@@ -842,6 +842,18 @@ const PEDAL_LABELS = { synth: 'JawnSynth', pedal_harmonizer: 'Harmonizer', pedal
 const pedalLabel = name => PEDAL_LABELS[name] || (name.charAt(0).toUpperCase() + name.slice(1));
 const PEDAL_NAMES = {};
 Object.keys(PEDAL_SIZES).forEach(n => { PEDAL_NAMES[n] = 1; });
+const PEDAL_MOTIFS = {
+	pedal_harmonizer: 'M19 70 a9 7 0 1 0 18 0 a9 7 0 1 0 -18 0 M37 70 L37 30 L73 22 M55 62 a9 7 0 1 0 18 0 a9 7 0 1 0 -18 0 M73 62 L73 22',
+	pedal_de_esser: 'M10 55 L18 38 L26 66 L34 36 L42 68 L50 38 L58 66 L66 36 L74 64 L82 40 L90 55 M10 28 L90 28',
+	pedal_modulator: 'M20 50 a30 30 0 1 0 60 0 a30 30 0 1 0 -60 0 M20 50 Q35 25 50 50 T80 50',
+	pedal_pitch_shift: 'M15 80 L30 80 L30 62 L45 62 L45 45 L60 45 L60 30 L78 30 M70 23 L79 30 L70 37',
+	pedal_gate: 'M10 55 Q18 32 26 55 Q34 78 42 55 L58 55 Q66 32 74 55 Q82 78 90 55',
+	pedal_slider: 'M12 68 L12 32 L34 32 L34 68 L56 68 L56 32 L78 32 L78 68 L92 68',
+	pedal_overdrive: 'M10 70 L28 32 L36 32 L44 70 L52 70 L60 32 L68 32 L76 70 L90 70',
+	pedal_wah: 'M10 70 C28 70 32 22 50 22 C68 22 72 70 90 70',
+	pedal_chorus: 'M10 42 Q22 24 34 42 T58 42 T82 42 M10 60 Q22 42 34 60 T58 60 T82 60',
+	pedal_vibrato: 'M10 50 Q18 30 26 50 T44 50 Q54 30 62 50 T80 50 T94 50'
+};
 const KNOB_NAMES = {};
 Object.keys(ICONS).forEach(n => { if (n.indexOf('knob_') === 0) { KNOB_NAMES[n] = 1; } });
 const xmlText = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1075,8 +1087,18 @@ function pedalArt(style, name, h, is_dark) {
 	body += '<rect x="' + fx.toFixed(1) + '" y="' + fy.toFixed(1) + '" width="' + fw.toFixed(1) + '" height="' + fh.toFixed(1) + '" rx="' + fr.toFixed(1) + '" fill="' + (p.face || 'none') + '"'
 		+ (p.faceEdge ? ' stroke="' + p.faceEdge + '" stroke-width="' + (p.faceW || 6) + '"' : '')
 		+ (p.faceOpacity ? ' fill-opacity="' + p.faceOpacity + '"' : '') + '/>';
-	const fs = Math.min(hh * 0.135, (fw * 0.9) / (label.length * 0.6));
-	body += '<text x="' + (w / 2).toFixed(1) + '" y="' + (hh * 0.16).toFixed(1) + '" text-anchor="middle" font-family="DejaVu Sans, Noto Sans, sans-serif" font-weight="700" font-size="' + fs.toFixed(1) + '" fill="' + (p.text || p.detail) + '"'
+	// A motif badge sits at the left of the title, on the same baseline. It
+	// takes a little of the title's width, so the name is set slightly right
+	// and a touch smaller than a pedal without one.
+	const motif = PEDAL_MOTIFS[name];
+	const titleWidth = motif ? fw * 0.72 : fw * 0.9;
+	const titleX = motif ? w / 2 + fw * 0.10 : w / 2;
+	const fs = Math.min(hh * 0.135, titleWidth / (label.length * 0.6));
+	if (motif) {
+		const iconH = hh * 0.10, iconScale = iconH / 100;
+		body += '<g transform="translate(' + (w * 0.12).toFixed(1) + ',' + (hh * 0.16 - iconH).toFixed(1) + ') scale(' + iconScale.toFixed(3) + ')" fill="none" stroke="' + (p.text || p.detail) + '" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"><path d="' + motif + '"/></g>';
+	}
+	body += '<text x="' + titleX.toFixed(1) + '" y="' + (hh * 0.16).toFixed(1) + '" text-anchor="middle" font-family="DejaVu Sans, Noto Sans, sans-serif" font-weight="700" font-size="' + fs.toFixed(1) + '" fill="' + (p.text || p.detail) + '"'
 		+ (p.textStroke ? ' stroke="' + p.textStroke + '" stroke-width="' + (fs * 0.12).toFixed(1) + '" paint-order="stroke"' : '') + '>' + xmlText(label) + '</text>';
 	const gx = w * 0.16, gy = hh * 0.70, gw = w * 0.68, gh = hh * 0.18;
 	body += '<rect x="' + gx.toFixed(1) + '" y="' + gy.toFixed(1) + '" width="' + gw.toFixed(1) + '" height="' + gh.toFixed(1) + '" rx="' + (gh * 0.18).toFixed(1) + '" fill="' + (p.hub || p.detail) + '"'
