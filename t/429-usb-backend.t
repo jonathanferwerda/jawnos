@@ -11,7 +11,9 @@
 #            `jawn_audio_roundtrip_usb`), the bus-frame segment table and click
 #            placement of the latency probe, the playback GET_CUR rate probe,
 #            the SET_CUR/GET_CUR playback-rate sequence (endpoint recipient, an
-#            interface fallback, and no success without a readback), the
+#            interface fallback, and no success without a readback), the 48 -> 32
+#            monitor resample when the endpoint refuses 48 kHz while the capture
+#            stays at 48 kHz, the
 #            C ABI `jawn_audio_start_usb` is additive, the take owns one
 #            process-wide control slot shared with the Oboe take, and the driver
 #            leaks (never frees) an URB the kernel still owns and never closes
@@ -67,7 +69,7 @@ sub cargo_available {
 
 # --- the pure logic runs on a machine with no phone --------------------------
 SKIP: {
-	skip 'no cargo toolchain on this machine', 17 unless cargo_available();
+	skip 'no cargo toolchain on this machine', 18 unless cargo_available();
 
 	my $target = tempdir( CLEANUP => 1 );
 	local $ENV{'CARGO_TARGET_DIR'} = $target;
@@ -153,6 +155,11 @@ SKIP: {
 		$out,
 		qr/usb_device::tests::the_rate_target_comes_from_the_packet_and_is_encoded_little_endian/,
 		'the rate target follows the packet and is encoded little-endian'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_monitor_resampler_turns_48k_into_32k_without_a_shortfall/,
+		'the monitor is resampled 48 kHz -> 32 kHz without a shortfall'
 	);
 }
 
@@ -268,6 +275,10 @@ like( $usb, qr/const PRIME_TIMEOUT_MS: u64 = 100;/, 'the warm-up is bounded' );
 like( $usb, qr/sys::control_in\(/, 'the playback rate is probed with a class GET_CUR' );
 like( $usb, qr/sys::control_out\(/, 'and set with a class SET_CUR, not only read' );
 like( $usb, qr/fn set_playback_rate\(/, 'the take brings the endpoint to the packet\'s rate' );
+like( $usb, qr/fn monitor_fallback_rate\(/, 'a refused rate falls back to the rate the endpoint can carry' );
+like( $usb, qr/struct MonitorResampler/, 'the monitor is resampled, not the capture' );
+like( $usb, qr/fn fill_packet_resampled\(/, 'each OUT packet reads the fifo at 48 kHz and writes the device rate' );
+like( $usb, qr/fn fill_out_urb_with\(/, 'the take fills OUT through the resampler' );
 like( $usb, qr/0x22u8, ep_out as u16, "endpoint"/, 'UAC1\'s endpoint recipient is tried first' );
 like( $usb, qr/0x21u8, iface_out as u16, "interface"/, 'with the interface recipient as a fallback' );
 like( $usb, qr/verified: false/, 'and a refusal is reported without claiming success' );

@@ -469,7 +469,8 @@ fn frames_to_ms(frames: u64, rate: u32) -> u32 {
 /// `out_frames` is what the submitted packets actually carry; comparing it with
 /// the captured duration makes a hole in the OUT stream visible as `out_lag_ms`
 /// (capture time minus playback time). A continuous stream that keeps up sits at
-/// zero; a starved one grows.
+/// zero; a starved one grows. The two rates differ when the monitor is resampled
+/// to the endpoint's own rate; the capture side is always `in_rate`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Cadence {
     pub(crate) out_frames: u64,
@@ -478,15 +479,23 @@ pub(crate) struct Cadence {
     pub(crate) out_lag_ms: i64,
 }
 
-fn cadence(frames_in: u64, out_packets: u64, frames_per_packet: usize, rate: u32) -> Cadence {
-    let out_frames = out_packets * frames_per_packet as u64;
-    let (capture_ms, out_ms) = if rate == 0 {
-        (0, 0)
+fn cadence(
+    frames_in: u64,
+    out_packets: u64,
+    out_frames_per_packet: usize,
+    in_rate: u32,
+    out_rate: u32,
+) -> Cadence {
+    let out_frames = out_packets * out_frames_per_packet as u64;
+    let capture_ms = if in_rate == 0 {
+        0
     } else {
-        (
-            (frames_in * 1_000 + u64::from(rate) / 2) / u64::from(rate),
-            (out_frames * 1_000 + u64::from(rate) / 2) / u64::from(rate),
-        )
+        (frames_in * 1_000 + u64::from(in_rate) / 2) / u64::from(in_rate)
+    };
+    let out_ms = if out_rate == 0 {
+        0
+    } else {
+        (out_frames * 1_000 + u64::from(out_rate) / 2) / u64::from(out_rate)
     };
     Cadence {
         out_frames,
@@ -631,6 +640,22 @@ fn monitor_rate_ok(packet: usize, hz: u32) -> bool {
     hz == 0 || hz == monitor_rate_for_packet(packet)
 }
 
+/// The rate the monitor can run at, given the packet the caller asked for and
+/// the endpoint's read rate. A rate equal to the capture rate needs no
+/// conversion; a lower rate is resampled to. `None` means the endpoint is at a
+/// rate this 1 ms-packet path cannot carry as whole frames (44.1 kHz, for
+/// example), so the monitor must stay off rather than drift.
+fn monitor_fallback_rate(packet: usize, endpoint_hz: u32) -> Option<u32> {
+    if monitor_rate_ok(packet, endpoint_hz) {
+        return Some(monitor_rate_for_packet(packet));
+    }
+    if endpoint_hz >= 8_000 && endpoint_hz % 1_000 == 0 {
+        Some(endpoint_hz)
+    } else {
+        None
+    }
+}
+
 /// Little-endian 16-bit stereo to the duplicated mono the rings carry. The left
 /// sample is the mono value, exactly as `plan::Strip` reads the ring; the two
 /// halves are never summed, so a mic that lands on one channel keeps its level.
@@ -740,6 +765,16 @@ struct OutFifo {
     dropped: u64,
 }
 
+/// One stereo frame as 16-bit little-endian, the shape the OUT packet wants.
+fn write_monitor_frame(out: &mut [u8], frame: usize, left: f32, right: f32) {
+    let left = crate::wav::to_i16(left).to_le_bytes();
+    let right = crate::wav::to_i16(right).to_le_bytes();
+    out[frame * 4] = left[0];
+    out[frame * 4 + 1] = left[1];
+    out[frame * 4 + 2] = right[0];
+    out[frame * 4 + 3] = right[1];
+}
+
 impl OutFifo {
     /// `capacity` is the physical ring size and `high_water` the fill level the
     /// oldest frame is dropped above. Trimming at the high water keeps the
@@ -784,6 +819,22 @@ impl OutFifo {
         }
     }
 
+    /// The oldest stereo frame without consuming it.
+    fn front(&self) -> Option<(f32, f32)> {
+        (self.len > 0).then(|| {
+            let slot = self.head * 2;
+            (self.data[slot], self.data[slot + 1])
+        })
+    }
+
+    /// Consume the oldest stereo frame.
+    fn pop(&mut self) -> Option<(f32, f32)> {
+        let frame = self.front()?;
+        self.head = (self.head + 1) % self.capacity;
+        self.len -= 1;
+        Some(frame)
+    }
+
     /// Fill `frames` stereo frames of `out` (4 bytes each), padding with silence
     /// when the queue is short. Returns how many frames came from the queue; a
     /// caller treats a shortfall as one underrun.
@@ -792,12 +843,7 @@ impl OutFifo {
         let got = wanted.min(self.len);
         for frame in 0..got {
             let slot = ((self.head + frame) % self.capacity) * 2;
-            let left = crate::wav::to_i16(self.data[slot]).to_le_bytes();
-            let right = crate::wav::to_i16(self.data[slot + 1]).to_le_bytes();
-            out[frame * 4] = left[0];
-            out[frame * 4 + 1] = left[1];
-            out[frame * 4 + 2] = right[0];
-            out[frame * 4 + 3] = right[1];
+            write_monitor_frame(out, frame, self.data[slot], self.data[slot + 1]);
         }
         for byte in &mut out[got * 4..wanted * 4] {
             *byte = 0;
@@ -805,6 +851,68 @@ impl OutFifo {
         self.head = (self.head + got) % self.capacity;
         self.len -= got;
         got
+    }
+
+    /// Fill one packet by linearly resampling the queue to the endpoint's rate.
+    /// The queue itself stays at the capture rate, so priming, the high-water
+    /// trim and the fill counters keep their meaning; only the frames written
+    /// into the packet are converted. Returns how many output frames came from
+    /// real input; a caller treats a shortfall as one underrun.
+    fn fill_packet_resampled(
+        &mut self,
+        resampler: &mut MonitorResampler,
+        frames: usize,
+        out: &mut [u8],
+    ) -> usize {
+        let wanted = frames.min(out.len() / 4);
+        if !resampler.primed {
+            match self.pop() {
+                Some((left, right)) => {
+                    resampler.prev_l = left;
+                    resampler.prev_r = right;
+                    resampler.pos = 0.0;
+                    resampler.primed = true;
+                }
+                None => {
+                    for byte in &mut out[..wanted * 4] {
+                        *byte = 0;
+                    }
+                    return 0;
+                }
+            }
+        }
+        let mut produced = 0;
+        for frame in 0..wanted {
+            let Some((cur_l, cur_r)) = self.front() else {
+                // The queue ran dry mid-packet: silence the rest and let the
+                // next fill re-prime rather than extrapolate from a stale one.
+                for byte in &mut out[frame * 4..wanted * 4] {
+                    *byte = 0;
+                }
+                resampler.primed = false;
+                return produced;
+            };
+            let alpha = resampler.pos as f32;
+            let left = resampler.prev_l + (cur_l - resampler.prev_l) * alpha;
+            let right = resampler.prev_r + (cur_r - resampler.prev_r) * alpha;
+            write_monitor_frame(out, frame, left, right);
+            produced += 1;
+            resampler.pos += resampler.step;
+            while resampler.pos >= 1.0 {
+                match self.pop() {
+                    Some((left, right)) => {
+                        resampler.prev_l = left;
+                        resampler.prev_r = right;
+                        resampler.pos -= 1.0;
+                    }
+                    None => {
+                        resampler.pos = 0.0;
+                        break;
+                    }
+                }
+            }
+        }
+        produced
     }
 
     fn dropped(&self) -> u64 {
@@ -826,6 +934,38 @@ impl OutFifo {
     }
 }
 
+/// Linear resampling for the **monitor only**, from the capture rate to the
+/// endpoint's own rate. Capture, the record ring and the take stay at the
+/// capture rate; this converts the frames on their way into the OUT packets.
+/// One frame of lookahead (`prev`) keeps the step continuous across packets, so
+/// a 3:2 decimation does not click at a packet or URB boundary.
+struct MonitorResampler {
+    /// Input frames per output frame (48k -> 32k is 1.5).
+    step: f64,
+    /// Fractional position of the next output relative to `prev`.
+    pos: f64,
+    prev_l: f32,
+    prev_r: f32,
+    primed: bool,
+}
+
+impl MonitorResampler {
+    fn new(in_rate: u32, out_rate: u32) -> Self {
+        let step = if out_rate == 0 {
+            1.0
+        } else {
+            f64::from(in_rate) / f64::from(out_rate)
+        };
+        Self {
+            step,
+            pos: 0.0,
+            prev_l: 0.0,
+            prev_r: 0.0,
+            primed: false,
+        }
+    }
+}
+
 /// What one take's monitor (OUT) side carried. The priming split lives here so
 /// a future take can tell a slow start from starvation. The fill sample is taken
 /// just before every OUT URB is filled, so the latency the report claims is the
@@ -844,9 +984,9 @@ struct OutStats {
     fill_frames_max: usize,
 }
 
-/// Write every packet of one OUT URB from the loop's own `fifo`. The caller has
-/// already absorbed every complete IN URB, so this fill does not race the
-/// capture side for the same interval.
+/// Write every packet of one OUT URB from the loop's own `fifo`, with no rate
+/// conversion. Kept as the plain-monitor shape; [`fill_out_urb_with`] is the
+/// core the take uses when the endpoint runs at another rate.
 ///
 /// # Safety
 /// `done` must point at a live OUT URB image with a buffer of
@@ -856,6 +996,23 @@ unsafe fn fill_out_urb(
     packet: usize,
     fifo: &mut OutFifo,
     stats: &mut OutStats,
+) {
+    fill_out_urb_with(done, packet, fifo, stats, None);
+}
+
+/// Write every packet of one OUT URB from the loop's own `fifo`. When
+/// `resampler` is present the packet is filled at the endpoint's rate while the
+/// fifo stays at the capture rate.
+///
+/// # Safety
+/// `done` must point at a live OUT URB image with a buffer of
+/// `number_of_packets * packet` bytes.
+unsafe fn fill_out_urb_with(
+    done: *mut UsbdevfsUrb,
+    packet: usize,
+    fifo: &mut OutFifo,
+    stats: &mut OutStats,
+    mut resampler: Option<&mut MonitorResampler>,
 ) {
     let fill = fifo.len();
     stats.fill_samples += 1;
@@ -869,7 +1026,11 @@ unsafe fn fill_out_urb(
     let count = header.number_of_packets.max(0) as usize;
     for index in 0..count {
         let out = std::slice::from_raw_parts_mut(base.add(index * packet), packet);
-        if fifo.fill_packet(frames_per_packet, out) < frames_per_packet {
+        let produced = match resampler.as_deref_mut() {
+            Some(resampler) => fifo.fill_packet_resampled(resampler, frames_per_packet, out),
+            None => fifo.fill_packet(frames_per_packet, out),
+        };
+        if produced < frames_per_packet {
             stats.underruns += 1;
         }
         stats.packets += 1;
@@ -1423,7 +1584,7 @@ pub(crate) fn run_usb_plan(
 
     let packet_in = config.packet_in as usize;
     let mut have_out = config.ep_out >= 0 && config.packet_out > 0;
-    let packet_out = if have_out {
+    let mut packet_out = if have_out {
         config.packet_out as usize
     } else {
         0
@@ -1480,15 +1641,26 @@ pub(crate) fn run_usb_plan(
             },
         )
     };
-    // A readback that disagrees with the packet size means the endpoint is
-    // running at another rate. Feeding it 48 kHz frames is the overrun/wrap
-    // distortion documentation records, so capture still runs but the monitor
-    // is left off until the 48 -> 32 fallback lands. A failed read (hz == 0) is
-    // not evidence of a mismatch and keeps the monitor as before.
+    // A readback that disagrees with the packet size means the endpoint runs at
+    // another rate. If that rate can be carried by an integer number of frames
+    // per 1 ms packet, resample the monitor to it (capture and the take stay at
+    // 48 kHz); otherwise leave the monitor off rather than overrun the endpoint.
+    // A failed read (hz == 0) is not evidence of a mismatch and keeps 48 kHz.
     let mut monitor_off = None;
-    if have_out && !monitor_rate_ok(packet_out, out_rate.hz) {
-        have_out = false;
-        monitor_off = Some("playback rate");
+    let monitor_out_rate = if have_out {
+        match monitor_fallback_rate(packet_out, out_rate.hz) {
+            Some(rate) => rate,
+            None => {
+                have_out = false;
+                monitor_off = Some("playback rate");
+                config.rate
+            }
+        }
+    } else {
+        config.rate
+    };
+    if have_out && monitor_out_rate != config.rate {
+        packet_out = (monitor_out_rate as usize / 1_000) * 4;
     }
 
     let sched = sys::request_realtime();
@@ -1549,11 +1721,21 @@ pub(crate) fn run_usb_plan(
     }
 
     let frames_per_out_packet = packet_out / 4;
-    let frames_per_out_urb = depth.out_packets * frames_per_out_packet;
+    // Input frames one OUT packet consumes. They differ from the device-rate
+    // frames only when the monitor is resampled; the fifo, priming and the
+    // high-water trim all stay at the capture rate.
+    let frames_per_out_packet_in = if monitor_out_rate == config.rate {
+        frames_per_out_packet
+    } else {
+        let net = frames_per_out_packet as u64 * u64::from(config.rate);
+        let out = u64::from(monitor_out_rate);
+        ((net + out - 1) / out) as usize
+    };
+    let frames_per_out_urb = depth.out_packets * frames_per_out_packet_in;
     let frames_per_in_urb = depth.in_packets * (packet_in / 4);
     // The whole OUT depth is what priming must fill before the first submit.
     let prime_frames = if have_out {
-        depth.prime_frames(frames_per_out_packet)
+        depth.prime_frames(frames_per_out_packet_in)
     } else {
         0
     };
@@ -1566,6 +1748,9 @@ pub(crate) fn run_usb_plan(
             monitor_high_water(prime_frames, frames_per_in_urb),
         )
     });
+    let mut monitor_resampler =
+        (have_out && monitor_out_rate != config.rate)
+            .then(|| MonitorResampler::new(config.rate, monitor_out_rate));
     // At most one packet's worth of duplicated mono samples.
     let mut packet_stereo = vec![0.0f32; (packet_in / 2).max(2)];
 
@@ -1665,13 +1850,14 @@ pub(crate) fn run_usb_plan(
         for index in 0..depth.out_urbs {
             unsafe {
                 clear_urb(out_ptrs[index]);
-                fill_out_urb(
+                fill_out_urb_with(
                     out_ptrs[index],
                     packet_out,
                     fifo
                         .as_mut()
                         .expect("have_out built the monitor fifo"),
                     &mut out_stats,
+                    monitor_resampler.as_mut(),
                 );
             }
             match unsafe { sys::submit(config.fd, out_ptrs[index]) } {
@@ -1819,13 +2005,14 @@ pub(crate) fn run_usb_plan(
                 };
                 unsafe {
                     clear_urb(pointer);
-                    fill_out_urb(
+                    fill_out_urb_with(
                         pointer,
                         packet_out,
                         fifo
                             .as_mut()
                             .expect("have_out built the monitor fifo"),
                         &mut out_stats,
+                        monitor_resampler.as_mut(),
                     );
                 }
                 match unsafe { sys::submit(config.fd, pointer) } {
@@ -1913,7 +2100,13 @@ pub(crate) fn run_usb_plan(
         .map_or((0, 0), |fifo| (fifo.capacity(), fifo.high_water()));
     let fifo_capacity_ms = frames_to_ms(fifo_capacity as u64, config.rate);
     let high_water_ms = frames_to_ms(high_water as u64, config.rate);
-    let cadence = cadence(stats.frames_in, out_stats.packets, packet_out / 4, config.rate);
+    let cadence = cadence(
+        stats.frames_in,
+        out_stats.packets,
+        frames_per_out_packet,
+        config.rate,
+        monitor_out_rate,
+    );
 
     Ok(UsbIoReport {
         packets_in: histogram_rows(&histogram),
@@ -2876,6 +3069,44 @@ mod tests {
     }
 
     #[test]
+    fn the_monitor_resampler_turns_48k_into_32k_without_a_shortfall() {
+        let mut fifo = OutFifo::new(1_000, 1_000);
+        let block: Vec<f32> = (0..48)
+            .flat_map(|frame| {
+                let value = frame as f32 / 48.0;
+                [value, value]
+            })
+            .collect();
+        fifo.push(&block);
+
+        let mut resampler = MonitorResampler::new(48_000, 32_000);
+        let mut packet = [0u8; 32 * 4];
+        assert_eq!(
+            fifo.fill_packet_resampled(&mut resampler, 32, &mut packet),
+            32,
+            "48 input frames carry 32 output frames at 3:2"
+        );
+        assert_eq!(
+            i16::from_le_bytes([packet[0], packet[1]]),
+            0,
+            "the first output is the first input frame"
+        );
+        let last = i16::from_le_bytes([packet[31 * 4], packet[31 * 4 + 1]]);
+        assert!(last > 30_000, "the ramp reaches the end: {last}");
+
+        // A packet the queue cannot feed is short rather than a stale tail.
+        let mut short = OutFifo::new(100, 100);
+        short.push(&[0.0, 0.0, 0.5, 0.5, 1.0, 1.0]);
+        let mut resampler = MonitorResampler::new(48_000, 32_000);
+        let mut packet = [0x7fu8; 32 * 4];
+        assert!(
+            short.fill_packet_resampled(&mut resampler, 32, &mut packet) < 32,
+            "an underrun is short"
+        );
+        assert_eq!(packet[32 * 4 - 1], 0, "the rest is silence");
+    }
+
+    #[test]
     fn the_out_depth_is_its_own_and_the_monitor_runway_is_eight_ms() {
         assert_eq!(URB_COUNT, 4, "the capture runway stays four URBs deep");
         assert_eq!((OUT_URB_COUNT, OUT_PACKETS_PER_URB), (2, 4));
@@ -3320,23 +3551,34 @@ mod tests {
     #[test]
     fn the_cadence_counters_expose_a_starved_out_stream() {
         let frames_per_packet = 48usize;
-        let balanced = cadence(48_000, 1_000, frames_per_packet, 48_000);
+        let balanced = cadence(48_000, 1_000, frames_per_packet, 48_000, 48_000);
         assert_eq!(balanced.out_frames, 48_000);
         assert_eq!(balanced.capture_ms, 1_000);
         assert_eq!(balanced.out_ms, 1_000);
         assert_eq!(balanced.out_lag_ms, 0, "a continuous OUT stream lags nothing");
 
-        let starved = cadence(48_000, 944, frames_per_packet, 48_000);
+        let starved = cadence(48_000, 944, frames_per_packet, 48_000, 48_000);
         assert_eq!(starved.out_ms, 944);
         assert_eq!(starved.out_lag_ms, 56, "the hole is visible as lag");
 
         // A shorter take rounds both sides to the same whole millisecond.
-        let short = cadence(13_272, 277, frames_per_packet, 48_000);
+        let short = cadence(13_272, 277, frames_per_packet, 48_000, 48_000);
         assert_eq!(short.capture_ms, 277);
         assert_eq!(short.out_ms, 277);
         assert_eq!(short.out_lag_ms, 0);
 
-        assert_eq!(cadence(48_000, 1_000, frames_per_packet, 0).out_lag_ms, 0);
+        assert_eq!(
+            cadence(48_000, 1_000, frames_per_packet, 0, 0).out_lag_ms,
+            0
+        );
+
+        // A 32 kHz monitor: 1,000 packets of 32 frames is still 1,000 ms even
+        // though the capture side is 48 kHz.
+        let resampled = cadence(48_000, 1_000, 32, 48_000, 32_000);
+        assert_eq!(resampled.out_frames, 32_000);
+        assert_eq!(resampled.capture_ms, 1_000);
+        assert_eq!(resampled.out_ms, 1_000);
+        assert_eq!(resampled.out_lag_ms, 0);
     }
 
     #[test]
@@ -3411,6 +3653,22 @@ mod tests {
         );
         assert!(!monitor_rate_ok(192, 32_000));
         assert!(!monitor_rate_ok(128, 48_000));
+        assert_eq!(monitor_fallback_rate(192, 48_000), Some(48_000));
+        assert_eq!(
+            monitor_fallback_rate(192, 32_000),
+            Some(32_000),
+            "the UM2's endpoint rate is an integer number of frames per ms"
+        );
+        assert_eq!(
+            monitor_fallback_rate(192, 44_100),
+            None,
+            "44.1 kHz cannot be carried by whole 1 ms packets"
+        );
+        assert_eq!(
+            monitor_fallback_rate(192, 0),
+            Some(48_000),
+            "a failed read keeps the capture rate"
+        );
     }
 
     #[test]

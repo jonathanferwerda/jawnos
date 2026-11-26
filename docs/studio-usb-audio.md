@@ -1,13 +1,13 @@
 # Studio USB audio — the direct path (UAC1, isochronous)
 
 Status (2026-11-26): built and measured on the tablet (SM-X400) with a Behringer
-UM2. Capture is lossless 48 kHz. The monitor runs through a direct usbfs output.
-The UM2's playback endpoint answered **32 kHz** and the probe's `SET_CUR` for
-48 kHz was refused, so the engine now runs the strict UAC1 rate sequence (Sec.
-2.1) itself, verifies it with `GET_CUR`, and **leaves the monitor off** when the
-readback disagrees with the packet size instead of feeding 48 kHz frames into a
-slower endpoint. What is still owed is the device gate: whether the UM2 accepts
-the sequence, and, if it does not, the 48 -> 32 monitor resample (Sec. 2.2).
+UM2. Capture is lossless 48 kHz. The UM2's playback endpoint answered **32 kHz**
+and `SET_CUR` for 48 kHz stalls (`EPIPE`), so the engine runs the strict UAC1
+rate sequence (Sec. 2.1), verifies it with `GET_CUR`, and then **resamples the
+monitor 48 -> 32** and sends 128-byte packets (Sec. 2.2). Capture, the take and
+the DSP stay at 48 kHz. A rate this 1 ms-packet path cannot carry as whole
+frames (44.1 kHz) still leaves the monitor off and records why. The device gate
+is now “does the monitor sound continuous at 32 kHz”, not “does the rate set”.
 
 ## 1. Why a direct path
 
@@ -35,12 +35,12 @@ Behringer UM2, UAC1, full speed, 1 ms frames. It supports **32, 44.1 and 48 kHz*
 
 The playback rate is the open defect. The P0 probe's `SET_CUR` for 48,000 Hz was
 refused (`-1`) on the endpoint recipient, the interface recipient, and the alt-0
-fallback. The take now retries the strict endpoint request and then the
-interface form, and requires a `GET_CUR` readback before it will monitor. If the
-readback stays at 32 kHz, either find the control and ordering the UM2 accepts,
-or resample the monitor 48 -> 32 and send 32 frames/ms (128-byte packets).
-Feeding 48 frames/ms to an endpoint running at 32 kHz overruns it and distorts
-independently of buffer depth.
+fallback; the tablet's takes now confirm the stall as `EPIPE` (errno 32). The
+engine retries the strict endpoint request and then the interface form, requires
+a `GET_CUR` readback, and when the readback stays at 32 kHz it **resamples the
+monitor** and sends 32 frames/ms (128-byte packets). Feeding 48 frames/ms to an
+endpoint running at 32 kHz overruns it and distorts independently of buffer
+depth.
 
 ### 2.1 The PCM2902 rate sequence (implemented; device gate pending)
 
@@ -80,22 +80,23 @@ setting and the exact order:
    require `80 bb 00` **before** submitting any 192-byte/ms stream. Do not claim
    the rate was set without that readback.
 
-If that still stalls, the chip is going to stay at its current setting; take the
-fallback below rather than burning another session on it. The engine reports the
-attempt in `rate_set` and, while the readback disagrees, captures with the
-monitor off (`monitor_off: "playback rate"`) rather than overrunning the
-endpoint.
+If that still stalls, the chip is going to stay at its current setting; the
+engine takes the fallback below rather than burning another session on it. The
+report carries the attempt in `rate_set` and the monitor's device rate in
+`out_rate.hz`; `monitor_off` appears only when the endpoint's rate cannot be
+carried by whole 1 ms packets.
 
-### 2.2 Fallback: monitor at the endpoint's current rate
+### 2.2 Fallback: monitor at the endpoint's current rate (implemented)
 
-If the playback endpoint remains at 32 kHz, resample the monitor 48 -> 32 (an
-exact 3:2 decimation; a linear or polyphase resampler is sufficient for a
-monitor) and send **128-byte packets = 32 stereo 16-bit frames per 1 ms**. The
-capture and the engine DSP stay at 48 kHz; only the monitor output leg changes
-rate. Pass 128 as the output packet size through the depth and round-trip
-arguments (the engine already derives `frames_per_packet = packet / 4`). This
-removes the overrun/wrap distortion immediately at the cost of a 16 kHz monitor
-bandwidth; the capture is unaffected.
+When the playback endpoint stays at 32 kHz, the engine resamples the monitor
+48 -> 32 (linear interpolation, an exact 3:2 ratio) and sends **128-byte packets
+= 32 stereo 16-bit frames per 1 ms**. The capture, the record ring and the DSP
+stay at 48 kHz; the monitor FIFO also stays in 48 kHz frames, so priming, the
+high-water trim and the fill counters keep their meaning. Only the packet fill
+converts, with one frame of lookahead so the 3:2 step does not click at a packet
+boundary. `out_rate.hz` reports 32000 and `out_packets`/`underruns_out` say
+whether the monitor kept up. The cost is a 16 kHz monitor bandwidth; the capture
+is unaffected.
 
 ## 3. The engine
 
@@ -108,7 +109,9 @@ bandwidth; the capture is unaffected.
   the strip, `DiskWriter` and reports are unchanged.
 - Monitor: one FIFO on the USB thread between IN decode and OUT fill, primed to
   the output runway and trimmed at a high water; every trim is counted. At least
-  two OUT URBs stay in flight.
+  two OUT URBs stay in flight. When the endpoint runs below 48 kHz, a linear
+  resampler converts each OUT packet (48 -> 32 at the UM2's rate) while the FIFO
+  stays in 48 kHz frames.
 - Safety: every in-flight URB is `DISCARDURB`ed and reaped before its buffer is
   freed; an URB the kernel still owns after the bounded reap is deliberately
   leaked; the fd is owned by Java and is never closed or freed here.
@@ -134,9 +137,10 @@ char *jawn_audio_roundtrip_usb(int fd,
 2; `monitor_ms = out_urbs × out_packets`. The take report carries `in_depth`,
 `out_depth`, `monitor_ms`, `in_delivery_ms`, `out_urbs_effective`, `out_lag_ms`,
 `monitor_fill_max_ms`, `monitor_fill_avg_ms`, `fifo_capacity_ms`,
-`high_water_ms`, `out_rate`, `rate_set` (target, the `SET_CUR` return and errno,
-which recipient accepted it, and `verified`), `monitor_off`, and the existing
-capture counters.
+`high_water_ms`, `out_rate` (the monitor's device rate; 32000 means the packets
+are resampled), `rate_set` (target, the `SET_CUR` return and errno, which
+recipient accepted it, and `verified`), `monitor_off`, and the existing capture
+counters.
 
 ## 4. The app
 
@@ -206,11 +210,10 @@ backend assumes full-speed 1 ms frames.
 
 ## 8. Next
 
-1. **Playback rate**: run the engine's strict sequence on the UM2 and read
-   `rate_set` / `out_rate`. If the readback is `80 bb 00`, re-run the cable round
-   trip and the sweep. If it still stalls, implement the 48 -> 32 monitor
-   resample in Sec. 2.2 (the engine already leaves the monitor off rather than
-   overrunning the endpoint).
+1. **Monitor at 32 kHz**: run the UM2 take at 8/4/2 and read `out_rate.hz`
+   (32000), `out_packets`, `underruns_out` and `monitor_fill_*`. If the monitor is
+   continuous, re-run the cable round trip and record the 3:2 resample's effect on
+   the score. If it starves at 4 ms, the next tuning is the 4×2 / 8×1 shape below.
 2. The 4×2 / 8×1 output shape with an 8×2 input at the same 8 ms runway.
 3. A per-device latency preset in the Studio configuration (Safe 16 / Balanced 8
    / Low 4 / Ultra 2), storing the measured floor and the last take's health; Auto
