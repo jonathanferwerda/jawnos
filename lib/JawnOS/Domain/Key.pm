@@ -120,6 +120,7 @@ sub minion_task_list {
 	return {
 		archive_transfer => \&archive_transfer_job,
 		archive_manifest_rescan => \&archive_manifest_rescan_job,
+		archive_manifest_refresh => \&archive_manifest_refresh_job,
 		archive_fetch_home => \&archive_fetch_home_job,
 		folders_copy => \&folders_copy_job,
 		folders_encrypt => \&folders_encrypt_job,

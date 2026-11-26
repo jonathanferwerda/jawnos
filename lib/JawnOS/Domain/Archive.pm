@@ -41,6 +41,12 @@ use Unicode::Normalize qw(NFC);
 # one small request per location per fifteen seconds is enough; a finished
 # archive shows up on the next read after that.
 our %archive_manifest_memo;
+# The media sweep behind a listing digest, kept for a few seconds so several
+# searches or a burst of clients do not walk the same drive repeatedly.
+our %archive_manifest_media_memo;
+# When a background revalidation was last enqueued, so one search loop cannot
+# queue the same digest check on every render while the worker is still busy.
+our %archive_manifest_refresh_memo;
 our $device;
 our %m;
 # The queue for work that has to outlive the request that asked for it: its own
@@ -946,6 +952,67 @@ sub archive_manifest_row {
 	return $row;
 }
 
+# A cheap fingerprint of a location's listing: the size and modification time
+# of the two files a manifest is made of. An append touches the journal and a
+# rescan rewrites the compacted file, so this changes exactly when the listing
+# does - and it costs two stats, so a machine can ask "anything new?" without
+# reading or sending the rows. A drive filled by hand is noticed when a rescan
+# writes the list, which is what a rescan is for.
+sub archive_manifest_digest {
+	my $dir = shift;
+	return undef unless (defined $dir && length $dir);
+	my @parts;
+	foreach my $name ( 'manifest.json', 'manifest.jsonl' ) {
+		my $path = $dir . '/' . $name;
+		next unless -e $path;
+		# a fractional time where the platform has one, so two same-size appends
+		# inside one second are still two different listings
+		my @stat = eval { Time::HiRes::stat($path) };
+		@stat = stat($path) unless @stat;
+		push @parts, join(':', $name, ($stat[7] // 0), ($stat[9] // 0));
+	}
+	return sha256_hex(join("\n", @parts));
+}
+
+# A sweep over the media files themselves, so a file replaced on the drive is
+# noticed even when nothing updated the manifest. Each file contributes its
+# place, size and modification time - a quick check, not a read of every byte,
+# which is what makes it affordable to repeat. The two manifest files and a
+# transfer's partials are left out: they are the listing, not the media, and a
+# half-written one would change the answer on its own.
+sub archive_manifest_media_digest {
+	my $dir = shift;
+	return undef unless (defined $dir && length $dir && -d $dir);
+	my $now = &rightNow();
+	my $hit = $archive_manifest_media_memo{$dir};
+	return $hit->{'digest'} if ($hit && $now - $hit->{'at'} < 15000);
+	my $sha = Digest::SHA->new(256);
+	foreach my $file ( sort &dir_listing([$dir], 1) ) {
+		my $relative = substr($file, length($dir) + 1);
+		next unless (defined $relative && length $relative);
+		next if $relative =~ m{^manifest\.jsonl?(?:\.tmp)?$};
+		next if $relative =~ m{\.part(?:\.json)?$};
+		my @stat = eval { Time::HiRes::stat($file) };
+		@stat = stat($file) unless @stat;
+		next unless @stat;
+		$sha->add(join("\0", $relative, ($stat[7] // 0), ($stat[9] // 0)) . "\n");
+	}
+	my $digest = $sha->hexdigest;
+	$archive_manifest_media_memo{$dir} = { at => $now, digest => $digest };
+	%archive_manifest_media_memo = () if keys(%archive_manifest_media_memo) > 32;
+	return $digest;
+}
+
+# What a client compares: the manifest's own fingerprint plus the media sweep,
+# so either an append or a file changed behind the manifest's back is a change.
+sub archive_manifest_listing_digest {
+	my $dir = shift;
+	return undef unless (defined $dir && length $dir);
+	my $manifest = &archive_manifest_digest($dir) || '';
+	my $media = &archive_manifest_media_digest($dir) || '';
+	return sha256_hex($manifest . "\n" . $media);
+}
+
 # What an archive holds for a location: the compacted manifest with the journal
 # read over the top of it. An append is one line, so a transfer never rewrites
 # the listing; a read is one file plus whatever has piled up since. A line that
@@ -978,7 +1045,12 @@ sub archive_manifest_read {
 			}
 		}
 	}
-	return { rows => [ map { $rows{$_} } sort keys %rows ], journal_lines => $lines, journal_skipped => $skipped };
+	return {
+		rows => [ map { $rows{$_} } sort keys %rows ],
+		journal_lines => $lines,
+		journal_skipped => $skipped,
+		digest => &archive_manifest_digest($dir)
+	};
 }
 
 # Write the listing a reader sees. Rewriting the whole thing is the one
@@ -1053,15 +1125,150 @@ sub archive_manifest_fetch {
 		$agent->{'ua'}->inactivity_timeout($data->{'timeout'});
 		# a sleeping machine must not spend the long connect default either;
 		# a reachable one that is slow to answer still answers inside the bound
-		$agent->{'ua'}->connect_timeout($data->{'timeout'});
+		$agent->{'ua'}->connect_timeout(($data->{'timeout'} > 6 ? 6 : $data->{'timeout'}));
 	}
+	my $form = { location => $data->{'location'} };
+	# what the caller already holds, so an unchanged listing answers without
+	# the rows; the route compares it to the drive's own fingerprint
+	$form->{'digest'} = $data->{'digest'} if (defined $data->{'digest'} && length $data->{'digest'});
 	my $res = eval {
-		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/archive/manifest' => form => {
-			location => $data->{'location'}
-		})->result->json;
+		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/archive/manifest' => form => $form)->result->json;
 	};
 	return { error => 'the archive machine did not answer' } unless ($res && $res->{'status'} eq 'ok');
 	return { %{$res}, hostname => $agent->{'hostname'} };
+}
+
+# The local copy of a remote archive's listing, keyed by the machine and the
+# location. The cache table is this machine's own view and never syncs, which is
+# the point: a search reads the rows here and the archive machine is not asked at
+# all. `digest` is the fingerprint the machine gave for those rows, and `checked`
+# is when it last answered, so a stale copy can be revalidated cheaply instead of
+# fetched again.
+sub archive_manifest_local_key {
+	my ($remote_uuid, $location) = @_;
+	return ($remote_uuid || '') . '|' . ($location || '');
+}
+
+sub archive_manifest_local_read {
+	my $data = shift || {};
+	my $key = &archive_manifest_local_key($data->{'remote_uuid'}, $data->{'location'});
+	# The rows are the row's data; the check time is its server_time, so a
+	# revalidation that finds nothing new bumps one small column instead of
+	# rewriting a large listing every minute.
+	my $row = eval {
+		my $query = &subs::db_select_simple('cache', ['data', 'uuid', 'server_time'], {
+			app => 'archive', context => 'manifest', subcontext => sha256_hex($key), device => $device
+		});
+		return $query ? $query->hashes->[0] : undef;
+	};
+	return undef unless (ref $row eq 'HASH' && defined $row->{'data'} && length $row->{'data'});
+	my $saved = eval { &subs::decode_sereal($row->{'data'}) };
+	return undef unless (ref $saved eq 'HASH' && ref $saved->{'rows'} eq 'ARRAY');
+	$saved->{'uuid'} = $row->{'uuid'} if defined $row->{'uuid'};
+	$saved->{'checked'} = $row->{'server_time'} if defined $row->{'server_time'};
+	return $saved;
+}
+
+sub archive_manifest_local_write {
+	my $data = shift || {};
+	my $key = &archive_manifest_local_key($data->{'remote_uuid'}, $data->{'location'});
+	my $now = &rightNow();
+	my $row = {
+		remote_uuid => $data->{'remote_uuid'} || '',
+		location => $data->{'location'} || '',
+		folder => $data->{'folder'} || '',
+		hostname => $data->{'hostname'} || '',
+		rows => $data->{'rows'} || [],
+		digest => (defined $data->{'digest'} ? $data->{'digest'} : ''),
+		updated => (defined $data->{'updated'} ? $data->{'updated'} : $now),
+	};
+	&subs::cache_set({
+		app => 'archive', context => 'manifest', subcontext => sha256_hex($key), warranty => '100y'
+	}, $row);
+	$row->{'checked'} = $now;
+	# A caller may want the next search to check at once (or a test may need an
+	# old check time); cache_set has just written now, so move only that column.
+	if (defined $data->{'checked'}) {
+		my $where = { app => 'archive', context => 'manifest', subcontext => sha256_hex($key) };
+		$where->{'device'} = $device if defined $device;
+		&subs::db_update('cache', { server_time => $data->{'checked'} }, $where);
+		$row->{'checked'} = $data->{'checked'};
+	}
+	return $row;
+}
+
+# The listing did not change: move only its check time, so the page and the
+# drive are not rewritten for an answer that said nothing new.
+sub archive_manifest_local_touch {
+	my $data = shift || {};
+	my $key = &archive_manifest_local_key($data->{'remote_uuid'}, $data->{'location'});
+	my $now = &rightNow();
+	my $where = { app => 'archive', context => 'manifest', subcontext => sha256_hex($key) };
+	$where->{'device'} = $device if defined $device;
+	eval { &subs::db_update('cache', { server_time => $now }, $where) };
+	$data->{'checked'} = $now;
+	return $now;
+}
+
+# Begin a background revalidation. The search side never waits: it has the local
+# rows already. The job asks the machine for its digest and, when it differs,
+# fetches and stores the new rows. The memo keeps one process from enqueuing the
+# same check on every search while the last one is still queued.
+sub archive_manifest_refresh_start {
+	my ($data, $local) = @_;
+	$data ||= {};
+	my $key = &archive_manifest_local_key($data->{'remote_uuid'}, $data->{'location'});
+	my $now = &rightNow();
+	my $started = $archive_manifest_refresh_memo{$key};
+	return 0 if ($started && $now - $started < 60000);
+	$archive_manifest_refresh_memo{$key} = $now;
+	%archive_manifest_refresh_memo = () if keys(%archive_manifest_refresh_memo) > 32;
+	my $id = eval {
+		&minion_grabber()->enqueue(archive_manifest_refresh => [ {
+			remote_uuid => $data->{'remote_uuid'},
+			location => $data->{'location'},
+			digest => ($local ? ($local->{'digest'} || '') : '')
+		} ] => { retries => 1 });
+	};
+	return $id ? 1 : 0;
+}
+
+# One revalidation: a digest question first, the rows only when the answer
+# changed. `checked` is written on every outcome, including a machine that did
+# not answer, so a sleeping peer is asked once a minute rather than once a
+# search.
+sub archive_manifest_refresh_job {
+	my ($job, $data) = @_;
+	$data ||= {};
+	my $local = &archive_manifest_local_read($data);
+	unless ($local) { $job->finish({ skipped => 'no local manifest' }); return }
+	my $now = &rightNow();
+	my $res = &archive_manifest_fetch({
+		remote_uuid => $data->{'remote_uuid'},
+		location => $data->{'location'},
+		digest => ($local->{'digest'} || ''),
+		timeout => 30
+	});
+	if ($res->{'error'}) {
+		&archive_manifest_local_touch($local);
+		$job->finish({ error => $res->{'error'}, checked => $now });
+		return;
+	}
+	if ($res->{'unchanged'}) {
+		&archive_manifest_local_touch($local);
+		$job->finish({ unchanged => 1, digest => $res->{'digest'}, checked => $now });
+		return;
+	}
+	my $written = &archive_manifest_local_write({
+		remote_uuid => $data->{'remote_uuid'},
+		location => $data->{'location'},
+		folder => $res->{'folder'},
+		hostname => $res->{'hostname'},
+		rows => $res->{'rows'} || [],
+		digest => $res->{'digest'},
+		checked => $now
+	});
+	$job->finish({ rows => scalar @{$written->{'rows'}}, digest => $written->{'digest'}, changed => 1 });
 }
 
 sub archive_manifest_cached {
@@ -1070,7 +1277,42 @@ sub archive_manifest_cached {
 	my $now = &rightNow();
 	my $hit = $archive_manifest_memo{$key};
 	return $hit->{'manifest'} if ($hit && $now - $hit->{'at'} < 15000);
+	# The local copy answers at once. A search never waits on the archive
+	# machine: a copy older than a minute starts a background check and is served
+	# as it is, and a machine that is asleep or gone serves the copy too rather
+	# than leaving the library empty.
+	my $local = &archive_manifest_local_read({ remote_uuid => $data->{'remote_uuid'}, location => $data->{'location'} });
+	if ($local) {
+		my $manifest = {
+			status => 'ok',
+			location => $data->{'location'},
+			folder => $local->{'folder'},
+			rows => $local->{'rows'},
+			digest => $local->{'digest'},
+			hostname => $local->{'hostname'},
+			cached => 1,
+			checked => $local->{'checked'},
+			updated => $local->{'updated'}
+		};
+		$archive_manifest_memo{$key} = { at => $now, manifest => $manifest };
+		%archive_manifest_memo = () if keys(%archive_manifest_memo) > 32;
+		# the check is cheap (two stats on the drive) but it still crosses the
+		# rail, so it belongs to the worker, not to the search that is drawing
+		my $age = $now - ($local->{'checked'} || 0);
+		&archive_manifest_refresh_start($data, $local) if $age >= 60000;
+		return $manifest;
+	}
 	my $manifest = &archive_manifest_fetch($data);
+	if (!$manifest->{'error'}) {
+		&archive_manifest_local_write({
+			remote_uuid => $data->{'remote_uuid'},
+			location => $data->{'location'},
+			folder => $manifest->{'folder'},
+			hostname => $manifest->{'hostname'},
+			rows => $manifest->{'rows'} || [],
+			digest => $manifest->{'digest'}
+		});
+	}
 	$archive_manifest_memo{$key} = { at => $now, manifest => $manifest };
 	%archive_manifest_memo = () if keys(%archive_manifest_memo) > 32;
 	return $manifest;
@@ -1095,6 +1337,8 @@ sub archive_manifest_for {
 			folder => $dest->{'folder'},
 			rows => $manifest->{'rows'},
 			journal_lines => $manifest->{'journal_lines'},
+			digest => $manifest->{'digest'},
+			cached => 0,
 			hostname => $rm->{'hostname'} || &machine_name()
 		};
 	}

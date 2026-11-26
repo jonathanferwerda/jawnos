@@ -203,13 +203,29 @@ sub action_30474 {
 		$c->render(json => { status => 'error', error => $dest->{'error'} });
 		return;
 	}
+	# A caller that already holds a copy sends what it has. The fingerprint covers
+	# the manifest and the media files' own size and time, so an unchanged listing
+	# answers without reading or sending the rows.
+	my $digest = &subs::archive_manifest_listing_digest($dest->{'folder'});
+	my $known = $c->param('digest');
+	if (defined $known && length $known && defined $digest && $known eq $digest) {
+		$c->render(json => {
+			status => 'ok',
+			location => $location,
+			folder => $dest->{'folder'},
+			digest => $digest,
+			unchanged => 1
+		});
+		return;
+	}
 	my $manifest = &subs::archive_manifest_read({ dir => $dest->{'folder'} });
 	$c->render(json => {
 		status => 'ok',
 		location => $location,
 		folder => $dest->{'folder'},
 		rows => $manifest->{'rows'},
-		journal_lines => $manifest->{'journal_lines'}
+		journal_lines => $manifest->{'journal_lines'},
+		digest => $digest
 	});
 }
 
