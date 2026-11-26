@@ -1,9 +1,11 @@
 # tests-for: lib/JawnOS/Manager/Part09.pm lib/JawnOS/Domain/Sync.pm
 # covers:    A carry-only stream is written while a pull walks it, so a band
 #            can return fewer rows than the map named. That is the stream
-#            changing, not a lost read: it must not fail the pull, or a
+#            changing, not a lost read, and a row the local schema refuses is
+#            the same kind of best-effort miss: neither may fail the pull, or a
 #            machine stops on "routers: short read" and nothing behind it
-#            merges. A planned table still fails a short band read.
+#            merges. A planned table still fails a short band read or a row it
+#            could not merge.
 
 use strict;
 use warnings;
@@ -30,7 +32,9 @@ sub hash { return $_[0]->{rows}[0]; }
 package main;
 
 sub run_pull {
-	my ($table, $carry) = @_;
+	my ($table, $carry, $rows_per_band, $merge_mode) = @_;
+	$rows_per_band = 3 unless defined $rows_per_band;
+	$merge_mode = 0 unless defined $merge_mode;
 	my $peer = 'e9ce731a06afcab8f8b4b502637a717d';
 	my $me = 'de3f1c63ba2b3cfe3910ad2742c5a556';
 	my ($band_calls, $merged) = (0, 0);
@@ -88,21 +92,19 @@ sub run_pull {
 	};
 	local *Manager::sync_rows_batch = sub {
 		$band_calls++;
-		# Every band answers short: three rows where the map named five.
+		# Each band answers with the rows the test asks for: three where the map
+		# named five is a short read, five is a complete band.
+		my @rows = map { { uuid => chr(96 + $_) . $band_calls, server_time => $_ } } 1 .. $rows_per_band;
 		return ({
 			ok => 1,
-			rows => [
-				{ uuid => 'a' . $band_calls, server_time => 1 },
-				{ uuid => 'b' . $band_calls, server_time => 2 },
-				{ uuid => 'c' . $band_calls, server_time => 3 },
-			],
+			rows => \@rows,
 			next => '', done => 1, wire_bytes => 10,
 		}, undef);
 	};
 	local *Manager::merge_table_rows = sub {
 		my ($ctx, $q, $next_row) = @_;
 		while (my $row = $next_row->()) { $merged++ }
-		return 0;
+		return $merge_mode;
 	};
 
 	my $c = bless {}, 'FakeC';
@@ -131,9 +133,19 @@ is($sync->{state}, 'done', 'the sync job finishes');
 ok($band_calls >= 2, 'the pull still walked the carry table\'s bands');
 is($merged, 6, 'every row that arrived was merged');
 
+($status, $sync, $band_calls, $merged) = run_pull('routers', 1, 5, 1);
+is($status, 'done', 'a refused row on a carry table does not fail the pull either');
+is($sync->{state}, 'done', 'the job still finishes as done');
+is($merged, 10, 'the rows that could merge did');
+
 ($status, $sync, $band_calls, $merged) = run_pull('appointments', 0);
 is($status, 'failed', 'a short band read on a planned table still fails');
 like($sync->{note}, qr/^appointments: short band read: 6 of 10/,
 	'and names the table and the count it fell short of');
+
+($status, $sync, $band_calls, $merged) = run_pull('appointments', 0, 5, 1);
+is($status, 'failed', 'a refused row on a planned table still fails');
+like($sync->{note}, qr/^appointments: short read$/,
+	'and the note names the table');
 
 done_testing();
