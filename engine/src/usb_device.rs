@@ -1021,6 +1021,17 @@ impl MonitorResampler {
 struct OutStats {
     packets: u64,
     bytes: u64,
+    /// Packets the kernel accepted, and the bytes they carry. A filled packet
+    /// only plays if its submit succeeded, so this pair is the honest delivery
+    /// count when `packets` also includes fills that had to be retried.
+    sent_packets: u64,
+    sent_bytes: u64,
+    /// OUT URBs whose `SUBMITURB` the kernel refused. Each refusal leaves the
+    /// pipeline a slot short until the retry succeeds, so this is the counter
+    /// that separates "the fifo starved" from "the kernel refused a submit".
+    submit_errors: u64,
+    /// The errno of the most recent refusal (0 when none).
+    submit_errno: i32,
     underruns: u64,
     /// The underruns already counted when warm-up ended. Priming fills the fifo
     /// before the first submit, so this is zero unless a caller fills OUT while
@@ -1049,6 +1060,56 @@ unsafe fn fill_out_urb(
     stats: &mut OutStats,
 ) {
     fill_out_urb_with(done, packet, fifo, stats, None);
+}
+
+/// Count one accepted OUT URB's packets as delivered. Called only after
+/// `SUBMITURB` returned success, so a fill that is refused and later retried is
+/// counted once, and a fill that never gets in is not counted at all.
+///
+/// # Safety
+/// `urb` must point at a live OUT URB image.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+unsafe fn note_submitted(stats: &mut OutStats, urb: *mut UsbdevfsUrb, packet: usize) {
+    let count = (*urb).number_of_packets.max(0) as u64;
+    stats.sent_packets += count;
+    stats.sent_bytes += count * packet as u64;
+}
+
+/// Submit one filled OUT URB and keep the pipeline depth honest. A refused
+/// submit costs one slot until something retries it, so the slot is marked in
+/// `need` and the loop retries it on its next pass: one refusal is then a late
+/// packet instead of a permanently idle URB. Every refusal is counted with its
+/// errno, so the take report can tell a starved fifo from a refused submit.
+#[allow(clippy::too_many_arguments)]
+#[cfg(target_os = "android")]
+unsafe fn submit_out(
+    fd: std::os::raw::c_int,
+    pointer: *mut UsbdevfsUrb,
+    index: usize,
+    packet: usize,
+    out_flight: &mut [bool],
+    need: &mut [bool],
+    outstanding: &mut usize,
+    stats: &mut OutStats,
+    last_error: &mut Option<i32>,
+) {
+    match sys::submit(fd, pointer) {
+        Ok(()) => {
+            out_flight[index] = true;
+            need[index] = false;
+            *outstanding += 1;
+            note_submitted(stats, pointer, packet);
+        }
+        Err(error) => {
+            out_flight[index] = false;
+            need[index] = true;
+            stats.submit_errors += 1;
+            stats.submit_errno = error.raw_os_error().unwrap_or(0);
+            if last_error.is_none() {
+                *last_error = Some(stats.submit_errno);
+            }
+        }
+    }
 }
 
 /// Write every packet of one OUT URB from the loop's own `fifo`. When
@@ -1163,9 +1224,17 @@ pub struct UsbReport {
     /// OUT submit.
     pub underruns_out_start: u64,
     pub dropped_out: u64,
+    /// OUT URBs the kernel refused to accept. Each one is retried, so a non-zero
+    /// count with a clean `dropped_out` still means the output stream was late.
+    pub out_submit_errors: u64,
+    /// The errno of the most recent refused OUT submit (0 when none).
+    pub out_submit_errno: i32,
     /// Packets submitted on the monitor endpoint, and the bytes they carried.
     pub out_packets: u64,
     pub out_bytes: u64,
+    /// The packets the kernel actually accepted. Equal to `out_packets` unless a
+    /// submit was still being retried when the take stopped.
+    pub out_sent: u64,
     /// The monitor's runway: every queued OUT packet is 1 ms of audio.
     pub monitor_ms: u32,
     /// The configured capture depth as `(urbs, packets_per_urb)`.
@@ -1228,8 +1297,11 @@ pub(crate) struct UsbIoReport {
     underruns_out: u64,
     underruns_out_start: u64,
     dropped_out: u64,
+    out_submit_errors: u64,
+    out_submit_errno: i32,
     out_packets: u64,
     out_bytes: u64,
+    out_sent: u64,
     monitor_ms: u32,
     in_delivery_ms: u32,
     monitor_fill_max_ms: u32,
@@ -1289,7 +1361,7 @@ fn histogram_json(rows: &[(u32, u64)]) -> String {
 /// One JSON object, the same status style the Oboe backend emits.
 fn report_json(report: &UsbReport) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"monitor_peak\":{:.6},\"out_peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"rate_set\":{{\"target\":{},\"ret\":{},\"errno\":{},\"recipient\":\"{}\",\"verified\":{}}},\"monitor_off\":{},\"monitor_channel\":{},\"monitor_master\":\"{}\",\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_submit_errors\":{},\"out_submit_errno\":{},\"out_packets\":{},\"out_bytes\":{},\"out_sent\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"monitor_peak\":{:.6},\"out_peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"rate_set\":{{\"target\":{},\"ret\":{},\"errno\":{},\"recipient\":\"{}\",\"verified\":{}}},\"monitor_off\":{},\"monitor_channel\":{},\"monitor_master\":\"{}\",\"plan\":\"{}\",\"take\":\"{}\"}}",
         report.rate,
         histogram_json(&report.packets_in),
         report.missed_in,
@@ -1298,8 +1370,11 @@ fn report_json(report: &UsbReport) -> String {
         report.underruns_out,
         report.underruns_out_start,
         report.dropped_out,
+        report.out_submit_errors,
+        report.out_submit_errno,
         report.out_packets,
         report.out_bytes,
+        report.out_sent,
         report.monitor_ms,
         report.in_depth.0,
         report.in_depth.1,
@@ -1857,8 +1932,12 @@ pub(crate) fn run_usb_plan(
 
     let mut in_flight = vec![false; depth.in_urbs];
     let mut out_flight = vec![false; depth.out_urbs];
+    // An OUT slot whose submit the kernel refused, waiting for the loop to try
+    // again. The take keeps its pipeline depth instead of losing the slot.
+    let mut out_need_submit = vec![false; depth.out_urbs];
     let mut outstanding: usize = 0;
     let mut submit_error: Option<i32> = None;
+    let mut out_submit_error: Option<i32> = None;
 
     for index in 0..depth.in_urbs {
         match unsafe { sys::submit(config.fd, in_ptrs[index]) } {
@@ -1961,17 +2040,19 @@ pub(crate) fn run_usb_plan(
                     monitor_resampler.as_mut(),
                 );
             }
-            match unsafe { sys::submit(config.fd, out_ptrs[index]) } {
-                Ok(()) => {
-                    out_flight[index] = true;
-                    outstanding += 1;
-                }
-                Err(error) => {
-                    if submit_error.is_none() {
-                        submit_error = Some(error.raw_os_error().unwrap_or(0));
-                    }
-                }
-            }
+            unsafe {
+                submit_out(
+                    config.fd,
+                    out_ptrs[index],
+                    index,
+                    packet_out,
+                    &mut out_flight,
+                    &mut out_need_submit,
+                    &mut outstanding,
+                    &mut out_stats,
+                    &mut out_submit_error,
+                )
+            };
         }
     }
 
@@ -1987,6 +2068,26 @@ pub(crate) fn run_usb_plan(
             || limit.map_or(false, |limit| started.elapsed() >= limit);
         if ending || outstanding == 0 {
             break;
+        }
+        // A refused OUT submit took its slot out of the pipeline. Retry it here,
+        // once per wakeup, so a transient refusal costs one late packet rather
+        // than the rest of the take at reduced depth.
+        for index in 0..depth.out_urbs {
+            if out_need_submit[index] && !out_flight[index] {
+                unsafe {
+                    submit_out(
+                        config.fd,
+                        out_ptrs[index],
+                        index,
+                        packet_out,
+                        &mut out_flight,
+                        &mut out_need_submit,
+                        &mut outstanding,
+                        &mut out_stats,
+                        &mut out_submit_error,
+                    )
+                };
+            }
         }
         let done = match unsafe { sys::reap(config.fd) } {
             Ok(pointer) => pointer,
@@ -2126,17 +2227,19 @@ pub(crate) fn run_usb_plan(
                         monitor_resampler.as_mut(),
                     );
                 }
-                match unsafe { sys::submit(config.fd, pointer) } {
-                    Ok(()) => {
-                        out_flight[index] = true;
-                        outstanding += 1;
-                    }
-                    Err(error) => {
-                        if submit_error.is_none() {
-                            submit_error = Some(error.raw_os_error().unwrap_or(0));
-                        }
-                    }
-                }
+                unsafe {
+                    submit_out(
+                        config.fd,
+                        pointer,
+                        index,
+                        packet_out,
+                        &mut out_flight,
+                        &mut out_need_submit,
+                        &mut outstanding,
+                        &mut out_stats,
+                        &mut out_submit_error,
+                    )
+                };
             }
             continue;
         }
@@ -2228,8 +2331,11 @@ pub(crate) fn run_usb_plan(
         underruns_out: out_stats.underruns,
         underruns_out_start: out_stats.underruns_start,
         dropped_out: fifo.as_ref().map_or(0, |fifo| fifo.dropped()),
+        out_submit_errors: out_stats.submit_errors,
+        out_submit_errno: out_stats.submit_errno,
         out_packets: out_stats.packets,
         out_bytes: out_stats.bytes,
+        out_sent: out_stats.sent_packets,
         monitor_ms: depth.monitor_ms(),
         in_delivery_ms: depth.in_delivery_ms(),
         monitor_fill_max_ms,
@@ -2316,8 +2422,11 @@ fn run_usb_take(config: UsbConfig, stop: Arc<AtomicBool>) -> Result<UsbReport, S
         underruns_out: io.underruns_out,
         underruns_out_start: io.underruns_out_start,
         dropped_out: io.dropped_out,
+        out_submit_errors: io.out_submit_errors,
+        out_submit_errno: io.out_submit_errno,
         out_packets: io.out_packets,
         out_bytes: io.out_bytes,
+        out_sent: io.out_sent,
         monitor_ms: io.monitor_ms,
         in_depth: (io.in_depth.in_urbs, io.in_depth.in_packets),
         out_depth: (io.out_depth.out_urbs, io.out_depth.out_packets),
@@ -3605,6 +3714,37 @@ mod tests {
     }
 
     #[test]
+    fn only_an_accepted_submit_counts_as_delivered() {
+        let packet = 192usize;
+        let packets = 4usize;
+        let data = vec![0u8; packet * packets];
+        let mut urb = Urb::new(packets);
+        unsafe {
+            prepare_urb(
+                urb.ptr(),
+                0x02,
+                packet,
+                packets,
+                data.as_ptr() as *mut c_void,
+            );
+        }
+        let mut stats = OutStats::default();
+        unsafe { note_submitted(&mut stats, urb.ptr(), packet) };
+        assert_eq!(stats.sent_packets, packets as u64, "every packet is delivered");
+        assert_eq!(stats.sent_bytes, (packet * packets) as u64);
+        // Filling an URB is not delivering it: a refused submit leaves `packets`
+        // to count the fill while `sent_packets` counts only what got in.
+        let filled = OutStats {
+            packets: packets as u64,
+            submit_errors: 1,
+            submit_errno: 32,
+            ..OutStats::default()
+        };
+        assert_eq!(filled.sent_packets, 0, "a refused URB delivered nothing");
+        assert_eq!(filled.submit_errno, 32, "and the refusal names its errno");
+    }
+
+    #[test]
     fn the_out_pipeline_primes_and_refills_two_urbs() {
         let packet = 192usize;
         let frames = packet / 4;
@@ -3820,8 +3960,11 @@ mod tests {
             underruns_out: 0,
             underruns_out_start: 0,
             dropped_out: 0,
+            out_submit_errors: 0,
+            out_submit_errno: 0,
             out_packets: 0,
             out_bytes: 0,
+            out_sent: 0,
             monitor_ms: 8,
             in_depth: (4, 8),
             out_depth: (2, 4),

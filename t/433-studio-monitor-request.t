@@ -303,6 +303,18 @@ sandbox.studioAutoBufferTick({ ok: true, frames_in: 1200, out_packets: 0, droppe
 ok(store['jawnos.studio.monitor_settled'] === undefined && sandbox.studioMonitorAutoSettled() === '',
 	'a window with no packets does not settle (got ' + store['jawnos.studio.monitor_settled'] + ')');
 
+// A refused OUT submit is a fault the drop counters cannot see: the packets were
+// filled, so nothing was trimmed, but the endpoint was fed late. The sweep must
+// step up rather than call that window clean.
+delete store['jawnos.studio.monitor_settled'];
+autoDepth.length = 0;
+sandbox.studioUsbListenStart(false, '1');
+sandbox.studioAutoBufferTick({ ok: true, frames_in: 500, out_packets: 100, dropped_out: 0, underruns_out: 0, out_submit_errors: 0 });
+sandbox.studioAutoBufferTick({ ok: true, frames_in: 700, out_packets: 140, dropped_out: 0, underruns_out: 0, out_submit_errors: 2 });
+sandbox.studioAutoBufferTick({ ok: true, frames_in: 900, out_packets: 180, dropped_out: 0, underruns_out: 0, out_submit_errors: 2 });
+ok(autoDepth[1] === '8,2,2,4', 'a refused submit steps the buffer up (got ' + autoDepth[1] + ')');
+ok(store['jawnos.studio.monitor_settled'] === undefined, 'and does not settle on it');
+
 // The settled value is shown beside the picker.
 store['jawnos.studio.monitor_settled'] = '8';
 values['#studio_monitor_buffer'] = 'auto';

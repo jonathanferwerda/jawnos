@@ -261,6 +261,49 @@ the same runway (4×2 or 8×1) are the next thing to try; the engine's depth ABI
 already accepts them. App 1371 asks for 8 ms as 8×2 IN / 4×2 OUT, and that is
 the setting the guitar milestone measures.
 
+### 5.2 2026-11-26, later: the grit is packet loss, not clipping
+
+Three takes on the same tablet (hot, and near 15% battery, so the CPU may have
+been throttled), pulled from `/sdcard/Download/jawnos-usb-take-*.json`:
+
+| preset | run | dropped_out | underruns_out | out_ms / capture_ms | out_peak | monitor_peak |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4 ms (Auto) | 20.3 s | 11,230 | 0 | 20.08 / 20.32 | 0.325 | — |
+| 16 ms | 1.43 s | 2,110 | 0 | 1.38 / 1.43 | — | 0.33 / 0.17 |
+| 16 ms | 190 s | **361,150** | 0 | **182.8 / 190.3** | — | 0.17 |
+
+Two facts settle what the grit is:
+
+- **Nothing clips.** `monitor_peak` 0.33 and `out_peak` 0.32-0.17 with an input
+  peak of 0.63. The harshness is not the level and not the i16 conversion.
+- **The OUT stream only carried 94-96% of the capture duration**, and the missing
+  time matches `dropped_out` almost exactly (11,230 frames = 234 ms at 48 kHz
+  against a 240 ms gap). The fifo was trimmed because the output side fell
+  behind, not because packets starved: `underruns_out` stayed 0.
+
+A single lost OUT submission explains the shape: each refusal leaves that URB
+out of the pipeline and, in 3907, nothing retried it, so the slot stayed idle for
+the rest of the take. With two URBs at 4-5 ms each, one refusal every ~0.4 s is
+enough for 1-2% loss. It also explains why the grit grows with a shorter buffer
+(each stall costs a larger share of the runway) and why a longer buffer reduces
+but never removes it.
+
+Engine v0.1.3908 instruments and fixes that path:
+
+- `out_submit_errors` / `out_submit_errno` count every refused `SUBMITURB` on
+  the monitor endpoint with its errno; `out_sent` counts the packets the kernel
+  actually accepted (`out_packets` also counts a fill that is waiting to retry).
+- `submit_out` marks a refused slot and the loop retries it on its next pass, so
+  a refusal costs one late packet instead of the rest of the take at reduced
+  depth.
+- Auto treats a new `out_submit_errors` as a fault, so it no longer settles on a
+  window whose drops happen to be zero.
+
+The 48 -> 32 kHz linear resample is still unfiltered, so it adds some aliasing
+harshness of its own, but it is constant across buffer sizes and cannot account
+for crackle that appears and disappears with the preset. Fix the packet loss
+first, then re-measure on a charged, cool tablet before changing the resampler.
+
 ## 6. The pacing lessons
 
 - **One OUT URB is wrong.** With one in flight the next is submitted only after
@@ -293,21 +336,28 @@ feedback-aware output path; the current backend assumes full-speed 1 ms frames.
 
 ## 8. Next
 
-1. **The milestone test.** With Monitor through set to Direct USB, the guitar on
+1. **Re-measure after the submit retry.** Same guitar path, on a charged and
+   cool tablet, 16 ms and 4 ms. Read `out_submit_errors` first: non-zero means
+   the kernel is refusing resubmits and the next fix is a fresh URB rather than
+   a retry of the refused one. Zero, with `dropped_out` still climbing, moves the
+   search to the reap loop (late OUT completion) instead.
+2. **The milestone test.** With Monitor through set to Direct USB, the guitar on
    Input 2 (channel 1), a couple of pedals on the track and the song's rack on,
    at the 8 ms preset (IN 8×2 / OUT 4×2), with a take recording at the same
    time. The plan the page sends is the one the engine records and monitors
    (Sec. 3.1, Sec. 4), and the report names `monitor_channel` and
    `monitor_master`.
-2. **ASIO.** The same picker on Windows: asio4all and the DAW's own ASIO
+3. **ASIO.** The same picker on Windows: asio4all and the DAW's own ASIO
    driver, populated the way `Direct USB` is populated here.
-3. A per-device latency preset (Safe 16 / Balanced 8 / Low 4 / Ultra 2),
+4. A per-device latency preset (Safe 16 / Balanced 8 / Low 4 / Ultra 2),
    storing the measured floor and the last take's health; Auto picks the
    smallest preset that ran clean.
-4. Resample the probe's chirp, so its score is comparable at the 32 kHz
+5. A proper low-pass in `MonitorResampler`, once the packet loss is gone, so the
+   48 -> 32 kHz decimation stops folding content above 16 kHz back down.
+6. Resample the probe's chirp, so its score is comparable at the 32 kHz
    endpoint (Sec. 5).
-5. Playback of a file into the UM2.
-6. A high-speed UAC2 interface for the sub-3 ms target.
+7. Playback of a file into the UM2.
+8. A high-speed UAC2 interface for the sub-3 ms target.
 
 ## 9. Reproduce
 

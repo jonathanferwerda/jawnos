@@ -1390,15 +1390,19 @@ function studioAutoBufferTick(data) {
 	if (data.monitor_off) { return; }
 	var dropped = Number(data.dropped_out || 0);
 	var underruns = Number(data.underruns_out || 0);
+	// A submit the kernel refused is a fault too: the packet was filled but the
+	// endpoint got it late, which is exactly the grit the sweep is looking for.
+	var refused = Number(data.out_submit_errors || 0);
 	if (!studioUsbAuto.base) {
-		studioUsbAuto.base = { dropped: dropped, underruns: underruns };
+		studioUsbAuto.base = { dropped: dropped, underruns: underruns, refused: refused };
 		studioUsbAuto.ticks = 0;
 		return;
 	}
 	studioUsbAuto.ticks += 1;
 	if (studioUsbAuto.ticks < 2) { return; }
 	var bad = (dropped - studioUsbAuto.base.dropped) > 0
-		|| (underruns - studioUsbAuto.base.underruns) > 0;
+		|| (underruns - studioUsbAuto.base.underruns) > 0
+		|| (refused - studioUsbAuto.base.refused) > 0;
 	var candidate = studioUsbAuto.queue[studioUsbAuto.index];
 	if (!bad) {
 		studioAutoBufferSettle(candidate);
@@ -1726,6 +1730,11 @@ function studioListenRender(data) {
 		if (usb.out_rate && usb.out_rate.hz) { usbFacts.push(usb.out_rate.hz + ' Hz'); }
 		if (typeof usb.dropped_out === 'number') { usbFacts.push(studioListenText('drop') + ' ' + usb.dropped_out); }
 		if (typeof usb.underruns_out === 'number') { usbFacts.push('xrun ' + usb.underruns_out); }
+		// A refused OUT submit is a hole the counters above cannot see: the URB was
+		// filled, so no drop is counted, but the device was fed late.
+		if (typeof usb.out_submit_errors === 'number' && usb.out_submit_errors > 0) {
+			usbFacts.push('submit ' + usb.out_submit_errors + ' (' + usb.out_submit_errno + ')');
+		}
 		$('#studio_listen_frames').text(usbFacts.join(' \u00b7 '));
 		return;
 	}
