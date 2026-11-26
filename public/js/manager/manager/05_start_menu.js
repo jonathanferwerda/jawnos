@@ -142,14 +142,16 @@ function fuck_you() {
 	});
 }
 
-$(document).on('click', '#start_menu_toggle', function() {
-	startMenuToggle();
+$(document).on('click', '#start_menu_toggle', function(e) {
+	// a click with no pointer travel is the keyboard's own (detail 0), and opens
+	// the menu with the filter - or the selected page tab - already focused
+	startMenuToggle({ detail: e.detail });
 });
 
 // A start button copied into an added bar has no id; it answers the same menu.
 $(document).on('click', '.start_menu_toggle_copy', function(e) {
 	e.preventDefault();
-	startMenuToggle();
+	startMenuToggle({ detail: e.detail });
 });
 
 $(document).on('click', '.start_menu_menu', function() {
@@ -194,6 +196,9 @@ $(document).on('click', '.remote_control_open', function() {
 function startMenuToggle(data) {
 	if (typeof data == 'undefined') { data = {}; }
 	var source = data['source'];
+	// a click the keyboard made carries no pointer detail; it opens onto the
+	// filter so the person can type straight away
+	var keyboard = (data['detail'] === 0);
 	var st = $('#start_menu_toggle');
 	var start_menu = $('#start_menu');
 	var menu = localStorage.getItem('start_menu_menu') || '';
@@ -212,6 +217,7 @@ function startMenuToggle(data) {
 		// flash. A press on a tab (source 'menu') is the refresh, and always fetches.
 		if (!source && startMenuHtml[menu]) {
 			startMenuRender(startMenuHtml[menu], st);
+			if (keyboard) { startMenuFocusInitial(); }
 			return;
 		}
 		$.ajax({
@@ -221,14 +227,15 @@ function startMenuToggle(data) {
 			success: function(response) {
 				if (response.html) {
 					// The server resolves an empty menu to this install's default
-					// (the System page on a first run, the app list afterwards), so
-					// the cache and the saved choice follow what was actually drawn.
+					// (the app list, on a new install and afterwards), so the cache
+					// and the saved choice follow what was actually drawn.
 					var shown = response.menu || menu || '';
 					if (shown && !localStorage.getItem('start_menu_menu')) {
 						localStorage.setItem('start_menu_menu', shown);
 					}
 					startMenuHtml[shown] = response.html;
 					startMenuRender(response.html, st);
+					if (keyboard) { startMenuFocusInitial(); }
 				}
 			}
 		});
@@ -236,10 +243,10 @@ function startMenuToggle(data) {
 }
 
 // Swap a menu's markup in - fresh from the server or out of the per-tab cache -
-// and put the corner back together. The search may be riding the menu's corner,
-// so it is held aside over the swap: replaceWith would take it down with the old
-// markup, and with it whatever was typed. There is no timer on the menu: it
-// stands until something else is pressed.
+// and put the corner back together. The search may be riding the menu's header
+// slot, so it is held aside over the swap: replaceWith would take it down with
+// the old markup, and with it whatever was typed. There is no timer on the
+// menu: it stands until something else is pressed.
 function startMenuRender(html, st) {
 	// Only the first open unfolds. A tab press (a fresh fetch for the same
 	// panel) swaps the markup while the menu stands, and replaying the open
@@ -247,14 +254,33 @@ function startMenuRender(html, st) {
 	// panel simply takes the new view. A panel caught mid-fold is still on its
 	// way out, so that press is a fresh open and does animate.
 	var was_open = jawnosStartMenuOpen($('#start_menu'));
+	// The swap takes the focused node and the shelf the person had chosen with
+	// it; both are read before the old markup goes and put back after the new
+	// rows are built. A fresh open starts on All again; a swap while the menu
+	// stands keeps the shelf and where the keyboard was.
+	var focused = startMenuFocusCapture();
+	var kept_category = was_open ? ($('.start_menu_category.selected').attr('category') || $('.start_menu_category[aria-selected="true"]').attr('category') || '') : '';
 	var search = $('#search_entanglement').closest('#start_menu').length ? $('#search_entanglement').detach() : null;
 	$('#start_menu').replaceWith(html);
 	$('#start_menu').show();
-	if (search) { $('#start_menu').append(search); }
+	// a fresh body means a fresh filter: the query cannot narrow a list it was
+	// not typed against
+	startMenuQuery = '';
+	$('#start_menu_filter').val('');
+	if (search) {
+		// the search rides the menu's own header slot, not the panel's foot
+		var slot = $('#start_menu .start_menu_search_slot').first();
+		if (slot.length) { slot.append(search); } else { $('#start_menu').append(search); }
+	}
 	if (typeof jawnosSearchPlace == 'function') { jawnosSearchPlace(); }
 	// the menu hangs from the button that opened it
 	jawnosStartMenuPlace();
 	startMenuListify();
+	if (kept_category) {
+		startMenuSelectCategory(kept_category);
+		startMenuView();
+	}
+	startMenuFocusRestore(focused);
 	assistantIconInitializer();
 	taskbarDisplayer();
 	if (typeof mailDotPaint == 'function') { mailDotPaint(); }
@@ -330,43 +356,64 @@ function startMenuListify() {
 	if (main.length == 0) { return; }
 	startMenuHidePrivate(main);
 	main.find('br').remove();
+	var forget_label = ($('#start_menu').attr('data-forget-label') || '').trim() || 'Forget';
 	main.find('img').each(function () {
 		var img = $(this);
 		if (img.closest('.start_menu_item').length > 0) { return; }
 		// the leave and site-type buttons are absolutely placed in the top corner;
 		// wrapping them in a row would move them
 		if (/position\s*:\s*absolute/i.test(img.attr('style') || '')) { return; }
-		var label = img.attr('hint') || '';
-		// start_menu_list is what the other menus use for a row that closes the menu
-		var item = $('<span class="start_menu_item start_menu_list"></span>');
-		// The row goes at the top level of the list even when the template wrapped the
-		// icon in something else (the tickets button sits in a bare <span>). Left in
-		// that wrapper it is not a child of the list, so the sort never sees it and it
-		// ends up stranded above the rows that were sorted.
-		main.append(item);
-		// icon first so it sits on the left, name beside it
-		item.append(img);
+		var label = (img.attr('hint') || '').trim();
+		var item = $('<div class="start_menu_item"></div>');
+		// the row itself is a real button, so tab and Enter land on it; the icon
+		// inside keeps every id, class and hint its own handler listens for
+		var open = $('<button type="button" class="start_menu_item_open start_menu_list"></button>');
+		if (label) { open.attr('aria-label', label); }
+		// the name beside the button already reads the app, so the picture is
+		// decoration to a screen reader
+		img.attr('aria-hidden', 'true');
+		open.append(img);
 		if (label) {
-			item.append($('<span class="start_menu_item_text"></span>').text(label));
+			open.append($('<span class="start_menu_item_text"></span>').text(label));
 		}
+		item.append(open);
 		// the X takes the app back off the recent list; startMenuView() shows
-		// it only over the recents, and the row press steps aside for it
-		item.append('<span class="start_menu_recent_clear" hint="Forget">✕</span>');
+		// it only over the recents, and it sits apart from the row's own press
+		var clear = $('<button type="button" class="start_menu_recent_clear"></button>');
+		clear.attr('aria-label', (forget_label + (label ? ' ' + label : '')).trim());
+		clear.text('✕');
+		item.append(clear);
+		// the rows are parked in the All apps group; the view moves the recents out
+		var group = main.find('.start_menu_all_group');
+		if (group.length) { group.append(item); } else { main.append(item); }
 	});
+	// lockdown keeps only the Security row and its note standing
+	main.find('.start_menu_item').has('#security_toggle').addClass('start_menu_lockdown_keep');
 	startMenuSort(main);
 	startMenuView();
 }
 
+// The label a row reads: its own text when the template drew one, else the
+// hint the icon carries. Used by the sort and by the filter.
+function startMenuRowLabel(item) {
+	var text = item.find('.start_menu_item_text').first().text();
+	if (text && text.trim()) { return text.trim(); }
+	return (item.find('img').first().attr('hint') || '').trim();
+}
+
 function startMenuSort(main) {
-	var items = main.children('.start_menu_item').get();
+	main = (main && main.length) ? main : $('.start_menu_main_display');
+	var group = main.find('.start_menu_all_group');
+	if (!group.length) { group = main; }
+	var items = group.find('.start_menu_item').get();
 	if (items.length < 2) { return; }
 	items.sort(function (a, b) {
-		var at = ($(a).text() || '').trim().toLowerCase();
-		var bt = ($(b).text() || '').trim().toLowerCase();
+		var at = startMenuRowLabel($(a)).toLowerCase();
+		var bt = startMenuRowLabel($(b)).toLowerCase();
 		if (at == bt) { return 0; }
 		return at < bt ? -1 : 1;
 	});
-	$(items).appendTo(main);
+	$(items).appendTo(group);
 }
 // the name is part of the button: pressing it presses the icon next to it
 $(document).on('click', '.start_menu_item_text', function () {
@@ -387,11 +434,10 @@ $(document).on('click', '.start_menu_item', function (e) {
 
 // What the app menu remembers: the apps opened from it, freshest first, kept
 // in the president's cache and riding on the list as its recent attribute -
-// the list IS the recent list, and the shelf rail is how everything else is
-// reached. A press writes the app back, through the server and into the
-// attribute so the view agrees without waiting. Which shelf is showing lives
-// on the rail button itself, so a fresh menu - fetched on every open - always
-// starts on the recents.
+// startMenuView() lifts those into the Recent group. A press writes the app
+// back, through the server and into the attribute so the view agrees without
+// waiting. The shelf showing lives on the chip itself, and a fresh menu starts
+// on All.
 function startMenuRowKey(item) {
 	var img = item.find('img').first();
 	return img.attr('id') || img.attr('hint') || ($.trim(item.text()) || '');
@@ -433,48 +479,275 @@ function startMenuForget(key) {
 	startMenuView();
 }
 
-// The shelf showing narrows the list to its own, kept alphabetical; otherwise
-// the list is the recents, freshest first, and the note stands in their place
-// until a press has filled it.
+// The app page opens on the whole catalogue: the recent apps first, freshest
+// first, then everything else alphabetically. A shelf narrows the catalogue to
+// its own, and the filter narrows it by name; either one drops both group
+// labels and the recent X. The open page is the choice, so All is the default.
+var startMenuQuery = '';
+
+// What the view means by visible: the rows it hides itself carry display:none,
+// and that is what decides both the empty note and the keyboard's walk.
+function startMenuShown(node) {
+	return node.length > 0 && node.css('display') !== 'none';
+}
+
 function startMenuView() {
 	var main = $('.start_menu_main_display');
 	if (main.length == 0) { return; }
-	var rows = main.children('.start_menu_item');
-	if (rows.length == 0) { return; }
-	var category = $('.start_menu_category.selected').attr('category') || '';
-	rows.show();
-	if (category) {
-		startMenuSort(main);
-		rows.each(function () {
-			if (startMenuRowCategory($(this)) !== category) { $(this).hide(); }
-		});
+	var recent_group = main.find('.start_menu_recent_group');
+	var all_group = main.find('.start_menu_all_group');
+	if (!all_group.length) { all_group = main; }
+	var rows = main.find('.start_menu_item');
+	if (rows.length == 0) {
+		main.find('.start_menu_group_label').hide();
+		main.find('.start_menu_empty').toggle(true);
+		return;
 	}
-	else {
-		var rank = new Map();
+	// every row is parked and sorted in the catalogue; the recents are lifted
+	// out of it below
+	rows.appendTo(all_group);
+	startMenuSort(main);
+	var category = $('.start_menu_category.selected').attr('category') || 'all';
+	var q = (typeof startMenuQuery == 'string' ? startMenuQuery : '').trim().toLowerCase();
+	// only the unfiltered catalogue has a recent section
+	var show_recent = (category === 'all' && !q);
+	if (show_recent && recent_group.length) {
+		var seen = {};
+		var moved = 0;
 		$.each(startMenuRecent(), function (i, key) {
-			if (!rank.has(key)) { rank.set(key, i); }
+			if (moved >= 5 || seen[key]) { return; }
+			var row = all_group.find('.start_menu_item').filter(function () {
+				return startMenuRowKey($(this)) === key;
+			}).first();
+			if (!row.length) { return; }
+			seen[key] = true;
+			row.appendTo(recent_group);
+			moved++;
 		});
-		var order = [];
-		rows.each(function () {
-			if (rank.has(startMenuRowKey($(this)))) { order.push(this); }
-			else { $(this).hide(); }
-		});
-		order.sort(function (a, b) { return rank.get(startMenuRowKey($(a))) - rank.get(startMenuRowKey($(b))); });
-		$(order).appendTo(main);
 	}
-	var shown = rows.filter(function () { return $(this).css('display') != 'none'; }).length;
-	main.find('.start_menu_empty').toggle(!category && shown == 0);
-	rows.find('.start_menu_recent_clear').toggle(!category);
+	// a row stays when it is in the chosen shelf and its name matches the filter
+	rows.each(function () {
+		var row = $(this);
+		var visible = true;
+		if (category !== 'all' && startMenuRowCategory(row) !== category) { visible = false; }
+		if (visible && q && startMenuRowLabel(row).toLowerCase().indexOf(q) < 0) { visible = false; }
+		row.toggle(visible);
+	});
+	// the X is the recents' own: a catalogue row or a shelf's rows do not wear it
+	recent_group.find('.start_menu_recent_clear').show();
+	all_group.find('.start_menu_recent_clear').hide();
+	var recent_visible = recent_group.length ? recent_group.find('.start_menu_item').filter(function () { return startMenuShown($(this)); }).length : 0;
+	var all_visible = all_group.find('.start_menu_item').filter(function () { return startMenuShown($(this)); }).length;
+	recent_group.children('.start_menu_group_label').toggle(show_recent && recent_visible > 0);
+	all_group.children('.start_menu_group_label').toggle(show_recent && all_visible > 0);
+	main.find('.start_menu_empty').toggle((recent_visible + all_visible) === 0);
 }
 
-// A press on a shelf shows it, a press on the shelf showing brings the
-// recents back; the button wears the choice, and the next open - a fresh
-// menu with no shelf marked - lands on the recents again.
+// The shelf the menu wears: exactly one chip is selected and says so. All is
+// always a valid resting place, which is also where a second press on a chosen
+// shelf lands.
+function startMenuSelectCategory(category) {
+	category = category || 'all';
+	$('.start_menu_category').each(function () {
+		var chip = $(this);
+		var on = ((chip.attr('category') || 'all') === category);
+		chip.toggleClass('selected', on).attr('aria-selected', on ? 'true' : 'false');
+	});
+}
+
+// A press on a shelf shows it, a press on the shelf showing brings All back.
 $(document).on('click', '.start_menu_category', function () {
-	var showing = $(this).hasClass('selected');
-	$('.start_menu_category').removeClass('selected');
-	if (!showing) { $(this).addClass('selected'); }
+	var chip = $(this);
+	var category = chip.attr('category') || 'all';
+	if (category === 'all') {
+		startMenuSelectCategory('all');
+	}
+	else if (chip.hasClass('selected')) {
+		startMenuSelectCategory('all');
+	}
+	else {
+		startMenuSelectCategory(category);
+	}
 	startMenuView();
+});
+
+// The filter narrows the catalogue by name as the person types; a fresh menu
+// body resets both the field and the query.
+$(document).on('input', '#start_menu_filter', function () {
+	startMenuQuery = $(this).val() || '';
+	startMenuView();
+});
+
+// What to put the keyboard back on after a swap. A menu body is replaced whole,
+// so the node the person was standing on leaves with the old markup; the
+// identifying bits of it are read before and matched again after.
+function startMenuFocusCapture() {
+	var menu = $('#start_menu');
+	var active = document.activeElement;
+	if (!menu.length || !active || !menu[0].contains(active)) { return null; }
+	var el = $(active);
+	var info = { id: active.id || '', tab: '', category: '', row: '', more: false, foot: '', item: '' };
+	if (el.hasClass('start_menu_menu')) { info.tab = el.attr('menu') || ''; }
+	else if (el.hasClass('start_menu_category')) { info.category = el.attr('category') || ''; }
+	else if (el.hasClass('start_menu_item_open')) { info.row = startMenuRowKey(el.closest('.start_menu_item')); }
+	else if (el.hasClass('start_menu_more')) { info.more = true; }
+	else if (el.hasClass('start_menu_more_item')) { info.item = (el.find('img[id]').first().attr('id') || ''); }
+	else if (el.hasClass('start_menu_leave_button')) { info.foot = 'start_menu_leave_button'; }
+	else if (el.hasClass('start_menu_site_button')) { info.foot = 'start_menu_site_button'; }
+	return info;
+}
+
+function startMenuFocusRestore(info) {
+	if (!info) { return; }
+	var target = $();
+	if (info.category) {
+		target = $('.start_menu_category').filter(function () {
+			return ($(this).attr('category') || 'all') === info.category;
+		}).first();
+	}
+	else if (info.tab) {
+		target = $('.start_menu_menu').filter(function () {
+			return ($(this).attr('menu') || '') === info.tab;
+		}).first();
+	}
+	else if (info.row) {
+		target = $('.start_menu_item').filter(function () {
+			return startMenuRowKey($(this)) === info.row;
+		}).first().find('.start_menu_item_open').first();
+	}
+	else if (info.more) { target = $('.start_menu_more').first(); }
+	else if (info.item) {
+		target = $('.start_menu_more_item').filter(function () {
+			return ($(this).find('img[id]').first().attr('id') || '') === info.item;
+		}).first();
+	}
+	else if (info.foot) { target = $('.' + info.foot).first(); }
+	else if (info.id) {
+		target = $(document.getElementById(info.id));
+	}
+	if (target && target.length) { target.first().focus(); }
+}
+
+// Opened from the keyboard: the filter is the first thing to type in, unless
+// the search has taken its place, in which case the page tab is the landing.
+function startMenuFocusInitial() {
+	var filter = $('#start_menu_filter');
+	if (startMenuShown(filter)) { filter.first().focus(); return; }
+	var tab = $('.start_menu_menu[aria-selected="true"]').first();
+	if (!tab.length) { tab = $('.start_menu_menu.selected').first(); }
+	if (tab.length) { tab.focus(); }
+}
+
+function startMenuFocusToggle() {
+	var toggle = jawnosStartMenuToggleFor($('#start_menu'));
+	if (toggle.length) { toggle.first().focus(); }
+}
+
+// ---- the footer -------------------------------------------------------------
+// Leave and Site are wrapper buttons around the icon that does the work: a press
+// anywhere on the wrapper presses the icon, but a press on the icon itself is
+// left alone so it runs once.
+$(document).on('click', '.start_menu_foot', function (e) {
+	if ($(this).hasClass('start_menu_more')) { return; }
+	var img = $(this).find('img').first();
+	if (!img.length || e.target === img[0]) { return; }
+	img.trigger('click');
+});
+
+function startMenuMoreToggle(open) {
+	var more = $('#start_menu_more_menu');
+	if (!more.length) { return; }
+	var want = (typeof open == 'boolean') ? open : !!more.prop('hidden');
+	more.prop('hidden', !want);
+	$('.start_menu_more').attr('aria-expanded', want ? 'true' : 'false');
+}
+
+function startMenuMoreClose() {
+	startMenuMoreToggle(false);
+}
+
+// More opens over the footer and stays open until something else is pressed.
+$(document).on('click', '.start_menu_more', function (e) {
+	e.stopPropagation();
+	startMenuMoreToggle();
+});
+
+// A More item presses its icon and puts the menu away again.
+$(document).on('click', '.start_menu_more_item', function (e) {
+	var img = $(this).find('img').first();
+	if (img.length && e.target !== img[0]) { img.trigger('click'); }
+	startMenuMoreClose();
+});
+
+// A press anywhere outside More closes it while leaving the menu standing.
+$(document).on('click', function (e) {
+	var more = $('#start_menu_more_menu');
+	if (!more.length || more.prop('hidden')) { return; }
+	if ($(e.target).closest('.start_menu_more, #start_menu_more_menu').length) { return; }
+	startMenuMoreClose();
+});
+
+// ---- the keyboard -----------------------------------------------------------
+// Escape shuts More first, then the menu; the arrows walk the page row, the
+// category row and the app rows, and Home/End jump to the ends of the app rows.
+function startMenuFocusStep(list, current, dir) {
+	var items = list.get();
+	if (!items.length) { return; }
+	var i = $.inArray(current[0], items);
+	if (i < 0) { i = 0; }
+	i = (i + dir + items.length) % items.length;
+	$(items[i]).focus();
+}
+
+$(document).on('keydown', function (e) {
+	var menu = $('#start_menu');
+	if (!jawnosStartMenuOpen(menu)) { return; }
+	var target = $(e.target);
+	var inside = target.closest('#start_menu').length > 0;
+	var on_toggle = target.closest('#start_menu_toggle, .start_menu_toggle_copy').length > 0;
+	if (!inside && !on_toggle) { return; }
+	var key = e.key || '';
+	var code = e.keyCode || 0;
+	var escape = (key === 'Escape' || key === 'Esc' || code === 27);
+	if (escape) {
+		e.preventDefault();
+		var more = $('#start_menu_more_menu');
+		if (more.length && !more.prop('hidden')) { startMenuMoreClose(); return; }
+		$('#start_menu_toggle').attr('toggled', 'closed');
+		startMenuCloser(0);
+		if (inside) { startMenuFocusToggle(); }
+		return;
+	}
+	if (!inside) { return; }
+	// the two horizontal rows step their own tablist
+	var chip = target.closest('.start_menu_menu, .start_menu_category');
+	if (chip.length) {
+		var left = (key === 'ArrowLeft' || code === 37);
+		var right = (key === 'ArrowRight' || code === 39);
+		if (left || right) {
+			e.preventDefault();
+			startMenuFocusStep(chip.closest('[role="tablist"]').find('.start_menu_menu, .start_menu_category'), chip, right ? 1 : -1);
+			return;
+		}
+	}
+	// the app rows walk the visible list, top to bottom
+	var row = target.closest('.start_menu_item_open');
+	if (row.length) {
+		var rows = $('#start_menu .start_menu_item_open').filter(function () {
+			return startMenuShown($(this).closest('.start_menu_item'));
+		});
+		var step = null;
+		if (key === 'ArrowDown' || code === 40) { step = 1; }
+		else if (key === 'ArrowUp' || code === 38) { step = -1; }
+		else if (key === 'Home') { e.preventDefault(); rows.first().focus(); return; }
+		else if (key === 'End') { e.preventDefault(); rows.last().focus(); return; }
+		if (step !== null) {
+			e.preventDefault();
+			var i = rows.index(row);
+			var next = Math.max(0, Math.min(rows.length - 1, i + step));
+			if (next >= 0 && rows.length) { rows.eq(next).focus(); }
+		}
+	}
 });
 
 // the menu ships inside the page as well as over the socket, so do it once at load

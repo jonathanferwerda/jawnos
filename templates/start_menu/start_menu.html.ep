@@ -6,47 +6,64 @@
 %# and a machine without systemd/logind has nothing to ask.
 % my @leave_power = &subs::power_actions();
 <style>
+#start_menu.lockdown .start_menu_header,
+#start_menu.lockdown .start_menu_pages,
 #start_menu.lockdown .start_menu_categories,
-#start_menu.lockdown .start_menu_menu,
-#start_menu.lockdown .start_menu_main_display > *:not(#security_toggle):not(.start_menu_lockdown_note),
-#start_menu.lockdown #running_start,
+#start_menu.lockdown .start_menu_footer,
+#start_menu.lockdown .start_menu_group_label,
+#start_menu.lockdown .start_menu_empty,
 #start_menu.lockdown .start_menu_view_content,
-#start_menu.lockdown #main_logo,
-#start_menu.lockdown #now_toggle,
-#start_menu.lockdown #assistant,
-#start_menu.lockdown #navigation_now,
-#start_menu.lockdown .fuck_you,
-#start_menu.lockdown #admin_console_toggle,
-#start_menu.lockdown .leave { display:none !important; }
+#start_menu.lockdown #running_start,
+#start_menu.lockdown .site_type_manual_changer_options { display:none !important; }
+#start_menu.lockdown .start_menu_main_display > *:not(.start_menu_lockdown_note):not(.start_menu_recent_group):not(.start_menu_all_group):not(.start_menu_lockdown_keep) { display:none !important; }
+#start_menu.lockdown .start_menu_item:not(.start_menu_lockdown_keep) { display:none !important; }
 #start_menu.lockdown .start_menu_lockdown_note { display:block !important; }
 </style>
-<div id="start_menu" class="theme_surface<% if ($lockdown) { %> lockdown<% } %>" style="display:none;max-width:100%;overflow:hidden;background-color:<%= $config->{$device}->{'start_menu'}->{'background_colour'} || 'yellow' %>;">
-	<span style="float:right;width:20%;position:absolute;right:0px;top:0px;text-align:right;">
+<div id="start_menu" class="theme_surface<% if ($lockdown) { %> lockdown<% } %>" role="dialog"
+     aria-label="<%= &subs::ui('Start menu') %>"
+     data-forget-label="<%= &subs::lang('start_menu.forget') %>"
+     style="display:none;max-width:100%;overflow:hidden;background-color:<%= &subs::theme_surface_colour('start_menu', $device) || 'var(--panel)' %>;">
 
-		<% my $images = {
-			app => '/images/jbuttons/logo3.png',
-			run => '/images/make believe/new sun.png',
-			up => '/images/make believe/road ahead.png',
-			exp => '/images/make believe/nonsense.png',
-			view => '/images/make believe/water.png'
-		}; %>
-
-
-
-		<% my %menu_hints = ( app => 'Apps', run => 'Running', up => 'Upcoming', exp => 'Expiring', view => 'System' ); %>
-		<% foreach my $b ( qw/app run up exp view/ ) { %>
-			<img src="<%= &subs::icon_for($images->{$b}) %>" hint="<%= $menu_hints{$b} %>" class="medium_thumb start_menu_menu hover <% if ($menu eq $b) { %>selected<% } %>" menu="<%= $b %>">
+	<div class="start_menu_header">
+		<span class="start_menu_title"><%= &subs::lang('start_menu.start') %></span>
+		<span class="start_menu_search_slot"></span>
+		<% if ($menu eq 'app') { %>
+			<input type="search" id="start_menu_filter" class="start_menu_filter"
+			       placeholder="<%= &subs::lang('start_menu.search_apps') %>"
+			       aria-label="<%= &subs::lang('start_menu.search_apps') %>"
+			       autocomplete="off" spellcheck="false">
 		<% } %>
-		<img id="main_logo" class="jonathan little_thumb configuration"  src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
+		<img id="main_logo" class="jonathan little_thumb configuration"
+		     src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure" alt="">
+	</div>
 
-		<!--
+	<% my %page_icon = (
+		app  => &subs::icon_for('/images/jbuttons/logo3.png'),
+		run  => &subs::icon_for('/images/make believe/new sun.png'),
+		up   => &subs::icon_for('/images/make believe/road ahead.png'),
+		exp  => &subs::icon_for('/images/make believe/nonsense.png'),
+		view => &subs::icon_for('/images/make believe/water.png')
+	); %>
+	<% my %page_label = (
+		app  => &subs::lang('search.apps'),
+		run  => &subs::lang('running'),
+		up   => &subs::lang('start_menu.upcoming'),
+		exp  => &subs::lang('start_menu.expiring'),
+		view => &subs::lang('configure.follow_system')
+	); %>
+	<div class="start_menu_pages" role="tablist" aria-label="<%= &subs::ui('Start menu pages') %>">
+		<% foreach my $b ( qw/app run up exp view/ ) { %>
+			<button type="button" class="start_menu_menu<% if ($menu eq $b) { %> selected<% } %>"
+			        menu="<%= $b %>" role="tab"
+			        aria-selected="<%= $menu eq $b ? 'true' : 'false' %>"
+			        hint="<%= $page_label{$b} %>">
+				<img class="start_menu_page_glyph" src="<%= $page_icon{$b} %>" alt="" aria-hidden="true">
+				<span class="start_menu_page_text"><%= $page_label{$b} %></span>
+			</button>
+		<% } %>
+	</div>
 
-			<a target="_blank" class="take_on_me" href="https://<%= $c->req->url->base->host . ':' . $ENV{'PORT_AHOY'} %>/"><img class="jonathan" src="<%= $gb::known_appts->{'guest'}->{'icon'} %>"></a>
-			<a target="_blank" class="take_on_me" href="https://<%= $c->req->url->base->host . ':' . $ENV{'PORT_AHOY'} %>/manager"><img class="jonathan" src="<%= $gb::known_appts->{'citizen'}->{'icon'} %>"></a>
-			<a target="_blank" class="take_on_me" href="https://<%= $c->req->url->base->host . ':' . $ENV{'PORT_AHOY'} %>/store"><img class="jonathan" src="<%= $gb::known_appts->{'resident'}->{'icon'} %>"></a>
-		-->
-	</span>
-	<span class="start_menu_body">
+	<div class="start_menu_body">
 		<% if ($menu eq 'view') { %>
 			<span class="start_menu_view_content">
 			<!--
@@ -73,20 +90,37 @@
 			<%# the menu is fetched with the list; the pre-rendered include carries no
 			    recent key, so it is read from the stash rather than a bare name %>
 			<% my $recent = $c->stash('recent') || []; %>
-			<span class="start_menu_app_menu">
-				<span class="start_menu_categories">
+			<div class="start_menu_app_menu">
+				<div class="start_menu_categories" role="tablist" aria-label="<%= &subs::ui('App categories') %>">
+					<button type="button" class="start_menu_category selected" category="all"
+					        role="tab" aria-selected="true" hint="<%= &subs::lang('start_menu.all') %>">
+						<img class="start_menu_cat_glyph" src="<%= &subs::icon_for('/images/jbuttons/logo3.png') %>" alt="" aria-hidden="true">
+						<span class="start_menu_cat_text"><%= &subs::lang('start_menu.all') %></span>
+					</button>
 					<% foreach my $category ( sort keys %{$category_icons} ) { %>
-						<img class="start_menu_category hover" category="<%= $category %>" hint="<%= &subs::format_name($category) %>" src="<%= &subs::icon_path($category, $category_icons->{$category}) %>">
+						<button type="button" class="start_menu_category" category="<%= $category %>"
+						        role="tab" aria-selected="false" hint="<%= &subs::format_name($category) %>">
+							<img class="start_menu_cat_glyph" src="<%= &subs::icon_path($category, $category_icons->{$category}) %>" alt="" aria-hidden="true">
+							<span class="start_menu_cat_text"><%= &subs::format_name($category) %></span>
+						</button>
 					<% } %>
-				</span>
-				<span class="start_menu_main_display" recent="<%= join ',', @{$recent} %>" hidden_apps="<%= join '|', @{$hidden_apps || []} %>">
+				</div>
+				<div class="start_menu_main_display" recent="<%= join ',', @{$recent} %>" hidden_apps="<%= join '|', @{$hidden_apps || []} %>">
 					<div class="start_menu_lockdown_note" style="display:none;padding:18px;line-height:1.5;max-width:520px;">
 						<h2><%= &subs::ui('Lockdown') %></h2>
 						<p><%= &subs::ui('An enemy is present, or this is a dangerous place. Only Security and apps marked Dangerous stay open. Open Security for the way out.') %></p>
 					</div>
-					<%# the app menu is the recent list; until a press fills it, the note
-					    stands where the rows will - startMenuView() toggles it %>
-					<span class="start_menu_empty" style="display:none;">No recent apps yet - the ones you open from here land here</span>
+
+					<div class="start_menu_recent_group">
+						<div class="start_menu_group_label start_menu_recent_label"><%= &subs::lang('chat.recent') %></div>
+					</div>
+
+					<div class="start_menu_all_group">
+						<div class="start_menu_group_label start_menu_all_label"><%= &subs::lang('start_menu.all_apps') %></div>
+					</div>
+
+					<div class="start_menu_empty" style="display:none;"><%= &subs::lang('start_menu.no_matches') %></div>
+
 					<img class="jonathan" category="system" src="<%= &subs::icon_for('/images/make believe/web_button.png') %>" hint="<%= &subs::lang('internet') %>" id="internet_toggle"></img>
 					<img class="jonathan" category="system" src="<%= &subs::icon_for('/images/make believe/search_button.png') %>" hint="<%= &subs::lang('common.search') %>" id="search_app_toggle"></img>
 					<img class="jonathan" category="system" src="<%= &subs::icon_for('/images/decipherable/folder.png') %>" hint="Folders" id="folders_toggle"></img>
@@ -103,7 +137,7 @@
 				<img id="music_toggle" category="media" src="<%= &subs::icon_for('/images/make believe/music.png') %>" hint="Music" class="jonathan music"></img>
 				<img id="embedded_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/microchip.png') %>" hint="Embedded" class="jonathan embedded"></img>
 				<img id="controllers_toggle" category="games" src="<%= &subs::icon_for('/images/decipherable/computer.png') %>" hint="<%= &subs::ui('Controllers') %>" class="jonathan controllers"></img>
-				<span><img id="ticketmaker" class="jonathan little_thumb" category="business" src="<%= &subs::icon_for('/images/decipherable/ticket.png') %>" hint="Passes"></span>
+				<img id="ticketmaker" class="jonathan little_thumb" category="business" src="<%= &subs::icon_for('/images/decipherable/ticket.png') %>" hint="Passes">
 				<img id="cards_toggle" category="games" src="<%= &subs::icon_for('/images/decipherable/cards.png') %>" hint="Cards" class="jonathan cards">
 				<br>
 				<img class="jonathan" id="backup_now" category="system" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Backup now" ></img>
@@ -175,28 +209,8 @@
 					});
 					</script>
 
-				</span>
-			</span>
-			<img class="jonathan little_thumb leave" src="<%= &subs::icon_for('/images/decipherable/exit.png') %>" hint="<%= &subs::lang('power_leave') %>" power="<%= join ',', @leave_power %>" style="position:absolute;bottom:4px;left:8px;"></img>
-			<img id="site_type_toggle" class="little_thumb <% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>hover site_type_manual_changer_toggle <% } %>" hint="Site type" 
-				src="<%= &subs::icon_for($gb::site_types->{$navigation_information->{$signatorial}->{'site_type'}}->{'icon'}) %>" hint="Site type" style="position:absolute;bottom:4px;left:56px;
-				<% if ($navigation_information->{$signatorial}->{'site_source'} eq 'manual') { %>border-solid;border-color:red;border-width:8px;
-				<% } elsif ($navigation_information->{$signatorial}->{'site_source'} eq 'lost') { %>border-solid;border-color:black;border-width:8px;
-				<% } %>"></img>
-
-				<%# the now, assistant, navigation and bird buttons stand along the menu's foot,
-				    away from the search's own row; they used to sit across the menu's
-				    top-left where a reach for the search kept landing on the bird %>
-				<% my $now_plain = &subs::icon_for('/images/decipherable/now.png'); %>
-				<img src="<%= &subs::icon_path('now here', $now_plain) %>" jawnos_icon="/images/decipherable/now.png" hint="Now" presence="unknown" id="now_toggle" style="background-color: green;position:absolute;bottom:4px;left:104px;" class="little_thumb now jonathan start_menu_corner">
-				<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb assistant hover start_menu_corner" id="assistant" style="position:absolute;bottom:4px;left:152px;">
-				<img src="<%= &subs::icon_for('/images/make believe/gps.png') %>" jawnos_icon="/images/make believe/gps.png" hint="<%= &subs::lang('navigation.update') %>" class="little_thumb hover start_menu_corner" id="navigation_now" style="position:absolute;bottom:4px;left:200px;">
-				<img class="jonathan little_thumb fuck_you start_menu_corner" hint="Flip the bird" src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" jawnos_icon="/images/decipherable/the bird.png" style="position:absolute;bottom:4px;left:248px;"></img>
-
-				<%# The desktop app's embedded view shows this and nothing else does: it
-				    asks the app to switch back to its dashboard tab. A browser tab has
-				    no such place, so the icon stays hidden there (see manager.css). %>
-				<img id="admin_console_toggle" class="jonathan little_thumb start_menu_corner" hint="Admin console" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" style="position:absolute;bottom:4px;left:296px;" onclick="window.jawnosAdminConsole && jawnosAdminConsole()"></img>
+				</div>
+			</div>
 
 			<% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>
 				<div class="site_type_manual_changer_options" style="float:right;display:none;">
@@ -251,5 +265,62 @@
 				</table>
 			</div>
 		<% } %>
-	</span>
+	</div>
+
+	<div class="start_menu_footer">
+		<button type="button" class="start_menu_foot start_menu_leave_button"
+		        aria-label="<%= &subs::lang('power_leave') %>">
+			<img class="jonathan little_thumb leave" src="<%= &subs::icon_for('/images/decipherable/exit.png') %>" hint="<%= &subs::lang('power_leave') %>" power="<%= join ',', @leave_power %>" alt="">
+			<span class="start_menu_foot_label"><%= &subs::lang('power_leave') %></span>
+		</button>
+
+		<button type="button" class="start_menu_foot start_menu_site_button"
+		        aria-label="<%= &subs::lang('start_menu.site_type') %>">
+			<img id="site_type_toggle" class="little_thumb <% if ($navigation_information->{$signatorial}->{'site_rating'} < 10) { %>hover site_type_manual_changer_toggle <% } %>" hint="<%= &subs::lang('start_menu.site_type') %>"
+				src="<%= &subs::icon_for($gb::site_types->{$navigation_information->{$signatorial}->{'site_type'}}->{'icon'}) %>"
+				style="<% if ($navigation_information->{$signatorial}->{'site_source'} eq 'manual') { %>border-solid;border-color:red;border-width:8px;
+				<% } elsif ($navigation_information->{$signatorial}->{'site_source'} eq 'lost') { %>border-solid;border-color:black;border-width:8px;
+				<% } %>" alt="">
+			<span class="start_menu_foot_label"><%= &subs::lang('start_menu.site_type') %></span>
+		</button>
+
+		<button type="button" class="start_menu_foot start_menu_more"
+		        aria-haspopup="menu" aria-expanded="false" aria-controls="start_menu_more_menu">
+			<span class="start_menu_more_glyph" aria-hidden="true">⋯</span>
+			<span class="start_menu_foot_label"><%= &subs::lang('start_menu.more') %></span>
+		</button>
+
+		<div id="start_menu_more_menu" class="start_menu_more_menu" role="menu" hidden>
+			<%# the now, assistant, navigation and bird buttons live under More now, off
+			    the search's own row; they used to sit across the menu's top-left where a
+			    reach for the search kept landing on the bird %>
+			<% my $now_plain = &subs::icon_for('/images/decipherable/now.png'); %>
+			<button type="button" class="start_menu_more_item" role="menuitem" aria-label="<%= &subs::ui('Now') %>">
+				<img src="<%= &subs::icon_path('now here', $now_plain) %>" jawnos_icon="/images/decipherable/now.png" hint="Now" presence="unknown" id="now_toggle" class="little_thumb now jonathan start_menu_corner" alt="">
+				<span class="start_menu_more_label"><%= &subs::ui('Now') %></span>
+			</button>
+			<button type="button" class="start_menu_more_item" role="menuitem" aria-label="<%= &subs::ui('Assistant') %>">
+				<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb assistant hover start_menu_corner" id="assistant" alt="">
+				<span class="start_menu_more_label"><%= &subs::ui('Assistant') %></span>
+			</button>
+			<button type="button" class="start_menu_more_item" role="menuitem" aria-label="<%= &subs::ui('Navigation') %>">
+				<img src="<%= &subs::icon_for('/images/make believe/gps.png') %>" jawnos_icon="/images/make believe/gps.png" hint="<%= &subs::lang('navigation.update') %>" class="little_thumb hover start_menu_corner" id="navigation_now" alt="">
+				<span class="start_menu_more_label"><%= &subs::ui('Navigation') %></span>
+			</button>
+			<button type="button" class="start_menu_more_item" role="menuitem" aria-label="<%= &subs::ui('Bird') %>">
+				<img class="jonathan little_thumb fuck_you start_menu_corner" hint="Flip the bird" src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" jawnos_icon="/images/decipherable/the bird.png" alt="">
+				<span class="start_menu_more_label"><%= &subs::ui('Bird') %></span>
+			</button>
+
+			<%# The desktop app's embedded view shows this and nothing else does: it
+			    asks the app to switch back to its dashboard tab. A browser tab has
+			    no such place, so the icon stays hidden there (see manager.css). %>
+			<div class="start_menu_admin_item">
+				<button type="button" class="start_menu_more_item" role="menuitem" aria-label="<%= &subs::ui('Admin') %>">
+					<img id="admin_console_toggle" class="jonathan little_thumb start_menu_corner" hint="Admin console" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" onclick="window.jawnosAdminConsole && jawnosAdminConsole()" alt="">
+					<span class="start_menu_more_label"><%= &subs::ui('Admin') %></span>
+				</button>
+			</div>
+		</div>
+	</div>
 </div>

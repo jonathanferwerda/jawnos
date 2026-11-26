@@ -1,4 +1,4 @@
-# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js public/js/manager/manager/08_handbook.js public/css/manager.css lib/JawnOS/Manager/Part11.pm
+# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js public/js/manager/manager/08_handbook.js public/css/manager.css lib/JawnOS/Manager/Part11.pm perl/language.pl perl/help/topics_features.pl public/js/manager/taskbar.js
 # covers:    the running list lists open sessions only, Internet is the one web entry
 #            point, and every catalog-driven app label reads as a capitalised name
 
@@ -30,6 +30,8 @@ unlike($template, qr/id="web_toggle"/, 'no separate Web icon in the start menu')
 like($template, qr/id="internet_toggle"/, 'Internet is the one web entry point');
 my $menu_js = read_file(root() . '/public/js/manager/manager/05_start_menu.js');
 unlike($menu_js, qr/web_toggle/, 'the start menu no longer maps a Web icon');
+my $taskbar_js = read_file(root() . '/public/js/manager/taskbar.js');
+my $help_features = read_file(root() . '/perl/help/topics_features.pl');
 
 my ($run_sql) = $template =~ /if \(\$menu eq 'run'\) \{\s*\$query = &subs::db_query\('([^']+)'/s;
 ok(defined $run_sql, 'the run list has its own query');
@@ -107,6 +109,119 @@ for my $key (@lang_hints) {
 	like($label, qr/^[A-Z]/, "the $key label starts with a capital letter");
 }
 
+# --- the rebuilt panel's shape ----------------------------------------------
+# The panel is one labelled, tabbed dialog: a header (title, search slot, app
+# filter, Configure gear), a page tablist, the app page's category chips and its
+# Recent/All groups, and a footer of Leave, Site type and a More menu. The All
+# chip is the resting selection, so the catalogue shows on open.
+like($template, qr/class="start_menu_header"/, 'the panel has its header');
+like($template, qr/class="start_menu_search_slot"/, 'the header reserves the search slot');
+like($template, qr/id="start_menu_filter" class="start_menu_filter"/,
+	'the app page draws the name filter');
+like($template, qr/class="start_menu_pages" role="tablist"/,
+	'the page row is a labelled tablist');
+like($template, qr/foreach my \$b \( qw\/app run up exp view\/ \)/,
+	'the page row draws Apps, Running, Upcoming, Expiring and System');
+like($template, qr/class="start_menu_menu/, 'each page is a start_menu_menu button');
+like($template, qr/role="tab"/, 'each page button is a tab');
+like($template, qr/aria-selected="<%= \$menu eq \$b \? 'true' : 'false' %>"/,
+	'each page button announces whether it is selected');
+like($template, qr/class="start_menu_category selected" category="all"[\s\S]{0,160}aria-selected="true"/,
+	'the All category chip starts selected');
+like($template, qr/class="start_menu_categories" role="tablist"/,
+	'the category chips are a tablist');
+like($template, qr/class="start_menu_recent_group"/, 'the app page has a Recent group');
+like($template, qr/class="start_menu_all_group"/, 'and an All apps group');
+like($template, qr/class="start_menu_footer"/, 'the panel has its footer');
+like($template, qr/class="start_menu_foot start_menu_leave_button"/, 'Leave sits in the footer');
+like($template, qr/class="start_menu_foot start_menu_site_button"/, 'Site type sits in the footer');
+like($template, qr/class="start_menu_foot start_menu_more"/, 'More sits in the footer');
+like($template, qr/id="start_menu_more_menu" class="start_menu_more_menu" role="menu"/,
+	'More opens its own menu');
+like($template, qr/class="start_menu_admin_item"/,
+	'the Admin console is its own item, hidden outside the desktop app');
+
+# The menu's surface is the theme's own start-menu colour, with the panel colour
+# as the fallback - never a hardcoded yellow, which once left a pale sheet on the
+# wrong theme.
+like($template, qr/theme_surface_colour\('start_menu', \$device\)/,
+	'the surface comes from theme_surface_colour(start_menu, device)');
+like($template, qr/theme_surface_colour\('start_menu', \$device\) \|\| 'var\(--panel\)'/,
+	'and falls back to the panel colour');
+unlike($template, qr/theme_surface_colour\([^)]*\) \|\| 'yellow'/,
+	'the surface has no yellow fallback');
+
+# The page row is labelled from the core catalog and the category chips from the
+# catalogue of app names, so every language has words where a key would show.
+for my $key (qw(search.apps running start_menu.upcoming start_menu.expiring configure.follow_system)) {
+	like($template, qr/&subs::lang\('\Q$key\E'\)/, "the page label $key comes from the catalog");
+}
+like($template, qr/&subs::format_name\(\$category\)/,
+	'the category labels read as formatted names');
+
+# The rebuilt labels are core keys, not just English prose: each resolves to a
+# real English label rather than the key itself.
+for my $key (qw(start_menu.upcoming start_menu.expiring start_menu.all start_menu.all_apps
+	start_menu.forget start_menu.search_apps start_menu.start start_menu.more
+	start_menu.site_type start_menu.no_matches)) {
+	my $label = language::translate('en', $key);
+	ok(defined $label && length $label, "$key resolves in English");
+	isnt($label, $key, "$key is not left as the bare key");
+}
+
+# --- what the panel does ----------------------------------------------------
+# startMenuView() sorts the catalogue and keeps the All chip's catalogue: the
+# unfiltered view lifts up to five recent apps into the Recent group and sorts
+# the rest into All apps; a shelf or a typed query narrows the same rows and
+# drops both group labels. The filter feeds the query as the person types.
+like($menu_js, qr/var startMenuQuery = '';/, 'the app filter has its query state');
+like($menu_js, qr/function startMenuView\(\)/, 'startMenuView draws the catalogue');
+like($menu_js, qr/category === 'all'/, "startMenuView treats the All chip as the whole catalogue");
+like($menu_js, qr/\.start_menu_recent_group/, 'the view moves recent apps into the Recent group');
+like($menu_js, qr/\.start_menu_all_group/, 'and the rest into All apps');
+like($menu_js, qr/\$\('#start_menu_filter'\)/, 'the view resets the filter field');
+like($menu_js, qr/on\('input', '#start_menu_filter'/,
+	'the filter redraws the view as the person types');
+like($menu_js, qr/function startMenuSelectCategory\(category\)/,
+	'startMenuSelectCategory keeps exactly one chip selected');
+like($menu_js, qr/function startMenuMoreToggle\(open\)/,
+	'the More button toggles its menu');
+like($menu_js, qr/function startMenuFocusCapture\(\)/, 'a swap remembers the focused node');
+like($menu_js, qr/function startMenuFocusRestore\(info\)/, 'and puts the keyboard back on it');
+like($menu_js, qr/key === 'Escape'/, 'Escape closes the menu');
+like($menu_js, qr/key === 'ArrowLeft'/, 'the tablists step left with the arrow keys');
+like($menu_js, qr/key === 'ArrowRight'/, 'and right');
+like($menu_js, qr/key === 'ArrowDown'/, 'the rows step down with the arrow keys');
+like($menu_js, qr/key === 'ArrowUp'/, 'and up');
+like($menu_js, qr/key === 'Home'/, 'Home jumps to the first row');
+like($menu_js, qr/key === 'End'/, 'and End to the last');
+like($taskbar_js, qr/\$\('#start_menu \.start_menu_search_slot'\)/,
+	'the search is placed in the menu header slot');
+like($taskbar_js, qr/matchMedia\('\(max-width:620px\)'\)/,
+	'placement asks whether this is a phone');
+like($taskbar_js, qr/addClass\('start_menu_sheet'\)/,
+	'and hangs the sheet class on a phone');
+like($taskbar_js, qr/matchMedia\('\(max-height:520px\)'\)/,
+	'a landscape phone is a short screen, not a narrow one');
+like($taskbar_js, qr/short \? full : 'min\(78vh, ' \+ full \+ '\)'/,
+	'and a short screen takes the whole room between the bars');
+
+# --- the guide's start-menu topic -------------------------------------------
+# Tier-1 help is hand-written and has to keep up with the panel: the guide names
+# the labelled pages and the app filter, the Recent/All groups, Leave/Site/More,
+# and that Help lives in the Apps list rather than at the foot.
+my ($start_menu_help) = $help_features =~ /\$topic\{'start_menu'\} = \{(.*?)\n\t\};/s;
+ok(defined $start_menu_help, 'the start_menu help topic is readable');
+like($start_menu_help, qr/2026-11-25/, 'the topic was verified against this rebuild');
+like($start_menu_help, qr/Apps, Running, Upcoming, Expiring and System/,
+	'the guide names the labelled pages');
+like($start_menu_help, qr/filter in the header/, 'the guide describes the app filter');
+like($start_menu_help, qr/Recent group/, 'the guide describes the Recent group');
+like($start_menu_help, qr/All apps/, 'and the All apps list');
+like($start_menu_help, qr/Leave, Site type and More/, 'the guide names the footer');
+like($start_menu_help, qr/Help is one of the apps in the Apps list/,
+	'and says Help is in the Apps list');
+
 like($menu_js, qr/\.start_menu_toggle_copy/, 'a start button copied into an added bar answers');
 like($menu_js, qr/closest\('#start_menu_toggle, \.start_menu_toggle_copy'\)/,
 	'a press on the copy is not mistaken for an outside press');
@@ -139,6 +254,45 @@ for my $level (qw(light medium maximum)) {
 }
 like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*#start_menu\.jawnos_menu_unfold \{ animation: none; \}/s,
 	'reduced motion takes the unfold away even mid-flight');
+
+# --- the panel's layout ------------------------------------------------------
+# One flex column: header, page row, a body that gives, and a foot. The width
+# and height are the desktop/tablet panel; a phone gets the sheet below.
+like($css, qr/#start_menu\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*width:\s*clamp\(540px, 42vw, 620px\);[^}]*height:\s*clamp\(420px, 68vh, 720px\)/,
+	'the panel is a flex column at the desktop clamp size');
+like($css, qr/#start_menu\.start_menu_sheet\s*\{[^}]*left:\s*8px;[^}]*right:\s*8px;[^}]*bottom:\s*calc\(var\(--taskbar_bottom_h, 0px\) \+ 8px\)/,
+	'a phone sheet spans the screen and stands on the taskbar');
+like($css, qr/\@media \(max-width: 620px\)\s*\{\s*#start_menu\s*\{/,
+	'and the stylesheet draws the same sheet at the 620px breakpoint');
+like($css, qr/\@media \(max-height: 520px\)\s*\{\s*#start_menu\s*\{/,
+	'and a short landscape screen gets the full-height sheet too');
+like($css, qr/#start_menu \.start_menu_body\s*\{[^}]*overflow:\s*hidden/,
+	'the body gives and clips');
+like($css, qr/#start_menu \.start_menu_main_display\s*\{[^}]*overflow-y:\s*auto/,
+	'while the app list scrolls inside it');
+# The active tab/chip is painted under #start_menu: a soft accent fill and an
+# inset foot, not a border width universal.css overrides with !important.
+like($css, qr/#start_menu \.start_menu_menu\.selected[^}]*box-shadow:\s*inset 0 -3px 0 var\(--accent/,
+	'the active page tab wears an accent foot and fill');
+like($css, qr/#start_menu \.start_menu_category\.selected[^}]*background-color:\s*var\(--accent-soft/,
+	'and so does the active category chip');
+unlike($css, qr/#start_menu \.start_menu_menu\.selected[^}]*border-width/,
+	'the active state does not rely on border-width');
+# The recent X is a quiet neutral affordance at rest; red is only for the
+# pointer or the keyboard.
+like($css, qr/#start_menu \.start_menu_recent_clear\s*\{[^}]*color:\s*currentColor;[^}]*opacity:\s*\.55/,
+	'the recent X is neutral at rest');
+unlike($css, qr/#start_menu \.start_menu_recent_clear\s*\{[^}]*#cc0000/,
+	'with no red in its resting rule');
+like($css, qr/#start_menu \.start_menu_recent_clear:hover[^}]*#cc0000/,
+	'and turns red on hover');
+# The foot is three 44px keys; More opens a themed grid above it.
+like($css, qr/#start_menu \.start_menu_foot\s*\{[^}]*min-height:\s*44px/,
+	'a foot key is a 44px target');
+like($css, qr/#start_menu \.start_menu_more_menu\s*\{(?=[^}]*position:\s*absolute)(?=[^}]*bottom:\s*100%)(?=[^}]*right:\s*0)/,
+	'the More menu opens above the foot, anchored to its right');
+like($css, qr/#start_menu \.start_menu_more_item\s*\{[^}]*min-height:\s*44px/,
+	'and each More item is a 44px row');
 
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
@@ -204,6 +358,16 @@ my ($maker_args) = $part11 =~ /render_to_string\(\s*template => 'start_menu\/sta
 ok(defined $maker_args, 'the maker\'s start-menu render is readable');
 my @stash_names = $maker_args =~ /(?:^|,)\s*(\w+)\s*=>/g;
 ok(grep({ $_ eq 'device' } @stash_names), 'the maker hands the template a device');
+
+# A new install opens on the App catalogue, not the System view: the water-drop
+# page is one press away, and a launcher should not open on a diagnosis. The
+# welcome tour still rides in first_run, so the returner keeps that key.
+like($part11, qr/\$menu = 'app' unless length \$menu;/,
+	'a new install lands on the App page');
+unlike($part11, qr/\$menu = 'view' unless length \$menu;/,
+	'and not on the System view');
+like($part11, qr/first_run => \$first_run/,
+	'the maker still returns first_run for the welcome tour');
 
 my %stash = map {
 	$_ => ($_ eq 'menu' ? 'app' : $_ eq 'device' ? 'computer' : ($_ eq 'config' || $_ eq 'parking_lot') ? {} : [])

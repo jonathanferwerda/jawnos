@@ -183,6 +183,35 @@ foreach my $code ( keys %power_labels ) {
 	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
 }
 
+# The rebuilt start menu's own labels: its page row, category chips, header
+# filter and footer. These are core labels on every machine, so they are written
+# in every interface language here rather than left to the English backfill; the
+# sentences around them go through subs::ui/jawnosT on demand.
+my @start_menu_keys = qw( start_menu.upcoming start_menu.expiring start_menu.all start_menu.all_apps start_menu.forget start_menu.search_apps start_menu.start start_menu.more start_menu.site_type start_menu.no_matches );
+my %start_menu_labels = (
+en => [ 'Upcoming', 'Expiring', 'All', 'All apps', 'Forget', 'Search apps', 'Start', 'More', 'Site type', 'No apps match' ],
+zh => [ '即将', '即将到期', '全部', '所有应用', '忘记', '搜索应用', '开始', '更多', '站点类型', '没有匹配的应用' ],
+fr => [ 'À venir', 'Expire bientôt', 'Tout', 'Toutes les applications', 'Oublier', 'Rechercher des applications', 'Démarrer', 'Plus', 'Type de site', 'Aucune application ne correspond' ],
+es => [ 'Próximos', 'Por vencer', 'Todo', 'Todas las apps', 'Olvidar', 'Buscar apps', 'Iniciar', 'Más', 'Tipo de sitio', 'Ninguna app coincide' ],
+de => [ 'Anstehend', 'Ablaufend', 'Alle', 'Alle Apps', 'Vergessen', 'Apps suchen', 'Start', 'Mehr', 'Seitentyp', 'Keine Apps passen' ],
+pt => [ 'Próximos', 'A expirar', 'Tudo', 'Todos os apps', 'Esquecer', 'Pesquisar apps', 'Iniciar', 'Mais', 'Tipo de site', 'Nenhum app corresponde' ],
+hi => [ 'आगामी', 'समाप्त होने वाले', 'सभी', 'सभी ऐप्स', 'भूलें', 'ऐप्स खोजें', 'प्रारंभ', 'और', 'साइट प्रकार', 'कोई ऐप नहीं मिला' ],
+ar => [ 'القادمة', 'المنتهية', 'الكل', 'كل التطبيقات', 'نسيان', 'بحث عن التطبيقات', 'بدء', 'المزيد', 'نوع الموقع', 'لا توجد تطبيقات مطابقة' ],
+bn => [ 'আসন্ন', 'মেয়াদোত্তীর্ণ', 'সব', 'সব অ্যাপ', 'ভুলে যান', 'অ্যাপ খুঁজুন', 'শুরু', 'আরও', 'সাইটের ধরন', 'কোনো অ্যাপ মেলেনি' ],
+ru => [ 'Предстоящие', 'Истекающие', 'Все', 'Все приложения', 'Забыть', 'Поиск приложений', 'Запуск', 'Ещё', 'Тип сайта', 'Нет подходящих приложений' ],
+ja => [ '今後', '期限切れ間近', 'すべて', 'すべてのアプリ', '忘れる', 'アプリを検索', '開始', 'その他', 'サイトの種類', '一致するアプリなし' ],
+pa => [ 'ਆਗਾਮੀ', 'ਮਿਆਦ ਪੁੱਗਣ ਵਾਲੇ', 'ਸਾਰੇ', 'ਸਾਰੀਆਂ ਐਪਾਂ', 'ਭੁੱਲੋ', 'ਐਪਾਂ ਖੋਜੋ', 'ਸ਼ੁਰੂ', 'ਹੋਰ', 'ਸਾਈਟ ਕਿਸਮ', 'ਕੋਈ ਐਪ ਨਹੀਂ ਮਿਲੀ' ],
+id => [ 'Mendatang', 'Akan kedaluwarsa', 'Semua', 'Semua aplikasi', 'Lupakan', 'Cari aplikasi', 'Mulai', 'Lainnya', 'Jenis situs', 'Tidak ada aplikasi yang cocok' ],
+ko => [ '예정', '만료 예정', '전체', '모든 앱', '잊기', '앱 검색', '시작', '더 보기', '사이트 유형', '일치하는 앱 없음' ],
+it => [ 'In arrivo', 'In scadenza', 'Tutto', 'Tutte le app', 'Dimentica', 'Cerca app', 'Avvia', 'Altro', 'Tipo di sito', 'Nessuna app corrisponde' ],
+tr => [ 'Yaklaşan', 'Süresi dolan', 'Tümü', 'Tüm uygulamalar', 'Unut', 'Uygulama ara', 'Başlat', 'Daha fazla', 'Site türü', 'Eşleşen uygulama yok' ],
+);
+foreach my $code ( keys %start_menu_labels ) {
+	my %add;
+	@add{@start_menu_keys} = @{$start_menu_labels{$code}};
+	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
+}
+
 # The Power app's own labels. These are core labels on the app window and the
 # taskbar widget, so they are written in every interface language here rather
 # than left to the English backfill. The sentences around them go through

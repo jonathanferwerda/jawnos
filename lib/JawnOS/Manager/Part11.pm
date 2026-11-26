@@ -617,12 +617,13 @@ sub start_menu_maker($c, $opts = undef) {
 	$opts = {} unless ref $opts eq 'HASH';
 	my $menu = $c->param('menu') // '';
 	$menu = '' unless $menu =~ /^(?:app|run|up|exp|view)$/;
-	# A new install opens on the System page (the water-drop tab), which is the
-	# quickest way to see that the house is well. A saved choice always wins:
-	# the browser only sends nothing while it has none. Once the welcome tour has
-	# been shown the ordinary fallback is the app list.
+	# A new install lands on the App page, the whole catalogue. A launcher should
+	# not open on a diagnosis: the System page (the water-drop tab) is one press
+	# away on the page row, and the welcome tour still rides along in the
+	# returner's first_run. A saved choice always wins: the browser only sends
+	# nothing while it has none.
 	my $first_run = &help::welcome_seen() ? 0 : 1;
-	$menu = $first_run ? 'view' : 'app' unless length $menu;
+	$menu = 'app' unless length $menu;
 
 	# Opening the System view is what asks the levels loop for quick passes.
 	&subs::levels_fast_request() if $menu eq 'view';

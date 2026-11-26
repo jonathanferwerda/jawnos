@@ -497,10 +497,9 @@ $(document).on('focusout', '.taskbar_clock_input', function () {
 	jawnosClockEditEnd(true);
 });
 
-// The search's own home: the taskbar's right end, the start menu's corner
-// beside the leave, now and bird buttons, or the dock's row. One writer, so the
-// menu's own re-renders can call it again after they have swapped the corner
-// buttons out from under it.
+// The search's own home: the taskbar's right end, the start menu's header slot,
+// or the dock's row. One writer, so the menu's own re-renders can call it again
+// after they have swapped the header out from under it.
 function jawnosSearchPlace() {
 	var search = $('#search_entanglement');
 	if (!search.length) { return; }
@@ -514,7 +513,15 @@ function jawnosSearchPlace() {
 		if (!search.closest('#taskbar').length) { search.prependTo('#taskbar'); }
 	}
 	else if (jawnosBars.search == 'start_menu') {
-		if (!search.closest('#start_menu').length) { search.appendTo('#start_menu'); }
+		// the menu's header reserves a slot for it; a menu without one (an older
+		// cached body) still takes it at the panel's own edge
+		var slot = $('#start_menu .start_menu_search_slot').first();
+		if (slot.length) {
+			if (search.parent()[0] !== slot[0]) { search.appendTo(slot); }
+		}
+		else if (!search.closest('#start_menu').length) {
+			search.appendTo('#start_menu');
+		}
 	}
 	else if (!search.closest('#pseudonym_home').length) {
 		search.prependTo('#pseudonym_home');
@@ -630,6 +637,27 @@ function jawnosStartMenuPlace() {
 	var toggle = $('#start_menu_toggle').filter(':visible').first();
 	if (!toggle.length) { toggle = $('.start_menu_toggle_copy:visible').first(); }
 	if (!menu.length || !toggle.length || !menu.is(':visible')) { return; }
+	// A phone gets a sheet: the panel spans the screen with a margin and stands
+	// on the taskbar, whatever edge the bar is on, with its height bounded by the
+	// room between the bars. The stylesheet draws the same box; writing it here
+	// keeps an open menu in step when the bars move under it.
+	var narrow = (typeof window.matchMedia == 'function') && window.matchMedia('(max-width:620px)').matches;
+	var short = (typeof window.matchMedia == 'function') && window.matchMedia('(max-height:520px)').matches;
+	if (narrow || short) {
+		// a short screen is a landscape phone: the sheet takes the whole room
+		// between the bars instead of a portrait's 78vh
+		var full = 'calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 16px)';
+		menu.addClass('start_menu_sheet');
+		menu.css({
+			'left': '8px',
+			'right': '8px',
+			'top': 'auto',
+			'bottom': 'calc(var(--taskbar_bottom_h, 0px) + 8px)',
+			'max-height': short ? full : 'min(78vh, ' + full + ')'
+		});
+		return;
+	}
+	menu.removeClass('start_menu_sheet');
 	var t = toggle[0].getBoundingClientRect();
 	var w = $(window).width();
 	var h = $(window).height();

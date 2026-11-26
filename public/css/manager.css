@@ -19,9 +19,28 @@ html, body {
 	border: 1px solid var(--accent-line, #2f6cc4);
 	border-radius: var(--jawnos-corner, 12px);
 }
-.start_menu_menu.selected {
-	border-width: 2px;
-	border-color: var(--accent, #3b7ddd);
+/* The start-menu page tab and category chip that is showing. Their face is flat,
+   so the accent is painted, not drawn with a border: universal.css pins every
+   button's border width with !important, which a widget cannot win back without
+   shouting. The showing chip therefore wears the soft accent fill, a 3px accent
+   foot and an accent ring - three signals that survive beside a hovered chip
+   (the :hover/:focus-visible arms keep the same specificity the base hover rule
+   has, so order cannot flatten them back out). */
+#start_menu .start_menu_menu.selected,
+#start_menu .start_menu_category.selected,
+#start_menu .start_menu_menu.selected:hover,
+#start_menu .start_menu_category.selected:hover,
+#start_menu .start_menu_menu.selected:focus-visible,
+#start_menu .start_menu_category.selected:focus-visible {
+	background-color: var(--accent-soft, #e6effb);
+	background-image: none;
+	border-color: var(--accent-line, #2f6cc4);
+	box-shadow: inset 0 -3px 0 var(--accent, #3b7ddd), 0 0 0 1px var(--accent, #3b7ddd);
+	/* the theme's ink reads on the accent-soft fill in either theme: on a light
+	   desk the chip is pale and the ink is black, on a dark desk the chip is a
+	   dark wash and the ink is light. The ring and foot carry the accent. */
+	color: var(--ink);
+	opacity: 1;
 }
 
 .jonathan {
@@ -1719,38 +1738,91 @@ body.full_app_mode .window_fullview_exit { display: none !important; }
 }
 
 #start_menu {
-	/* the menu hangs off the top-right corner; never wider than the screen so
-	   phones and split-screen windows do not clip it. It drops from under a top
-	   taskbar and stops above a bottom one, and stands over both bars. */
+	/* A labeled panel that hangs from the button that opens it: one flex column
+	   of header, page row, scrolling body and foot. The width and height are the
+	   desktop/tablet panel; a phone gets the bottom sheet below.
+	   jawnosStartMenuPlace() nudges it against its button, and the surface colour
+	   rides in the template's inline background-color. */
 	box-sizing: border-box;
-	width: min(400px, 100vw);
-	height: min(400px, calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 8px));
-	position:fixed;
+	position: fixed;
 	right: 0px;
 	top: calc(var(--taskbar_top_h, 0px) + 4px);
 	z-index: 40001;
-	border: solid;
-	border-width: 1px;
-	border-color: var(--line);
+	display: flex;
+	flex-direction: column;
+	width: clamp(540px, 42vw, 620px);
+	max-width: 100vw;
+	height: clamp(420px, 68vh, 720px);
+	overflow: hidden;
+	border: 1px solid var(--line);
 	border-radius: var(--jawnos-corner, 12px);
 	box-shadow: 0 24px 60px rgba(0,0,0,.30), 0 2px 10px rgba(0,0,0,.12);
+	color: var(--ink);
 }
 
-/* a little bigger than the default .jonathan size, but leave the taskbar's own
-   buttons (.little_thumb) and other .jonathan users alone */
+/* A phone has no room for a corner panel: the menu becomes a sheet standing on
+   the taskbar, edge to edge but for an 8px margin, and never taller than the
+   room between the bars. jawnosStartMenuPlace() writes this same geometry for
+   its phone branch and hangs the class on the panel, so the sheet and the
+   script agree whether or not the stylesheet's own breakpoint has fired. */
+#start_menu.start_menu_sheet {
+	left: 8px;
+	right: 8px;
+	top: auto;
+	bottom: calc(var(--taskbar_bottom_h, 0px) + 8px);
+	width: auto;
+	max-width: none;
+	height: auto;
+	max-height: min(78vh, calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 16px));
+	border-radius: 16px;
+}
+@media (max-width: 620px) {
+	#start_menu {
+		left: 8px;
+		right: 8px;
+		top: auto;
+		bottom: calc(var(--taskbar_bottom_h, 0px) + 8px);
+		width: auto;
+		max-width: none;
+		height: auto;
+		max-height: min(78vh, calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 16px));
+		border-radius: 16px;
+	}
+}
+/* A phone in landscape is wider than the portrait breakpoint but too short for
+   a corner panel: the same sheet, using all the height between the bars. */
+@media (max-height: 520px) {
+	#start_menu {
+		left: 8px;
+		right: 8px;
+		top: auto;
+		bottom: calc(var(--taskbar_bottom_h, 0px) + 8px);
+		width: auto;
+		max-width: none;
+		height: auto;
+		max-height: calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 16px);
+		border-radius: 16px;
+	}
+}
+
+/* The app pictures stay one size whether startMenuListify() has wrapped them in
+   rows yet or not. The header gear, the foot icons and the More icons are
+   smaller and override this below. */
 #start_menu .jonathan,
-#start_menu .start_menu_main_display img,
-#start_menu .start_menu_menu {
-	height: 54px;
-	width: 54px;
-	max-width: 54px;
+#start_menu .start_menu_main_display img {
+	height: 40px;
+	width: 40px;
+	max-width: 40px;
+	object-fit: contain;
 }
 
-/* Every app tile in the menu wears the same frame, so the desk's material has
-   a defined edge on each: the grid's bare .jonathan icons, the category rail,
-   the sorted rows, and main_icon_maker's own window_icon pictures (a custom
-   main image included). Gallery used to be the only one carrying a border. The
-   edge colour is the material's own, so a texture reads on every tile. */
+/* Every app picture in the menu wears the same frame, so the desk's material
+   has a defined edge on each: the pre-listify grid's .jonathan icons, the
+   category chips, the sorted rows, and main_icon_maker's own window_icon
+   pictures (a custom main image included). The edge colour is the material's
+   own, so a texture reads on every tile. The width is !important because
+   universal.css zeroes a picture inside a button, and rows and chips are
+   buttons now. */
 #start_menu .jonathan,
 #start_menu .start_menu_main_display img,
 #start_menu .start_menu_categories img,
@@ -1758,6 +1830,7 @@ body.full_app_mode .window_fullview_exit { display: none !important; }
 #start_menu .window_icon {
 	box-sizing: border-box;
 	border: 1px solid var(--jawnos-texture-edge, var(--line));
+	border-width: 1px !important;
 	border-radius: var(--jawnos-corner, 10px);
 }
 
@@ -1775,68 +1848,51 @@ body.full_app_mode .window_fullview_exit { display: none !important; }
 	50% { box-shadow: 0 0 14px 5px red; }
 }
 
-/* Leave, site-type, now, assistant and the bird sit in a strip across the
-   top-left of the menu; keep them a fixed square, side by side, and drop the
-   app grid below them so nothing gets covered. (The grid needs the full width
-   for its five-per-row icons, so it cannot be inset sideways.) */
-#start_menu .leave,
-#start_menu .site_type_manual_changer_toggle,
-#start_menu .start_menu_corner {
-	box-sizing: border-box;
-	height: 40px;
-	width: 40px;
-	max-width: 40px;
-	object-fit: contain;
-}
-/* the app list must not scroll under the foot buttons (leave, site type, now,
-   assistant, the bird): the body stops above their strip, so the rows are
-   clipped there instead of passing behind the fixed buttons. Only the app menu
-   wears a foot, so only it gives up the strip. */
-#start_menu:has(.start_menu_app_menu) .start_menu_body {
-	height: calc(100% - 52px);
-}
-
-/* The admin-console icon belongs only to the desktop app's embedded view: it
-   asks the app to switch back to its dashboard tab. A browser tab has no such
-   handler, so the icon is hidden there (see keyboard.js's webview probe). */
-#admin_console_toggle {
-	display: none;
-}
-html.jawnos_webview #admin_console_toggle {
-	display: inline-block;
-}
-
-/* the menu's body: the lists scroll inside it, and the rail keeps its 18% at
-   the right. It is not a positioned box: the corner buttons ride the menu's own
-   frame (they are absolutely placed and their containing block is #start_menu),
-   so scrolling a list does not carry them along - while the body was absolute
-   they scrolled with it */
+/* The body is the only part that gives: the header, the page row and the foot
+   stand, and the view inside scrolls. The panel is a flex column, so nothing
+   here is absolutely placed against a fake 82% content rail. */
 #start_menu .start_menu_body {
-	/* blockified so height:100% resolves (a bare inline span ignores it); not
-	   positioned, so the corner buttons' containing block stays #start_menu */
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+	width: 100%;
+	overflow: hidden;
+}
+
+/* The app list is the app page's scroller: the category chips stand above it
+   and the rows scroll under them. */
+#start_menu .start_menu_main_display {
+	flex: 1 1 auto;
+	min-height: 0;
+	width: 100%;
+	box-sizing: border-box;
+	overflow-y: auto;
+	overflow-x: hidden;
+	scrollbar-width: thin;
+	padding: 4px 6px 18px;
+}
+
+/* The Running/Upcoming/Expiring list and the System view are each the whole
+   body and scroll on their own, so the header and the page row never move. */
+#start_menu #running_start,
+#start_menu .start_menu_view_content {
 	display: block;
+	flex: 1 1 auto;
+	min-height: 0;
 	height: 100%;
-	width: 82%;
-	overflow: auto;
+	width: 100%;
+	box-sizing: border-box;
+	overflow-y: auto;
+	overflow-x: hidden;
+	scrollbar-width: thin;
+	padding: 2px 4px 18px;
 }
-.start_menu_main_display {
-	display: block;
-	/* the search's own row, while the menu is its home; without it the list is
-	   pushed up to the menu's top */
-	padding-top: 50px;
-}
-#start_menu:not(.search_home) .start_menu_main_display,
-#start_menu:not(.search_home) .start_menu_categories { padding-top: 0px; }
-/* the search's row sits at the menu's top, so every tab's content clears it: the
-   running/upcoming/expiring table and the System view as well as the app list */
-#start_menu.search_home .start_menu_body > #running_start,
-#start_menu.search_home .start_menu_body > .start_menu_view_content { padding-top: 50px; }
-.start_menu_view_content { display: block; }
 
 /* The System card is a house-wide levels list: this machine, every peer that
    answered the last pass, and the embedded boards the house can see. It is
-   drawn for the menu's ~82% body width, so the rows are compact and never a
-   wide table. Translucent black keeps it readable on the theme's menu colour. */
+   drawn for the body's width, so the rows are compact and never a wide table.
+   Translucent black keeps it readable on the theme's menu colour. */
 #htop_viewer {
 	color: inherit;
 	font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -1956,133 +2012,478 @@ html.jawnos_webview #admin_console_toggle {
 	text-align: right;
 }
 
-/* The app menu is a list: one icon and its name per row, instead of rows of icons
-   broken up with <br>. startMenuListify() in manager.js builds and orders the rows,
-   so these rules only shape them: icon on the left, name beside it. */
+/* ---- the header -----------------------------------------------------------
+   Title, the search slot (where the global search lands when the menu is its
+   home), the typed app filter, and the Configure gear. */
+#start_menu .start_menu_header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+	min-height: 48px;
+	padding: 0 10px;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--line);
+	color: var(--ink);
+}
+#start_menu .start_menu_title {
+	flex: 0 0 auto;
+	font-size: 15px;
+	font-weight: 600;
+	white-space: nowrap;
+	color: var(--ink);
+}
+#start_menu .start_menu_search_slot {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+}
+/* an empty slot must not eat the app filter's room */
+#start_menu .start_menu_search_slot:empty {
+	flex: 0 0 0;
+}
+#start_menu .start_menu_header #main_logo {
+	flex: 0 0 auto;
+	width: 34px;
+	height: 34px;
+	max-width: 34px;
+	object-fit: contain;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+/* the app filter reads as a modern search field on the theme's own surfaces */
+#start_menu .start_menu_filter {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: 100%;
+	height: 32px;
+	min-height: 32px;
+	box-sizing: border-box;
+	padding: 0 12px;
+	font-size: 14px;
+	color: var(--ink);
+	background-color: var(--panel-2);
+	border: 1px solid var(--line);
+	border-radius: 999px;
+}
+#start_menu .start_menu_filter:focus,
+#start_menu .start_menu_filter:focus-visible {
+	border-color: var(--accent, #3b7ddd);
+	box-shadow: 0 0 0 2px var(--accent-soft, #e6effb);
+	outline: none;
+}
+/* The global search, when its home is the menu, is the thing the filter would
+   be: the filter steps aside rather than stacking a second field. */
+#start_menu.search_home #start_menu_filter {
+	display: none;
+}
+
+/* ---- the app menu ---------------------------------------------------------
+   One column: the category chips stand above and the list below scrolls.
+   startMenuListify() builds a row per app - a real button holding the picture
+   and the name, plus a forget X over the recent list - and startMenuView()
+   moves those rows between the Recent and All groups. */
+#start_menu .start_menu_app_menu {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+	height: 100%;
+	width: 100%;
+}
+#start_menu .start_menu_recent_group,
+#start_menu .start_menu_all_group {
+	display: block;
+}
+#start_menu .start_menu_group_label {
+	padding: 10px 10px 4px;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1.2;
+	letter-spacing: .08em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	color: var(--ink);
+	opacity: .6;
+}
+
+/* One app per row: a real button (the picture and its name) inside the row, so
+   the texture and edge are reset on the button and the row is only its skin. */
 #start_menu .start_menu_item {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	padding: 6px 10px;
+	gap: 4px;
+	min-width: 0;
+	padding: 2px 4px 2px 2px;
+	border-radius: 10px;
+	background-color: transparent;
+	background-image: none;
 	cursor: var(--jawnos-cursor-pointer, pointer);
 }
-#start_menu .start_menu_item + .start_menu_item {
-	border-top: 1px solid rgba(0,0,0,0.06);
+#start_menu .start_menu_item:hover,
+#start_menu .start_menu_item:focus-within {
+	background-color: color-mix(in srgb, var(--accent-soft, #e6effb) 20%, transparent);
 }
-#start_menu .start_menu_item:hover {
-	background-color: rgba(0,0,0,0.1);
+#start_menu .start_menu_item_open {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 48px;
+	height: auto;
+	margin: 0;
+	padding: 4px 6px;
+	background-color: transparent;
+	background-image: none;
+	border: 0 !important;
+	border-radius: 10px;
+	box-shadow: none;
+	color: inherit;
+	font-size: 18px;
+	text-align: left;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
-#start_menu .start_menu_item img {
+#start_menu .start_menu_item_open:hover,
+#start_menu .start_menu_item_open:focus-visible {
+	background-color: transparent;
+	background-image: none;
+	border: 0 !important;
+	box-shadow: none;
+}
+#start_menu .start_menu_item_open:active {
+	transform: none;
+	filter: none;
+	box-shadow: none !important;
+}
+#start_menu .start_menu_item_open img {
 	flex: 0 0 auto;
 	height: 40px;
 	width: 40px;
 	max-width: 40px;
 	object-fit: contain;
+	border: 1px solid var(--jawnos-texture-edge, var(--line)) !important;
+	border-radius: var(--jawnos-corner, 10px);
 }
-.start_menu_item_text {
+#start_menu .start_menu_item_text {
 	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: clamp(16px, 5vw, 22px);
+	font-size: 18px;
+	line-height: 1.25;
 	text-align: left;
+	color: var(--ink);
 }
 
-/* The app menu wears a shelf rail on its left: the five categories filter the
-   list beside it, and the shelf showing wears the same .selected the menu
-   buttons do. The list is the recent list - startMenuView() in manager.js
-   fills it from the list's recent attribute, which every press writes back -
-   so the rail is how everything else is reached, and a press on the showing
-   shelf brings the recents back. */
-.start_menu_app_menu {
+/* ---- the page row and the category chips ---------------------------------
+   Both are labelled, horizontally scrolling rows of flat buttons. The accent
+   fill, foot and ring paint the one that is showing (see the .selected rule
+   near the top of this sheet), so the active tab and chip are never just
+   another tab. */
+#start_menu .start_menu_pages,
+#start_menu .start_menu_categories {
 	display: flex;
-	align-items: flex-start;
-	gap: 8px;
-}
-.start_menu_categories {
-	display: flex;
-	flex-direction: column;
+	flex-direction: row;
+	align-items: stretch;
+	gap: 6px;
 	flex: 0 0 auto;
-	gap: 8px;
-	padding-top: 50px;
-	padding-bottom: 6px;
-	/* the list scrolls under the rail; the rail itself stands still */
-	position: sticky;
-	top: 0px;
-	align-self: flex-start;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+	box-sizing: border-box;
+	padding: 6px 10px;
+	color: var(--ink);
+}
+#start_menu .start_menu_pages {
+	border-bottom: 1px solid var(--line);
+}
+#start_menu .start_menu_pages::-webkit-scrollbar,
+#start_menu .start_menu_categories::-webkit-scrollbar {
+	display: none;
+}
+#start_menu .start_menu_menu,
+#start_menu .start_menu_category {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 44px;
+	min-height: 44px;
+	width: auto;
+	max-width: none;
+	min-width: 0;
+	margin: 0;
+	padding: 0 10px;
+	box-sizing: border-box;
+	background-color: transparent;
+	background-image: none;
+	border-color: transparent;
+	border-radius: 10px;
+	box-shadow: none;
+	color: var(--ink-muted, #5b6169);
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 1;
+	text-align: left;
+	white-space: nowrap;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+	transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
 }
 #start_menu .start_menu_category {
-	box-sizing: border-box;
-	height: 40px;
-	width: 40px;
-	max-width: 40px;
-	object-fit: contain;
-	cursor: var(--jawnos-cursor-pointer, pointer);
-	opacity: 0.65;
-	border-radius: 6px;
+	padding: 0 8px;
+	font-size: 11px;
+	opacity: .85;
 }
+#start_menu .start_menu_menu:hover,
 #start_menu .start_menu_category:hover,
-#start_menu .start_menu_category.selected {
-	opacity: 1;
+#start_menu .start_menu_menu:focus-visible,
+#start_menu .start_menu_category:focus-visible {
+	background-color: color-mix(in srgb, var(--accent-soft, #e6effb) 20%, transparent);
+	color: var(--ink);
 }
-.start_menu_app_menu .start_menu_main_display {
-	flex: 1 1 auto;
-	min-width: 0;
+#start_menu .start_menu_page_glyph,
+#start_menu .start_menu_cat_glyph {
+	flex: 0 0 auto;
+	object-fit: contain;
+}
+#start_menu .start_menu_page_glyph {
+	width: 22px;
+	height: 22px;
+	max-width: 22px;
+}
+#start_menu .start_menu_cat_glyph {
+	width: 20px;
+	height: 20px;
+	max-width: 20px;
+}
+#start_menu .start_menu_page_text,
+#start_menu .start_menu_cat_text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 /* Until a press fills the recent list the note stands where the rows will;
-   startMenuView() toggles it, and it never shows over a shelf. */
+   startMenuView() toggles it, and it never shows beside real rows. */
 #start_menu .start_menu_empty {
 	display: block;
 	padding: 18px 12px;
 	color: var(--ink-muted, #666);
-	font-size: clamp(15px, 4vw, 19px);
+	font-size: 14px;
+	text-align: center;
 }
 
-/* the search, when the start menu is its home: the menu's whole top row,
-   clear of the menu buttons' column on the right */
+/* The global search, when the start menu is its home, is a static child of the
+   header's slot: jawnosSearchPlace() appends it into .start_menu_search_slot,
+   so it simply fills the room the title and gear leave. */
 #start_menu #search_entanglement {
-	position: absolute;
-	top: 2px;
-	left: 8px;
-	right: 84px;
-	height: 46px;
+	position: static;
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
 	display: flex;
 	align-items: center;
 	gap: 4px;
-	z-index: 2;
 }
 #start_menu #search {
 	flex: 1 1 auto;
 	width: auto;
 	min-width: 0 !important;
-	height: 40px;
+	height: 32px;
 	box-sizing: border-box;
 }
-/* the toggle matches the menu's other icons (the app rows are 40px of picture
-   plus the 3px little_thumb frame, 46 in all) */
-#start_menu #search_toggle {
+#start_menu #search_toggle,
+#start_menu #search_cancel {
 	flex: 0 0 auto;
-	width: 40px;
-	height: 40px;
-	max-width: 40px;
+	width: 28px;
+	height: 28px;
+	max-width: 28px;
 	object-fit: contain;
 }
 
-/* The X on a recent item takes the app back off the list; it shows only over
-   the recents, never over a shelf. */
+/* The X takes an app back off the recent list. At rest it is the row's own ink
+   at low opacity - a quiet affordance, not an alarm; the pointer or the
+   keyboard turns it red, and it never wears the button texture. */
 #start_menu .start_menu_recent_clear {
 	flex: 0 0 auto;
-	color: #cc0000;
-	font-size: 18px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	min-width: 28px;
+	min-height: 28px;
+	margin: 0 4px 0 0;
+	padding: 0;
+	box-sizing: border-box;
+	background-color: transparent;
+	background-image: none;
+	border: 0 !important;
+	border-radius: 50%;
+	box-shadow: none;
+	color: currentColor;
+	opacity: .55;
+	font-size: 16px;
 	line-height: 1;
-	padding: 4px 8px;
 	cursor: var(--jawnos-cursor-pointer, pointer);
-	opacity: 0.75;
 }
-#start_menu .start_menu_recent_clear:hover {
+#start_menu .start_menu_recent_clear:hover,
+#start_menu .start_menu_recent_clear:focus-visible {
+	color: #cc0000;
 	opacity: 1;
+	background-color: color-mix(in srgb, #cc0000 12%, transparent);
+	box-shadow: none;
+}
+
+/* ---- the foot -------------------------------------------------------------
+   Leave, Site type and More share the bar: each is a 44px key with its icon
+   over a tiny label. More opens a themed grid above the bar; the admin item is
+   the desktop app's alone. */
+#start_menu .start_menu_footer {
+	position: relative;
+	display: flex;
+	flex-direction: row;
+	align-items: stretch;
+	gap: 4px;
+	flex: 0 0 auto;
+	padding: 6px 10px;
+	box-sizing: border-box;
+	border-top: 1px solid var(--line);
+	color: var(--ink);
+}
+#start_menu .start_menu_foot {
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	min-width: 0;
+	min-height: 44px;
+	height: auto;
+	margin: 0;
+	padding: 4px 6px;
+	box-sizing: border-box;
+	background-color: transparent;
+	background-image: none;
+	border: 0 !important;
+	border-radius: 10px;
+	box-shadow: none;
+	color: var(--ink-muted, #5b6169);
+	font-size: 10px;
+	line-height: 1.1;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+	transition: background-color .15s ease, color .15s ease;
+}
+#start_menu .start_menu_foot:hover,
+#start_menu .start_menu_foot:focus-visible,
+#start_menu .start_menu_more[aria-expanded="true"] {
+	background-color: color-mix(in srgb, var(--accent-soft, #e6effb) 20%, transparent);
+	color: var(--ink);
+}
+#start_menu .start_menu_foot img {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	width: 26px;
+	height: 26px;
+	max-width: 26px;
+	object-fit: contain;
+}
+/* the site-type icon carries an 8px status edge (manual or lost), so it needs a
+   larger box than the other foot icons to keep its glyph readable */
+#start_menu .start_menu_site_button img {
+	width: 34px;
+	height: 34px;
+	max-width: 34px;
+}
+#start_menu .start_menu_foot_label {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 10px;
+}
+#start_menu .start_menu_more_glyph {
+	font-size: 24px;
+	line-height: 1;
+	font-weight: 600;
+}
+#start_menu .start_menu_more_menu {
+	position: absolute;
+	right: 0;
+	left: auto;
+	bottom: 100%;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(150px, 1fr));
+	gap: 4px;
+	min-width: 240px;
+	max-width: min(360px, calc(100vw - 32px));
+	padding: 6px;
+	box-sizing: border-box;
+	background-color: var(--panel-2);
+	background-image: none;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	box-shadow: var(--shadow-2, 0 10px 30px rgba(0,0,0,.16));
+	z-index: 2;
+}
+/* the universal [hidden] face is weaker than the grid above; say it here */
+#start_menu .start_menu_more_menu[hidden] {
+	display: none;
+}
+#start_menu .start_menu_more_item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 44px;
+	height: auto;
+	margin: 0;
+	padding: 4px 10px;
+	box-sizing: border-box;
+	background-color: transparent;
+	background-image: none;
+	border: 0 !important;
+	border-radius: 8px;
+	box-shadow: none;
+	color: var(--ink);
+	font-size: 13px;
+	text-align: left;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+#start_menu .start_menu_more_item:hover,
+#start_menu .start_menu_more_item:focus-visible {
+	background-color: color-mix(in srgb, var(--accent-soft, #e6effb) 22%, transparent);
+}
+#start_menu .start_menu_more_item img {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	width: 24px;
+	height: 24px;
+	max-width: 24px;
+	object-fit: contain;
+}
+#start_menu .start_menu_more_label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* The admin-console item belongs only to the desktop app's embedded view: it
+   asks the app to switch back to its dashboard tab. A browser tab has no such
+   handler, so the item is hidden there (see keyboard.js's webview probe). */
+#start_menu .start_menu_admin_item {
+	display: none;
+}
+html.jawnos_webview #start_menu .start_menu_admin_item {
+	display: block;
+}
+#start_menu #admin_console_toggle {
+	display: none;
+}
+html.jawnos_webview #start_menu #admin_console_toggle {
+	display: inline-block;
 }
 
 .appointment_option {
