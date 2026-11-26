@@ -193,7 +193,11 @@ sub merge_table_rows {
 					$skewed_columns{$_} = 1 for @unknown;
 				}
 			}
-							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
+			# A settings row salvaged into `routers` (its columns in the wrong
+			# places) is not a gateway. Never write it back, and let the local
+			# dedupe at the end of this table remove the copies already here.
+			next ROW if $q eq 'routers' && ref $r eq 'HASH' && !&subs::router_row_valid($r);
+			my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
 							# A document number only ever moves forward. The hub is the only
 							# writer of next_number, but a peer's copy can still be older than
@@ -669,15 +673,45 @@ sub merge_table_rows {
 								}
 								my $removed_row = grep { defined $_->{'uuid'} && defined $r->{'uuid'} && ($_->{'uuid'} eq $r->{'uuid'} ) && ($_->{'table'} || '') eq $q && ($_->{'scope'} || '') ne 'file' } @{$deletions};
 								unless ($removed_row) {
-									if (scalar @resulters == 0) {
+									# A gateway discovered by two machines carries a different uuid
+									# on each. Match the row already here by MAC (or address, when
+									# the MAC is unknown) and update that row; the survivor keeps
+									# its uuid and the family gathers behind it.
+									my $natural_uuid;
+									if ($q eq 'routers' && !$h) {
+										my @local_routers = grep { &subs::router_row_valid($_) }
+											@{ &subs::db_select('routers')->hashes || [] };
+										my ($match) = grep { &subs::router_same_gateway($_, $r) } @local_routers;
+										if ($match) {
+											$h = $match;
+											$natural_uuid = $match->{'uuid'};
+										}
+									}
+									# `$h` may be autovivified to an empty hash by an earlier read, so
+									# the row count is what says "not here yet"; a natural router match
+									# above makes it an update of the survivor.
+									if (scalar @resulters == 0 && !$natural_uuid) {
 										my $inserted = eval { &subs::db_insert($q,$r)};
 										if ($@) { push @insert_errors, ($r->{'uuid'} || '?') . ': ' . ($@ =~ s/\s+/ /gr); }
 										elsif ($inserted) { $rows_inserted++; }
 										else { push @insert_errors, ($r->{'uuid'} || '?') . ': refused'; }
 									}
 									else {
-										$rows_updated++ if $h->{'server_time'} < $r->{'server_time'};
-										eval { &subs::db_update($q,$r, { uuid => $r->{'uuid'} } ) } unless $h->{'server_time'} >= $r->{'server_time'};
+										my $peer_time = ($r->{'server_time'} // 0) + 0;
+										my $local_time = ($h->{'server_time'} // 0) + 0;
+										$rows_updated++ if $local_time < $peer_time;
+										unless ($local_time >= $peer_time) {
+											if ($natural_uuid) {
+												# Keep the survivor's uuid: the peer's row is the same
+												# gateway, not a new one.
+												my $row = { %{$r} };
+												delete $row->{'uuid'};
+												eval { &subs::db_update($q, $row, { uuid => $natural_uuid }) };
+											}
+											else {
+												eval { &subs::db_update($q,$r, { uuid => $r->{'uuid'} } ) };
+											}
+										}
 									}
 									if ($q eq 'appointments' && (!$h->{'server_time'} || $r->{'server_time'} > $h->{'server_time'})) {
 										push @{$updateables}, { app => $r->{'app'}, uuid => $r->{'uuid'} } unless grep { $_->{'app'} eq $r->{'app'} } @{$updateables};
@@ -768,7 +802,10 @@ sub merge_table_rows {
 	foreach my $ta ( sort keys %toggle_changed ) {
 		&subs::watch_toggle_pusher({ app => $ta, value => $toggle_changed{$ta} });
 	}
-	return wantarray ? ($merge_short, $merge_errors, (defined $insert_errors[0] ? $insert_errors[0] : undef)) : $merge_short;
+# A router table that arrived with two spellings of one gateway is clean now.
+# The dedupe's tombstones ride the log to the peers that still hold the copies.
+&subs::router_dedupe() if $q eq 'routers';
+return wantarray ? ($merge_short, $merge_errors, (defined $insert_errors[0] ? $insert_errors[0] : undef)) : $merge_short;
 }
 
 # The post-merge work shared by the snapshot path and the row-stream path: refresh

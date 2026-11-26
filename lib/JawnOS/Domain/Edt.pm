@@ -667,6 +667,100 @@ sub router_probe {
 	return { name => $name, firmware => $firmware, manager => "http://$ip/" };
 }
 
+# A router's gateway MAC, ready to compare: the colon and the case do not name a
+# different machine, and an empty MAC is not an identity at all.
+sub router_mac_normal {
+	my $mac = shift // '';
+	$mac = lc $mac;
+	$mac =~ s/[^0-9a-f]//g;
+	return $mac;
+}
+
+# A row this table can keep: a real IPv4 address. A damaged database once
+# salvaged a settings row into `routers` (its columns landed in the wrong
+# places), and such a row is not a gateway.
+sub router_row_valid {
+	my $row = shift;
+	return 0 unless ref $row eq 'HASH';
+	my $ip = $row->{'ip'} // '';
+	return 0 unless $ip =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+	return 0 if grep { $_ + 0 > 255 } split /\./, $ip;
+	return 1;
+}
+
+# The same gateway seen twice: the MAC decides when both rows name one, because
+# a router keeps its MAC while its address changes and two routers on one address
+# keep different MACs. With a MAC missing (a tunnel gateway), the address is the
+# identity.
+sub router_same_gateway {
+	my ($a, $b) = @_;
+	return 0 unless ref $a eq 'HASH' && ref $b eq 'HASH';
+	my $ma = &router_mac_normal($a->{'mac'});
+	my $mb = &router_mac_normal($b->{'mac'});
+	return $ma eq $mb ? 1 : 0 if length $ma && length $mb;
+	my $ia = $a->{'ip'} // '';
+	my $ib = $b->{'ip'} // '';
+	return (length $ia && $ia eq $ib) ? 1 : 0;
+}
+
+# A kept row takes the newest sighting's fields. The uuid and the creation time
+# stay with the survivor; a blank MAC, name or NIC is filled from the other row
+# even when that sighting is older.
+sub router_absorb {
+	my ($keep, $other) = @_;
+	my $keep_seen = ($keep->{'last_seen'} // 0) + 0;
+	my $other_seen = ($other->{'last_seen'} // 0) + 0;
+	my $newer = $other_seen > $keep_seen ? $other : $keep;
+	foreach my $field ( qw(ip nic name model manager last_seen server_time ost) ) {
+		next unless defined $newer->{$field} && length $newer->{$field};
+		$keep->{$field} = $newer->{$field};
+	}
+	if ((!defined $keep->{'mac'} || !length $keep->{'mac'}) && defined $other->{'mac'} && length $other->{'mac'}) {
+		$keep->{'mac'} = $other->{'mac'};
+	}
+	return;
+}
+
+# One row per gateway. Two machines that discover the same router give it
+# different uuids, and a NIC that was renamed makes a third; syncing them used to
+# leave a card per sighting. The smallest uuid wins, so every machine applies the
+# same rule to the rows it holds and no machine tombstones a uuid smaller than
+# the one it keeps. Removed rows get a single tombstone, so a peer cannot hand
+# them back. Invalid rows take the same road. Read-only when the table already
+# holds one row per gateway.
+sub router_dedupe {
+	my $rows = &db_select('routers')->hashes || [];
+	return 0 unless scalar @{$rows};
+	my @canon;
+	my @drop;
+	foreach my $r ( sort { ($a->{'uuid'} // '') cmp ($b->{'uuid'} // '') } @{$rows} ) {
+		unless (&router_row_valid($r)) { push @drop, $r; next; }
+		my ($same) = grep { &router_same_gateway($_->{'row'}, $r) } @canon;
+		if (!$same) { push @canon, { row => { %{$r} }, changed => 0 }; next; }
+		&router_absorb($same->{'row'}, $r);
+		$same->{'changed'} = 1;
+		push @drop, $r;
+	}
+	my $dropped = 0;
+	foreach my $kept ( @canon ) {
+		next unless $kept->{'changed'};
+		my $uuid = $kept->{'row'}->{'uuid'} // '';
+		next unless length $uuid;
+		my %row = %{ $kept->{'row'} };
+		delete $row{'uuid'};
+		&db_update('routers', \%row, { uuid => $uuid });
+	}
+	foreach my $r ( @drop ) {
+		my $uuid = $r->{'uuid'} // '';
+		next unless length $uuid;
+		&tombstone_writer({ table => 'routers', app => '__president', uuid => $uuid, scope => 'single' });
+		&db_delete('routers', { uuid => $uuid });
+		$dropped++;
+	}
+	&log_writer('routers: kept ' . scalar(@canon) . ', removed ' . scalar(@drop) . ' duplicate or foreign row(s)') if @drop;
+	return $dropped;
+}
+
 sub router_discover {
 	my $now = &rightNow();
 	my $last = &cache_get({ app => '__president', context => 'router', subcontext => 'discovery' });
@@ -677,13 +771,21 @@ sub router_discover {
 		my $gw = $report->{$nic}->{'gw'} || '';
 		next unless $gw =~ /^\d{1,3}(?:\.\d{1,3}){3}$/ && &ip_is_private($gw);
 		my $probe = &router_probe($gw) || { name => 'Router', firmware => '', manager => "http://$gw/" };
-		my $row = &db_select('routers', undef, { ip => $gw })->hashes->[0];
+		my $mac = $report->{$nic}->{'gw_mac'} || '';
 		my %rec = (
 			ip => $gw, nic => $nic, name => $probe->{'name'},
 			model => $probe->{'firmware'}, manager => $probe->{'manager'},
-			mac => $report->{$nic}->{'gw_mac'} || '', last_seen => $now,
+			mac => $mac, last_seen => $now,
 			server_time => $now, ost => $now,
 		);
+		# A peer may already hold this gateway under another uuid, and a NIC that
+		# was renamed spells the same row again. Match the identity, not the uuid,
+		# and update the smallest uuid - the one dedupe keeps - so the sighting
+		# lands on the survivor.
+		my @matches = grep { &router_row_valid($_) && &router_same_gateway($_, \%rec) }
+			@{ &db_select('routers')->hashes || [] };
+		@matches = sort { ($a->{'uuid'} // '') cmp ($b->{'uuid'} // '') } @matches;
+		my $row = $matches[0];
 		if ($row) {
 			&db_update('routers', \%rec, { uuid => $row->{'uuid'} });
 		}
@@ -693,6 +795,7 @@ sub router_discover {
 			&db_insert('routers', \%rec);
 		}
 	}
+	&router_dedupe();
 	return 1;
 }
 
