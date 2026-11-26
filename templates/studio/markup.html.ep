@@ -706,7 +706,7 @@
 					</tr>
 					<tr>
 						<td><%= &subs::ui('Monitor through') %><br><span style="font-size:12px;"><%= &subs::ui('the native path Listen and Monitor use; only what this device has is listed') %></span></td>
-						<td><select id="studio_monitor_backend" hint="<%= &subs::ui('Choose the native path the live monitor runs through') %>"><option value="auto"><%= &subs::ui('Auto') %></option></select> <span id="studio_monitor_backend_note" aria-live="polite"></span></td>
+						<td><select id="studio_monitor_backend" hint="<%= &subs::ui('Choose the native path the live monitor runs through') %>"><option value="auto"><%= &subs::ui('Auto') %></option></select> <label><%= &subs::ui('Buffer') %> <select id="studio_monitor_buffer" hint="<%= &subs::ui('Choose the live monitor buffer: a longer one is safer, a shorter one is quicker') %>"><option value="16">16 ms</option><option value="12">12 ms</option><option value="10">10 ms</option><option value="8" selected>8 ms</option><option value="4">4 ms</option><option value="2">2 ms</option></select></label> <span id="studio_monitor_backend_note" aria-live="polite"></span></td>
 					</tr>
 					<tr>
 						<td>Round trip<br><span style="font-size:12px;">plays a few clicks through the speakers and times the echo on the mic; use speakers (not headphones) and stay quiet</span></td>

@@ -61,7 +61,7 @@ function fake(sel) {
 	f.is = function () { return false; };
 	// A function's own `length` is its arity and is not writable; the fake needs
 	// a match count, so define it.
-	Object.defineProperty(f, 'length', { value: (sel === '#studio_monitor_backend') ? 1 : 0 });
+	Object.defineProperty(f, 'length', { value: (sel === '#studio_monitor_backend' || sel === '#studio_monitor_buffer') ? 1 : 0 });
 	f.find = f.closest = f.append = f.appendTo = f.hide = f.show = f.css = function () { return f; };
 	f.addClass = f.removeClass = f.toggleClass = f.prop = function () { return f; };
 	return f;
@@ -191,6 +191,17 @@ ok(listen.master_values_json && JSON.parse(listen.master_values_json).length ===
 // A re-arm: the new plan is built before the running take is stopped, and a
 // stale take that answers "already running" is cleared and the start retried.
 values['#studio_monitor_backend'] = 'usb';
+// Every buffer the row offers is a depth: 2 ms capture batches, the chosen
+// output runway.
+var buffers = { '16': '8,2,4,4', '12': '8,2,3,4', '10': '8,2,2,5', '8': '8,2,2,4', '4': '8,2,2,2', '2': '8,2,2,1' };
+var mapped = [];
+Object.keys(buffers).forEach(function (ms) {
+	values['#studio_monitor_buffer'] = ms;
+	mapped.push(ms + '=' + sandbox.studioMonitorDepth().join(','));
+});
+ok(mapped.every(function (row) { var p = row.split('='); return buffers[p[0]] === p[1]; }),
+	'every buffer is a depth (got ' + mapped.join(' ') + ')');
+values['#studio_monitor_buffer'] = '4';
 var starts = 0, stops = 0, depth = [];
 sandbox.JawnAudioEngine = {
 	usbTake: function (seconds, json) {
@@ -207,8 +218,8 @@ sandbox.studioUsbListening = false;
 sandbox.studioUsbListenStart(false, '1');
 ok(starts === 2, 'a stale take is cleared and the start retried (got ' + starts + ')');
 ok(stops === 1, 'and the retry stops it exactly once (got ' + stops + ')');
-ok(depth.length === 1 && depth[0] === '8,2,4,2',
-	'the monitor asks for 2 ms capture batches before the 8 ms runway (got ' + JSON.stringify(depth) + ')');
+ok(depth.length === 1 && depth[0] === '8,2,2,2',
+	'the monitor asks for the chosen buffer before the take (got ' + JSON.stringify(depth) + ')');
 
 // A plan that cannot be built leaves the monitor that is already running alone.
 var wasStops = stops;

@@ -503,6 +503,10 @@ like($studio_js, qr/var picked_native = \(picked === 'usb' \|\| picked === 'oboe
 	'so Direct USB reaches Monitor with no house engine');
 like($controls_js, qr/window\.localStorage\.setItem\('jawnos\.studio\.monitor_backend'/,
 	'and the chosen path survives a reload');
+like($markup, qr/id="studio_monitor_buffer"/, 'the monitor buffer sits beside the path picker');
+like($controls_js, qr/var studioMonitorDepths = \{/, 'each buffer is an engine depth');
+like($controls_js, qr/var depth = studioMonitorDepth\(\);/, 'and the listen asks for the chosen one');
+like($controls_js, qr/'jawnos\.studio\.monitor_buffer'/, 'the buffer survives a reload and re-arms on a change');
 like($controls_js, qr/if \(studioEngineRecording\) \{[\s\S]*?studioEngineMonitorGain\(on \? 1 : 0\)/,
 	'a recording engine take arms or silences the live input from the Monitor button');
 unlike($controls_js, qr/studioEngineRecording && studioEngineMonitorArmed/,

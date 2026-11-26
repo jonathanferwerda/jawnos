@@ -1184,7 +1184,25 @@ $(document).on('change', '#studio_monitor_backend', function () {
 	try { window.localStorage.setItem('jawnos.studio.monitor_backend', value); } catch (e) {}
 	studioMonitorBackendRender();
 });
-$(function () { studioMonitorBackendRender(); });
+$(document).on('change', '#studio_monitor_buffer', function () {
+	var value = String($(this).val() || '');
+	try { window.localStorage.setItem('jawnos.studio.monitor_buffer', value); } catch (e) {}
+	// A running take keeps the depth it started with, so the change is only
+	// heard at the next start: re-arm it (the same short dropout a pedal makes).
+	if (studioListenActive) {
+		var next = (typeof studioListenChannel !== 'undefined' && studioListenChannel !== null)
+			? studioListenChannel : undefined;
+		studioListenStop(next, next);
+	}
+});
+$(function () {
+	studioMonitorBackendRender();
+	// The last buffer this device used, so a reload keeps the setting.
+	try {
+		var saved = String(window.localStorage.getItem('jawnos.studio.monitor_buffer') || '');
+		if (studioMonitorDepths[saved]) { $('#studio_monitor_buffer').val(saved); }
+	} catch (e) {}
+});
 
 function studioNativeAudio() {
 	if (studioNativeBridge !== undefined) { return studioNativeBridge; }
@@ -1283,6 +1301,37 @@ var studioUsbListenChannel = 0;
 /// The picker's probe while Configure is open: a cable plugged in after the page
 /// loaded must appear without a reload.
 var studioMonitorProbeTimer = 0;
+
+// The monitor buffer, in ms, as the engine's four depth numbers: capture URBs
+// and packets, then output URBs and packets. The capture side stays at 2 ms
+// batches (8 URBs x 2 packets), which is what stops the first audio being
+// queued behind a long block; the buffer the person chooses is the output
+// runway (`out_urbs x out_packets`). The packets per URB keep the refill cadence
+// at 4-5 ms rather than 2: this thread is not real-time, and a 2 ms cadence was
+// the shape that trimmed on a busy moment. A shorter runway is quicker and
+// needs the thread to refill that often.
+var studioMonitorDepths = {
+	'16': ['8', '2', '4', '4'],
+	'12': ['8', '2', '3', '4'],
+	'10': ['8', '2', '2', '5'],
+	'8': ['8', '2', '2', '4'],
+	'4': ['8', '2', '2', '2'],
+	'2': ['8', '2', '2', '1']
+};
+
+function studioMonitorBuffer() {
+	var select = $('#studio_monitor_buffer');
+	var value = select.length ? String(select.val() || '') : '';
+	if (!studioMonitorDepths[value]) {
+		try { value = String(window.localStorage.getItem('jawnos.studio.monitor_buffer') || ''); }
+		catch (e) { value = ''; }
+	}
+	return studioMonitorDepths[value] ? value : '8';
+}
+
+function studioMonitorDepth() {
+	return studioMonitorDepths[studioMonitorBuffer()];
+}
 
 function studioUsbAudioBridge() {
 	return (window.JawnAudioEngine && typeof window.JawnAudioEngine.usbTake === 'function')
@@ -1449,11 +1498,15 @@ function studioUsbListenStart(quiet, channel, ch, fallback) {
 		try { bridge.usbTakeStop(); } catch (e) {}
 		studioUsbListening = false;
 	}
-	// The monitor's depth: 2 ms capture batches instead of the default 8, so the
-	// first audio is not up to 8 ms late; the 8 ms OUT runway is the one that
-	// measured clean. The engine clamps and answers what it applied.
+	// The depth the buffer selector asks for: 2 ms capture batches in every
+	// setting, and the chosen output runway. The engine clamps and answers what
+	// it applied, so the row's log is the depth the take really runs.
 	if (typeof bridge.usbDepth === 'function') {
-		try { console.log('studio: usb depth', bridge.usbDepth('8', '2', '4', '2')); } catch (e) {}
+		var depth = studioMonitorDepth();
+		try {
+			console.log('studio: usb depth', studioMonitorBuffer() + ' ms',
+				bridge.usbDepth(depth[0], depth[1], depth[2], depth[3]));
+		} catch (e) {}
 	}
 	var answer = studioUsbTake(bridge, plan);
 	if (answer && answer.ok !== true && /already running/i.test(String(answer.error || ''))) {
