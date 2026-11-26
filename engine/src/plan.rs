@@ -258,7 +258,7 @@ fn parse_object(fields: Vec<(String, Json)>) -> Result<ChannelPlan, String> {
                         if !master_order.contains(&kind) {
                             master_order.push(kind);
                         }
-                        master_knobs.push((kind, knob_object(kind, values)?));
+                        master_knobs.push((kind, knob_object(kind, values, true)?));
                     }
                 }
                 Json::Null => {}
@@ -288,12 +288,12 @@ fn parse_object(fields: Vec<(String, Json)>) -> Result<ChannelPlan, String> {
                 if !master_order.contains(&kind) {
                     master_order.push(kind);
                 }
-                master_knobs.push((kind, knob_object(kind, value)?));
+                master_knobs.push((kind, knob_object(kind, value, true)?));
             }
             _ => {
                 let kind = InsertKind::parse(&key)
                     .ok_or_else(|| format!("no such insert: {key}"))?;
-                let values = knob_object(kind, value)?;
+                let values = knob_object(kind, value, false)?;
                 if !order.iter().any(|name| name == kind.name()) {
                     order.push(kind.name().to_string());
                 }
@@ -358,7 +358,14 @@ fn master_rank(kind: InsertKind) -> usize {
 }
 
 /// One insert object's knobs, validated against the effect's own control list.
-fn knob_object(kind: InsertKind, value: Json) -> Result<Vec<(String, f32)>, String> {
+/// `bypass` is the master rack's footswitch, accepted only there: it is a
+/// pseudo-control, so it rides the knob object but not the effect's control
+/// list.
+fn knob_object(
+    kind: InsertKind,
+    value: Json,
+    allow_bypass: bool,
+) -> Result<Vec<(String, f32)>, String> {
     let fields = match value {
         Json::Object(fields) => fields,
         Json::Null => return Ok(Vec::new()),
@@ -371,6 +378,11 @@ fn knob_object(kind: InsertKind, value: Json) -> Result<Vec<(String, f32)>, Stri
     };
     let mut knobs = Vec::with_capacity(fields.len());
     for (key, value) in fields {
+        if allow_bypass && key == "bypass" {
+            let bypass = number(&key, &value)? as f32;
+            knobs.push((key, bypass));
+            continue;
+        }
         let index = kind.control_index(&key).ok_or_else(|| {
             format!(
                 "{} has no \"{}\" knob (it has: {})",
@@ -380,7 +392,10 @@ fn knob_object(kind: InsertKind, value: Json) -> Result<Vec<(String, f32)>, Stri
             )
         })?;
         let control = kind.controls()[index as usize];
-        knobs.push((control.to_string(), kind.native_value(control, number(&key, &value)? as f32)));
+        knobs.push((
+            control.to_string(),
+            kind.native_value(control, number(&key, &value)? as f32),
+        ));
     }
     Ok(knobs)
 }
@@ -815,5 +830,15 @@ mod tests {
         let error = parse_plan(Some(r#"{"master":["tone"]}"#)).unwrap_err();
         assert!(error.contains("tone is not a master insert"), "{error}");
         assert!(error.contains("master_comp"), "{error}");
+
+        // The footswitch is a pseudo-control of the rack, not of a track pedal.
+        let plan = parse_plan(Some(r#"{"master_limiter":{"ceiling":-3,"bypass":1}}"#))
+            .expect("valid")
+            .expect("not raw");
+        assert!(plan
+            .master[0]
+            .knobs
+            .contains(&("bypass".to_string(), 1.0)));
+        assert!(parse_plan(Some(r#"{"tone":{"bypass":1}}"#)).is_err());
     }
 }

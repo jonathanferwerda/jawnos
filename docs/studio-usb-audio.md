@@ -165,7 +165,7 @@ plan written before these keys parses exactly as it did.
 | `channel` | `0` (left/mic) or `1` (right/instrument); the input the take records and the monitor listens to. Default `0`. |
 | `gain`, `pan` | the strip's trim and placement. |
 | `<insert>` / `inserts` | the track pedals, in key order (`fuzz`, `delay`, …). |
-| `master` | the master rack: an array of names (`["master_comp","master_limiter"]`) or an object carrying each one's knobs. A bare `master_*` key is also the rack. |
+| `master` | the master rack: an array of names (`["master_comp","master_limiter"]`) or an object carrying each one's knobs. A bare `master_*` key is also the rack. `bypass` is the slot's footswitch. |
 
 ```json
 {"channel":1,"gain":1.0,"pan":0.0,
@@ -193,10 +193,21 @@ Refresh, a `Monitor buffer (ms)` select (8/4/2), the result line, and the USB
 probe (which now also runs the cable round trip). The final report is written to
 `/sdcard/Download/jawnos-usb-take-<stamp>.json` with the WAV path and counters.
 
-Its **Take through** select still offers only `raw` and the tone+delay fixture,
-so today it sends a plan with no `channel` and no `master`: the engine reads the
-mic and the monitor is dry. Sending `channel` (mic/guitar) and the Studio
-master rack in that plan is the next app change (Sec. 8).
+The Studio page drives this path itself. Its **Monitor through** row (beside the
+Round trip row) lists only what the device has - `Auto`, `Oboe` when the app
+registers the bridge, `Direct USB` when an interface is attached and allowed -
+and Listen and a track's Monitor start the chosen path. Choosing Direct USB
+sends `JawnAudioEngine.usbTake(seconds, plan)` with `seconds = 0` (until
+stopped) and a plan built from the song: the input channel the Listen input
+picked, the selected track's pedals with their values, and the master rack with
+every footswitch. Stop calls `usbTakeStop()` and the poll reads
+`usbTakeStatus()`, so the row under Listen shows the input, the rack, the device
+rate and the drops.
+
+The app's own **Take through** select still offers only `raw` and the tone+delay
+fixture, so a test take from the app panel sends no `channel` and no `master`:
+the engine reads the mic and the monitor is dry. That panel is a test harness;
+the Studio page is the real path.
 
 ## 5. Measurements (tablet, 2026-11-26)
 
@@ -275,14 +286,14 @@ feedback-aware output path; the current backend assumes full-speed 1 ms frames.
 
 ## 8. Next
 
-1. **The app sends the channel and the rack.** The take panel's `raw`/fixture
-   plan needs a channel pick (mic / guitar, i.e. 0 / 1) and the song's master
-   rack, so the live monitor runs them (Sec. 3.1). Then the milestone test: the
-   guitar on channel 1, a couple of pedals, the rack on, at the 8 ms preset
-   (IN 8×2 / OUT 4×2), with the take recording at the same time.
-2. **The backend picker** in the Studio configuration, in the row that lists
-   ALSA / PipeWire / JACK: Oboe vs. Direct (USB) now, populated per attached
-   device, with ASIO (asio4all / the DAW's ASIO) the Windows entry later.
+1. **The milestone test.** With Monitor through set to Direct USB, the guitar on
+   Input 2 (channel 1), a couple of pedals on the track and the song's rack on,
+   at the 8 ms preset (IN 8×2 / OUT 4×2), with a take recording at the same
+   time. The plan the page sends is the one the engine records and monitors
+   (Sec. 3.1, Sec. 4), and the report names `monitor_channel` and
+   `monitor_master`.
+2. **ASIO.** The same picker on Windows: asio4all and the DAW's own ASIO
+   driver, populated the way `Direct USB` is populated here.
 3. A per-device latency preset (Safe 16 / Balanced 8 / Low 4 / Ultra 2),
    storing the measured floor and the last take's health; Auto picks the
    smallest preset that ran clean.

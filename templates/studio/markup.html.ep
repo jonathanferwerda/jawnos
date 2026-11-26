@@ -705,6 +705,10 @@
 						<td><button id="studio_export_tracks" class="hover" hint="<%= &subs::ui('Export the whole song as one mixed audio file') %>"><%= &subs::ui('Export mix') %></button> <span id="studio_export_state" aria-live="polite"></span></td>
 					</tr>
 					<tr>
+						<td><%= &subs::ui('Monitor through') %><br><span style="font-size:12px;"><%= &subs::ui('the native path Listen and Monitor use; only what this device has is listed') %></span></td>
+						<td><select id="studio_monitor_backend" hint="<%= &subs::ui('Choose the native path the live monitor runs through') %>"><option value="auto"><%= &subs::ui('Auto') %></option></select> <span id="studio_monitor_backend_note" aria-live="polite"></span></td>
+					</tr>
+					<tr>
 						<td>Round trip<br><span style="font-size:12px;">plays a few clicks through the speakers and times the echo on the mic; use speakers (not headphones) and stay quiet</span></td>
 						<td><select id="studio_latency_backend" hint="Measure the round trip through this browser or a native audio backend"><option value="javascript" selected>this browser</option><option value="alsa">ALSA</option><option value="pipewire">PipeWire</option><option value="jack">JACK</option></select> <button id="studio_latency_measure">Measure</button> <span id="studio_latency_result">&mdash;</span></td>
 					</tr>

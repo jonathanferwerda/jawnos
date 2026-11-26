@@ -218,6 +218,11 @@ track. The order is the house's chain, not a per-song list:
 5. `master_maximizer`
 6. `master_limiter`
 
+The native engine builds all five of its slots and hears each one's footswitch
+as `master_<name>.bypass` in the value list, so a unit switched on or off is
+heard at the next block rather than at the next start. A bypassed slot keeps
+its knobs and its place and is simply not run.
+
 | name | controls |
 | --- | --- |
 | `master_comp` | `thresh`, `attack`, `mix` |

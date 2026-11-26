@@ -188,21 +188,31 @@ function studioEngineMasterKind(name) {
 	return kind;
 }
 
-// The enabled master rack as engine control values. The browser holds the
-// contract's 0..100 sliders; studioEffectNatural turns each into the unit the
-// engine's mixer takes. A value-only transport update carries this whole list,
-// so a dropped update cannot leave one knob stale.
+// The master rack as engine control values: every slot's footswitch, plus the
+// knobs of the slots that are on. The browser holds the contract's 0..100
+// sliders; studioEffectNatural turns each into the unit the engine's mixer
+// takes. A value-only transport update carries this whole list, so a dropped
+// update cannot leave one knob stale, and a footswitch moved mid-song is heard
+// on the next block because the slot is still in the rack.
 function studioEngineMasterValues() {
 	var records = (typeof studioMasterSave === 'function') ? studioMasterSave() : [];
 	if (!records.length && mixer['admin'] && mixer['admin']['master']) {
 		records = mixer['admin']['master'];
 	}
 	var values = [];
+	var seen = {};
 	records.forEach(function (record) {
-		if (!record || !record['on']) { return; }
+		if (!record || !record['name']) { return; }
 		var kind = studioEngineMasterKind(record['name']);
 		// The Stereo Widener is browser only, exactly as the take plan leaves it.
 		if (kind === 'stereowidener') { return; }
+		seen[record['name']] = true;
+		values.push({
+			name: record['name'],
+			control: 'bypass',
+			value: record['on'] ? 0 : 1
+		});
+		if (!record['on']) { return; }
 		$.each(record['controls'] || {}, function (control, value) {
 			if (studioEffectNumber(value) === null) { return; }
 			values.push({
@@ -211,6 +221,13 @@ function studioEngineMasterValues() {
 				value: studioEffectNatural(kind, control, value)
 			});
 		});
+	});
+	// A slot the song never saved a record for is off, not left running with the
+	// insert's defaults: the rack is always the five, and silence about a slot
+	// must not arm it.
+	(typeof studioEngineMasterList === 'function' ? studioEngineMasterList() : []).forEach(function (name) {
+		if (seen[name]) { return; }
+		values.push({ name: name, control: 'bypass', value: 1 });
 	});
 	return values;
 }

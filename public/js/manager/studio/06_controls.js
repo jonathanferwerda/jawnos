@@ -1165,6 +1165,9 @@ function studioAudioBackendReset() {
 var studioNativeBridge;
 var studioNativeListening = false;
 
+$(document).on('change', '#studio_monitor_backend', function () { studioMonitorBackendRender(); });
+$(function () { studioMonitorBackendRender(); });
+
 function studioNativeAudio() {
 	if (studioNativeBridge !== undefined) { return studioNativeBridge; }
 	studioNativeBridge = null;
@@ -1249,6 +1252,165 @@ function studioNativeStart(quiet) {
 
 var studioListenTimer = 0;
 var studioListenActive = false;
+
+// --- where the live monitor runs ------------------------------------------
+// A phone can carry the monitor two ways: Oboe (the HAL's duplex stream, one
+// input, no rack) and Direct USB (the interface's own isochronous endpoints,
+// the plan's channel, its pedals and the song's master rack). A desktop keeps
+// the house engine's ALSA/PipeWire listen. Only paths this device really has
+// are offered; `Auto` keeps the old choice (Oboe when the app registers it,
+// else the house engine).
+var studioUsbListening = false;
+var studioUsbListenChannel = 0;
+
+function studioUsbAudioBridge() {
+	return (window.JawnAudioEngine && typeof window.JawnAudioEngine.usbTake === 'function')
+		? window.JawnAudioEngine : null;
+}
+
+function studioUsbAudioDevice() {
+	var bridge = studioUsbAudioBridge();
+	if (!bridge || typeof bridge.usbAudioDevice !== 'function') { return null; }
+	try {
+		var data = JSON.parse(bridge.usbAudioDevice());
+		return (data && data.ok === true) ? data : null;
+	} catch (e) { return null; }
+}
+
+function studioMonitorOptions() {
+	var options = [{ id: 'auto', label: 'Auto' }];
+	if (studioNativeAudio()) { options.push({ id: 'oboe', label: 'Oboe' }); }
+	if (studioUsbAudioDevice()) { options.push({ id: 'usb', label: 'Direct USB' }); }
+	return options;
+}
+
+function studioMonitorBackend() {
+	var select = $('#studio_monitor_backend');
+	var value = select.length ? String(select.val() || 'auto') : 'auto';
+	if (value === 'auto') {
+		if (studioNativeAudio()) { return 'oboe'; }
+		return 'engine';
+	}
+	if (value === 'oboe' && !studioNativeAudio()) { return 'engine'; }
+	if (value === 'usb' && !studioUsbAudioDevice()) { return 'engine'; }
+	return value;
+}
+
+// Rebuild the picker from what this device has. A path that disappears (the
+// interface unplugged, the app build without the bridge) leaves the old choice
+// in place only when it is still offered.
+function studioMonitorBackendRender() {
+	var select = $('#studio_monitor_backend');
+	if (!select.length || typeof select.empty !== 'function') { return; }
+	var options = studioMonitorOptions();
+	var current = String(select.val() || 'auto');
+	select.empty();
+	options.forEach(function (option) {
+		select.append($('<option>').attr('value', option.id).text(studioListenText(option.label)));
+	});
+	var keep = options.some(function (option) { return option.id === current; });
+	select.val(keep ? current : 'auto');
+	var note = $('#studio_monitor_backend_note');
+	if (note.length) {
+		var device = studioUsbAudioDevice();
+		var row = device && device.device ? device.device : null;
+		note.text(row && row.name ? String(row.name) : '');
+	}
+}
+
+// The plan a direct-USB listen runs: one input, the selected track's rack, and
+// the song's master rack. It is the same plan a take records through, so the
+// monitor hears the trim, the pedals and the mastering pass the take belongs
+// to. Values are the engine's own units (studioEffectNatural); a bypassed
+// insert rides as `bypass`, exactly as the transport's value list does.
+function studioUsbListenPlan(listen_channel, ch) {
+	var plan = { channel: Number(listen_channel) === 1 ? 1 : 0 };
+	var gain = parseFloat($('#studio_listen_gain').val());
+	if (isFinite(gain)) { plan.gain = Math.max(0, Math.min(4, gain)); }
+	var strip = studioAudio.channels[(ch === undefined || ch === null) ? studioSelectedChannel : ch];
+	if (strip && strip.inserts) {
+		strip.inserts.forEach(function (ins) {
+			if (!ins || !ins.name) { return; }
+			if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
+			var kind = studioEffectKind(ins.name);
+			var knobs = {};
+			if (!ins.bypassed) {
+				$.each(ins.values || {}, function (control, value) {
+					if (control === 'sync' || typeof studioEffectNatural !== 'function') { return; }
+					var natural = studioEffectNatural(kind, control, value);
+					if (typeof natural === 'number' && isFinite(natural)) { knobs[control] = natural; }
+				});
+			}
+			if (ins.bypassed) { knobs.bypass = 1; }
+			plan[kind] = knobs;
+		});
+	}
+	var master = (typeof studioEngineMasterList === 'function') ? studioEngineMasterList() : [];
+	if (master.length) {
+		plan.master = master;
+		if (typeof studioEngineMasterValues === 'function') {
+			studioEngineMasterValues().forEach(function (entry) {
+				if (master.indexOf(entry.name) < 0) { return; }
+				if (!plan[entry.name]) { plan[entry.name] = {}; }
+				plan[entry.name][entry.control] = entry.value;
+			});
+		}
+	}
+	return plan;
+}
+
+function studioUsbListenStart(quiet, channel, ch, fallback) {
+	var bridge = studioUsbAudioBridge();
+	var listen_channel = (channel === undefined || channel === null)
+		? $('#studio_listen_input').val() : String(channel);
+	if (!bridge) {
+		studioListenSetActive(false);
+		if (fallback && typeof studioMonitorEngineFallback === 'function') { studioMonitorEngineFallback(); }
+		if (!quiet) { studioListenShowError(studioListenText('the app build has no direct USB audio')); }
+		return;
+	}
+	var answer = {};
+	try { answer = JSON.parse(bridge.usbTake('0', JSON.stringify(studioUsbListenPlan(listen_channel, ch)))); }
+	catch (e) { answer = { ok: false, error: studioListenText('the native audio bridge did not answer') }; }
+	if (!answer || answer.ok !== true) {
+		studioListenSetActive(false);
+		if (fallback && typeof studioMonitorEngineFallback === 'function') { studioMonitorEngineFallback(); }
+		if (!(quiet && studioListenNotRunning(answer && answer.error))) {
+			studioListenShowError((answer && answer.error) || studioListenText('the USB monitor did not start'));
+		}
+		return;
+	}
+	studioUsbListening = true;
+	studioUsbListenChannel = Number(listen_channel) === 1 ? 1 : 0;
+	studioEngineListening = true;
+	studioListenSetActive(true);
+	studioListenChannel = studioUsbListenChannel;
+	if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
+	studioListenRender({ state: (answer.state || 'detecting'), channel: studioUsbListenChannel, frames: 0, usb: answer });
+	studioListenPollStart();
+}
+
+function studioUsbStatus() {
+	var bridge = studioUsbAudioBridge();
+	var data = {};
+	if (bridge) { try { data = JSON.parse(bridge.usbTakeStatus()); } catch (e) { data = {}; } }
+	if (!data || data.ok !== true) {
+		studioUsbListening = false;
+		studioEngineListening = false;
+		studioListenPollStop();
+		studioListenSetActive(false);
+		if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
+		studioListenShowError((data && data.error) || studioListenText('the USB monitor did not answer'));
+		return;
+	}
+	studioListenSetActive(true);
+	studioListenRender({
+		state: (data.state || 'listening'),
+		channel: studioUsbListenChannel,
+		frames: data.frames_in,
+		usb: data
+	});
+}
 // The engine input the running Listen names, so Monitor can tell when another
 // track (or another input) has become the one to hear.
 var studioListenChannel = null;
@@ -1282,6 +1444,16 @@ function studioListenRender(data) {
 	$('#studio_listen_input_text').text(studioListenText('Input') + ' ' + studioListenInputText(channel));
 	var frames = (typeof data.frames == 'number' && isFinite(data.frames))
 		? String(data.frames) : '\u2014';
+	if (data.usb) {
+		var usb = data.usb;
+		var usbFacts = [studioListenInputText(data.channel)];
+		if (usb.monitor_master) { usbFacts.push(studioListenText('Rack') + ' ' + usb.monitor_master); }
+		if (usb.out_rate && usb.out_rate.hz) { usbFacts.push(usb.out_rate.hz + ' Hz'); }
+		if (typeof usb.dropped_out === 'number') { usbFacts.push(studioListenText('drop') + ' ' + usb.dropped_out); }
+		if (typeof usb.underruns_out === 'number') { usbFacts.push('xrun ' + usb.underruns_out); }
+		$('#studio_listen_frames').text(usbFacts.join(' \u00b7 '));
+		return;
+	}
 	if (data.native) {
 		var native = data.native;
 		var facts = [];
@@ -1311,6 +1483,7 @@ function studioListenPollStop() {
 }
 
 function studioListenStatus() {
+	if (studioUsbListening) { studioUsbStatus(); return; }
 	if (studioNativeListening) { studioNativeStatus(); return; }
 	if (!$('#studio_listen_toggle').length) { studioListenPollStop(); return; }
 	$.ajax({
@@ -1387,7 +1560,9 @@ function studioListenInserts(ch) {
 // instead of a silent monitor.
 function studioListenStart(quiet, channel, ch, fallback) {
 	studioListenShowError('');
-	if (studioNativeAudio()) { studioNativeStart(quiet); return; }
+	var backend = studioMonitorBackend();
+	if (backend === 'usb') { studioUsbListenStart(quiet, channel, ch, fallback); return; }
+	if (backend === 'oboe' && studioNativeAudio()) { studioNativeStart(quiet); return; }
 	var listen_channel = (channel === undefined || channel === null)
 		? $('#studio_listen_input').val() : String(channel);
 	var request = {
@@ -1431,6 +1606,18 @@ function studioListenStart(quiet, channel, ch, fallback) {
 // `next_channel`/`ch` let Monitor move the one Listen to another track's input
 // after the engine has stopped the old one; the Configure control passes none.
 function studioListenStop(next_channel, ch) {
+	if (studioUsbListening) {
+		var usb = studioUsbAudioBridge();
+		studioUsbListening = false;
+		studioEngineListening = false;
+		studioUsbListenChannel = 0;
+		studioListenPollStop();
+		studioListenSetActive(false);
+		if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
+		if (usb) { try { usb.usbTakeStop(); } catch (e) {} }
+		if (next_channel !== undefined) { studioListenStart(false, next_channel, ch, true); }
+		return;
+	}
 	if (studioNativeListening) {
 		var bridge = studioNativeAudio();
 		studioNativeListening = false;

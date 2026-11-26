@@ -241,10 +241,10 @@ like($js, qr/function studioEngineTrackSend\(ch\)/, 'the plan reads the destinat
 like($js, qr/studioPlugInfo\(ch, 'input'\)/, 'through the same saved plug the two jacks share');
 like($js, qr/return source - 1;/, 'the engine track is the 0-based channel number');
 my $master = body($js, 'studioEngineMasterList');
-like($master, qr/return record && record\['on'\]\n\t\t\t&& studioEffectKind\(record\['name'\]\) !== 'stereowidener';/,
-	'and the master list drops the browser-only Stereo Widener, named directly or as master_stereowidener');
-like($master, qr/\.map\(function \(record\) \{\n\t\treturn record\['name'\];/,
-	'while every other enabled master effect still reaches the take');
+like($master, qr/return order\.filter\(function \(name\) \{/,
+	'and the master list is the contract\'s five slots');
+like($master, qr/return name !== 'master_stereowidener';/,
+	'dropping the browser-only Stereo Widener');
 like($js, qr/\$\.each\(\[c\.insertByName, c\.outInsertByName\], function \(j, map\) \{/,
 	'a pedal macro pushes into both chains');
 

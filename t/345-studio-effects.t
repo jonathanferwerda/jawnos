@@ -417,13 +417,13 @@ like($js, qr/if \(!ins \|\| ins\.bypassed\) \{ return; \}/,
 like($js, qr/inserts\.push\(studioEffectKind\(ins\.name\)\);/,
 	'a rack insert travels under its canonical engine name');
 like($js, qr/function studioEngineMasterList\(\)/,
-	'the take collects the enabled master effects');
-like($js, qr/studioMasterSave\(\)/,
-	'the list comes from the page\'s own master rack');
-like($js, qr/mixer\['admin'\] && mixer\['admin'\]\['master'\]/,
-	'the song\'s saved master state is the fallback');
-like($js, qr/record\['on'\]/,
-	'only a switched-on master effect is sent');
+	'the take collects the master rack');
+like($js, qr/var order = \(typeof studioMasterOrder/,
+	'the rack is the contract\'s own list');
+like($js, qr/name !== 'master_stereowidener'/,
+	'the browser-only Stereo Widener is the one slot left out');
+like($master, qr/control: 'bypass'/,
+	'each slot travels with its footswitch, so on or off is heard mid-song');
 like($js, qr/tracks_json: JSON\.stringify\(plan\)/,
 	'the per-track plan travels as tracks_json');
 like($js, qr/master_json: JSON\.stringify\(master\)/,

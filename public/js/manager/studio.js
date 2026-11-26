@@ -1459,24 +1459,17 @@ function studioEngineTrackSend(ch) {
 	return source - 1;
 }
 
-// The enabled master effects the page has now; the engine builds them in the
-// contract's order whatever order this list is in. A master switched on after
-// the take started is not in that take's rack (see the engine's `master` note).
+// The master rack the engine builds: always the contract's five slots, in the
+// order the page lists them. Whether a slot is heard is a bypass in the value
+// list (`master_<name>.bypass`), not the insert's absence, so a footswitch moved
+// mid-song is heard on the next block instead of at the next start. The Stereo
+// Widener is browser-only, so it is the one slot the engine never builds.
 function studioEngineMasterList() {
-	var records = (typeof studioMasterSave === 'function') ? studioMasterSave() : [];
-	// Before the browser graph exists, the song's admin still holds the rack's
-	// on/off state, so a take can arm what the song says was on.
-	if (!records.length && mixer['admin'] && mixer['admin']['master']) {
-		records = mixer['admin']['master'];
-	}
-	return records.filter(function (record) {
-		// The Stereo Widener is a browser-only master effect: the native engine
-		// cannot build it, so an enabled slot is left out rather than refusing
-		// the take.
-		return record && record['on']
-			&& studioEffectKind(record['name']) !== 'stereowidener';
-	}).map(function (record) {
-		return record['name'];
+	var order = (typeof studioMasterOrder !== 'undefined')
+		? studioMasterOrder
+		: ['master_comp', 'master_eq', 'master_reverb', 'master_maximizer', 'master_limiter'];
+	return order.filter(function (name) {
+		return name !== 'master_stereowidener';
 	});
 }
 

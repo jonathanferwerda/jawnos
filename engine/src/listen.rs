@@ -996,10 +996,18 @@ mod tests {
 
         let dry = peak(r#"{"channel":1,"gain":4}"#);
         let limited = peak(r#"{"channel":1,"gain":4,"master_limiter":{"ceiling":-24}}"#);
+        // The same insert switched off is the rack's footswitch, not its
+        // absence: the plan carries it and the listener does not hear it.
+        let bypassed =
+            peak(r#"{"channel":1,"gain":4,"master_limiter":{"ceiling":-24,"bypass":1}}"#);
         assert!(dry > 1.0, "the instrument channel was not monitored: {dry}");
         assert!(
             limited < dry * 0.5,
             "the master rack did not run: dry {dry}, limited {limited}"
+        );
+        assert!(
+            (bypassed - dry).abs() < 1e-3,
+            "a bypassed insert still ran: dry {dry}, bypassed {bypassed}"
         );
     }
 

@@ -1,9 +1,13 @@
-# tests-for: public/js/manager/studio.js public/js/manager/studio/06_controls.js
+# tests-for: public/js/manager/studio.js public/js/manager/studio/06_controls.js public/js/manager/studio/10_master.js
 # covers:    An engine take arms its live input only when a track is actually
 #            monitored. A stale app-wide Monitor setting left at "yes" must not
 #            turn a Monitor-off recording into a dry monitored one. This runs
 #            studioEngineStartNow in node with the AJAX call captured, so the
-#            request body is checked directly.
+#            request body is checked directly. It also checks the direct-USB
+#            listen's plan: the input channel, the track's pedals with their
+#            values, a bypassed pedal and the song's master rack (always the
+#            five slots, each with its footswitch), and that the picker answers
+#            `usb` only when the app bridge and a device are there.
 
 use strict;
 use warnings;
@@ -35,7 +39,9 @@ var values = {
 	'#studio_engine_seconds': '10',
 	'#studio_engine_tracks': '1',
 	'#studio_engine_inputs': '0',
-	'#studio_engine_inserts': ''
+	'#studio_engine_inserts': '',
+	'#studio_listen_gain': '2',
+	'#studio_monitor_backend': 'usb'
 };
 
 function fake(sel) {
@@ -49,7 +55,9 @@ function fake(sel) {
 	f.attr = function () { return undefined; };
 	f.text = function () { return ''; };
 	f.is = function () { return false; };
-	f.length = 0;
+	// A function's own `length` is its arity and is not writable; the fake needs
+	// a match count, so define it.
+	Object.defineProperty(f, 'length', { value: (sel === '#studio_monitor_backend') ? 1 : 0 });
 	f.find = f.closest = f.append = f.appendTo = f.hide = f.show = f.css = function () { return f; };
 	f.addClass = f.removeClass = f.toggleClass = f.prop = function () { return f; };
 	return f;
@@ -84,6 +92,31 @@ var sandbox = {
 	studioAudioLabel: function (text) { return text; }
 };
 sandbox.window = sandbox;
+
+// The app bridge the page sees in the WebView. `usbTake` answers the same
+// shape the Java side does: accepted, with the interface still opening.
+sandbox.JawnAudioEngine = {
+	usbTake: function (seconds, plan) { captured.length = 0; captured.push({ usb: plan }); return '{"ok":true,"state":"detecting"}'; },
+	usbTakeStatus: function () { return '{"ok":true,"state":"started","frames_in":0}'; },
+	usbTakeStop: function () { return '{"ok":true}'; },
+	usbAudioDevice: function () { return '{"ok":true,"device":{"name":"UM2"}}'; }
+};
+
+// The effects part's mapping. Identity is enough here: the test is which names
+// and values reach the plan, not how a slider becomes a native unit.
+sandbox.studioEffectKind = function (name) { return String(name); };
+sandbox.studioEffectBrowserOnly = function (name) { return String(name) === 'stereowidener'; };
+sandbox.studioEffectNatural = function (kind, control, value) { return value; };
+sandbox.studioEngineMasterValues = function () {
+	return [
+		{ name: 'master_comp', control: 'bypass', value: 0 },
+		{ name: 'master_comp', control: 'thresh', value: -18 },
+		{ name: 'master_limiter', control: 'bypass', value: 1 },
+		{ name: 'master_eq', control: 'bypass', value: 1 },
+		{ name: 'master_reverb', control: 'bypass', value: 1 },
+		{ name: 'master_maximizer', control: 'bypass', value: 1 }
+	];
+};
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox, { filename: 'studio.js' });
 vm.runInContext(fs.readFileSync(process.argv[3], 'utf8'), sandbox, { filename: '06_controls.js' });
@@ -108,10 +141,36 @@ var off = requestFor({});
 ok(off, 'the Monitor-off take made a request');
 ok(off.monitor_input === 'false', 'Monitor off sends monitor_input false (got ' + off.monitor_input + ')');
 
-// One track monitored: the take's live input is armed.
+// One monitored track: the take's live input is armed.
 var on = requestFor({ 1: 1 });
 ok(on, 'the Monitor-on take made a request');
 ok(on.monitor_input === 'true', 'Monitor on sends monitor_input true (got ' + on.monitor_input + ')');
+
+// The direct-USB listen's plan: the input channel, the track's pedals with
+// their values, a bypassed pedal, and the song's rack with its footswitches.
+sandbox.mixer = { admin: { master: [] } };
+sandbox.studioAudio.channels = {
+	1: { inserts: [
+		{ name: 'fuzz', bypassed: false, values: { gain: 50, tone: 50, level: 50 } },
+		{ name: 'delay', bypassed: true, values: { time: 40 } },
+		{ name: 'stereowidener', bypassed: false, values: { width: 50 } }
+	] }
+};
+var plan = sandbox.studioUsbListenPlan('1', '1');
+ok(plan.channel === 1, 'the plan names the instrument channel (got ' + plan.channel + ')');
+ok(plan.gain === 2, 'the plan carries the listen trim (got ' + plan.gain + ')');
+ok(plan.fuzz && plan.fuzz.gain === 50 && plan.fuzz.level === 50, 'the fuzz travels with its knobs');
+ok(plan.delay && plan.delay.bypass === 1 && plan.delay.time === undefined,
+	'a bypassed pedal travels as a bypass, without its knobs (got ' + JSON.stringify(plan.delay) + ')');
+ok(plan.stereowidener === undefined, 'the browser-only widener is left out');
+ok(Array.isArray(plan.master) && plan.master.length === 5,
+	'the rack is always the five slots (got ' + JSON.stringify(plan.master) + ')');
+ok(plan.master.indexOf('master_stereowidener') < 0, 'the widener is not a rack slot');
+ok(plan.master_comp && plan.master_comp.thresh === -18, 'an enabled slot carries its knobs');
+ok(plan.master_limiter && plan.master_limiter.bypass === 1,
+	'a switched-off slot travels as bypass (got ' + JSON.stringify(plan.master_limiter) + ')');
+ok(sandbox.studioMonitorBackend() === 'usb',
+	'the picker answers usb when the bridge and a device are there (got ' + sandbox.studioMonitorBackend() + ')');
 
 console.log('ok');
 JS

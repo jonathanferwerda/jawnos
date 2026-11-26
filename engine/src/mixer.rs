@@ -552,7 +552,10 @@ impl Mixer {
     /// `master_eq.low`, `master_reverb.model`, `master_maximizer.loudness`,
     /// `master_limiter.ceiling`. The prefix is resolved by
     /// [`master_effect_name`], so the canonical `compressor.threshold` also
-    /// works. Returns false when the named insert is not in the rack.
+    /// works. `master_<name>.bypass` is the rack's footswitch (1 bypasses, 0
+    /// restores), so one value list can build the whole rack once and then
+    /// switch a slot in or out exactly as the page's footswitch does. Returns
+    /// false when the named insert is not in the rack.
     ///
     /// Like [`Channel::set`], this only writes a smoothed target and is meant
     /// for the setup thread or the audio thread between blocks; a control
@@ -562,6 +565,9 @@ impl Mixer {
             Some(pair) => pair,
             None => return false,
         };
+        if knob == "bypass" {
+            return self.bypass_master(prefix, value >= 0.5);
+        }
         let effect = master_effect_name(prefix);
         let value = match InsertKind::parse(prefix) {
             Some(kind) => kind.native_value(knob, value),
@@ -1067,6 +1073,21 @@ mod tests {
         let level = std::f32::consts::FRAC_1_SQRT_2;
         assert!((stereo[0] - level).abs() < 1e-6);
         assert!((stereo[1] - level).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_master_footswitch_rides_the_value_list() {
+        let mut mixer = Mixer::new(&[], &[]);
+        mixer.set_master_chain(&[InsertKind::Limiter], 48_000, 4);
+        mixer.prepare(48_000, 4);
+        // 1 bypasses and 0 restores, so one value list can build the rack once
+        // and then switch a slot in or out mid-stream.
+        assert!(mixer.set_master("master_limiter.bypass", 1.0));
+        assert!(mixer.set_master("master_limiter.bypass", 0.0));
+        // A slot the rack does not hold cannot be switched.
+        assert!(!mixer.set_master("master_comp.bypass", 1.0));
+        let mut bus = vec![0.0f32; 4];
+        assert!(mixer.run_master(&mut bus).is_ok());
     }
 
     #[test]

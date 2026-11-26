@@ -525,7 +525,7 @@ unlike($controls_js, qr/studioEngineAnswer = function/,
 like($controls_js, qr/function studioSetMonitor\(ch, on, from_user\) \{[\s\S]{0,300}?studioMonitorEngineFailed = false;/,
 	'pressing Monitor tries the engine again');
 my $fallback_calls = () = $controls_js =~ /if \(fallback && typeof studioMonitorEngineFallback === 'function'\) \{ studioMonitorEngineFallback\(\); \}/g;
-is($fallback_calls, 2, 'both a refused Listen and a transport error fall back to the browser');
+is($fallback_calls, 4, 'a refused engine Listen, a refused transport and either USB refusal all fall back to the browser');
 like($controls_js, qr/if \(next_channel !== undefined\) \{ studioListenStart\(false, next_channel, ch, true\); \}/,
 	'moving the one Listen keeps the fallback request');
 

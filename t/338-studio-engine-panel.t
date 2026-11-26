@@ -559,8 +559,10 @@ like($body, qr/Input 1 is channel 0 and Input 2 is channel 1/,
 
 like($controls_js, qr/function studioNativeAudio\(/, 'the app bridge is detected on the phone');
 like($controls_js, qr/window\.JawnAudioOboe/, 'and named');
-like($controls_js, qr/if \(studioNativeAudio\(\)\) \{ studioNativeStart\(quiet\); return; \}/,
-	'Listen prefers the phone\'s native stream');
+like($controls_js, qr/if \(backend === 'oboe' && studioNativeAudio\(\)\) \{ studioNativeStart\(quiet\); return; \}/,
+	'Listen prefers the phone\'s native stream when the picker says Oboe');
+like($controls_js, qr/if \(backend === 'usb'\) \{ studioUsbListenStart\(/,
+	'and the direct USB path when the picker says Direct USB');
 like($controls_js, qr/bridge\.start\(String\(rate\), '192', String\(gain\)\)/,
 	'the native stream opens at the house rate, a 4 ms burst and the Listen gain');
 like($controls_js, qr/if \(studioNativeListening\) \{ studioNativeStatus\(\); return; \}/,
