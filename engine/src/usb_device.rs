@@ -26,20 +26,26 @@
 //! Capture feeds two rings: the **record ring** the take's `drain_ring` writes to
 //! disk (the same shape and strip the Oboe take uses) and a **monitor ring** the
 //! optional playback endpoint reads back through a small bounded fifo.
+//!
+//! The four depth numbers (IN URBs, IN packets per URB, OUT URBs, OUT packets
+//! per URB) are one process-wide setting — `jawn_audio_set_usb_depth` — read once
+//! when a take starts, so the monitor runway can be swept from 8 ms down to
+//! 1–2 ms. `jawn_audio_roundtrip_usb` measures the cable loop with the kernel's
+//! USB bus frame numbers (`urb.start_frame`) rather than the wall clock.
 
 #![allow(dead_code)]
 
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
-use std::sync::atomic::AtomicBool;
-#[cfg(any(target_os = "android", feature = "oboe"))]
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 
 use crate::control::{error_json, into_c_string, json_escape, lock_control};
 use crate::monbus;
 use crate::plan::ChannelPlan;
+#[cfg(target_os = "android")]
+use crate::roundtrip as rt;
 
 /// The rate a UAC1 full-speed device on this path runs at. The report carries
 /// it so a WAV and a sidecar agree with the frames the kernel handed over.
@@ -57,6 +63,139 @@ pub(crate) const PACKETS_PER_URB: usize = 8;
 pub(crate) const OUT_URB_COUNT: usize = 2;
 /// Isochronous packets in each monitor URB.
 pub(crate) const OUT_PACKETS_PER_URB: usize = 4;
+
+/// Every depth dimension is clamped into this inclusive range. It is also the
+/// range a take may be swept over: eight 8-packet URBs is already 64 ms of IN
+/// runway, and one 1-packet OUT URB is the shortest monitor. Values beyond
+/// [`DEPTH_SANE_MAX`] are nonsense rather than something to clamp silently.
+pub(crate) const DEPTH_MIN: i32 = 1;
+pub(crate) const DEPTH_MAX: i32 = 8;
+pub(crate) const DEPTH_SANE_MAX: i32 = 64;
+
+/// The four numbers that shape a take. Read once at the start of
+/// [`run_usb_plan`], so a depth change while a take runs applies to the next
+/// one, never to a stream whose buffers are already in flight.
+///
+/// The monitor's average added latency is roughly
+/// `in_packets / 2 + out_urbs * out_packets` ms: half an IN URB of capture
+/// batching plus the whole OUT runway. That is a budget comment, not a promise
+/// the report makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UsbDepth {
+    pub(crate) in_urbs: usize,
+    pub(crate) in_packets: usize,
+    pub(crate) out_urbs: usize,
+    pub(crate) out_packets: usize,
+}
+
+impl UsbDepth {
+    /// The landed take's depth: four 8-packet IN URBs and two 4-packet OUT
+    /// URBs (32 ms of capture runway, 8 ms of monitor runway).
+    pub(crate) const DEFAULT: UsbDepth = UsbDepth {
+        in_urbs: URB_COUNT,
+        in_packets: PACKETS_PER_URB,
+        out_urbs: OUT_URB_COUNT,
+        out_packets: OUT_PACKETS_PER_URB,
+    };
+
+    /// Validate the C ABI's four numbers: a negative value or one past
+    /// [`DEPTH_SANE_MAX`] is a refusal, everything else is clamped into
+    /// [`DEPTH_MIN`]..=[`DEPTH_MAX`].
+    fn from_args(in_urbs: i32, in_packets: i32, out_urbs: i32, out_packets: i32) -> Result<Self, String> {
+        let values = [
+            ("in_urbs", in_urbs),
+            ("in_packets", in_packets),
+            ("out_urbs", out_urbs),
+            ("out_packets", out_packets),
+        ];
+        for (name, value) in values {
+            if value < 0 {
+                return Err(format!("{name} is {value}; a depth cannot be negative"));
+            }
+            if value > DEPTH_SANE_MAX {
+                return Err(format!(
+                    "{name} is {value}; {DEPTH_SANE_MAX} is already far past the {DEPTH_MAX} maximum"
+                ));
+            }
+        }
+        Ok(UsbDepth {
+            in_urbs: in_urbs.clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+            in_packets: in_packets.clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+            out_urbs: out_urbs.clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+            out_packets: out_packets.clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+        })
+    }
+
+    /// The OUT runway: every queued packet is 1 ms of audio at 48 kHz.
+    pub(crate) fn monitor_ms(self) -> u32 {
+        (self.out_urbs * self.out_packets) as u32
+    }
+
+    /// How long one IN URB's worth of packets covers; also the batching half of
+    /// the monitor's added latency.
+    pub(crate) fn in_delivery_ms(self) -> u32 {
+        self.in_packets as u32
+    }
+
+    /// Frames the monitor must hold before its first OUT submit: the whole OUT
+    /// depth, at the configured packet size.
+    pub(crate) fn prime_frames(self, frames_per_packet: usize) -> usize {
+        self.out_urbs * self.out_packets * frames_per_packet
+    }
+}
+
+// The process-wide depth, packed into one word so a reader can never see two
+// new numbers and two old ones. A take re-reads it once before allocating.
+const fn pack_depth(depth: UsbDepth) -> u64 {
+    (depth.in_urbs as u64)
+        | ((depth.in_packets as u64) << 8)
+        | ((depth.out_urbs as u64) << 16)
+        | ((depth.out_packets as u64) << 24)
+}
+
+fn unpack_depth(bits: u64) -> UsbDepth {
+    UsbDepth {
+        in_urbs: ((bits & 0xff) as i32).clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+        in_packets: (((bits >> 8) & 0xff) as i32).clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+        out_urbs: (((bits >> 16) & 0xff) as i32).clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+        out_packets: (((bits >> 24) & 0xff) as i32).clamp(DEPTH_MIN, DEPTH_MAX) as usize,
+    }
+}
+
+static USB_DEPTH: AtomicU64 = AtomicU64::new(pack_depth(UsbDepth::DEFAULT));
+
+/// The depth a take started now would use.
+pub(crate) fn current_depth() -> UsbDepth {
+    unpack_depth(USB_DEPTH.load(Ordering::Relaxed))
+}
+
+fn store_depth(depth: UsbDepth) {
+    USB_DEPTH.store(pack_depth(depth), Ordering::Relaxed);
+}
+
+fn depth_json(depth: UsbDepth) -> String {
+    format!(
+        "{{\"urbs\":{},\"packets\":{}}}",
+        depth.in_urbs, depth.in_packets
+    )
+}
+
+fn out_depth_json(depth: UsbDepth) -> String {
+    format!(
+        "{{\"urbs\":{},\"packets\":{}}}",
+        depth.out_urbs, depth.out_packets
+    )
+}
+
+fn depth_status_json(depth: UsbDepth) -> String {
+    format!(
+        "{{\"ok\":true,\"in_depth\":{},\"out_depth\":{},\"monitor_ms\":{},\"in_delivery_ms\":{}}}",
+        depth_json(depth),
+        out_depth_json(depth),
+        depth.monitor_ms(),
+        depth.in_delivery_ms()
+    )
+}
 
 /// How long the monitor may be primed before the first OUT submit. Long enough
 /// for a few 1 ms capture packets, short enough that a silent device cannot
@@ -295,6 +434,104 @@ fn monitor_runway_ms(urb_count: usize, packets_per_urb: usize, packet: usize, ra
 /// adds before the packets consume it, so priming never trims real audio.
 fn monitor_fifo_frames(prime_frames: usize, frames_per_out_urb: usize) -> usize {
     prime_frames.max(frames_per_out_urb) + frames_per_out_urb + OUT_BACKLOG_FRAMES
+}
+
+/// The chirp [`crate::roundtrip::click`] fits in six 1 ms packets at 48 kHz
+/// (288 frames), so the probe's single OUT URB carries all of it in its first
+/// six packets and silence after that.
+pub(crate) const CLICK_PACKETS: usize = 6;
+
+/// One USB bus frame is one millisecond, and one millisecond is 48 audio frames
+/// at this rate. A captured sample offset is converted to a fractional bus
+/// frame with this divisor.
+pub(crate) const FRAMES_PER_BUS_FRAME: f64 = 48.0;
+
+/// Where one isochronous packet's frames landed on the bus. The capture buffer
+/// is a flat mono sample run, so `capture_offset` is its frame index at the
+/// packet's first sample and `bus_frame` is the kernel's `urb.start_frame` plus
+/// the packet's position in the URB. A 49-frame packet (196 bytes) therefore
+/// shifts every later offset by that extra frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Segment {
+    pub(crate) capture_offset: usize,
+    pub(crate) bus_frame: u32,
+    pub(crate) frames: usize,
+}
+
+/// The fractional bus frame a captured sample offset was heard on. The last
+/// segment at or before the offset wins; offsets past the last segment
+/// extrapolate from it, so a click at the very end of the capture still maps.
+fn frame_at_offset(segments: &[Segment], offset: usize) -> Option<f64> {
+    let segment = segments
+        .iter()
+        .rev()
+        .find(|segment| offset >= segment.capture_offset)?;
+    Some(
+        f64::from(segment.bus_frame)
+            + (offset - segment.capture_offset) as f64 / FRAMES_PER_BUS_FRAME,
+    )
+}
+
+/// Write the chirp's frames into the first [`CLICK_PACKETS`] packets of a
+/// stereo S16LE OUT buffer and zero everything else. Returns how many frames of
+/// the chirp were placed; a packet shorter than the chirp simply stops early.
+fn place_click(buffer: &mut [u8], packet: usize, click: &[f32]) -> usize {
+    for byte in buffer.iter_mut() {
+        *byte = 0;
+    }
+    if packet < 4 || buffer.is_empty() {
+        return 0;
+    }
+    let frames_per_packet = packet / 4;
+    let mut placed = 0usize;
+    for packet_index in 0..CLICK_PACKETS {
+        let start = packet_index * packet;
+        if start + packet > buffer.len() {
+            break;
+        }
+        for frame in 0..frames_per_packet {
+            if placed >= click.len() {
+                break;
+            }
+            let bytes = crate::wav::to_i16(click[placed]).to_le_bytes();
+            let (left, right) = (bytes[0], bytes[1]);
+            let offset = start + frame * 4;
+            buffer[offset] = left;
+            buffer[offset + 1] = right;
+            buffer[offset + 2] = left;
+            buffer[offset + 3] = right;
+            placed += 1;
+        }
+        if placed >= click.len() {
+            break;
+        }
+    }
+    placed
+}
+
+/// The bus-frame subtraction, with its refusals. A bus frame is 1 ms, so the
+/// difference in whole bus frames *is* the difference in milliseconds; the
+/// audio-frame count is that same number times the number of frames per
+/// millisecond.
+fn bus_round_trip_ms(click_frame: u32, heard_frame: f64) -> Result<f64, String> {
+    if click_frame == 0 {
+        return Err("the playback URB did not report a bus frame".to_string());
+    }
+    if !heard_frame.is_finite() {
+        return Err("the heard bus frame was not finite".to_string());
+    }
+    let delta = heard_frame - f64::from(click_frame);
+    if delta < 0.0 {
+        return Err(format!(
+            "the click was heard at bus frame {heard_frame:.3}, before the playback URB's frame {click_frame}; the two frames do not share a counter"
+        ));
+    }
+    if delta > 1_000.0 {
+        return Err(format!(
+            "the measured round trip is {delta:.1} ms, which is not a click in the same window"
+        ));
+    }
+    Ok(delta)
 }
 
 /// UAC1's class GET_CUR for the sampling frequency answers three little-endian
@@ -562,6 +799,13 @@ pub struct UsbReport {
     pub out_bytes: u64,
     /// The monitor's runway: every queued OUT packet is 1 ms of audio.
     pub monitor_ms: u32,
+    /// The configured capture depth as `(urbs, packets_per_urb)`.
+    pub in_depth: (usize, usize),
+    /// The configured monitor depth as `(urbs, packets_per_urb)`.
+    pub out_depth: (usize, usize),
+    /// How many 1 ms packets one IN URB delivers: the batching half of the
+    /// monitor's added latency.
+    pub in_delivery_ms: u32,
     pub out_rate: UsbOutRate,
     pub setinterface: UsbSetInterface,
     pub sched: UsbSched,
@@ -587,6 +831,9 @@ pub(crate) struct UsbIoReport {
     out_packets: u64,
     out_bytes: u64,
     monitor_ms: u32,
+    in_delivery_ms: u32,
+    in_depth: UsbDepth,
+    out_depth: UsbDepth,
     out_rate: UsbOutRate,
     setinterface: UsbSetInterface,
     sched: UsbSched,
@@ -628,7 +875,7 @@ fn histogram_json(rows: &[(u32, u64)]) -> String {
 /// One JSON object, the same status style the Oboe backend emits.
 fn report_json(report: &UsbReport) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"plan\":\"{}\",\"take\":\"{}\"}}",
         report.rate,
         histogram_json(&report.packets_in),
         report.missed_in,
@@ -640,6 +887,11 @@ fn report_json(report: &UsbReport) -> String {
         report.out_packets,
         report.out_bytes,
         report.monitor_ms,
+        report.in_depth.0,
+        report.in_depth.1,
+        report.out_depth.0,
+        report.out_depth.1,
+        report.in_delivery_ms,
         report.setinterface.ret,
         report.setinterface.errno,
         report.sched.policy,
@@ -769,6 +1021,12 @@ mod sys {
 /// stop flag. It runs on the take's worker thread, so the `sched_setscheduler`
 /// call applies to the thread the kernel wakes for reaps.
 ///
+/// The depth is read once here ([`current_depth`]); the monitor's average added
+/// latency is roughly `in_packets / 2 + out_urbs * out_packets` ms — half an IN
+/// URB of capture batching plus the whole OUT runway. Sweeping the OUT depth is
+/// what moves that number; the IN depth only sets how much jitter it can ride
+/// out.
+///
 /// `record` is the take's record ring producer. The monitor loopback's ring is
 /// private to this function.
 #[cfg(target_os = "android")]
@@ -794,6 +1052,10 @@ pub(crate) fn run_usb_plan(
     } else {
         0
     };
+    // One read for the whole take: buffers, in-flight flags and the priming
+    // threshold are all sized from this, and never resized while the kernel owns
+    // a URB.
+    let depth = current_depth();
 
     // Select the alternate settings. Java already did this through
     // `UsbDeviceConnection.setInterface()`; the ioctl is a cross-check, so a
@@ -841,14 +1103,16 @@ pub(crate) fn run_usb_plan(
 
     // One data buffer per direction, sized once. Each URB's buffer points at its
     // own slice; nothing is resized or moved while the kernel owns a URB.
-    let mut in_urbs: Vec<Urb> = (0..URB_COUNT).map(|_| Urb::new(PACKETS_PER_URB)).collect();
-    let mut in_data = vec![0u8; URB_COUNT * PACKETS_PER_URB * packet_in];
-    let mut in_ptrs: Vec<*mut UsbdevfsUrb> = Vec::with_capacity(URB_COUNT);
+    let mut in_urbs: Vec<Urb> = (0..depth.in_urbs)
+        .map(|_| Urb::new(depth.in_packets))
+        .collect();
+    let mut in_data = vec![0u8; depth.in_urbs * depth.in_packets * packet_in];
+    let mut in_ptrs: Vec<*mut UsbdevfsUrb> = Vec::with_capacity(depth.in_urbs);
     for (index, urb) in in_urbs.iter_mut().enumerate() {
         let buffer = unsafe {
             in_data
                 .as_mut_ptr()
-                .add(index * PACKETS_PER_URB * packet_in) as *mut c_void
+                .add(index * depth.in_packets * packet_in) as *mut c_void
         };
         let pointer = urb.ptr();
         unsafe {
@@ -856,7 +1120,7 @@ pub(crate) fn run_usb_plan(
                 pointer,
                 config.ep_in as u8,
                 packet_in,
-                PACKETS_PER_URB,
+                depth.in_packets,
                 buffer,
             )
         };
@@ -867,15 +1131,15 @@ pub(crate) fn run_usb_plan(
     let mut out_data: Vec<u8> = Vec::new();
     let mut out_ptrs: Vec<*mut UsbdevfsUrb> = Vec::new();
     if have_out {
-        out_urbs = (0..OUT_URB_COUNT)
-            .map(|_| Urb::new(OUT_PACKETS_PER_URB))
+        out_urbs = (0..depth.out_urbs)
+            .map(|_| Urb::new(depth.out_packets))
             .collect();
-        out_data = vec![0u8; OUT_URB_COUNT * OUT_PACKETS_PER_URB * packet_out];
+        out_data = vec![0u8; depth.out_urbs * depth.out_packets * packet_out];
         for (index, urb) in out_urbs.iter_mut().enumerate() {
             let buffer = unsafe {
                 out_data
                     .as_mut_ptr()
-                    .add(index * OUT_PACKETS_PER_URB * packet_out)
+                    .add(index * depth.out_packets * packet_out)
                     as *mut c_void
             };
             let pointer = urb.ptr();
@@ -884,7 +1148,7 @@ pub(crate) fn run_usb_plan(
                     pointer,
                     config.ep_out as u8,
                     packet_out,
-                    OUT_PACKETS_PER_URB,
+                    depth.out_packets,
                     buffer,
                 )
             };
@@ -894,10 +1158,10 @@ pub(crate) fn run_usb_plan(
 
     let (monitor_producer, monitor_consumer) = monbus::new(MONITOR_RING_FRAMES);
     let frames_per_out_packet = packet_out / 4;
-    let frames_per_out_urb = OUT_PACKETS_PER_URB * frames_per_out_packet;
+    let frames_per_out_urb = depth.out_packets * frames_per_out_packet;
     // The whole OUT depth is what priming must fill before the first submit.
     let prime_frames = if have_out {
-        OUT_URB_COUNT * frames_per_out_urb
+        depth.prime_frames(frames_per_out_packet)
     } else {
         0
     };
@@ -912,12 +1176,12 @@ pub(crate) fn run_usb_plan(
     let mut peak = 0.0f32;
     let mut out_stats = OutStats::default();
 
-    let mut in_flight = [false; URB_COUNT];
-    let mut out_flight = [false; OUT_URB_COUNT];
+    let mut in_flight = vec![false; depth.in_urbs];
+    let mut out_flight = vec![false; depth.out_urbs];
     let mut outstanding: usize = 0;
     let mut submit_error: Option<i32> = None;
 
-    for index in 0..URB_COUNT {
+    for index in 0..depth.in_urbs {
         match unsafe { sys::submit(config.fd, in_ptrs[index]) } {
             Ok(()) => {
                 in_flight[index] = true;
@@ -1010,7 +1274,7 @@ pub(crate) fn run_usb_plan(
     out_stats.underruns_start = out_stats.underruns;
 
     if have_out {
-        for index in 0..OUT_URB_COUNT {
+        for index in 0..depth.out_urbs {
             unsafe {
                 clear_urb(out_ptrs[index]);
                 fill_out_urb(
@@ -1131,13 +1395,13 @@ pub(crate) fn run_usb_plan(
 
     // Ask the kernel to discard whatever is still in flight, then reap it. The
     // fd stays open; Java closes it.
-    for index in 0..URB_COUNT {
+    for index in 0..depth.in_urbs {
         if in_flight[index] {
             unsafe { sys::discard(config.fd, in_ptrs[index]) };
         }
     }
     if have_out {
-        for index in 0..OUT_URB_COUNT {
+        for index in 0..depth.out_urbs {
             if out_flight[index] {
                 unsafe { sys::discard(config.fd, out_ptrs[index]) };
             }
@@ -1192,12 +1456,10 @@ pub(crate) fn run_usb_plan(
         dropped_out: fifo.dropped(),
         out_packets: out_stats.packets,
         out_bytes: out_stats.bytes,
-        monitor_ms: monitor_runway_ms(
-            OUT_URB_COUNT,
-            OUT_PACKETS_PER_URB,
-            packet_out,
-            config.rate,
-        ),
+        monitor_ms: depth.monitor_ms(),
+        in_delivery_ms: depth.in_delivery_ms(),
+        in_depth: depth,
+        out_depth: depth,
         out_rate,
         setinterface,
         sched,
@@ -1265,6 +1527,9 @@ fn run_usb_take(config: UsbConfig, stop: Arc<AtomicBool>) -> Result<UsbReport, S
         out_packets: io.out_packets,
         out_bytes: io.out_bytes,
         monitor_ms: io.monitor_ms,
+        in_depth: (io.in_depth.in_urbs, io.in_depth.in_packets),
+        out_depth: (io.out_depth.out_urbs, io.out_depth.out_packets),
+        in_delivery_ms: io.in_delivery_ms,
         out_rate: io.out_rate,
         setinterface: io.setinterface,
         sched: io.sched,
@@ -1285,6 +1550,35 @@ fn run_usb_take(_config: UsbConfig, _stop: Arc<AtomicBool>) -> Result<UsbReport,
 }
 
 // --- the plain-C ABI ---------------------------------------------------------
+
+/// Set the process-wide USB depth for the next take. Every value is clamped
+/// into 1..=8; a negative number, or one past 64, is refused with
+/// `{"ok":false,"error":...}`. The default stays four 8-packet IN URBs and two
+/// 4-packet OUT URBs (32 ms capture, 8 ms monitor).
+///
+/// On success the answer repeats the applied depth, the OUT runway
+/// (`monitor_ms`, `out_urbs * out_packets`) and the IN delivery window
+/// (`in_delivery_ms`, `in_packets`). A take already in flight keeps the depth it
+/// started with; the next `jawn_audio_start_usb` reads this one.
+///
+/// # Safety
+/// The returned pointer is a C string this crate allocated; the caller owns it
+/// and releases it the same way it releases every other reply from this ABI.
+#[no_mangle]
+pub unsafe extern "C" fn jawn_audio_set_usb_depth(
+    in_urbs: i32,
+    in_packets: i32,
+    out_urbs: i32,
+    out_packets: i32,
+) -> *mut c_char {
+    match UsbDepth::from_args(in_urbs, in_packets, out_urbs, out_packets) {
+        Ok(depth) => {
+            store_depth(depth);
+            into_c_string(depth_status_json(depth))
+        }
+        Err(error) => into_c_string(error_json(&error)),
+    }
+}
 
 /// Start a direct-USB (usbfs) take on a worker thread and return a JSON status
 /// immediately. `ep_out < 0` is capture-only; `seconds <= 0` runs until
@@ -1401,6 +1695,589 @@ pub unsafe extern "C" fn jawn_audio_start_usb(
     let status = current.status.clone();
     drop(current);
     into_c_string(status)
+}
+
+// --- the direct-USB latency probe -------------------------------------------
+
+/// One direct-USB round-trip measurement. `round_trip_frames` and
+/// `round_trip_ms` carry the same number: the difference is in USB bus frames,
+/// and one bus frame is one millisecond. `click_frame` and `heard_frame` are
+/// `None` only on the monotonic fallback, which has no bus-frame space to name.
+#[derive(Debug, Clone)]
+pub(crate) struct UsbRoundTrip {
+    pub(crate) method: String,
+    pub(crate) click_frame: Option<u32>,
+    pub(crate) heard_frame: Option<f64>,
+    pub(crate) round_trip_frames: f64,
+    pub(crate) round_trip_ms: f64,
+    pub(crate) score: f32,
+    pub(crate) packets_in: Vec<(u32, u64)>,
+    pub(crate) missed_in: u64,
+    pub(crate) in_depth: UsbDepth,
+    pub(crate) out_rate: UsbOutRate,
+    pub(crate) sched: UsbSched,
+    pub(crate) note: Option<String>,
+}
+
+/// The probe either measured, or heard nothing and still owes the caller the
+/// best correlation it saw. A plain `Err` stays a refusal (a bad fd, a refused
+/// submit, a click that could not be placed).
+#[cfg(target_os = "android")]
+pub(crate) enum ProbeOutcome {
+    Measured(UsbRoundTrip),
+    NoClick { best: f32, floor: f32 },
+}
+
+fn optional_u32(value: Option<u32>) -> String {
+    value.map_or_else(|| "null".to_string(), |value| value.to_string())
+}
+
+fn optional_f64(value: Option<f64>) -> String {
+    value.map_or_else(|| "null".to_string(), |value| format!("{value:.3}"))
+}
+
+fn optional_json_string(value: Option<&str>) -> String {
+    value.map_or_else(|| "null".to_string(), |value| format!("\"{}\"", json_escape(value)))
+}
+
+fn roundtrip_json(report: &UsbRoundTrip) -> String {
+    format!(
+        "{{\"ok\":true,\"backend\":\"usb\",\"probe\":\"roundtrip\",\"method\":\"{}\",\"click_frame\":{},\"heard_frame\":{},\"round_trip_frames\":{:.3},\"round_trip_ms\":{:.3},\"score\":{:.3},\"packets_in\":{},\"missed_in\":{},\"in_depth\":{},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"note\":{}}}",
+        json_escape(&report.method),
+        optional_u32(report.click_frame),
+        optional_f64(report.heard_frame),
+        report.round_trip_frames,
+        report.round_trip_ms,
+        report.score,
+        histogram_json(&report.packets_in),
+        report.missed_in,
+        depth_json(report.in_depth),
+        report.out_rate.ret,
+        report.out_rate.errno,
+        json_escape(&report.out_rate.raw),
+        report.out_rate.hz,
+        report.sched.policy,
+        report.sched.priority,
+        report.sched.errno,
+        optional_json_string(report.note.as_deref()),
+    )
+}
+
+/// The Oboe probe's failure shape: `ok:false`, the best correlation and the
+/// floor, so a quiet cable reads as a number short of a detection rather than a
+/// bare refusal.
+fn roundtrip_no_click_json(best: f32, floor: f32, depth: UsbDepth) -> String {
+    format!(
+        "{{\"ok\":false,\"backend\":\"usb\",\"probe\":\"roundtrip\",\"error\":\"the probe heard no click (best correlation {best:.3}, floor {floor:.3}); the loopback may be open, silent or too quiet\",\"score\":{best:.3},\"floor\":{floor:.3},\"in_depth\":{}}}",
+        depth_json(depth)
+    )
+}
+
+/// Copy one completed IN URB into the probe's flat capture run and record where
+/// each packet's frames landed on the bus. No allocation: `capture` and
+/// `segments` were sized before the first submit.
+///
+/// # Safety
+/// `done` must point at a kernel-returned URB image whose buffer covers
+/// `number_of_packets * packet` bytes.
+unsafe fn absorb_in_probe(
+    done: *mut UsbdevfsUrb,
+    packet: usize,
+    capture: &mut [u8],
+    captured_bytes: &mut usize,
+    segments: &mut Vec<Segment>,
+    histogram: &mut [u64],
+    stats: &mut InStats,
+) {
+    let header = &*done;
+    let base = header.buffer as *const u8;
+    let count = header.number_of_packets.max(0) as usize;
+    let start_frame = header.start_frame.max(0) as u32;
+    let descs = (done as *const u8).add(URB_BYTES) as *const UsbdevfsIsoPacketDesc;
+    for index in 0..count {
+        let desc = &*descs.add(index);
+        record_packet_length(histogram, desc.actual_length as usize);
+        stats.bytes_in += u64::from(desc.actual_length);
+        if desc.status as i32 == EXDEV {
+            stats.missed_in += 1;
+        }
+        if desc.status != 0 || desc.actual_length == 0 {
+            continue;
+        }
+        let length = (desc.actual_length as usize).min(packet);
+        let frames = (length / 4).min(capture.len().saturating_sub(*captured_bytes) / 4);
+        if frames == 0 {
+            continue;
+        }
+        let source = std::slice::from_raw_parts(base.add(index * packet), frames * 4);
+        capture[*captured_bytes..*captured_bytes + frames * 4].copy_from_slice(source);
+        segments.push(Segment {
+            capture_offset: *captured_bytes / 4,
+            bus_frame: start_frame + index as u32,
+            frames,
+        });
+        *captured_bytes += frames * 4;
+        stats.frames_in += frames as u64;
+    }
+}
+
+/// The probe the C ABI runs: capture for a 100 ms pre-roll, submit one OUT URB
+/// whose first six packets carry the chirp, keep capturing, then place the chirp
+/// in the capture and subtract the two bus frames.
+///
+/// The kernel fills `urb.start_frame` when it schedules an URB and returns it
+/// with the completion; both directions come from the same controller counter,
+/// so their difference is the round trip. When the playback completion carries
+/// no frame (a zero or an HCD that does not write it back), the fallback times
+/// the OUT submit and the IN completion with `Instant` and subtracts the frames
+/// captured after the chirp — a number good to ±1–2 ms, reported as such.
+#[cfg(target_os = "android")]
+unsafe fn probe_usb_roundtrip(
+    fd: i32,
+    iface_in: i32,
+    alt_in: i32,
+    ep_in: i32,
+    packet_in: i32,
+    iface_out: i32,
+    alt_out: i32,
+    ep_out: i32,
+    packet_out: i32,
+    millis: i32,
+) -> Result<ProbeOutcome, String> {
+    use std::time::{Duration, Instant};
+
+    if fd < 0 {
+        return Err("the USB connection has no usable file descriptor".to_string());
+    }
+    if ep_in < 0 || packet_in < 4 {
+        return Err(
+            "the capture endpoint needs an endpoint number and at least one stereo frame per packet"
+                .to_string(),
+        );
+    }
+    if ep_out < 0 || packet_out < 4 {
+        return Err(
+            "the probe needs a playback endpoint and at least one stereo frame per packet"
+                .to_string(),
+        );
+    }
+
+    let packet_in = packet_in as usize;
+    let packet_out = packet_out as usize;
+    let depth = current_depth();
+    let window_ms = millis.clamp(200, 1_500) as usize;
+    let pre_roll_ms = 100.min(window_ms / 2);
+    let post_roll_ms = window_ms - pre_roll_ms;
+
+    let _ = sys::set_interface(fd, iface_in, alt_in);
+    let _ = sys::set_interface(fd, iface_out, alt_out);
+
+    // The same class GET_CUR the take records. On the UM2 it answers 32000 while
+    // 192-byte packets stream, so it is reported beside the measurement and
+    // never used to interpret it.
+    let out_rate = {
+        let mut bytes = [0u8; 3];
+        let (ret, errno) =
+            sys::control_in(fd, 0xA2, 0x81, 0x0100, ep_out as u16, &mut bytes, 250);
+        let read = (ret.max(0) as usize).min(bytes.len());
+        UsbOutRate {
+            ret,
+            errno,
+            raw: hex_bytes(&bytes[..read]),
+            hz: decode_sample_rate(&bytes[..read]),
+        }
+    };
+    let sched = sys::request_realtime();
+
+    // Every buffer is sized before the first submit, and never moves.
+    let mut in_urbs: Vec<Urb> = (0..depth.in_urbs)
+        .map(|_| Urb::new(depth.in_packets))
+        .collect();
+    let mut in_data = vec![0u8; depth.in_urbs * depth.in_packets * packet_in];
+    let mut in_ptrs: Vec<*mut UsbdevfsUrb> = Vec::with_capacity(depth.in_urbs);
+    for (index, urb) in in_urbs.iter_mut().enumerate() {
+        let buffer = unsafe {
+            in_data
+                .as_mut_ptr()
+                .add(index * depth.in_packets * packet_in) as *mut c_void
+        };
+        let pointer = urb.ptr();
+        prepare_urb(
+            pointer,
+            ep_in as u8,
+            packet_in,
+            depth.in_packets,
+            buffer,
+        );
+        in_ptrs.push(pointer);
+    }
+
+    // One OUT URB: six click packets and silence after them. A configured OUT
+    // depth shorter than the chirp is widened for the probe only, so the whole
+    // 288-frame chirp is always on the bus.
+    let out_packets = depth.out_packets.max(CLICK_PACKETS);
+    let click = rt::click(USB_RATE);
+    let mut out_urb = Urb::new(out_packets);
+    let mut out_data = vec![0u8; out_packets * packet_out];
+    let placed = place_click(&mut out_data, packet_out, &click);
+    if placed == 0 {
+        return Err("the playback packet is too small to carry the click".to_string());
+    }
+    let out_ptr = out_urb.ptr();
+    prepare_urb(
+        out_ptr,
+        ep_out as u8,
+        packet_out,
+        out_packets,
+        out_data.as_mut_ptr() as *mut c_void,
+    );
+
+    // The capture run: up to the whole window plus a margin, stereo S16LE.
+    let max_frames = (window_ms + 64) * (USB_RATE as usize / 1_000);
+    let mut capture = vec![0u8; max_frames * 4];
+    let mut captured_bytes = 0usize;
+    // One row per packet, and every packet is at most 49 frames. Room for the
+    // whole window plus the URBs the kernel still holds at the end, so the reap
+    // path never grows the table.
+    let mut segments: Vec<Segment> = Vec::with_capacity(
+        max_frames / 48 + depth.in_urbs * depth.in_packets + 64,
+    );
+    let mut histogram = vec![0u64; packet_in + 2];
+    let mut stats = InStats::default();
+
+    let mut in_flight = vec![false; depth.in_urbs];
+    let mut outstanding = 0usize;
+    let mut submit_error: Option<i32> = None;
+    for index in 0..depth.in_urbs {
+        match sys::submit(fd, in_ptrs[index]) {
+            Ok(()) => {
+                in_flight[index] = true;
+                outstanding += 1;
+            }
+            Err(error) => {
+                if submit_error.is_none() {
+                    submit_error = Some(error.raw_os_error().unwrap_or(0));
+                }
+            }
+        }
+    }
+    if outstanding == 0 {
+        return Err(format!(
+            "every isochronous capture URB submit was refused (errno {})",
+            submit_error.unwrap_or(0)
+        ));
+    }
+
+    // Capture first and let it settle: the first URB's frames are a transient.
+    let pre_roll_end = Instant::now() + Duration::from_millis(pre_roll_ms as u64);
+    while Instant::now() < pre_roll_end && outstanding > 0 {
+        let done = match sys::reap(fd) {
+            Ok(pointer) => pointer,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_micros(200));
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        if done.is_null() {
+            thread::sleep(Duration::from_micros(200));
+            continue;
+        }
+        if let Some(index) = in_ptrs.iter().position(|&pointer| pointer == done) {
+            if in_flight[index] {
+                in_flight[index] = false;
+                outstanding -= 1;
+            }
+            absorb_in_probe(
+                done,
+                packet_in,
+                &mut capture,
+                &mut captured_bytes,
+                &mut segments,
+                &mut histogram,
+                &mut stats,
+            );
+            clear_urb(done);
+            match sys::submit(fd, done) {
+                Ok(()) => {
+                    in_flight[index] = true;
+                    outstanding += 1;
+                }
+                Err(error) => {
+                    if submit_error.is_none() {
+                        submit_error = Some(error.raw_os_error().unwrap_or(0));
+                    }
+                }
+            }
+        }
+    }
+
+    // One OUT URB, submitted once. Its completion's `start_frame` is the bus
+    // frame the chirp starts on. A refused submit is reported after the IN URBs
+    // have been reaped, so no buffer is freed while the kernel owns it.
+    let submit_at = Instant::now();
+    let mut out_flight = false;
+    let mut out_submit_error: Option<i32> = None;
+    match sys::submit(fd, out_ptr) {
+        Ok(()) => {
+            out_flight = true;
+            outstanding += 1;
+        }
+        Err(error) => {
+            out_submit_error = Some(error.raw_os_error().unwrap_or(0));
+        }
+    }
+
+    let deadline = submit_at + Duration::from_millis(post_roll_ms as u64);
+    let mut out_start_frame: Option<u32> = None;
+    let mut completions: Vec<(Instant, usize)> = Vec::with_capacity(window_ms + 64);
+
+    while Instant::now() < deadline && outstanding > 0 {
+        let done = match sys::reap(fd) {
+            Ok(pointer) => pointer,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_micros(200));
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        if done.is_null() {
+            thread::sleep(Duration::from_micros(200));
+            continue;
+        }
+        if let Some(index) = in_ptrs.iter().position(|&pointer| pointer == done) {
+            if in_flight[index] {
+                in_flight[index] = false;
+                outstanding -= 1;
+            }
+            absorb_in_probe(
+                done,
+                packet_in,
+                &mut capture,
+                &mut captured_bytes,
+                &mut segments,
+                &mut histogram,
+                &mut stats,
+            );
+            if completions.len() < completions.capacity() {
+                completions.push((Instant::now(), captured_bytes / 4));
+            }
+            clear_urb(done);
+            match sys::submit(fd, done) {
+                Ok(()) => {
+                    in_flight[index] = true;
+                    outstanding += 1;
+                }
+                Err(error) => {
+                    if submit_error.is_none() {
+                        submit_error = Some(error.raw_os_error().unwrap_or(0));
+                    }
+                }
+            }
+            continue;
+        }
+        if done == out_ptr {
+            if out_flight {
+                out_flight = false;
+                outstanding -= 1;
+            }
+            let header = &*done;
+            if header.start_frame > 0 && out_start_frame.is_none() {
+                out_start_frame = Some(header.start_frame as u32);
+            }
+            // No resubmit: one chirp, one frame to name.
+            continue;
+        }
+        thread::sleep(Duration::from_micros(200));
+    }
+
+    // Cancel and reap every URB before returning; the fd stays Java's. If the
+    // kernel still owns one after the bounded drain, leak it rather than free
+    // memory it may still write.
+    if out_flight {
+        sys::discard(fd, out_ptr);
+    }
+    for index in 0..depth.in_urbs {
+        if in_flight[index] {
+            sys::discard(fd, in_ptrs[index]);
+        }
+    }
+    let mut tries = 0;
+    while outstanding > 0 && tries < 200 {
+        match sys::reap(fd) {
+            Ok(pointer) if !pointer.is_null() => {
+                if let Some(index) = in_ptrs.iter().position(|&candidate| candidate == pointer) {
+                    if in_flight[index] {
+                        in_flight[index] = false;
+                        outstanding -= 1;
+                    }
+                } else if pointer == out_ptr && out_flight {
+                    out_flight = false;
+                    outstanding -= 1;
+                }
+            }
+            _ => {
+                tries += 1;
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+    if outstanding > 0 {
+        eprintln!(
+            "jawn-audio usb probe: leaving {outstanding} isochronous URB(s) to the kernel; the fd close will drop them"
+        );
+    }
+    if in_flight.iter().any(|&flight| flight) {
+        std::mem::forget(in_urbs);
+        std::mem::forget(in_data);
+    }
+    if out_flight {
+        std::mem::forget(out_urb);
+        std::mem::forget(out_data);
+    }
+    if let Some(errno) = out_submit_error {
+        return Err(format!("the playback URB submit was refused (errno {errno})"));
+    }
+
+    // Left channel only: the device's first channel is the signal on this path.
+    let mono: Vec<f32> = capture[..captured_bytes]
+        .chunks_exact(4)
+        .map(|frame| f32::from(i16::from_le_bytes([frame[0], frame[1]])) / 32768.0)
+        .collect();
+    if mono.is_empty() {
+        return Err("the probe captured no frames".to_string());
+    }
+    let from = (USB_RATE as usize / 20).min(mono.len());
+    let best = rt::best_click(USB_RATE, &mono, from)
+        .ok_or_else(|| "the probe captured less than one chirp".to_string())?;
+    let heard = match rt::find_click(USB_RATE, &mono, from) {
+        Some(hit) => hit,
+        None => {
+            return Ok(ProbeOutcome::NoClick {
+                best: best.score,
+                floor: rt::MIN_SCORE,
+            })
+        }
+    };
+
+    let (method, click_frame, heard_frame, round_trip_ms, note) =
+        match out_start_frame.filter(|frame| *frame > 0) {
+            Some(click_frame) => {
+                let heard_frame = frame_at_offset(&segments, heard.offset).ok_or_else(|| {
+                    "the capture segment table has no row for the heard sample".to_string()
+                })?;
+                let delta = bus_round_trip_ms(click_frame, heard_frame)?;
+                (
+                    "urb.start_frame".to_string(),
+                    Some(click_frame),
+                    Some(heard_frame),
+                    delta,
+                    None,
+                )
+            }
+            None => {
+                // Truly unavailable: time the OUT submit against the IN
+                // completion that first contained the chirp, then take off the
+                // frames captured after it. Good to ±1–2 ms.
+                let (done_at, frames_then) = completions
+                    .iter()
+                    .copied()
+                    .find(|(_, frames)| *frames > heard.offset)
+                    .ok_or_else(|| {
+                        "no capture completion contained the heard click".to_string()
+                    })?;
+                let elapsed_ms = done_at.saturating_duration_since(submit_at).as_secs_f64() * 1_000.0;
+                let frames_after = (frames_then - heard.offset) as f64;
+                let ms = elapsed_ms - frames_after / FRAMES_PER_BUS_FRAME;
+                if !ms.is_finite() || ms < 0.0 {
+                    return Err(format!(
+                        "the monotonic timing is {ms:.3} ms; the click and the submit do not agree"
+                    ));
+                }
+                if ms > 1_000.0 {
+                    return Err(format!(
+                        "the measured round trip is {ms:.1} ms, which is not a click in the same window"
+                    ));
+                }
+                (
+                    "monotonic (start_frame unavailable)".to_string(),
+                    None,
+                    None,
+                    ms,
+                    Some(
+                        "start_frame was zero or absent; the monotonic fallback is ±1-2 ms"
+                            .to_string(),
+                    ),
+                )
+            }
+        };
+
+    Ok(ProbeOutcome::Measured(UsbRoundTrip {
+        method,
+        click_frame,
+        heard_frame,
+        round_trip_frames: round_trip_ms,
+        round_trip_ms,
+        score: heard.score,
+        packets_in: histogram_rows(&histogram),
+        missed_in: stats.missed_in,
+        in_depth: depth,
+        out_rate,
+        sched,
+        note,
+    }))
+}
+
+/// Measure the input-to-output round trip through the UM2's own cable loop,
+/// using the kernel's USB bus frame numbers rather than wall-clock timestamps.
+/// Blocks for at most `millis` (clamped to 200..=1500 ms).
+///
+/// The IN endpoints are open and streaming before the single OUT URB with the
+/// chirp is submitted; both are selected with `SETINTERFACE` and both alts are
+/// read back into the report's own probe. An `ok:false` answer carries either a
+/// refusal sentence or, when the chirp was not heard, the best correlation and
+/// the floor. The fd is never closed.
+///
+/// # Safety
+/// `fd` must be a live usbfs connection owned by the caller; this function
+/// submits and cancels iso URBs on it but never closes it. The returned pointer
+/// is a C string this crate allocated.
+#[no_mangle]
+pub unsafe extern "C" fn jawn_audio_roundtrip_usb(
+    fd: i32,
+    iface_in: i32,
+    alt_in: i32,
+    ep_in: i32,
+    packet_in: i32,
+    iface_out: i32,
+    alt_out: i32,
+    ep_out: i32,
+    packet_out: i32,
+    millis: i32,
+) -> *mut c_char {
+    #[cfg(target_os = "android")]
+    {
+        match probe_usb_roundtrip(
+            fd, iface_in, alt_in, ep_in, packet_in, iface_out, alt_out, ep_out, packet_out, millis,
+        ) {
+            Ok(ProbeOutcome::Measured(report)) => into_c_string(roundtrip_json(&report)),
+            Ok(ProbeOutcome::NoClick { best, floor }) => {
+                into_c_string(roundtrip_no_click_json(best, floor, current_depth()))
+            }
+            Err(error) => into_c_string(error_json(&error)),
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (
+            fd, iface_in, alt_in, ep_in, packet_in, iface_out, alt_out, ep_out, packet_out, millis,
+        );
+        into_c_string(error_json(
+            "the direct-USB round-trip probe needs the Android build (aarch64-linux-android) with the USB connection's fd",
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -1538,6 +2415,224 @@ mod tests {
     }
 
     #[test]
+    fn the_depth_clamps_to_one_through_eight_and_keeps_the_default() {
+        assert_eq!(
+            UsbDepth::DEFAULT,
+            UsbDepth {
+                in_urbs: 4,
+                in_packets: 8,
+                out_urbs: 2,
+                out_packets: 4,
+            },
+            "the landed depth stays the default"
+        );
+        assert_eq!(UsbDepth::DEFAULT.monitor_ms(), 8);
+        assert_eq!(UsbDepth::DEFAULT.in_delivery_ms(), 8, "eight 1 ms IN packets");
+
+        // Zero is not negative: it clamps up to the shortest depth.
+        assert_eq!(
+            UsbDepth::from_args(0, 0, 0, 0).unwrap(),
+            UsbDepth {
+                in_urbs: 1,
+                in_packets: 1,
+                out_urbs: 1,
+                out_packets: 1,
+            }
+        );
+        // A large but sane value clamps down to eight.
+        assert_eq!(
+            UsbDepth::from_args(64, 64, 64, 64).unwrap(),
+            UsbDepth {
+                in_urbs: 8,
+                in_packets: 8,
+                out_urbs: 8,
+                out_packets: 8,
+            }
+        );
+        // Nonsense is refused, not clamped.
+        assert!(UsbDepth::from_args(-1, 8, 2, 4).is_err());
+        assert!(UsbDepth::from_args(4, 8, 2, 65).is_err());
+        assert!(UsbDepth::from_args(4, i32::MIN, 2, 4).is_err());
+
+        // The process-wide word packs all four, so a reader cannot see a mix.
+        let depth = UsbDepth {
+            in_urbs: 1,
+            in_packets: 2,
+            out_urbs: 3,
+            out_packets: 4,
+        };
+        assert_eq!(unpack_depth(pack_depth(depth)), depth);
+        assert_eq!(unpack_depth(pack_depth(UsbDepth::DEFAULT)), UsbDepth::DEFAULT);
+    }
+
+    #[test]
+    fn the_priming_threshold_follows_the_configured_depth() {
+        let frames_per_packet = 192 / 4;
+        for out_urbs in 1..=8usize {
+            for out_packets in 1..=8usize {
+                let depth = UsbDepth {
+                    in_urbs: 4,
+                    in_packets: 8,
+                    out_urbs,
+                    out_packets,
+                };
+                let prime = depth.prime_frames(frames_per_packet);
+                assert_eq!(prime, out_urbs * out_packets * frames_per_packet);
+                assert_eq!(depth.monitor_ms(), (out_urbs * out_packets) as u32);
+                let frames_per_out_urb = out_packets * frames_per_packet;
+                let capacity = monitor_fifo_frames(prime, frames_per_out_urb);
+                assert_eq!(capacity, prime + frames_per_out_urb + OUT_BACKLOG_FRAMES);
+                let mut fifo = OutFifo::new(capacity);
+                let block: Vec<f32> = (0..prime).flat_map(|_| [0.1f32, 0.1]).collect();
+                fifo.push(&block);
+                assert_eq!(fifo.len(), prime, "a {out_urbs}x{out_packets} depth primes whole");
+                assert_eq!(fifo.dropped(), 0, "the scaled fifo does not trim the prime");
+            }
+        }
+        // The IN side's delivery window is its own packet count.
+        for in_packets in 1..=8usize {
+            let depth = UsbDepth {
+                in_packets,
+                ..UsbDepth::DEFAULT
+            };
+            assert_eq!(depth.in_delivery_ms(), in_packets as u32);
+        }
+    }
+
+    #[test]
+    fn the_segment_table_maps_an_offset_to_a_fractional_bus_frame() {
+        // A 49-frame (196-byte) packet shifts every later capture offset by one
+        // frame: offset 97 is the start of the third packet, not 96.
+        let segments = vec![
+            Segment {
+                capture_offset: 0,
+                bus_frame: 100,
+                frames: 48,
+            },
+            Segment {
+                capture_offset: 48,
+                bus_frame: 101,
+                frames: 49,
+            },
+            Segment {
+                capture_offset: 97,
+                bus_frame: 102,
+                frames: 48,
+            },
+        ];
+        assert_eq!(frame_at_offset(&segments, 0), Some(100.0));
+        assert!((frame_at_offset(&segments, 24).unwrap() - 100.5).abs() < 1e-9);
+        assert_eq!(frame_at_offset(&segments, 48), Some(101.0));
+        assert!((frame_at_offset(&segments, 60).unwrap() - 101.25).abs() < 1e-9);
+        assert_eq!(
+            frame_at_offset(&segments, 97),
+            Some(102.0),
+            "the 49-frame packet is counted, not assumed to be 48"
+        );
+        assert!((frame_at_offset(&segments, 145).unwrap() - 103.0).abs() < 1e-9);
+        assert_eq!(frame_at_offset(&[], 0), None);
+
+        // The subtraction: a click on bus frame 100 heard on 102.25 is 2.25 ms.
+        assert_eq!(bus_round_trip_ms(100, 102.25).unwrap(), 2.25);
+        assert!(bus_round_trip_ms(0, 102.0).is_err(), "no start_frame is no measurement");
+        assert!(bus_round_trip_ms(100, 99.0).is_err(), "heard before played is refused");
+        assert!(bus_round_trip_ms(100, 1_101.0).is_err(), "over a second is not this click");
+    }
+
+    #[test]
+    fn the_click_fills_six_packets_and_the_rest_is_silence() {
+        let click = crate::roundtrip::click(USB_RATE);
+        assert_eq!(click.len(), 288, "6 ms of chirp at 48 kHz");
+        let packet = 192usize;
+        let mut buffer = vec![0x7fu8; packet * 8];
+        assert_eq!(place_click(&mut buffer, packet, &click), 288);
+        let first = i16::from_le_bytes([buffer[0], buffer[1]]);
+        assert_eq!(first, crate::wav::to_i16(click[0]));
+        assert_eq!(buffer[2], buffer[0], "the mono chirp is on both channels");
+        assert_eq!(buffer[3], buffer[1]);
+        assert!(
+            buffer[CLICK_PACKETS * packet..].iter().all(|byte| *byte == 0),
+            "everything after the sixth packet is silence"
+        );
+
+        // A 49-frame packet holds six frames more than the chirp: those, and the
+        // packets after them, are zero.
+        let packet = 196usize;
+        let mut buffer = vec![0x7fu8; packet * 8];
+        assert_eq!(place_click(&mut buffer, packet, &click), 288);
+        assert!(buffer[288 * 4..CLICK_PACKETS * packet].iter().all(|byte| *byte == 0));
+        assert!(buffer[CLICK_PACKETS * packet..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn the_roundtrip_report_carries_the_bus_frame_measurement() {
+        let report = UsbRoundTrip {
+            method: "urb.start_frame".to_string(),
+            click_frame: Some(100),
+            heard_frame: Some(102.5),
+            round_trip_frames: 2.5,
+            round_trip_ms: 2.5,
+            score: 0.912,
+            packets_in: vec![(192, 5_000), (196, 3)],
+            missed_in: 0,
+            in_depth: UsbDepth::DEFAULT,
+            out_rate: UsbOutRate {
+                ret: 3,
+                errno: 0,
+                raw: "007d00".to_string(),
+                hz: 32_000,
+            },
+            sched: UsbSched {
+                policy: 1,
+                priority: 80,
+                errno: 13,
+            },
+            note: None,
+        };
+        let text = roundtrip_json(&report);
+        for needle in [
+            "\"ok\":true",
+            "\"backend\":\"usb\"",
+            "\"probe\":\"roundtrip\"",
+            "\"method\":\"urb.start_frame\"",
+            "\"click_frame\":100",
+            "\"heard_frame\":102.500",
+            "\"round_trip_frames\":2.500",
+            "\"round_trip_ms\":2.500",
+            "\"score\":0.912",
+            "\"packets_in\":{\"192\":5000,\"196\":3}",
+            "\"missed_in\":0",
+            "\"in_depth\":{\"urbs\":4,\"packets\":8}",
+            "\"out_rate\":{\"ret\":3,\"errno\":0,\"raw\":\"007d00\",\"hz\":32000}",
+            "\"sched\":{\"policy\":1,\"priority\":80,\"errno\":13}",
+            "\"note\":null",
+        ] {
+            assert!(text.contains(needle), "{needle} missing from {text}");
+        }
+
+        // The fallback names its method and its precision, and has no bus frame.
+        let fallback = UsbRoundTrip {
+            method: "monotonic (start_frame unavailable)".to_string(),
+            click_frame: None,
+            heard_frame: None,
+            round_trip_ms: 3.5,
+            round_trip_frames: 3.5,
+            note: Some("±1-2 ms".to_string()),
+            ..report
+        };
+        let text = roundtrip_json(&fallback);
+        assert!(text.contains("\"method\":\"monotonic (start_frame unavailable)\""));
+        assert!(text.contains("\"click_frame\":null"));
+        assert!(text.contains("\"heard_frame\":null"));
+        assert!(text.contains("\"note\":\"±1-2 ms\""));
+
+        let miss = roundtrip_no_click_json(0.21, crate::roundtrip::MIN_SCORE, UsbDepth::DEFAULT);
+        assert!(miss.contains("\"ok\":false"));
+        assert!(miss.contains("\"score\":0.210"));
+        assert!(miss.contains("\"floor\":0.350"));
+    }
+
+    #[test]
     fn a_short_prime_is_padded_and_counted_as_an_underrun() {
         let packet = 192usize;
         let packets = OUT_PACKETS_PER_URB;
@@ -1617,6 +2712,9 @@ mod tests {
             out_packets: 0,
             out_bytes: 0,
             monitor_ms: 8,
+            in_depth: (4, 8),
+            out_depth: (2, 4),
+            in_delivery_ms: 8,
             out_rate: UsbOutRate {
                 ret: 3,
                 errno: 0,
@@ -1649,6 +2747,9 @@ mod tests {
             "\"out_packets\":0",
             "\"out_bytes\":0",
             "\"monitor_ms\":8",
+            "\"in_depth\":{\"urbs\":4,\"packets\":8}",
+            "\"out_depth\":{\"urbs\":2,\"packets\":4}",
+            "\"in_delivery_ms\":8",
             "\"out_rate\":{\"ret\":3,\"errno\":0,\"raw\":\"80bb00\",\"hz\":48000}",
             "\"setinterface\":{\"ret\":0,\"errno\":0}",
             "\"sched\":{\"policy\":1,\"priority\":80,\"errno\":13}",

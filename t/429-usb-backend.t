@@ -2,12 +2,14 @@
 # covers:    the direct-USB (usbfs) backend: the kernel structs and ioctl numbers
 #            match arm64, the pure monitor/histogram/report helpers and their Rust
 #            unit tests run on a host with no phone, the shallow OUT depth and its
-#            priming threshold, the playback GET_CUR rate probe, the C ABI
-#            `jawn_audio_start_usb` is additive, the take owns one process-wide
-#            control slot shared with the Oboe take, and the driver leaks (never
-#            frees) an URB the kernel still owns and never closes Java's fd. The
-#            real device path is proven on the UM2 gate, so this test is the host
-#            half.
+#            priming threshold, the configurable 1..=8 depth and its two ABIs
+#            (`jawn_audio_set_usb_depth`, `jawn_audio_roundtrip_usb`), the
+#            bus-frame segment table and click placement of the latency probe, the
+#            playback GET_CUR rate probe, the C ABI `jawn_audio_start_usb` is
+#            additive, the take owns one process-wide control slot shared with the
+#            Oboe take, and the driver leaks (never frees) an URB the kernel still
+#            owns and never closes Java's fd. The real device path is proven on the
+#            UM2 gate, so this test is the host half.
 
 use strict;
 use warnings;
@@ -58,7 +60,7 @@ sub cargo_available {
 
 # --- the pure logic runs on a machine with no phone --------------------------
 SKIP: {
-	skip 'no cargo toolchain on this machine', 7 unless cargo_available();
+	skip 'no cargo toolchain on this machine', 12 unless cargo_available();
 
 	my $target = tempdir( CLEANUP => 1 );
 	local $ENV{'CARGO_TARGET_DIR'} = $target;
@@ -94,6 +96,31 @@ SKIP: {
 		$out,
 		qr/usb_device::tests::the_monitor_priming_threshold_is_the_whole_out_depth/,
 		'and is primed before the first OUT submit'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_depth_clamps_to_one_through_eight_and_keeps_the_default/,
+		'the depth clamps to 1..=8 and the landed default is kept'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_priming_threshold_follows_the_configured_depth/,
+		'priming and the fifo scale with every configured depth'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_segment_table_maps_an_offset_to_a_fractional_bus_frame/,
+		'the bus-frame segment table counts a 49-frame packet'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_click_fills_six_packets_and_the_rest_is_silence/,
+		'and the chirp lands in six packets with silence after it'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_roundtrip_report_carries_the_bus_frame_measurement/,
+		'the round-trip report names its method and precision'
 	);
 }
 
@@ -142,6 +169,27 @@ like(
 	'with the fd, both endpoints, seconds, a take path and a plan'
 );
 like( $usb, qr/extern "C" fn jawn_audio_start_usb/, 'and it is #[no_mangle] through that name' );
+like(
+	$usb,
+	qr/pub unsafe extern "C" fn jawn_audio_set_usb_depth\(/,
+	'the depth is process-wide and settable through its own ABI'
+);
+like(
+	$usb,
+	qr/pub unsafe extern "C" fn jawn_audio_roundtrip_usb\(/,
+	'and the direct-USB round trip has its own blocking ABI'
+);
+like( $usb, qr/const DEPTH_MIN: i32 = 1;/, 'the depth floor is one packet' );
+like( $usb, qr/const DEPTH_MAX: i32 = 8;/, 'and its ceiling eight' );
+like( $usb, qr/fn current_depth\(\) -> UsbDepth/, 'a take reads the process-wide depth once at start' );
+like( $usb, qr/fn prime_frames\(self, frames_per_packet: usize\) -> usize/, 'priming follows the configured depth' );
+like( $usb, qr/\\"in_depth\\":/, 'the take report gains in_depth' );
+like( $usb, qr/\\"out_depth\\":/, 'and out_depth' );
+like( $usb, qr/\\"in_delivery_ms\\":/, 'and the IN delivery window' );
+like( $usb, qr/fn frame_at_offset\(/, 'the probe maps a capture offset to a bus frame' );
+like( $usb, qr/\\"probe\\":\\"roundtrip\\"/, 'its report names the probe' );
+like( $usb, qr/\\"heard_frame\\":/, 'with both bus frames' );
+like( $usb, qr/MIN_SCORE/, 'a missed click still reports the correlation floor' );
 like( $usb, qr/have_out/, 'ep_out < 0 is capture-only' );
 like( $usb, qr/crate::plan::parse_plan/, 'the plan is read exactly as the Oboe start reads it' );
 
