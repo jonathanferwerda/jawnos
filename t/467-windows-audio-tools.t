@@ -52,4 +52,5 @@ is(subs::say_piper_dir('piper'), '', 'a bare name has no directory');
 is(subs::say_piper_dir(''), '', 'and an empty name answers empty');
 
 like($build, qr/curl\.exe/, q{the fetch uses Windows curl, so a mirror cannot change the bytes});
+like($build, qr/msvcp140\.dll/, q{the VC++ runtime DLLs travel beside Piper});
 done_testing();

@@ -228,6 +228,24 @@ try {
             throw "the Piper archive has no piper.exe at $piperSrc"
         }
         Invoke-Robocopy $piperSrc (Join-Path $toolsRoot 'piper')
+        # Piper and onnxruntime link the Visual C++ 2015-2022 x64 runtime. A
+        # clean Windows often lacks it, so carry the three DLLs beside piper.exe;
+        # the redistributable permits app-local deployment. A build machine
+        # without the redist gets a warning rather than a broken bundle.
+        $crtMissing = @()
+        foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            $crt = Join-Path (Join-Path $env:SystemRoot 'System32') $dll
+            if (Test-Path -LiteralPath $crt) {
+                Copy-Item -LiteralPath $crt -Destination (Join-Path $toolsRoot 'piper') -Force
+            } else {
+                $crtMissing += $dll
+            }
+        }
+        if ($crtMissing.Count) {
+            Write-Warning ('the Visual C++ 2015-2022 x64 runtime is missing on this build machine (' + ($crtMissing -join ', ') + '); install it and rebuild, or Piper will not start on a clean install.')
+        } else {
+            Write-Host 'Bundled the Visual C++ runtime beside Piper.'
+        }
         $piperOffer = @"
 Piper 1.2.0 and the libraries bundled with it come from:
   https://github.com/rhasspy/piper/releases/tag/2023.11.14-2

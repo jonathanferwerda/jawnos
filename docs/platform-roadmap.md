@@ -437,7 +437,9 @@ own espeak-ng) and SoX 14.4.2 into `runtime\tools`, checks them against pinned S
 the public-domain default voice into `app\voices`; `install.ps1` and `launch.bat` put both tool
 directories on PATH. SoX's Windows build has no MP3 decoder, so bundling it does not turn the MP3
 chimes into local playback — the browser stays the player, and SoX is there for the synth and any
-WAV work. The house's own Jonathan voice needs the newer Piper and stays a Linux/phone install.
+WAV work. Piper also links the Visual C++ 2015-2022 x64 runtime; the build copies its three DLLs
+beside `piper.exe`, so a clean Windows install needs no redistributable. The house's own Jonathan
+voice needs the newer Piper and stays a Linux/phone install.
 
 **Next:**
 

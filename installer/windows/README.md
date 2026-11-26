@@ -70,7 +70,10 @@ pinned SHA-256. Pass `-ToolsDir C:\downloads` to use pre-downloaded copies
 (named `piper_windows_amd64.zip` and `sox-14.4.2-win32.zip`) instead of the
 network, and `-NoTools` to build without them. The default voice is copied
 from `-VoiceDir` (default `<TreeDir>\voices`); without it the build warns and
-the install starts silent until `voice_sync` pulls a voice from a peer.
+the install starts silent until `voice_sync` pulls a voice from a peer. Piper
+links the Visual C++ 2015-2022 x64 runtime; the build copies its three DLLs
+beside `piper.exe`, so install the VC++ redistributable on the build machine
+(or the build warns and a clean install cannot start Piper).
 
 `app\` comes from `git archive HEAD` - tracked files only, no `.git`, no local
 `config.json`, no database, no untracked state. `runtime\` is copied from
