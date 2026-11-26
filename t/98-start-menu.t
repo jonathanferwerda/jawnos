@@ -117,7 +117,12 @@ for my $key (@lang_hints) {
 like($template, qr/class="start_menu_header"/, 'the panel has its header');
 like($template, qr/class="start_menu_search_slot"/, 'the header reserves the search slot');
 like($template, qr/id="start_menu_filter" class="start_menu_filter"/,
-	'the app page draws the name filter');
+	'the header draws the app-name search');
+# The search bar rides the header on every page, not only Apps, and Configure
+# holds its right edge.
+my ($menu_header) = $template =~ /(class="start_menu_header".*?<\/div>)/s;
+like($menu_header, qr/id="start_menu_filter"/, 'the search bar rides the header on every page');
+like($menu_header, qr/id="main_logo"/, 'and Configure shares that header');
 like($template, qr/class="start_menu_pages" role="tablist"/,
 	'the page row is a labelled tablist');
 like($template, qr/foreach my \$b \( qw\/app run up exp view\/ \)/,
@@ -203,8 +208,16 @@ like($taskbar_js, qr/addClass\('start_menu_sheet'\)/,
 	'and hangs the sheet class on a phone');
 like($taskbar_js, qr/matchMedia\('\(max-height:520px\)'\)/,
 	'a landscape phone is a short screen, not a narrow one');
-like($taskbar_js, qr/short \? full : 'min\(78vh, ' \+ full \+ '\)'/,
+like($taskbar_js, qr/var sheet_limit = short \? sheet_room : 'min\(78vh, ' \+ sheet_room \+ 'px\)'/,
 	'and a short screen takes the whole room between the bars');
+# A sheet follows the button's own bar: under a top bar, over a bottom one.
+like($taskbar_js, qr/var below = \(edge != 'bottom'\);/, 'the sheet follows the button\'s own edge');
+like($taskbar_js, qr/toggleClass\('start_menu_sheet_top', below\)/,
+	'and hangs under a top bar as well as over a bottom one');
+like($taskbar_js, qr/sheet\['top'\] = Math\.round\(t\.bottom \+ sheet_gap\)/,
+	'a top-bar sheet starts just below the button');
+like($taskbar_js, qr/sheet\['bottom'\] = Math\.round\(h - t\.top \+ sheet_gap\)/,
+	'a bottom-bar sheet ends just above it');
 
 # --- the guide's start-menu topic -------------------------------------------
 # Tier-1 help is hand-written and has to keep up with the panel: the guide names
@@ -212,10 +225,12 @@ like($taskbar_js, qr/short \? full : 'min\(78vh, ' \+ full \+ '\)'/,
 # and that Help lives in the Apps list rather than at the foot.
 my ($start_menu_help) = $help_features =~ /\$topic\{'start_menu'\} = \{(.*?)\n\t\};/s;
 ok(defined $start_menu_help, 'the start_menu help topic is readable');
-like($start_menu_help, qr/2026-11-25/, 'the topic was verified against this rebuild');
+like($start_menu_help, qr/2026-11-26/, 'the topic was verified against this rebuild');
 like($start_menu_help, qr/Apps, Running, Upcoming, Expiring and System/,
 	'the guide names the labelled pages');
-like($start_menu_help, qr/filter in the header/, 'the guide describes the app filter');
+like($start_menu_help, qr/search bar in the header/, 'the guide describes the app search');
+like($start_menu_help, qr/rides every page/, 'and says it is on every page');
+like($start_menu_help, qr/Configure, the wrench, holds the header/, 'and that Configure holds the right edge');
 like($start_menu_help, qr/Recent group/, 'the guide describes the Recent group');
 like($start_menu_help, qr/All apps/, 'and the All apps list');
 like($start_menu_help, qr/Leave, Site type and More/, 'the guide names the footer');
@@ -262,6 +277,18 @@ like($css, qr/#start_menu\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column
 	'the panel is a flex column at the desktop clamp size');
 like($css, qr/#start_menu\.start_menu_sheet\s*\{[^}]*left:\s*8px;[^}]*right:\s*8px;[^}]*bottom:\s*calc\(var\(--taskbar_bottom_h, 0px\) \+ 8px\)/,
 	'a phone sheet spans the screen and stands on the taskbar');
+# A sheet follows its button's bar: the phone branch hangs it under a top bar
+# as well as over a bottom one, and the stylesheet draws that box too.
+like($css, qr/#start_menu\.start_menu_sheet\.start_menu_sheet_top\s*\{[^}]*top:[^}]*bottom:\s*auto/s,
+	'the stylesheet carries the top sheet as well');
+like($css, qr/#start_menu \.start_menu_header #main_logo\s*\{[^}]*margin-left:\s*auto/s,
+	'Configure holds the header right edge');
+# The search bar rides every page: a page with no catalogue asks for Apps and
+# carries the query across the fetch.
+like($menu_js, qr/if \(!\$\('\.start_menu_main_display'\)\.length\)/,
+	'typing on a page with no catalogue asks for the Apps page');
+like($menu_js, qr/startMenuPendingQuery = value;/, 'and keeps the typed query');
+like($menu_js, qr/startMenuQuery = startMenuPendingQuery;/, 'so the catalogue renders filtered');
 like($css, qr/\@media \(max-width: 620px\)\s*\{\s*#start_menu\s*\{/,
 	'and the stylesheet draws the same sheet at the 620px breakpoint');
 like($css, qr/\@media \(max-height: 520px\)\s*\{\s*#start_menu\s*\{/,

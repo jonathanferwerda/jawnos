@@ -637,40 +637,53 @@ function jawnosStartMenuPlace() {
 	var toggle = $('#start_menu_toggle').filter(':visible').first();
 	if (!toggle.length) { toggle = $('.start_menu_toggle_copy:visible').first(); }
 	if (!menu.length || !toggle.length || !menu.is(':visible')) { return; }
-	// A phone gets a sheet: the panel spans the screen with a margin and stands
-	// on the taskbar, whatever edge the bar is on, with its height bounded by the
-	// room between the bars. The stylesheet draws the same box; writing it here
-	// keeps an open menu in step when the bars move under it.
+	// The button's own bar decides which way the panel opens; an added bar may
+	// sit on the other edge from the page's first one, and a hidden taskbar leaves
+	// the button in the top-right corner.
+	var anchor_bar = toggle.closest('.jawnos_bar');
+	var edge = anchor_bar.length ? (anchor_bar.attr('position') || 'bottom') : (jawnosBars.taskbar || 'bottom');
+	var below = (edge != 'bottom');
+	var t = toggle[0].getBoundingClientRect();
+	var w = $(window).width();
+	var h = $(window).height();
+	// A phone gets a sheet: the panel spans the screen with a margin and stands on
+	// the button's own edge - hanging under a top bar, standing on a bottom one -
+	// with its height bounded by the room between the bars. The stylesheet draws
+	// the same box; writing it here keeps an open menu in step when the bars move
+	// under it.
 	var narrow = (typeof window.matchMedia == 'function') && window.matchMedia('(max-width:620px)').matches;
 	var short = (typeof window.matchMedia == 'function') && window.matchMedia('(max-height:520px)').matches;
 	if (narrow || short) {
 		// a short screen is a landscape phone: the sheet takes the whole room
 		// between the bars instead of a portrait's 78vh
-		var full = 'calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 16px)';
-		menu.addClass('start_menu_sheet');
-		menu.css({
+		var sheet_gap = 8;
+		var sheet_room = Math.max(160, below ? (h - t.bottom - sheet_gap - 8) : (t.top - sheet_gap - 8));
+		var sheet_limit = short ? sheet_room : 'min(78vh, ' + sheet_room + 'px)';
+		menu.addClass('start_menu_sheet').toggleClass('start_menu_sheet_top', below);
+		var sheet = {
 			'left': '8px',
 			'right': '8px',
-			'top': 'auto',
-			'bottom': 'calc(var(--taskbar_bottom_h, 0px) + 8px)',
-			'max-height': short ? full : 'min(78vh, ' + full + ')'
-		});
+			'width': 'auto',
+			'max-width': 'none',
+			'max-height': sheet_limit
+		};
+		if (below) {
+			sheet['top'] = Math.round(t.bottom + sheet_gap) + 'px';
+			sheet['bottom'] = 'auto';
+		}
+		else {
+			sheet['bottom'] = Math.round(h - t.top + sheet_gap) + 'px';
+			sheet['top'] = 'auto';
+		}
+		menu.css(sheet);
 		return;
 	}
-	menu.removeClass('start_menu_sheet');
-	var t = toggle[0].getBoundingClientRect();
-	var w = $(window).width();
-	var h = $(window).height();
+	menu.removeClass('start_menu_sheet start_menu_sheet_top');
 	var gap = 4;
 	var menu_w = Math.min(menu.outerWidth() || 0, w);
 	var left = ((t.left + (t.width / 2)) < (w / 2)) ? t.left : (t.right - menu_w);
 	// a menu as wide as the screen sits flush to it rather than hanging over
 	left = Math.max(0, Math.min(left, w - menu_w));
-	// The button's own bar decides which way the menu opens; an added bar may
-	// sit on the other edge from the page's first one.
-	var anchor_bar = toggle.closest('.jawnos_bar');
-	var edge = anchor_bar.length ? (anchor_bar.attr('position') || 'bottom') : (jawnosBars.taskbar || 'bottom');
-	var below = (edge != 'bottom');
 	var room = below ? (h - t.bottom - gap - 8) : (t.top - gap - 8);
 	var place = {
 		'left': Math.round(left) + 'px',

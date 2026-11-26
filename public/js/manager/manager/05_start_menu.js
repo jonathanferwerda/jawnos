@@ -237,6 +237,10 @@ function startMenuToggle(data) {
 					startMenuRender(response.html, st);
 					if (keyboard) { startMenuFocusInitial(); }
 				}
+			},
+			// a page switch that failed must not leave the filter waiting forever
+			complete: function() {
+				startMenuPageSwitchBusy = false;
 			}
 		});
 	}
@@ -264,9 +268,16 @@ function startMenuRender(html, st) {
 	$('#start_menu').replaceWith(html);
 	$('#start_menu').show();
 	// a fresh body means a fresh filter: the query cannot narrow a list it was
-	// not typed against
+	// not typed against - unless the person typed on another page, when the same
+	// text carried into the catalogue the switch asked for
 	startMenuQuery = '';
 	$('#start_menu_filter').val('');
+	if (startMenuPendingQuery !== null) {
+		startMenuQuery = startMenuPendingQuery;
+		$('#start_menu_filter').val(startMenuPendingQuery);
+		startMenuPendingQuery = null;
+	}
+	startMenuPageSwitchBusy = false;
 	if (search) {
 		// the search rides the menu's own header slot, not the panel's foot
 		var slot = $('#start_menu .start_menu_search_slot').first();
@@ -484,6 +495,11 @@ function startMenuForget(key) {
 // its own, and the filter narrows it by name; either one drops both group
 // labels and the recent X. The open page is the choice, so All is the default.
 var startMenuQuery = '';
+// The search bar rides every page, so a press on Running or System still
+// searches: the typed text waits here across the fetch to the Apps page and
+// lands in the catalogue when it renders.
+var startMenuPendingQuery = null;
+var startMenuPageSwitchBusy = false;
 
 // What the view means by visible: the rows it hides itself carry display:none,
 // and that is what decides both the empty note and the keyboard's walk.
@@ -571,10 +587,22 @@ $(document).on('click', '.start_menu_category', function () {
 	startMenuView();
 });
 
-// The filter narrows the catalogue by name as the person types; a fresh menu
-// body resets both the field and the query.
+// The filter narrows the catalogue by name as the person types. The bar rides
+// every page, so typing where no catalogue is drawn asks for the Apps page and
+// carries the text across; a fresh menu body resets both the field and the
+// query.
 $(document).on('input', '#start_menu_filter', function () {
-	startMenuQuery = $(this).val() || '';
+	var value = $(this).val() || '';
+	if (!$('.start_menu_main_display').length) {
+		startMenuPendingQuery = value;
+		if (startMenuPageSwitchBusy) { return; }
+		startMenuPageSwitchBusy = true;
+		localStorage.setItem('start_menu_menu', 'app');
+		$('#start_menu').attr('toggled', 'closed');
+		startMenuToggle({ source: 'menu' });
+		return;
+	}
+	startMenuQuery = value;
 	startMenuView();
 });
 

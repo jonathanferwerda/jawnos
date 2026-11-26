@@ -1760,9 +1760,10 @@ body.full_app_mode .window_fullview_exit { display: none !important; }
 	color: var(--ink);
 }
 
-/* A phone has no room for a corner panel: the menu becomes a sheet standing on
-   the taskbar, edge to edge but for an 8px margin, and never taller than the
-   room between the bars. jawnosStartMenuPlace() writes this same geometry for
+/* A phone has no room for a corner panel: the menu becomes a sheet anchored
+   to the bar that owns its button - standing on a bottom bar, hanging under a
+   top one - edge to edge but for an 8px margin, and never taller than the room
+   between the bars. jawnosStartMenuPlace() writes this same geometry for
    its phone branch and hangs the class on the panel, so the sheet and the
    script agree whether or not the stylesheet's own breakpoint has fired. */
 #start_menu.start_menu_sheet {
@@ -1775,6 +1776,14 @@ body.full_app_mode .window_fullview_exit { display: none !important; }
 	height: auto;
 	max-height: min(78vh, calc(100vh - var(--taskbar_top_h, 0px) - var(--taskbar_bottom_h, 0px) - 16px));
 	border-radius: 16px;
+}
+/* A top bar's sheet hangs from that bar instead of standing on the bottom
+   one. jawnosStartMenuPlace() writes the same edge inline; this is the
+   stylesheet half of the pair, so the sheet is right even before the placer
+   runs. */
+#start_menu.start_menu_sheet.start_menu_sheet_top {
+	top: calc(var(--taskbar_top_h, 0px) + 8px);
+	bottom: auto;
 }
 @media (max-width: 620px) {
 	#start_menu {
@@ -2045,6 +2054,8 @@ body.full_app_mode .window_fullview_exit { display: none !important; }
 }
 #start_menu .start_menu_header #main_logo {
 	flex: 0 0 auto;
+	/* Configure holds the header right edge on every page */
+	margin-left: auto;
 	width: 34px;
 	height: 34px;
 	max-width: 34px;
