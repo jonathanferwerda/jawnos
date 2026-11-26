@@ -29,8 +29,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread::{self, JoinHandle};
+use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use oboe::{
@@ -40,6 +40,7 @@ use oboe::{
     SharingMode, Usage,
 };
 
+use crate::control::{error_json, into_c_string, json_escape, lock_control};
 use crate::disk::DiskWriter;
 use crate::monbus::{self, Consumer, Producer};
 use crate::plan::{ChannelPlan, Strip};
@@ -121,8 +122,9 @@ struct StreamSetup {
 const MAX_CALLBACK_FRAMES: usize = 32_768;
 
 /// Ring capacity: about 341 ms at 48 kHz, enough to ride out a disk stall. A
-/// full ring discards the newest frames and counts them.
-const RING_FRAMES: usize = 16_384;
+/// full ring discards the newest frames and counts them. Shared with the
+/// direct-USB backend so both takes use the same record-ring shape.
+pub(crate) const RING_FRAMES: usize = 16_384;
 
 /// Disk queue depth, in blocks. The measured cause of the first slice's losses:
 /// the 10 s take at app 1358 dropped 6,528 frames (68 blocks of 96) with
@@ -1093,10 +1095,11 @@ fn note_peak(slot: &AtomicU32, value: f32) {
 }
 
 /// What one drain thread got out of the ring. `written` is what the WAV holds;
-/// `dropped` is what the disk queue refused on the way there.
-struct Drained {
-    written: u64,
-    dropped: u64,
+/// `dropped` is what the disk queue refused on the way there. Shared with the
+/// direct-USB backend, which reuses [`drain_ring`] for its own take.
+pub(crate) struct Drained {
+    pub(crate) written: u64,
+    pub(crate) dropped: u64,
 }
 
 /// The non-audio side of the take: pull the ring into fixed buffers and hand
@@ -1104,7 +1107,10 @@ struct Drained {
 /// in the callback. A plan's [`Channel`] is built and prepared here too, on
 /// this thread, so the strip runs once per block after capture rather than in
 /// the audio callback.
-fn drain_ring(
+///
+/// Consumed by both the Oboe take and the direct-USB take
+/// (`usb_device::run_usb_take`), so the strip and disk policy live in one place.
+pub(crate) fn drain_ring(
     consumer: Consumer,
     mut disk: Option<DiskWriter>,
     period: usize,
@@ -1173,31 +1179,6 @@ fn push_block(
 
 // --- the plain-C ABI the app's service loads ---------------------------------
 
-/// The service's view of the one take this process may run. The audio path
-/// never touches this lock; only start, stop and status do.
-struct Control {
-    stop: Option<Arc<AtomicBool>>,
-    handle: Option<JoinHandle<()>>,
-    status: String,
-}
-
-fn control() -> &'static Mutex<Control> {
-    static CONTROL: OnceLock<Mutex<Control>> = OnceLock::new();
-    CONTROL.get_or_init(|| {
-        Mutex::new(Control {
-            stop: None,
-            handle: None,
-            status: "{\"ok\":false,\"error\":\"no take has started\"}".to_string(),
-        })
-    })
-}
-
-fn lock_control() -> std::sync::MutexGuard<'static, Control> {
-    control()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 /// One JSON object, matching the engine's existing status style.
 fn report_json(report: &OboeReport, take: &str) -> String {
     format!(
@@ -1224,36 +1205,6 @@ fn report_json(report: &OboeReport, take: &str) -> String {
         json_escape(&report.plan),
         json_escape(take),
     )
-}
-
-fn error_json(error: &str) -> String {
-    format!("{{\"ok\":false,\"error\":\"{}\"}}", json_escape(error))
-}
-
-fn json_escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for character in text.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-fn into_c_string(text: String) -> *mut c_char {
-    // `CString::new` fails only on an interior NUL, which JSON cannot carry.
-    match CString::new(text) {
-        Ok(text) => text.into_raw(),
-        Err(_) => CString::new("{\"ok\":false,\"error\":\"status text\"}")
-            .expect("static JSON has no NUL")
-            .into_raw(),
-    }
 }
 
 /// Start a take on a worker thread and return a JSON status immediately.
@@ -1611,7 +1562,7 @@ mod tests {
 
     #[test]
     fn error_text_is_escaped() {
-        let text = error_json("a \"quoted\"\nline");
+        let text = crate::control::error_json("a \"quoted\"\nline");
         assert_eq!(text, "{\"ok\":false,\"error\":\"a \\\"quoted\\\"\\nline\"}");
     }
 }

@@ -12,6 +12,9 @@
 
 pub mod auth;
 pub mod backends;
+// The one take slot both the Oboe and the direct-USB backends arm; a process
+// runs one take, so the slot must be shared rather than duplicated.
+pub(crate) mod control;
 pub mod bearing;
 pub mod capture;
 pub mod device;
@@ -34,6 +37,7 @@ pub mod sender;
 pub mod session;
 pub mod stream;
 pub mod uplink;
+pub mod usb_device;
 pub mod wav;
 pub mod wav_read;
 
@@ -104,4 +108,5 @@ pub use uplink::{
     PULL_BUFFER_FRAMES, PULL_BUFFER_MAX_MS, PULL_FRAMES, PULL_INTERVAL_MS,
 };
 pub use wav::{to_i16, WavError, WavWriter, HEADER_LEN as WAV_HEADER_LEN};
+pub use usb_device::UsbReport;
 pub use wav_read::{read_wav, WavAudio, WavReadError};
