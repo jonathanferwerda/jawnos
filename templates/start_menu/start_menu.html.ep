@@ -31,8 +31,8 @@
 		    box; the category chips below narrow the catalogue. The global search
 		    replaces it when its own home is the menu. %>
 		<input type="search" id="start_menu_filter" class="start_menu_filter"
-		       placeholder="<%= &subs::lang('start_menu.search_apps') %>"
-		       aria-label="<%= &subs::lang('start_menu.search_apps') %>"
+		       placeholder="<%= &subs::lang('common.search') %>"
+		       aria-label="<%= &subs::lang('common.search') %>"
 		       autocomplete="off" spellcheck="false">
 		<%# Configure holds the header's right edge on every page. %>
 		<img id="main_logo" class="jonathan little_thumb configuration"

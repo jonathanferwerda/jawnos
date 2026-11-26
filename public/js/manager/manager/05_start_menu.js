@@ -297,12 +297,13 @@ function startMenuHtmlFlush() {
 	startMenuHtml = {};
 }
 
-// A press anywhere but the menu - the button that opens it, or the house
-// search's own dropdown - puts the menu away.
+// A press anywhere but the menu - the button that opens it, the house search's
+// own dropdown, or the soft keyboard that types into the search - puts the menu
+// away.
 $(document).on('click', function (e) {
 	var menu = $('#start_menu');
 	if (!jawnosStartMenuOpen(menu)) { return; }
-	if ($(e.target).closest('#start_menu, #start_menu_toggle, .start_menu_toggle_copy, #start_menu_search_results').length > 0) { return; }
+	if ($(e.target).closest('#start_menu, #start_menu_toggle, .start_menu_toggle_copy, #start_menu_search_results, #jawn_soft_keyboard').length > 0) { return; }
 	$('#start_menu_toggle').attr('toggled', 'closed');
 	startMenuCloser(0);
 });

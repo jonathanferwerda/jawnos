@@ -122,6 +122,7 @@ like($template, qr/id="start_menu_filter" class="start_menu_filter"/,
 # holds its right edge.
 my ($menu_header) = $template =~ /(class="start_menu_header".*?<\/div>)/s;
 like($menu_header, qr/id="start_menu_filter"/, 'the search bar rides the header on every page');
+like($menu_header, qr/&subs::lang\('common\.search'\)/, 'the bar reads Search in every language');
 like($menu_header, qr/id="main_logo"/, 'and Configure shares that header');
 like($template, qr/class="start_menu_pages" role="tablist"/,
 	'the page row is a labelled tablist');
@@ -241,6 +242,10 @@ like($start_menu_help, qr/Help is one of the apps in the Apps list/,
 like($menu_js, qr/\.start_menu_toggle_copy/, 'a start button copied into an added bar answers');
 like($menu_js, qr/closest\('#start_menu_toggle, \.start_menu_toggle_copy'\)/,
 	'a press on the copy is not mistaken for an outside press');
+# The on-screen keyboard types into the search without counting as an outside
+# press, so the menu stands while the person types.
+like($menu_js, qr/closest\('#start_menu, #start_menu_toggle, \.start_menu_toggle_copy, #start_menu_search_results, #jawn_soft_keyboard'\)/,
+	'a soft-keyboard press is not an outside press');
 
 # --- the panel unfolds out of its button ------------------------------------
 # The motion is the same four-level scale the windows wear; the gate is the
