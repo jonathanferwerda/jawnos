@@ -255,8 +255,11 @@ subs::preload($_) for qw(
 	like($tpl, qr/data-eval-filter="active"/, 'the evaluation filter pills are present');
 	like($tpl, qr/data-history-range="7d"/, 'the history range pills are present');
 	like($tpl, qr/class="intelligence_cadence" data-scope=/, 'each evaluation row carries an editable cadence picker');
-	like($tpl, qr/class="intelligence_day[^"]*" data-day=/, 'each evaluation row carries an editable weekday picker');
-	like($tpl, qr/class="intelligence_days_cell"/, 'the weekday cell can be hidden when cadence does not use days');
+	like($tpl, qr/class="intelligence_days_button"/, 'each evaluation row carries an editable weekday dropdown');
+	like($tpl, qr/data-day-labels=/, 'the weekday dropdown carries the translated day names');
+	like($tpl, qr/class="intelligence_sort" data-sort-type="num"/, 'the evaluation columns are sortable');
+	like($tpl, qr/class="intelligence_days_cell"/, 'the weekday cell stays in the table so columns line up');
+	like($tpl, qr/class="intelligence_days_none"/, 'a scope without weekdays shows a dash');
 	like($tpl, qr/include 'configure\/currency_amount'/, 'the provider balance reuses the currency picker');
 	like($tpl, qr/intelligence_history_ranges \{[^}]*overflow-x: auto/, 'the filter and history pill rows scroll sideways');
 	like($tpl, qr/class="intelligence_next_run" data-scope=/, 'the row names the next-run span the picker updates');
@@ -267,6 +270,8 @@ subs::preload($_) for qw(
 	like($js, qr/localStorage\.setItem\(intelligenceHistoryKey/, 'the history range is remembered');
 	like($js, qr/url:\s*'\/manager\/intelligence\/cadence'/, 'the cadence picker posts to the app route');
 	like($js, qr/payload\.days/, 'the weekday picker sends days in the cadence request');
+	like($js, qr/function intelligenceDaysOpen/, 'the weekday picker opens a multiselect menu');
+	like($js, qr/function intelligenceSort/, 'a clicked evaluation column sorts the table');
 	like($js, qr/currency_picker/, 'the Intelligence window converts a picked currency');
 	unlike($js, qr/settingSetter/, 'the weekdays are not a second request');
 

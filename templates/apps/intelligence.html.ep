@@ -9,7 +9,7 @@
 <% my %state_label = ( active => &subs::ui('Active'), scheduled => &subs::ui('Scheduled'), on_demand => &subs::ui('On demand'), idle => &subs::ui('Idle') ); %>
 <style>
 #intelligence { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px; overflow: hidden; font-size: 15px; }
-#intelligence .intelligence_tabs { display:flex; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; white-space:nowrap; gap: 8px; padding-bottom: 4px; min-width: 0; scrollbar-width: thin; }
+#intelligence .intelligence_tabs { display:flex; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; white-space:nowrap; gap: 8px; padding-bottom: 4px; min-width: 0; scrollbar-width: thin; flex: 0 0 auto; }
 #intelligence .intelligence_section_pill { flex: 0 0 auto; padding: 5px 14px; border: 1px solid var(--line); border-radius:999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); white-space: nowrap; opacity: .85; }
 #intelligence .intelligence_section_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; opacity: 1; }
 #intelligence .intelligence_section { display: none; }
@@ -33,21 +33,28 @@
 #intelligence .intelligence_metric { display: flex; flex-direction: column; }
 #intelligence .intelligence_metric b { font-size: 18px; font-variant-numeric: tabular-nums; }
 #intelligence .intelligence_metric span { font-size: 12px; opacity: .7; }
-#intelligence .intelligence_filter_pills, #intelligence .intelligence_history_ranges { display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; white-space: nowrap; gap: 6px; padding-bottom: 4px; min-width: 0; scrollbar-width: thin; }
+#intelligence .intelligence_filter_pills, #intelligence .intelligence_history_ranges { display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; white-space: nowrap; gap: 6px; padding-bottom: 4px; min-width: 0; scrollbar-width: thin; flex: 0 0 auto; }
 #intelligence .intelligence_filter_pills > *, #intelligence .intelligence_history_ranges > * { flex: 0 0 auto; }
 #intelligence .intelligence_filter_pill { padding: 3px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); }
 #intelligence .intelligence_filter_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; }
 #intelligence .intelligence_cadence { font: inherit; font-size: 13px; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .4); padding: 3px 6px; }
-#intelligence .intelligence_days_cell { display: flex; flex-wrap: wrap; gap: 3px; min-width: 150px; max-width: 168px; }
-#intelligence .intelligence_days_cell[hidden] { display: none; }
-#intelligence .intelligence_day { flex: 0 0 auto; min-width: 30px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; font-size: 12px; cursor: var(--jawnos-cursor-pointer, pointer); opacity: .5; }
-#intelligence .intelligence_day.is-on { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; opacity: 1; }
-#intelligence .intelligence_day:disabled { cursor: var(--jawnos-cursor-default, default); opacity: .3; }
+#intelligence .intelligence_days_cell { min-width: 120px; max-width: 240px; }
+#intelligence .intelligence_days_button[hidden], #intelligence .intelligence_days_none[hidden] { display: none; }
+#intelligence .intelligence_days_none { opacity: .6; }
+#intelligence .intelligence_days_button { font: inherit; font-size: 12px; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .4); padding: 3px 6px; cursor: var(--jawnos-cursor-pointer, pointer); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; text-align: left; }
+#intelligence .intelligence_days_button::after { content: ' ▾'; opacity: .6; }
+#intelligence .intelligence_days_button:disabled { opacity: .45; cursor: var(--jawnos-cursor-default, default); }
+#intelligence .intelligence_days_menu { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .4); box-shadow: 0 6px 20px rgba(0, 0, 0, .35); padding: 4px; min-width: 150px; max-height: 260px; overflow-y: auto; }
+#intelligence .intelligence_days_option { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px; cursor: var(--jawnos-cursor-pointer, pointer); font-size: 13px; white-space: nowrap; }
+#intelligence .intelligence_days_option:hover { background: var(--panel-2, var(--panel)); }
+#intelligence th.intelligence_sort { cursor: var(--jawnos-cursor-pointer, pointer); user-select: none; }
+#intelligence th.intelligence_sort[data-sort-dir="asc"]::after { content: ' ▲'; opacity: .7; }
+#intelligence th.intelligence_sort[data-sort-dir="desc"]::after { content: ' ▼'; opacity: .7; }
 #intelligence .currency_amount { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 #intelligence .currency_amount .currency_value { font-variant-numeric: tabular-nums; }
 #intelligence .currency_picker { font: inherit; font-size: 12px; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px; }
 #intelligence .currency_fixed .currency_code { opacity: .7; font-size: 12px; }
-#intelligence .intelligence_note { min-height: 1.2em; opacity: .8; }
+#intelligence .intelligence_note { min-height: 1.2em; opacity: .8; flex: 0 0 auto; }
 #intelligence table { width: 100%; border-collapse: collapse; font-size: 14px; }
 #intelligence th, #intelligence td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 #intelligence th { font-weight: 600; opacity: .8; white-space: nowrap; }
@@ -56,7 +63,7 @@
 #intelligence .intelligence_external { border: 1px dashed var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); padding: 8px 12px; }
 #intelligence .intelligence_history_panel { display: none; }
 #intelligence .intelligence_history_panel.is-active { display: block; }
-#intelligence .intelligence_scroll { min-width: 0; overflow-x: auto; }
+#intelligence .intelligence_scroll { min-width: 0; overflow-x: auto; flex: 0 0 auto; }
 </style>
 <div id="intelligence" app="intelligence">
 	<div class="intelligence_tabs" role="tablist" aria-label="<%= &subs::ui('Intelligence sections') %>">
@@ -189,7 +196,7 @@
 		</div>
 	</section>
 
-	<section id="intelligence_section_evaluations" class="intelligence_section" data-section="evaluations" role="tabpanel" hidden>
+	<section id="intelligence_section_evaluations" class="intelligence_section" data-section="evaluations" role="tabpanel" hidden data-day-labels="<%= join('|', map { &subs::ui($day_names[$_]) } 0 .. 6) %>">
 		<div class="intelligence_filter_pills" role="group" aria-label="<%= &subs::ui('Evaluation filter') %>">
 			<button type="button" class="intelligence_filter_pill is-active" data-eval-filter="all"><%= &subs::ui('All') %></button>
 			<button type="button" class="intelligence_filter_pill" data-eval-filter="active"><%= $state_label{'active'} %></button>
@@ -201,47 +208,46 @@
 		<div class="intelligence_scroll">
 			<table>
 				<thead><tr>
-					<th><%= &subs::ui('Scope') %></th>
-					<th><%= &subs::ui('Cadence') %></th>
-					<th><%= &subs::ui('Days') %></th>
-					<th><%= &subs::ui('Next run') %></th>
-					<th><%= &subs::ui('Last run') %></th>
-					<th><%= &subs::ui('Tokens 7d') %></th>
-					<th><%= &subs::ui('Tokens 30d') %></th>
-					<th><%= &subs::ui('Last run tokens') %></th>
-					<th><%= &subs::ui('Average per run') %></th>
+					<th class="intelligence_sort" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Scope') %></th>
+					<th class="intelligence_sort" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Cadence') %></th>
+					<th class="intelligence_sort" data-sort-type="text" role="button" tabindex="0"><%= &subs::ui('Days') %></th>
+					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Next run') %></th>
+					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Last run') %></th>
+					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Tokens 7d') %></th>
+					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Tokens 30d') %></th>
+					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Last run tokens') %></th>
+					<th class="intelligence_sort" data-sort-type="num" role="button" tabindex="0"><%= &subs::ui('Average per run') %></th>
 				</tr></thead>
 				<tbody>
 				<% my $evaluations = (ref $d->{'evaluations'} eq 'ARRAY') ? $d->{'evaluations'} : []; %>
 				<% foreach my $row ( @{$evaluations} ) { %>
 					<% my $last = (ref $row->{'last_run'} eq 'HASH') ? $row->{'last_run'} : {}; %>
 					<tr data-eval-state="<%= $row->{'state'} %>">
-						<td><%= $scope_label->($row->{'scope'}) %></td>
-						<td>
+						<td data-sort="<%= lc($row->{'scope'} eq '__president' ? &subs::ui('Whole house') : &subs::format_name($row->{'scope'})) %>"><%= $scope_label->($row->{'scope'}) %></td>
+						<td data-sort="<%= lc($row->{'cadence'} eq 'each_run' ? &subs::ui('Each run') : ($cadence_label{$row->{'cadence'}} || $row->{'cadence'})) %>">
 							<select class="intelligence_cadence" data-scope="<%= $row->{'scope'} %>" hint="<%= &subs::ui('How often this evaluation runs on its own') %>">
 								<% foreach my $c ( qw/off hourly daily weekly monthly yearly each_run/ ) { %>
 									<option value="<%= $c %>" <% if ($row->{'cadence'} eq $c) { %>selected<% } %>><%= $c eq 'each_run' ? &subs::ui('Each run') : ($cadence_label{$c} || $c) %></option>
 								<% } %>
 							</select>
 						</td>
-						<td class="intelligence_days_cell" data-scope="<%= $row->{'scope'} %>" hint="<%= &subs::ui('The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs') %>"<% if (!($row->{'cadence'} eq 'daily' || $row->{'cadence'} eq 'weekly')) { %> hidden<% } %>>
+						<td class="intelligence_days_cell" data-scope="<%= $row->{'scope'} %>" hint="<%= &subs::ui('The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs') %>" data-sort="<%= ($row->{'cadence'} eq 'daily' || $row->{'cadence'} eq 'weekly') ? join(', ', map { substr(&subs::ui($day_names[$_]), 0, 3) } grep { defined $day_names[$_] } @{ $row->{'days'} || [] }) : '—' %>">
 							<% my $days_on = ($row->{'cadence'} eq 'daily' || $row->{'cadence'} eq 'weekly'); %>
-							<% foreach my $d ( 0 .. 6 ) { %>
-								<% my $on = (grep { $_ == $d } @{ $row->{'days'} || [] }) ? 1 : 0; %>
-								<button type="button" class="intelligence_day<%= $on ? ' is-on' : '' %>" data-day="<%= $d %>" aria-pressed="<%= $on ? 'true' : 'false' %>" hint="<%= &subs::ui($day_names[$d]) %>"<% if (!$days_on) { %> disabled<% } %>><%= substr(&subs::ui($day_names[$d]), 0, 3) %></button>
-							<% } %>
+							<% my @shown_days = @{ $row->{'days'} || [] }; %>
+							<button type="button" class="intelligence_days_button" data-scope="<%= $row->{'scope'} %>" data-days="<%= join(',', @shown_days) %>" aria-haspopup="true" aria-expanded="false" hint="<%= &subs::ui('The weekdays a daily or weekly evaluation runs on; none stops the scheduled runs') %>"<% if (!$days_on) { %> disabled hidden<% } %>><%= @shown_days ? join(', ', map { substr(&subs::ui($day_names[$_]), 0, 3) } grep { defined $day_names[$_] } @shown_days) : '—' %></button>
+							<span class="intelligence_days_none"<% if ($days_on) { %> hidden<% } %>>—</span>
 						</td>
-						<td><span class="intelligence_next_run" data-scope="<%= $row->{'scope'} %>"><%= length($row->{'next_run_text'} // '') ? $row->{'next_run_text'} : '—' %></span></td>
-						<td>
+						<td data-sort="<%= defined $row->{'next_run'} ? $row->{'next_run'} : 9999999999999 %>"><span class="intelligence_next_run" data-scope="<%= $row->{'scope'} %>"><%= length($row->{'next_run_text'} // '') ? $row->{'next_run_text'} : '—' %></span></td>
+						<td data-sort="<%= defined $last->{'at'} ? $last->{'at'} : 0 %>">
 							<%= length($last->{'outcome'} // '') ? $last->{'outcome'} : '—' %>
 							<% if (length($last->{'machine'} // '')) { %> · <%= $last->{'machine'} %><% } %>
 							<% if (length($last->{'model'} // '')) { %> · <%= $last->{'model'} %><% } %>
 							<% if (length($last->{'at_text'} // '')) { %> · <%= $last->{'at_text'} %><% } %>
 						</td>
-						<td class="intelligence_num"><%= $num->($row->{'tokens_7d'}) %></td>
-						<td class="intelligence_num"><%= $num->($row->{'tokens_30d'}) %></td>
-						<td class="intelligence_num"><%= $num->($row->{'last_run_tokens'}) %></td>
-						<td class="intelligence_num"><%= $num->($row->{'avg_per_run'}) %></td>
+						<td class="intelligence_num" data-sort="<%= $row->{'tokens_7d'} || 0 %>"><%= $num->($row->{'tokens_7d'}) %></td>
+						<td class="intelligence_num" data-sort="<%= $row->{'tokens_30d'} || 0 %>"><%= $num->($row->{'tokens_30d'}) %></td>
+						<td class="intelligence_num" data-sort="<%= $row->{'last_run_tokens'} || 0 %>"><%= $num->($row->{'last_run_tokens'}) %></td>
+						<td class="intelligence_num" data-sort="<%= $row->{'avg_per_run'} || 0 %>"><%= $num->($row->{'avg_per_run'}) %></td>
 					</tr>
 				<% } %>
 				</tbody>
