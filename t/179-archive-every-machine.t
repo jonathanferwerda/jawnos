@@ -153,6 +153,8 @@ my $images_js = read_file($root . '/public/js/' . 'images' . '.js');
 my $download = read_file("$root/lib/JawnOS/Controller/manager_misc5.pm");
 my $appointment_js = read_file("$root/public/js/manager/manager/06_appointment_distance.js");
 
+like($file, qr/sub archive_card_mounted/, 'the archive root knows an eMMC mountpoint from the card');
+like($archive, qr/archive_card_mounted/, 'the scaffolder and the watch use the same check');
 like($file, qr/sub archive_self_machine/, 'the archive machine can describe itself');
 like($file, qr/sub archive_machines/, 'and the peer list plus itself is one helper');
 like($file, qr/local => \(\$rm->\{'self'\} \? 1 : 0\)/, 'a plan marks the local destination');
@@ -185,5 +187,19 @@ like($download, qr/subs::remote_agent_for\(\$c->param\('remote_uuid'\)\)/, 'a do
 like($app_file, qr/class="little_thumb archive_file hover"/, 'an appointment file can be sent to the archive');
 like($appointment_js, qr/'click', '\.archive_file'/, 'the archive action is wired in the appointment part');
 like($appointment_js, qr/function appointmentArchiveWatch/, 'and shows the job without the Folders chunk');
+
+# ---- a controller waits for the card before it reads or writes -------------
+# The mountpoint exists on the eMMC when the card is out; the device number is
+# what stops a scaffold, a listing or a transfer from landing there.
+{
+	my $same = tempdir(DIR => "$FindBin::Bin/..", CLEANUP => 1);
+	local *subs::device_setter = sub { 'controller' };
+	my $scaffold = subs::archive_scaffolder($same);
+	is($scaffold->{'enabled'}, 0, 'a controller does not scaffold an eMMC mountpoint');
+	is($scaffold->{'reason'}, 'the archive card is not mounted', 'and says why');
+	ok(!-d "$same/Documents", 'no folders are invented on the eMMC');
+	my $dest = subs::archive_destination({ location => 'music', root => $same, path => 'song.mp3' });
+	is($dest->{'error'}, 'the archive card is not mounted', 'a destination on the eMMC is refused');
+}
 
 done_testing();

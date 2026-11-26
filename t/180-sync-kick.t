@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl perl/help/topics_features.pl scripts/sync_kick.pl
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl perl/help/topics_features.pl scripts/sync_kick.pl
 # covers:    the sync kick job clears the things that stall a rail and nudges the ordinary pass; a pull in flight neither hides another peer's failure nor gets its job reaped; a dead hub is not chosen; a controller holds its automatic sync until its card is mounted
 
 use strict;
@@ -15,6 +15,7 @@ use JawnOSTest;
 my $root = root();
 require "$root/perl/gb/01_state_and_defaults.pl";
 require "$root/lib/JawnOS/Manager/Part35.pm";
+require "$root/lib/JawnOS/Domain/File.pm";
 require "$root/lib/JawnOS/Domain/Sync.pm";
 
 {
@@ -183,6 +184,8 @@ my $now = JawnOSTest::ts(2026, 11, 5, 14, 0, 0);
 		'and reads the card this machine adopted, not a shared drive setting');
 	like($lan, qr/return;/,
 		'and leaves the pass when the card is not ready');
+	like(read_file("$root/lib/JawnOS/Domain/Sync.pm"), qr/archive_card_mounted/,
+		'the sync hold uses the same card check as reads and writes');
 	my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 	like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_auto_hold\b/s,
 		'the domain loader maps the hold to Sync.pm');

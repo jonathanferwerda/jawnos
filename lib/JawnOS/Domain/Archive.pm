@@ -78,6 +78,8 @@ sub archive_scaffolder {
 	return { enabled => 0, reason => 'no archive_dir set' } unless $root;
 	$root =~ s{/+$}{};
 	return { enabled => 0, dir => $root, reason => 'archive_dir does not exist' } unless -d $root;
+	return { enabled => 0, dir => $root, reason => 'the archive card is not mounted' }
+		unless &archive_card_mounted($root);
 	my (@created, @existing, @failed);
 	foreach my $location (&location_types()) {
 		my $path = &archive_location_folder($root, $location);
@@ -1287,6 +1289,7 @@ sub archive_watch_check {
 	my $root = $data->{'root'} || &archive_root();
 	return 0 unless (defined $location && length $location
 		&& defined $root && length $root && -d $root);
+	return 0 unless &archive_card_mounted($root);
 	my $folder = &archive_location_folder($root, $location);
 	return 0 unless (defined $folder && -d $folder);
 	# this is the authoritative look: do not answer from a sweep another caller

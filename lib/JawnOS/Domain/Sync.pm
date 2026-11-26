@@ -637,11 +637,12 @@ sub sync_auto_hold {
 	return undef unless ($data->{'device'} // '') eq 'controller';
 	my $root = $data->{'archive_dir'} // '';
 	return 'no archive card' unless length $root;
-	return 'the archive card is not mounted' unless -d $root;
-	my @dir = defined $data->{'archive_dev'} ? ($data->{'archive_dev'}) : stat($root);
-	my @base = defined $data->{'root_dev'} ? ($data->{'root_dev'}) : stat('/');
 	return 'the archive card is not mounted'
-		unless @dir && @base && $dir[0] != $base[0];
+		unless &archive_card_mounted($root, {
+			device => $data->{'device'},
+			archive_dev => $data->{'archive_dev'},
+			root_dev => $data->{'root_dev'},
+		});
 	return undef;
 }
 

@@ -153,6 +153,10 @@ like( $part10, qr/backup_now\?reason=remote_update&async=1&compress=1/,
 my $backup_src = read_file("$FindBin::Bin/../lib/JawnOS/Domain/Backup.pm");
 like( $backup_src, qr/param\('compress'\)/, 'the export checks the puller capability' );
 like( $backup_src, qr/if \$may_compress/, 'and writes the codec footer only when it may' );
+# The card folder is only used while the card is mounted; an empty mountpoint
+# on the eMMC must not grow a Backups folder.
+like( $backup_src, qr/archive_card_mounted/,
+	'the archive-card Backups folder waits for the mount' );
 
 # --- the archive-card quota --------------------------------------------------
 my $card = tempdir(CLEANUP => 1);

@@ -1,6 +1,7 @@
 # tests-for: lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/File.pm
 # covers:    media_path_allowed accepts this machine's archive root and still
-#            refuses paths outside every house root.
+#            refuses paths outside every house root; a controller's root only
+#            counts while the card is mounted on its own device.
 
 use strict;
 use warnings;
@@ -10,7 +11,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
-use File::Slurp qw(write_file);
+use File::Slurp qw(read_file write_file);
 use JawnOSTest;
 
 # The machine that holds the archive drive keeps Music, Gallery photos and
@@ -75,5 +76,34 @@ write_file($_, 'x') for ($home_file, $archive_photo, $archive_video, $outside_fi
 	ok(!subs::media_path_allowed("$archive/Photos/banana/p.jpg.enc"),
 		'an archive path is refused when this machine has no archive root');
 }
+
+# ---- a controller's archive is its card ------------------------------------
+# When the card is out, the automount mountpoint is an empty directory on the
+# eMMC. The device number tells it from the card, so a read or a write cannot
+# land on the eMMC just because the path exists.
+is(subs::archive_card_mounted($archive, { device => 'controller', archive_dev => 1, root_dev => 1 }),
+	0, 'a controller refuses an archive root on the eMMC');
+is(subs::archive_card_mounted($archive, { device => 'controller', archive_dev => 2, root_dev => 1 }),
+	1, 'a controller accepts a root on its own card');
+is(subs::archive_card_mounted($archive, { device => 'computer', archive_dev => 1, root_dev => 1 }),
+	1, 'a computer may archive on its own disk');
+is(subs::archive_card_mounted("$tmp/missing", { device => 'controller', archive_dev => 2, root_dev => 1 }),
+	0, 'a root that does not exist is not a card');
+
+# A controller reads its own config.json value, not the shared misc pick, and
+# the root is refused while it is only the eMMC mountpoint. The tempdir here is
+# under the repo, on the same device as /.
+my $same = tempdir(DIR => "$FindBin::Bin/..", CLEANUP => 1);
+{
+	local *subs::device_setter = sub { 'controller' };
+	local *subs::config_reader = sub { { archive_dir => $same } };
+	local *subs::setting_grabber = sub { "$tmp/other_drive" };
+	is(subs::archive_root(), undef,
+		'a controller uses its own config and refuses the eMMC mountpoint');
+}
+
+like(read_file("$FindBin::Bin/../lib/JawnOS/Domain/File.pm"),
+	qr/archive_card_mounted/,
+	'archive_root is gated on the card being mounted');
 
 done_testing();

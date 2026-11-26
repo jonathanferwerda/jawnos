@@ -147,7 +147,10 @@ like($body, qr/Backups folder/, 'the page explains where the backups live');
 
 # The storage walkthrough steps over the same answer Save produces, and the
 # route now says which of the folders are actually on the card.
-like($controller, qr/present => \(-d \(\$dir \. '\/' \. \$_\)\) \? 1 : 0/, 'the storage answer says which folders are on the card');
+like($controller, qr/my \$readable = .*archive_card_mounted\(\$dir\)/, 'a card that is not mounted makes no folder readable');
+like($controller, qr/present => .*archive_card_mounted\(\$dir\)/s, 'the storage answer says whether the card is present');
+like($controller, qr/sub _controller_rom_root.*archive_card_mounted/s, 'the ROM shelf checks the card before reading it');
+like($controller, qr/\$to eq 'sd' && !&subs::archive_card_mounted/, 'copying to the card waits for the mount');
 like($body, qr/id="controllers_walkthrough_button"/, 'the Storage section offers the walkthrough');
 like($body, qr/id="controllers_walkthrough"/, 'and a panel for its steps');
 like($controllers_js, qr/function controllerWalkthroughSteps\(data\)/, 'the walkthrough has its steps');

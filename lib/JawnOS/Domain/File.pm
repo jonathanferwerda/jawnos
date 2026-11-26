@@ -1555,18 +1555,51 @@ sub archive_location_for {
 	return wantarray ? ($match, $base) : $match;
 }
 
-# The archive root of this machine: the configure panel's pick first — it is a
-# misc setting, so the root can be chosen without editing config.json — then
-# config.json's archive_dir. Tidied: ~ resolved, no trailing slash. Undef when
-# this machine is not an archive.
+# Whether an archive root is really the card this controller adopted. A
+# controller's archive is its SD card; when the card is out, the automount
+# mountpoint is an empty directory on the eMMC, and a plain -d would let a
+# read, a write or a merge land there. The device number tells the card from
+# the directory that stands in for it. A computer or server has no such rule:
+# its archive may be a folder on its own disk.
+#
+# archive_dev/root_dev are test seams: a caller that already has the numbers
+# (the sync hold does, to keep its rules testable without a card) passes them
+# instead of making stat() probe a real mount.
+sub archive_card_mounted {
+	my ($root, $data) = @_;
+	$data ||= {};
+	my $device = defined $data->{'device'} ? $data->{'device'} : &device_setter();
+	return 1 unless defined $device && $device eq 'controller';
+	return 0 unless defined $root && length $root && -d $root;
+	my @dir = defined $data->{'archive_dev'} ? ($data->{'archive_dev'}) : stat($root);
+	my @base = defined $data->{'root_dev'} ? ($data->{'root_dev'}) : stat('/');
+	return (@dir && @base && $dir[0] != $base[0]) ? 1 : 0;
+}
+
+# The archive root of this machine. A controller's card is its own config.json
+# value - the card the first boot adopted - and the root only counts while that
+# card is mounted. The configure panel's pick is a misc setting and may name
+# another machine's drive, so a controller does not use it. Every other device
+# keeps the panel's pick first, then config.json. Tidied: ~ resolved, no
+# trailing slash. Undef when this machine is not an archive, or when a
+# controller's card is not mounted.
 sub archive_root {
-	# the panel's pick wants the settings table, which the very first boot may
-	# not have open yet; config.json is the fallback either way
-	my $dir = eval { return &setting_grabber({ app => 'misc', setting => 'archive_dir' }) };
-	$dir = $config->{'archive_dir'} unless (defined $dir && length $dir && lc($dir) ne 'null');
+	my $device = &device_setter();
+	my $dir;
+	if (defined $device && $device eq 'controller') {
+		my $cfg = eval { &config_reader() } || {};
+		$dir = $cfg->{'archive_dir'} // '';
+	}
+	else {
+		# the panel's pick wants the settings table, which the very first boot may
+		# not have open yet; config.json is the fallback either way
+		$dir = eval { return &setting_grabber({ app => 'misc', setting => 'archive_dir' }) };
+		$dir = $config->{'archive_dir'} unless (defined $dir && length $dir && lc($dir) ne 'null');
+	}
 	return undef unless (defined $dir && length $dir);
 	my $root = &home($dir);
 	$root =~ s{/+$}{};
+	return undef if (defined $device && $device eq 'controller') && !&archive_card_mounted($root, { device => $device });
 	return $root;
 }
 
@@ -1584,6 +1617,8 @@ sub archive_destination {
 	# to fail the transfer rather than have its folders invented on the disk
 	# below it
 	return { error => 'archive root is not there' } unless -d $root;
+	return { error => 'the archive card is not mounted' }
+		unless &archive_card_mounted($root);
 	my $relative = defined $data->{'path'} ? $data->{'path'} : '';
 	$relative =~ s{\\}{/}g;
 	my @parts;

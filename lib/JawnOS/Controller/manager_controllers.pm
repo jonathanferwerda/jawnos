@@ -274,6 +274,7 @@ sub _controller_rom_root {
 	return &subs::home('~/roms') unless ($where // '') eq 'sd';
 	my $root = &_controller_archive_dir($machine ? $machine->{'archive_dir'} : '');
 	return '' unless length $root;
+	return '' unless &subs::archive_card_mounted($root);
 	return $root . '/' . &_controller_rom_folder();
 }
 
@@ -311,7 +312,7 @@ sub action_54005 {
 	# walkthrough steps on that answer, and a grid that called every folder present
 	# because the card was mounted was telling the person nothing. A peer's mount is
 	# not ours to stat, so its folders carry no answer at all.
-	my $readable = ($is_this && length $dir) ? 1 : 0;
+	my $readable = ($is_this && length $dir && &subs::archive_card_mounted($dir)) ? 1 : 0;
 	my $folders = [ map { {
 		name => $_,
 		path => $dir . '/' . $_,
@@ -327,7 +328,7 @@ sub action_54005 {
 		backup_quota => $quota + 0,
 		backup_dir => (length $dir ? $dir . '/Backups' : ''),
 		folders => $folders,
-		present => (($is_this && length $dir && -d $dir) ? 1 : 0),
+		present => (($is_this && length $dir && &subs::archive_card_mounted($dir)) ? 1 : 0),
 		card => &_controller_card_finding($device, $machine, $key),
 	});
 }
@@ -443,7 +444,7 @@ sub action_54006 {
 	my $is_this = &_controller_is_this($uuid, $device, $machine);
 	# Only the machine holding the drive makes folders. A peer's mount is not
 	# ours to touch and is not probed, so a remote save changes the row only.
-	if ($is_this && length $dir && -d $dir) {
+	if ($is_this && length $dir && &subs::archive_card_mounted($dir)) {
 		foreach my $name (&_controller_folders()) {
 			my $path = $dir . '/' . $name;
 			next if -d $path;
@@ -458,7 +459,7 @@ sub action_54006 {
 		archive => ($archive eq '1' ? 1 : 0),
 		backup_quota => $quota + 0,
 		created => \@created,
-		present => (($is_this && length $dir && -d $dir) ? 1 : 0),
+		present => (($is_this && length $dir && &subs::archive_card_mounted($dir)) ? 1 : 0),
 	});
 }
 
@@ -526,7 +527,7 @@ sub action_54008 {
 	}
 	# A drive that is not mounted is never invented: the folders on it are made
 	# only when the mount is there, which is the same rule the storage save uses.
-	if ($to eq 'sd' && !-d &_controller_archive_dir($machine->{'archive_dir'})) {
+	if ($to eq 'sd' && !&subs::archive_card_mounted(&_controller_archive_dir($machine->{'archive_dir'}))) {
 		return $c->render(json => { ok => 0, error => 'no archive_dir' });
 	}
 	my $source = $source_dir . '/' . $name;

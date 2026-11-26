@@ -407,6 +407,7 @@ sub backup_archive_dir {
 	$root = &subs::home($root);
 	$root =~ s{/+$}{} unless $root eq '/';
 	return undef unless -d $root;
+	return undef unless &subs::archive_card_mounted($root);
 	my $dir = $root . '/Backups';
 	unless (-d $dir) {
 		File::Path::make_path($dir, { mode => 0700 });
