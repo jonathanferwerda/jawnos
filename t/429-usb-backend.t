@@ -1,11 +1,13 @@
 # tests-for: engine/src/usb_device.rs engine/src/lib.rs engine/src/oboe_device.rs engine/src/control.rs
 # covers:    the direct-USB (usbfs) backend: the kernel structs and ioctl numbers
 #            match arm64, the pure monitor/histogram/report helpers and their Rust
-#            unit tests run on a host with no phone, the C ABI `jawn_audio_start_usb`
-#            is additive, the take owns one process-wide control slot shared with
-#            the Oboe take, and the driver leaks (never frees) an URB the kernel
-#            still owns and never closes Java's fd. The real device path is proven
-#            on the UM2 gate, so this test is the host half.
+#            unit tests run on a host with no phone, the shallow OUT depth and its
+#            priming threshold, the playback GET_CUR rate probe, the C ABI
+#            `jawn_audio_start_usb` is additive, the take owns one process-wide
+#            control slot shared with the Oboe take, and the driver leaks (never
+#            frees) an URB the kernel still owns and never closes Java's fd. The
+#            real device path is proven on the UM2 gate, so this test is the host
+#            half.
 
 use strict;
 use warnings;
@@ -56,7 +58,7 @@ sub cargo_available {
 
 # --- the pure logic runs on a machine with no phone --------------------------
 SKIP: {
-	skip 'no cargo toolchain on this machine', 5 unless cargo_available();
+	skip 'no cargo toolchain on this machine', 7 unless cargo_available();
 
 	my $target = tempdir( CLEANUP => 1 );
 	local $ENV{'CARGO_TARGET_DIR'} = $target;
@@ -82,6 +84,16 @@ SKIP: {
 		$out,
 		qr/usb_device::tests::the_report_json_escapes_the_take_and_plan/,
 		'and the report JSON escaping'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_out_depth_is_its_own_and_the_monitor_runway_is_eight_ms/,
+		'the monitor keeps its own shallow OUT depth'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_monitor_priming_threshold_is_the_whole_out_depth/,
+		'and is primed before the first OUT submit'
 	);
 }
 
@@ -165,13 +177,23 @@ like( $usb, qr/assert!\(std::mem::size_of::<UsbdevfsSetInterface>\(\) == 8\)/, '
 # for the monitor, and the report's counters.
 like( $usb, qr/const URB_COUNT: usize = 4;/, 'four URBs in flight' );
 like( $usb, qr/const PACKETS_PER_URB: usize = 8;/, 'eight 1 ms packets each' );
+like( $usb, qr/const OUT_URB_COUNT: usize = 2;/, 'the monitor keeps two URBs of its own' );
+like( $usb, qr/const OUT_PACKETS_PER_URB: usize = 4;/, 'four packets each: 8 ms of runway' );
+like( $usb, qr/const PRIME_TIMEOUT_MS: u64 = 100;/, 'the warm-up is bounded' );
+like( $usb, qr/sys::control_in\(/, 'the playback rate is probed with a class GET_CUR' );
+like( $usb, qr/monitor_runway_ms\(/, 'the report carries the monitor runway' );
 like( $usb, qr/const OUT_BACKLOG_FRAMES: usize = 96;/, 'the monitor backlog is bounded at 96 frames' );
 like( $usb, qr/record\.push\(/, 'capture feeds the record ring' );
 like( $usb, qr/monitor\.push\(/, 'and the monitor ring' );
 like( $usb, qr/\\"packets_in\\":\{\}/, 'the report carries the packet-length histogram' );
 like( $usb, qr/\\"missed_in\\":\{\}/, 'the missed-frame count' );
 like( $usb, qr/\\"underruns_out\\":\{\}/, 'the playback underruns' );
+like( $usb, qr/\\"underruns_out_start\\":\{\}/, 'split into warm-up and starvation' );
 like( $usb, qr/\\"dropped_out\\":\{\}/, 'the playback drops' );
+like( $usb, qr/\\"out_packets\\":\{\}/, 'the monitor packets' );
+like( $usb, qr/\\"out_bytes\\":\{\}/, 'and their bytes' );
+like( $usb, qr/\\"monitor_ms\\":\{\}/, 'the monitor runway' );
+like( $usb, qr/\\"out_rate\\":\{\{\\"ret\\":\{\},\\"errno\\":\{\},\\"raw\\":\\"\{\}\\",\\"hz\\":\{\}\}\}/, 'and the endpoint rate probe' );
 like( $usb, qr/\\"setinterface\\":\{\{\\"ret\\":\{\},\\"errno\\":\{\}\}\}/, 'the set-interface result' );
 like( $usb, qr/\\"sched\\":\{\{\\"policy\\":\{\},\\"priority\\":\{\},\\"errno\\":\{\}\}\}/, 'and the scheduling answer' );
 like( $usb, qr/\\"frames_captured\\":\{\}/, 'the take counters' );

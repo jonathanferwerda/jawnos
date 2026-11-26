@@ -45,10 +45,23 @@ use crate::plan::ChannelPlan;
 /// it so a WAV and a sidecar agree with the frames the kernel handed over.
 pub const USB_RATE: u32 = 48_000;
 
-/// URBs in flight per direction. Four 8-packet URBs cover 32 ms at 1 ms/packet.
+/// Capture URBs in flight. Four 8-packet URBs cover 32 ms at 1 ms/packet: the
+/// jitter runway the IN side needs to ride out a scheduling gap.
 pub(crate) const URB_COUNT: usize = 4;
-/// Isochronous packets in each URB.
+/// Isochronous packets in each capture URB.
 pub(crate) const PACKETS_PER_URB: usize = 8;
+
+/// Monitor (OUT) URBs in flight. The two directions have different jobs: the IN
+/// runway absorbs jitter, while every queued OUT URB is *latency* the person
+/// hears. Two 4-packet URBs are 8 ms of runway instead of 32.
+pub(crate) const OUT_URB_COUNT: usize = 2;
+/// Isochronous packets in each monitor URB.
+pub(crate) const OUT_PACKETS_PER_URB: usize = 4;
+
+/// How long the monitor may be primed before the first OUT submit. Long enough
+/// for a few 1 ms capture packets, short enough that a silent device cannot
+/// stall the take's start.
+pub(crate) const PRIME_TIMEOUT_MS: u64 = 100;
 
 /// `USBDEVFS_URB_TYPE_ISO` is 0, not 1. Getting this wrong submits a control
 /// URB with an iso struct and the kernel rejects every one.
@@ -56,8 +69,8 @@ pub const USBDEVFS_URB_TYPE_ISO: u8 = 0;
 /// Start the URB as soon as the bus is free rather than at `start_frame`.
 pub const USBDEVFS_URB_ISO_ASAP: u32 = 0x02;
 
-/// The monitor fifo's jitter allowance, in frames, on top of one URB's worth of
-/// audio. A producer that runs further ahead than this is trimmed from the
+/// The monitor fifo's jitter allowance, in frames, on top of the whole OUT
+/// depth. A producer that runs further ahead than this is trimmed from the
 /// oldest end so the monitor's latency cannot grow without bound.
 pub(crate) const OUT_BACKLOG_FRAMES: usize = 96;
 
@@ -267,6 +280,41 @@ fn histogram_rows(histogram: &[u64]) -> Vec<(u32, u64)> {
         .collect()
 }
 
+/// The monitor's playback latency, in whole milliseconds: every queued OUT
+/// packet is 1 ms of audio, so the depth times the packet is the runway.
+fn monitor_runway_ms(urb_count: usize, packets_per_urb: usize, packet: usize, rate: u32) -> u32 {
+    if rate == 0 {
+        return 0;
+    }
+    let frames = urb_count * packets_per_urb * (packet / 4);
+    ((frames as u64 * 1000 + (rate as u64) / 2) / rate as u64) as u32
+}
+
+/// The monitor fifo must hold the whole priming runway, plus one URB of refill
+/// and the backlog bound. The extra URB is what the first post-priming drain
+/// adds before the packets consume it, so priming never trims real audio.
+fn monitor_fifo_frames(prime_frames: usize, frames_per_out_urb: usize) -> usize {
+    prime_frames.max(frames_per_out_urb) + frames_per_out_urb + OUT_BACKLOG_FRAMES
+}
+
+/// UAC1's class GET_CUR for the sampling frequency answers three little-endian
+/// bytes (`tSamFreq[3]`). A short read has no rate to report, so it decodes to 0.
+fn decode_sample_rate(bytes: &[u8]) -> u32 {
+    if bytes.len() < 3 {
+        return 0;
+    }
+    u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16)
+}
+
+/// Lowercase, unpadded hex of the bytes a control read returned.
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
 /// Little-endian 16-bit stereo to the duplicated mono the rings carry. The left
 /// sample is the mono value, exactly as `plan::Strip` reads the ring; the two
 /// halves are never summed, so a mic that lands on one channel keeps its level.
@@ -412,6 +460,25 @@ impl OutFifo {
     fn dropped(&self) -> u64 {
         self.dropped
     }
+
+    /// Frames waiting to be played. The priming loop reads this, so it is the
+    /// same count the packets will drain.
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+/// What one take's monitor (OUT) side carried. The priming split lives here so
+/// a future take can tell a slow start from starvation.
+#[derive(Default)]
+struct OutStats {
+    packets: u64,
+    bytes: u64,
+    underruns: u64,
+    /// The underruns already counted when warm-up ended. Priming fills the fifo
+    /// before the first submit, so this is zero unless a caller fills OUT while
+    /// still warming up.
+    underruns_start: u64,
 }
 
 /// Drain the monitor ring into `fifo` and write every packet of one OUT URB.
@@ -425,7 +492,7 @@ unsafe fn fill_out_urb(
     fifo: &mut OutFifo,
     consumer: &monbus::Consumer,
     scratch: &mut [f32],
-    underruns: &mut u64,
+    stats: &mut OutStats,
 ) {
     let got = consumer.pop(scratch);
     if got > 0 {
@@ -438,8 +505,10 @@ unsafe fn fill_out_urb(
     for index in 0..count {
         let out = std::slice::from_raw_parts_mut(base.add(index * packet), packet);
         if fifo.fill_packet(frames_per_packet, out) < frames_per_packet {
-            *underruns += 1;
+            stats.underruns += 1;
         }
+        stats.packets += 1;
+        stats.bytes += packet as u64;
     }
 }
 
@@ -458,6 +527,20 @@ pub struct UsbSched {
     pub errno: i32,
 }
 
+/// The playback endpoint's own `GET_CUR` sampling frequency, read once before
+/// streaming. The P0 probe answered 32000 on an endpoint whose alt implies 192
+/// B/ms (48 kHz mono-equivalent), so the take records what it says now.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UsbOutRate {
+    /// The ioctl's return; negative means the probe failed (never fatal).
+    pub ret: i32,
+    pub errno: i32,
+    /// The bytes the kernel returned, lowercase hex.
+    pub raw: String,
+    /// Those bytes decoded as a 24-bit little-endian rate; 0 when unread.
+    pub hz: u32,
+}
+
 /// What one direct-USB take got, in the same accounting shape as `OboeReport`
 /// plus the usbfs counters a device gate needs to read.
 #[derive(Debug, Clone)]
@@ -470,7 +553,16 @@ pub struct UsbReport {
     pub bytes_in: u64,
     pub frames_in: u64,
     pub underruns_out: u64,
+    /// The subset of `underruns_out` counted during warm-up, before the first
+    /// OUT submit.
+    pub underruns_out_start: u64,
     pub dropped_out: u64,
+    /// Packets submitted on the monitor endpoint, and the bytes they carried.
+    pub out_packets: u64,
+    pub out_bytes: u64,
+    /// The monitor's runway: every queued OUT packet is 1 ms of audio.
+    pub monitor_ms: u32,
+    pub out_rate: UsbOutRate,
     pub setinterface: UsbSetInterface,
     pub sched: UsbSched,
     pub frames_captured: u64,
@@ -490,7 +582,12 @@ pub(crate) struct UsbIoReport {
     frames_in: u64,
     dropped_ring: u64,
     underruns_out: u64,
+    underruns_out_start: u64,
     dropped_out: u64,
+    out_packets: u64,
+    out_bytes: u64,
+    monitor_ms: u32,
+    out_rate: UsbOutRate,
     setinterface: UsbSetInterface,
     sched: UsbSched,
     peak: f32,
@@ -531,14 +628,18 @@ fn histogram_json(rows: &[(u32, u64)]) -> String {
 /// One JSON object, the same status style the Oboe backend emits.
 fn report_json(report: &UsbReport) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"dropped_out\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"plan\":\"{}\",\"take\":\"{}\"}}",
         report.rate,
         histogram_json(&report.packets_in),
         report.missed_in,
         report.bytes_in,
         report.frames_in,
         report.underruns_out,
+        report.underruns_out_start,
         report.dropped_out,
+        report.out_packets,
+        report.out_bytes,
+        report.monitor_ms,
         report.setinterface.ret,
         report.setinterface.errno,
         report.sched.policy,
@@ -549,6 +650,10 @@ fn report_json(report: &UsbReport) -> String {
         report.dropped_ring,
         report.dropped_disk,
         report.peak,
+        report.out_rate.ret,
+        report.out_rate.errno,
+        json_escape(&report.out_rate.raw),
+        report.out_rate.hz,
         json_escape(&report.plan),
         json_escape(&report.take),
     )
@@ -615,6 +720,34 @@ mod sys {
         (ret, if ret < 0 { errno() } else { 0 })
     }
 
+    /// One class/vendor control IN into `data`. Returns the ioctl's ret and the
+    /// errno that explains a refusal.
+    pub(super) unsafe fn control_in(
+        fd: c_int,
+        request_type: u8,
+        request: u8,
+        value: u16,
+        index: u16,
+        data: &mut [u8],
+        timeout_ms: u32,
+    ) -> (i32, i32) {
+        let transfer = UsbdevfsCtrlTransfer {
+            request_type,
+            request,
+            value,
+            index,
+            length: data.len() as u16,
+            timeout: timeout_ms,
+            data: data.as_mut_ptr() as *mut c_void,
+        };
+        let ret = ioctl(
+            fd,
+            USBDEVFS_CONTROL as c_ulong,
+            &transfer as *const UsbdevfsCtrlTransfer,
+        );
+        (ret, if ret < 0 { errno() } else { 0 })
+    }
+
     pub(super) fn errno() -> i32 {
         std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
     }
@@ -671,6 +804,39 @@ pub(crate) fn run_usb_plan(
         let _ = unsafe { sys::set_interface(config.fd, config.iface_out, config.alt_out) };
     }
 
+    // Ask the playback endpoint its own sampling frequency, once, before any
+    // streaming: UAC1's class GET_CUR (`0xA2`, request `0x81`, `wValue 0x0100`,
+    // `wIndex` = the endpoint, 3 bytes). The P0 probe answered 32000 on an
+    // endpoint whose alt is 192 B/ms, so this records whether that is still
+    // true. A refusal is recorded and never fatal — the alt setting, not this
+    // probe, is what the stream actually runs at.
+    let out_rate = if have_out {
+        let mut bytes = [0u8; 3];
+        let (ret, errno) = unsafe {
+            sys::control_in(
+                config.fd,
+                0xA2,
+                0x81,
+                0x0100,
+                config.ep_out as u16,
+                &mut bytes,
+                250,
+            )
+        };
+        let read = (ret.max(0) as usize).min(bytes.len());
+        UsbOutRate {
+            ret,
+            errno,
+            raw: hex_bytes(&bytes[..read]),
+            hz: decode_sample_rate(&bytes[..read]),
+        }
+    } else {
+        UsbOutRate {
+            ret: -1,
+            ..UsbOutRate::default()
+        }
+    };
+
     let sched = sys::request_realtime();
 
     // One data buffer per direction, sized once. Each URB's buffer points at its
@@ -701,13 +867,15 @@ pub(crate) fn run_usb_plan(
     let mut out_data: Vec<u8> = Vec::new();
     let mut out_ptrs: Vec<*mut UsbdevfsUrb> = Vec::new();
     if have_out {
-        out_urbs = (0..URB_COUNT).map(|_| Urb::new(PACKETS_PER_URB)).collect();
-        out_data = vec![0u8; URB_COUNT * PACKETS_PER_URB * packet_out];
+        out_urbs = (0..OUT_URB_COUNT)
+            .map(|_| Urb::new(OUT_PACKETS_PER_URB))
+            .collect();
+        out_data = vec![0u8; OUT_URB_COUNT * OUT_PACKETS_PER_URB * packet_out];
         for (index, urb) in out_urbs.iter_mut().enumerate() {
             let buffer = unsafe {
                 out_data
                     .as_mut_ptr()
-                    .add(index * PACKETS_PER_URB * packet_out)
+                    .add(index * OUT_PACKETS_PER_URB * packet_out)
                     as *mut c_void
             };
             let pointer = urb.ptr();
@@ -716,7 +884,7 @@ pub(crate) fn run_usb_plan(
                     pointer,
                     config.ep_out as u8,
                     packet_out,
-                    PACKETS_PER_URB,
+                    OUT_PACKETS_PER_URB,
                     buffer,
                 )
             };
@@ -726,15 +894,26 @@ pub(crate) fn run_usb_plan(
 
     let (monitor_producer, monitor_consumer) = monbus::new(MONITOR_RING_FRAMES);
     let frames_per_out_packet = packet_out / 4;
-    let frames_per_out_urb = PACKETS_PER_URB * frames_per_out_packet;
-    let mut fifo = OutFifo::new(frames_per_out_urb + OUT_BACKLOG_FRAMES);
-    let mut monitor_scratch =
-        vec![0.0f32; (frames_per_out_urb + OUT_BACKLOG_FRAMES).max(1) * 2];
+    let frames_per_out_urb = OUT_PACKETS_PER_URB * frames_per_out_packet;
+    // The whole OUT depth is what priming must fill before the first submit.
+    let prime_frames = if have_out {
+        OUT_URB_COUNT * frames_per_out_urb
+    } else {
+        0
+    };
+    let fifo_frames = monitor_fifo_frames(prime_frames, frames_per_out_urb);
+    let mut fifo = OutFifo::new(fifo_frames);
+    let mut monitor_scratch = vec![0.0f32; fifo_frames.max(1) * 2];
     // At most one packet's worth of duplicated mono samples.
     let mut packet_stereo = vec![0.0f32; (packet_in / 2).max(2)];
 
+    let mut histogram = vec![0u64; packet_in + 2];
+    let mut stats = InStats::default();
+    let mut peak = 0.0f32;
+    let mut out_stats = OutStats::default();
+
     let mut in_flight = [false; URB_COUNT];
-    let mut out_flight = [false; URB_COUNT];
+    let mut out_flight = [false; OUT_URB_COUNT];
     let mut outstanding: usize = 0;
     let mut submit_error: Option<i32> = None;
 
@@ -758,9 +937,80 @@ pub(crate) fn run_usb_plan(
         ));
     }
 
-    let mut underruns: u64 = 0;
+    // Prime the monitor before the first OUT submit. At t=0 the monitor ring is
+    // empty, so submitting straight away would send 32 packets of silence and
+    // read as an underrun. Reap capture completions through the same
+    // `absorb_in` path until the fifo holds the whole OUT depth (or the bounded
+    // warm-up expires), then submit. Capture is already live, so these frames
+    // are the take's first frames, not a delay in the record path.
+    let prime_started = Instant::now();
+    while outstanding > 0 && fifo.len() < prime_frames {
+        if stop.load(Ordering::Acquire)
+            || prime_started.elapsed() >= Duration::from_millis(PRIME_TIMEOUT_MS)
+        {
+            break;
+        }
+        let done = match unsafe { sys::reap(config.fd) } {
+            Ok(pointer) => pointer,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_micros(200));
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        if done.is_null() {
+            thread::sleep(Duration::from_micros(200));
+            continue;
+        }
+        if let Some(index) = in_ptrs.iter().position(|&pointer| pointer == done) {
+            if in_flight[index] {
+                in_flight[index] = false;
+                outstanding -= 1;
+            }
+            unsafe {
+                absorb_in(
+                    done,
+                    packet_in,
+                    &mut histogram,
+                    &mut stats,
+                    record,
+                    &monitor_producer,
+                    &mut packet_stereo,
+                    &mut peak,
+                );
+                clear_urb(done);
+            }
+            match unsafe { sys::submit(config.fd, done) } {
+                Ok(()) => {
+                    in_flight[index] = true;
+                    outstanding += 1;
+                }
+                Err(error) => {
+                    if submit_error.is_none() {
+                        submit_error = Some(error.raw_os_error().unwrap_or(0));
+                    }
+                }
+            }
+            // Take only what the runway still needs; the rest stays in the
+            // ring for the first OUT fill, so priming cannot overfill the fifo.
+            while fifo.len() < prime_frames {
+                let need = prime_frames - fifo.len();
+                let got = monitor_consumer.pop(&mut monitor_scratch[..need * 2]);
+                if got == 0 {
+                    break;
+                }
+                fifo.push(&monitor_scratch[..got * 2]);
+            }
+            continue;
+        }
+        // No OUT URB exists yet, so anything else is not ours.
+        thread::sleep(Duration::from_micros(200));
+    }
+    out_stats.underruns_start = out_stats.underruns;
+
     if have_out {
-        for index in 0..URB_COUNT {
+        for index in 0..OUT_URB_COUNT {
             unsafe {
                 clear_urb(out_ptrs[index]);
                 fill_out_urb(
@@ -769,7 +1019,7 @@ pub(crate) fn run_usb_plan(
                     &mut fifo,
                     &monitor_consumer,
                     &mut monitor_scratch,
-                    &mut underruns,
+                    &mut out_stats,
                 );
             }
             match unsafe { sys::submit(config.fd, out_ptrs[index]) } {
@@ -785,10 +1035,6 @@ pub(crate) fn run_usb_plan(
             }
         }
     }
-
-    let mut histogram = vec![0u64; packet_in + 2];
-    let mut stats = InStats::default();
-    let mut peak = 0.0f32;
 
     let started = Instant::now();
     let limit = if config.seconds > 0.0 {
@@ -862,7 +1108,7 @@ pub(crate) fn run_usb_plan(
                     &mut fifo,
                     &monitor_consumer,
                     &mut monitor_scratch,
-                    &mut underruns,
+                    &mut out_stats,
                 );
             }
             match unsafe { sys::submit(config.fd, done) } {
@@ -891,7 +1137,7 @@ pub(crate) fn run_usb_plan(
         }
     }
     if have_out {
-        for index in 0..URB_COUNT {
+        for index in 0..OUT_URB_COUNT {
             if out_flight[index] {
                 unsafe { sys::discard(config.fd, out_ptrs[index]) };
             }
@@ -941,8 +1187,18 @@ pub(crate) fn run_usb_plan(
         bytes_in: stats.bytes_in,
         frames_in: stats.frames_in,
         dropped_ring: stats.dropped_ring,
-        underruns_out: underruns,
+        underruns_out: out_stats.underruns,
+        underruns_out_start: out_stats.underruns_start,
         dropped_out: fifo.dropped(),
+        out_packets: out_stats.packets,
+        out_bytes: out_stats.bytes,
+        monitor_ms: monitor_runway_ms(
+            OUT_URB_COUNT,
+            OUT_PACKETS_PER_URB,
+            packet_out,
+            config.rate,
+        ),
+        out_rate,
         setinterface,
         sched,
         peak,
@@ -1004,7 +1260,12 @@ fn run_usb_take(config: UsbConfig, stop: Arc<AtomicBool>) -> Result<UsbReport, S
         bytes_in: io.bytes_in,
         frames_in: io.frames_in,
         underruns_out: io.underruns_out,
+        underruns_out_start: io.underruns_out_start,
         dropped_out: io.dropped_out,
+        out_packets: io.out_packets,
+        out_bytes: io.out_bytes,
+        monitor_ms: io.monitor_ms,
+        out_rate: io.out_rate,
         setinterface: io.setinterface,
         sched: io.sched,
         frames_captured: io.frames_in,
@@ -1243,6 +1504,91 @@ mod tests {
     }
 
     #[test]
+    fn the_out_depth_is_its_own_and_the_monitor_runway_is_eight_ms() {
+        assert_eq!(URB_COUNT, 4, "the capture runway stays four URBs deep");
+        assert_eq!((OUT_URB_COUNT, OUT_PACKETS_PER_URB), (2, 4));
+        assert_eq!(
+            monitor_runway_ms(OUT_URB_COUNT, OUT_PACKETS_PER_URB, 192, USB_RATE),
+            8,
+            "two four-packet monitor URBs are 8 ms, not the IN side's 32"
+        );
+        assert_eq!(
+            monitor_runway_ms(OUT_URB_COUNT, OUT_PACKETS_PER_URB, 288, USB_RATE),
+            12,
+            "a 24-bit stereo packet is 72 frames, so four packets are still 1 ms"
+        );
+        assert_eq!(monitor_runway_ms(OUT_URB_COUNT, OUT_PACKETS_PER_URB, 192, 0), 0);
+    }
+
+    #[test]
+    fn the_monitor_priming_threshold_is_the_whole_out_depth() {
+        let prime = OUT_URB_COUNT * OUT_PACKETS_PER_URB * (192 / 4);
+        let frames_per_out_urb = OUT_PACKETS_PER_URB * (192 / 4);
+        assert_eq!(prime, 384, "eight 1 ms packets of 48 frames");
+        let mut fifo = OutFifo::new(monitor_fifo_frames(prime, frames_per_out_urb));
+        assert_eq!(fifo.len(), 0, "the monitor starts empty");
+        let block: Vec<f32> = (0..prime).flat_map(|_| [0.1f32, 0.1]).collect();
+        fifo.push(&block);
+        assert_eq!(fifo.len(), prime, "the fifo holds the whole runway");
+        assert_eq!(fifo.dropped(), 0, "priming is not trimmed by the backlog bound");
+        assert!(
+            monitor_fifo_frames(prime, frames_per_out_urb) >= prime + frames_per_out_urb,
+            "one URB of refill fits on top of the runway"
+        );
+    }
+
+    #[test]
+    fn a_short_prime_is_padded_and_counted_as_an_underrun() {
+        let packet = 192usize;
+        let packets = OUT_PACKETS_PER_URB;
+        let mut urb = Urb::new(packets);
+        let mut data = vec![0u8; packet * packets];
+        let pointer = urb.ptr();
+        unsafe {
+            prepare_urb(
+                pointer,
+                0x03,
+                packet,
+                packets,
+                data.as_mut_ptr() as *mut c_void,
+            );
+        }
+        let (producer, consumer) = monbus::new(monbus::MIN_FRAMES);
+        // Three of the four 48-frame packets exist; the fourth must zero-fill.
+        let block: Vec<f32> = (0..144).flat_map(|_| [0.5f32, 0.5]).collect();
+        producer.push(&block);
+        let frames_per_out_urb = packets * (packet / 4);
+        let mut fifo = OutFifo::new(monitor_fifo_frames(
+            OUT_URB_COUNT * frames_per_out_urb,
+            frames_per_out_urb,
+        ));
+        let mut scratch = vec![0.0f32; monbus::MIN_FRAMES * 2];
+        let mut stats = OutStats::default();
+        unsafe {
+            fill_out_urb(pointer, packet, &mut fifo, &consumer, &mut scratch, &mut stats)
+        };
+        assert_eq!(stats.packets, packets as u64, "every packet is submitted");
+        assert_eq!(stats.bytes, (packet * packets) as u64, "192 bytes per packet");
+        assert_eq!(stats.underruns, 1, "only the last packet fell short");
+        assert_eq!(stats.underruns_start, 0, "no warm-up underrun was snapshotted");
+        assert_eq!(fifo.len(), 0, "the audio that existed was played");
+        assert_eq!(data[3 * packet], 0, "the short packet is silence, not stale audio");
+    }
+
+    #[test]
+    fn the_out_rate_probe_decodes_the_uac1_three_bytes() {
+        assert_eq!(decode_sample_rate(&[0x80, 0xbb, 0x00]), 48_000);
+        assert_eq!(
+            decode_sample_rate(&[0x00, 0x7d, 0x00]),
+            32_000,
+            "the P0 probe's answer on the playback endpoint"
+        );
+        assert_eq!(decode_sample_rate(&[0x80, 0xbb]), 0, "a short read has no rate");
+        assert_eq!(hex_bytes(&[0x80, 0xbb, 0x00]), "80bb00");
+        assert_eq!(hex_bytes(&[]), "");
+    }
+
+    #[test]
     fn the_packet_histogram_counts_each_length_and_the_overflow() {
         let packet = 196usize;
         let mut histogram = vec![0u64; packet + 2];
@@ -1266,7 +1612,17 @@ mod tests {
             bytes_in: 7_680,
             frames_in: 1_920,
             underruns_out: 0,
+            underruns_out_start: 0,
             dropped_out: 0,
+            out_packets: 0,
+            out_bytes: 0,
+            monitor_ms: 8,
+            out_rate: UsbOutRate {
+                ret: 3,
+                errno: 0,
+                raw: "80bb00".to_string(),
+                hz: 48_000,
+            },
             setinterface: UsbSetInterface { ret: 0, errno: 0 },
             sched: UsbSched {
                 policy: 1,
@@ -1288,6 +1644,12 @@ mod tests {
             "\"packets_in\":{\"192\":37,\"196\":4}",
             "\"missed_in\":2",
             "\"frames_in\":1920",
+            "\"underruns_out\":0",
+            "\"underruns_out_start\":0",
+            "\"out_packets\":0",
+            "\"out_bytes\":0",
+            "\"monitor_ms\":8",
+            "\"out_rate\":{\"ret\":3,\"errno\":0,\"raw\":\"80bb00\",\"hz\":48000}",
             "\"setinterface\":{\"ret\":0,\"errno\":0}",
             "\"sched\":{\"policy\":1,\"priority\":80,\"errno\":13}",
             "\"frames_written\":1920",
