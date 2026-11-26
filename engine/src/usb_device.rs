@@ -23,9 +23,12 @@
 //! the ioctl numbers, the monitor fifo and the report are compiled everywhere so
 //! a host can unit-test them.
 //!
-//! Capture feeds two rings: the **record ring** the take's `drain_ring` writes to
-//! disk (the same shape and strip the Oboe take uses) and a **monitor ring** the
-//! optional playback endpoint reads back through a small bounded fifo.
+//! Capture feeds two destinations: the **record ring** the take's `drain_ring`
+//! writes to disk (the same shape and strip the Oboe take uses; still a
+//! `monbus` ring to the drain thread) and a **monitor fifo** the optional
+//! playback endpoint fills from. Both the absorb and the OUT fill run on the
+//! same USB thread, so the monitor has no cross-thread ring: its fifo is trimmed
+//! at a high water instead of being bursted into from a second queue.
 //!
 //! The four depth numbers (IN URBs, IN packets per URB, OUT URBs, OUT packets
 //! per URB) are one process-wide setting — `jawn_audio_set_usb_depth` — read once
@@ -212,10 +215,6 @@ pub const USBDEVFS_URB_ISO_ASAP: u32 = 0x02;
 /// depth. A producer that runs further ahead than this is trimmed from the
 /// oldest end so the monitor's latency cannot grow without bound.
 pub(crate) const OUT_BACKLOG_FRAMES: usize = 96;
-
-/// The monitor ring handed from the capture side to the playback side. The same
-/// floor `monbus` uses: about 85 ms of stereo at 48 kHz.
-pub(crate) const MONITOR_RING_FRAMES: usize = monbus::MIN_FRAMES;
 
 /// The kernel's packet status for a missed frame (`-EXDEV`).
 const EXDEV: i32 = -18;
@@ -429,11 +428,30 @@ fn monitor_runway_ms(urb_count: usize, packets_per_urb: usize, packet: usize, ra
     ((frames as u64 * 1000 + (rate as u64) / 2) / rate as u64) as u32
 }
 
-/// The monitor fifo must hold the whole priming runway, plus one URB of refill
-/// and the backlog bound. The extra URB is what the first post-priming drain
-/// adds before the packets consume it, so priming never trims real audio.
-fn monitor_fifo_frames(prime_frames: usize, frames_per_out_urb: usize) -> usize {
-    prime_frames.max(frames_per_out_urb) + frames_per_out_urb + OUT_BACKLOG_FRAMES
+/// The monitor fifo's physical size: the priming runway, one IN burst, one OUT
+/// burst and the backlog bound. The headroom above the high water is what lets a
+/// capture burst arrive without dropping frames the OUT side is about to play.
+fn monitor_fifo_capacity(
+    prime_frames: usize,
+    frames_in_burst: usize,
+    frames_out_burst: usize,
+) -> usize {
+    prime_frames.max(frames_out_burst) + frames_in_burst + frames_out_burst + OUT_BACKLOG_FRAMES
+}
+
+/// The fill level above which the oldest monitor frames are dropped. It is the
+/// priming runway plus one capture burst: a burst may land while the OUT side is
+/// between fills, but the monitor's latency never grows past that.
+fn monitor_high_water(prime_frames: usize, frames_in_burst: usize) -> usize {
+    prime_frames + frames_in_burst
+}
+
+/// Frames as whole milliseconds, rounded.
+fn frames_to_ms(frames: u64, rate: u32) -> u32 {
+    if rate == 0 {
+        return 0;
+    }
+    ((frames * 1_000 + u64::from(rate) / 2) / u64::from(rate)) as u32
 }
 
 /// The chirp [`crate::roundtrip::click`] fits in six 1 ms packets at 48 kHz
@@ -555,11 +573,15 @@ fn hex_bytes(bytes: &[u8]) -> String {
 /// Little-endian 16-bit stereo to the duplicated mono the rings carry. The left
 /// sample is the mono value, exactly as `plan::Strip` reads the ring; the two
 /// halves are never summed, so a mic that lands on one channel keeps its level.
+///
+/// The record ring is the one cross-thread hop left; the monitor's frames go
+/// straight into the loop's own [`OutFifo`], because both sides run on the same
+/// USB thread.
 fn decode_packet(
     packet: &[u8],
     stereo: &mut [f32],
     record: &monbus::Producer,
-    monitor: &monbus::Producer,
+    monitor: Option<&mut OutFifo>,
     stats: &mut InStats,
     peak: &mut f32,
 ) {
@@ -580,9 +602,11 @@ fn decode_packet(
         // A full record ring drops the newest frames; count them here rather
         // than letting the loss disappear into frames_captured - frames_written.
         stats.dropped_ring += record.push(block) as u64;
-        // The monitor leg is a loopback, so its own drops are the monitor's
-        // problem, not the take's; still push so the OUT side has audio.
-        let _ = monitor.push(block);
+        // Still the monitor's problem, not the take's: count its drops on the
+        // fifo (visible as `dropped_out`), never silently.
+        if let Some(fifo) = monitor {
+            fifo.push(block);
+        }
     }
     stats.frames_in += frames as u64;
 }
@@ -595,20 +619,22 @@ struct InStats {
     dropped_ring: u64,
 }
 
-/// Absorb one completed capture URB into the fixed counters and the two rings.
-/// No allocation, no lock, no log: every buffer here was sized at setup.
+/// Absorb one completed capture URB into the fixed counters, the record ring
+/// and (when a monitor is configured) the loop's own fifo. No allocation, no
+/// lock, no log: every buffer here was sized at setup.
 ///
 /// # Safety
 /// `done` must point at a live URB image whose `buffer` covers
 /// `number_of_packets * packet` bytes; `stereo` must hold at least
 /// `packet / 2` samples.
+#[allow(clippy::too_many_arguments)]
 unsafe fn absorb_in(
     done: *mut UsbdevfsUrb,
     packet: usize,
     histogram: &mut [u64],
     stats: &mut InStats,
     record: &monbus::Producer,
-    monitor: &monbus::Producer,
+    mut monitor: Option<&mut OutFifo>,
     stereo: &mut [f32],
     peak: &mut f32,
 ) {
@@ -626,44 +652,70 @@ unsafe fn absorb_in(
         if desc.status == 0 && desc.actual_length > 0 {
             let length = (desc.actual_length as usize).min(packet);
             let slice = std::slice::from_raw_parts(base.add(index * packet), length);
-            decode_packet(slice, stereo, record, monitor, stats, peak);
+            decode_packet(
+                slice,
+                stereo,
+                record,
+                monitor.as_deref_mut(),
+                stats,
+                peak,
+            );
         }
     }
 }
 
-/// The bounded monitor queue feeding the playback URBs. Frames arrive faster
-/// than packets need them only when the producer runs ahead; the oldest frame is
-/// discarded beyond the capacity, so the monitor's latency is bounded. A packet
-/// the queue cannot fill is zero-padded and counted as one underrun.
+/// The bounded monitor queue feeding the playback URBs. Frames arrive only from
+/// the USB thread that also fills the OUT packets, so there is no ring and no
+/// lock between them. The oldest frame is discarded above the **high water**
+/// (`prime + one IN burst`), not above the capacity, so a capture burst can land
+/// without loss while the steady fill stays at the priming runway. A packet the
+/// queue cannot fill is zero-padded and counted as one underrun.
 struct OutFifo {
     data: Vec<f32>,
     capacity: usize,
+    high_water: usize,
     head: usize,
     len: usize,
     dropped: u64,
 }
 
 impl OutFifo {
-    fn new(frames: usize) -> Self {
-        let capacity = frames.max(1);
+    /// `capacity` is the physical ring size and `high_water` the fill level the
+    /// oldest frame is dropped above. Trimming at the high water keeps the
+    /// steady-state latency at the priming runway instead of the capacity.
+    fn new(capacity: usize, high_water: usize) -> Self {
+        let capacity = capacity.max(1);
+        let high_water = high_water.clamp(1, capacity);
         OutFifo {
             data: vec![0.0f32; capacity * 2],
             capacity,
+            high_water,
             head: 0,
             len: 0,
             dropped: 0,
         }
     }
 
+    /// Append stereo frames, dropping the oldest first so the queue never sits
+    /// above its high water. When a single block is larger than the high water,
+    /// only its newest frames are kept. Every dropped frame is counted.
     fn push(&mut self, stereo: &[f32]) {
         let frames = stereo.len() / 2;
-        for frame in 0..frames {
-            if self.len == self.capacity {
-                // The oldest frame goes; the newest is what the monitor wants.
-                self.head = (self.head + 1) % self.capacity;
-                self.len -= 1;
-                self.dropped += 1;
-            }
+        if frames == 0 {
+            return;
+        }
+        let keep = frames.min(self.high_water);
+        let skip = frames - keep;
+        // Frames the block itself sheds are losses too; count them.
+        self.dropped += skip as u64;
+        // Leave exactly enough room for the frames this block will keep.
+        let room = self.high_water - keep;
+        while self.len > room && self.len > 0 {
+            self.head = (self.head + 1) % self.capacity;
+            self.len -= 1;
+            self.dropped += 1;
+        }
+        for frame in skip..frames {
             let slot = ((self.head + self.len) % self.capacity) * 2;
             self.data[slot] = stereo[frame * 2];
             self.data[slot + 1] = stereo[frame * 2 + 1];
@@ -703,10 +755,20 @@ impl OutFifo {
     fn len(&self) -> usize {
         self.len
     }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn high_water(&self) -> usize {
+        self.high_water
+    }
 }
 
 /// What one take's monitor (OUT) side carried. The priming split lives here so
-/// a future take can tell a slow start from starvation.
+/// a future take can tell a slow start from starvation. The fill sample is taken
+/// just before every OUT URB is filled, so the latency the report claims is the
+/// fill the loop actually saw.
 #[derive(Default)]
 struct OutStats {
     packets: u64,
@@ -716,9 +778,14 @@ struct OutStats {
     /// before the first submit, so this is zero unless a caller fills OUT while
     /// still warming up.
     underruns_start: u64,
+    fill_samples: u64,
+    fill_frames_sum: u64,
+    fill_frames_max: usize,
 }
 
-/// Drain the monitor ring into `fifo` and write every packet of one OUT URB.
+/// Write every packet of one OUT URB from the loop's own `fifo`. The caller has
+/// already absorbed every complete IN URB, so this fill does not race the
+/// capture side for the same interval.
 ///
 /// # Safety
 /// `done` must point at a live OUT URB image with a buffer of
@@ -727,13 +794,13 @@ unsafe fn fill_out_urb(
     done: *mut UsbdevfsUrb,
     packet: usize,
     fifo: &mut OutFifo,
-    consumer: &monbus::Consumer,
-    scratch: &mut [f32],
     stats: &mut OutStats,
 ) {
-    let got = consumer.pop(scratch);
-    if got > 0 {
-        fifo.push(&scratch[..got * 2]);
+    let fill = fifo.len();
+    stats.fill_samples += 1;
+    stats.fill_frames_sum += fill as u64;
+    if fill > stats.fill_frames_max {
+        stats.fill_frames_max = fill;
     }
     let frames_per_packet = packet / 4;
     let header = &*done;
@@ -806,6 +873,13 @@ pub struct UsbReport {
     /// How many 1 ms packets one IN URB delivers: the batching half of the
     /// monitor's added latency.
     pub in_delivery_ms: u32,
+    /// The fifo fill observed just before each OUT URB was filled, so the
+    /// monitor latency claim is measured rather than inferred.
+    pub monitor_fill_max_ms: u32,
+    pub monitor_fill_avg_ms: u32,
+    /// The fifo's physical capacity and the high water it trims above, in ms.
+    pub fifo_capacity_ms: u32,
+    pub high_water_ms: u32,
     pub out_rate: UsbOutRate,
     pub setinterface: UsbSetInterface,
     pub sched: UsbSched,
@@ -832,6 +906,10 @@ pub(crate) struct UsbIoReport {
     out_bytes: u64,
     monitor_ms: u32,
     in_delivery_ms: u32,
+    monitor_fill_max_ms: u32,
+    monitor_fill_avg_ms: u32,
+    fifo_capacity_ms: u32,
+    high_water_ms: u32,
     in_depth: UsbDepth,
     out_depth: UsbDepth,
     out_rate: UsbOutRate,
@@ -875,7 +953,7 @@ fn histogram_json(rows: &[(u32, u64)]) -> String {
 /// One JSON object, the same status style the Oboe backend emits.
 fn report_json(report: &UsbReport) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"plan\":\"{}\",\"take\":\"{}\"}}",
         report.rate,
         histogram_json(&report.packets_in),
         report.missed_in,
@@ -892,6 +970,10 @@ fn report_json(report: &UsbReport) -> String {
         report.out_depth.0,
         report.out_depth.1,
         report.in_delivery_ms,
+        report.monitor_fill_max_ms,
+        report.monitor_fill_avg_ms,
+        report.fifo_capacity_ms,
+        report.high_water_ms,
         report.setinterface.ret,
         report.setinterface.errno,
         report.sched.policy,
@@ -926,11 +1008,43 @@ mod sys {
 
     extern "C" {
         pub(super) fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+        pub(super) fn poll(fds: *mut PollFd, nfds: c_ulong, timeout: c_int) -> c_int;
         pub(super) fn sched_setscheduler(
             pid: c_int,
             policy: c_int,
             param: *const SchedParam,
         ) -> c_int;
+    }
+
+    /// `struct pollfd`.
+    #[repr(C)]
+    pub(super) struct PollFd {
+        pub(super) fd: c_int,
+        pub(super) events: i16,
+        pub(super) revents: i16,
+    }
+
+    /// `POLLIN`: usbfs makes the fd readable when a completion is queued.
+    const POLLIN: i16 = 0x0001;
+
+    /// Wait until usbfs has a completion to reap, or the timeout expires.
+    /// `Ok(true)` is ready; `Ok(false)` is a timeout or an `EINTR` retry, not an
+    /// error. The caller falls back to a short sleep only on a real error.
+    pub(super) unsafe fn wait_reap(fd: c_int, timeout_ms: c_int) -> std::io::Result<bool> {
+        let mut item = PollFd {
+            fd,
+            events: POLLIN,
+            revents: 0,
+        };
+        let ret = poll(&mut item as *mut PollFd, 1, timeout_ms);
+        if ret < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                return Ok(false);
+            }
+            return Err(error);
+        }
+        Ok(ret > 0 && (item.revents & POLLIN) != 0)
     }
 
     pub(super) unsafe fn submit(fd: c_int, urb: *mut UsbdevfsUrb) -> std::io::Result<()> {
@@ -1027,8 +1141,20 @@ mod sys {
 /// what moves that number; the IN depth only sets how much jitter it can ride
 /// out.
 ///
-/// `record` is the take's record ring producer. The monitor loopback's ring is
-/// private to this function.
+/// `record` is the take's record ring producer, the one cross-thread hop left.
+/// The monitor's frames are pushed by the same reap/absorb loop that fills the
+/// OUT URBs, into that loop's own [`OutFifo`], with no ring or lock between.
+#[cfg(target_os = "android")]
+fn wait_for_reap(fd: i32) {
+    // `poll` wakes as soon as a completion lands; a 1 ms bound keeps a silent
+    // device from parking the loop. A real poll error falls back to the old
+    // short sleep rather than spinning on the fd.
+    match unsafe { sys::wait_reap(fd, 1) } {
+        Ok(_) => {}
+        Err(_) => thread::sleep(std::time::Duration::from_micros(200)),
+    }
+}
+
 #[cfg(target_os = "android")]
 pub(crate) fn run_usb_plan(
     config: &UsbConfig,
@@ -1156,18 +1282,24 @@ pub(crate) fn run_usb_plan(
         }
     }
 
-    let (monitor_producer, monitor_consumer) = monbus::new(MONITOR_RING_FRAMES);
     let frames_per_out_packet = packet_out / 4;
     let frames_per_out_urb = depth.out_packets * frames_per_out_packet;
+    let frames_per_in_urb = depth.in_packets * (packet_in / 4);
     // The whole OUT depth is what priming must fill before the first submit.
     let prime_frames = if have_out {
         depth.prime_frames(frames_per_out_packet)
     } else {
         0
     };
-    let fifo_frames = monitor_fifo_frames(prime_frames, frames_per_out_urb);
-    let mut fifo = OutFifo::new(fifo_frames);
-    let mut monitor_scratch = vec![0.0f32; fifo_frames.max(1) * 2];
+    // One on-thread queue: capture pushes into it and the OUT fills drain it,
+    // both here. No monbus ring, so a burst cannot pile up off-thread and then
+    // arrive all at once above the trim point.
+    let mut fifo = have_out.then(|| {
+        OutFifo::new(
+            monitor_fifo_capacity(prime_frames, frames_per_in_urb, frames_per_out_urb),
+            monitor_high_water(prime_frames, frames_per_in_urb),
+        )
+    });
     // At most one packet's worth of duplicated mono samples.
     let mut packet_stereo = vec![0.0f32; (packet_in / 2).max(2)];
 
@@ -1201,14 +1333,14 @@ pub(crate) fn run_usb_plan(
         ));
     }
 
-    // Prime the monitor before the first OUT submit. At t=0 the monitor ring is
-    // empty, so submitting straight away would send 32 packets of silence and
-    // read as an underrun. Reap capture completions through the same
-    // `absorb_in` path until the fifo holds the whole OUT depth (or the bounded
-    // warm-up expires), then submit. Capture is already live, so these frames
-    // are the take's first frames, not a delay in the record path.
+    // Prime the monitor before the first OUT submit. At t=0 the fifo is empty,
+    // so submitting straight away would send a whole OUT URB of silence and read
+    // as an underrun. Reap capture completions through the same `absorb_in` path
+    // until the fifo holds the whole OUT depth (or the bounded warm-up expires),
+    // then submit. Capture is already live, so these frames are the take's first
+    // frames, not a delay in the record path.
     let prime_started = Instant::now();
-    while outstanding > 0 && fifo.len() < prime_frames {
+    while outstanding > 0 && fifo.as_ref().map_or(0, |fifo| fifo.len()) < prime_frames {
         if stop.load(Ordering::Acquire)
             || prime_started.elapsed() >= Duration::from_millis(PRIME_TIMEOUT_MS)
         {
@@ -1217,14 +1349,14 @@ pub(crate) fn run_usb_plan(
         let done = match unsafe { sys::reap(config.fd) } {
             Ok(pointer) => pointer,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_micros(200));
+                wait_for_reap(config.fd);
                 continue;
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         };
         if done.is_null() {
-            thread::sleep(Duration::from_micros(200));
+            wait_for_reap(config.fd);
             continue;
         }
         if let Some(index) = in_ptrs.iter().position(|&pointer| pointer == done) {
@@ -1239,7 +1371,7 @@ pub(crate) fn run_usb_plan(
                     &mut histogram,
                     &mut stats,
                     record,
-                    &monitor_producer,
+                    fifo.as_mut(),
                     &mut packet_stereo,
                     &mut peak,
                 );
@@ -1256,20 +1388,10 @@ pub(crate) fn run_usb_plan(
                     }
                 }
             }
-            // Take only what the runway still needs; the rest stays in the
-            // ring for the first OUT fill, so priming cannot overfill the fifo.
-            while fifo.len() < prime_frames {
-                let need = prime_frames - fifo.len();
-                let got = monitor_consumer.pop(&mut monitor_scratch[..need * 2]);
-                if got == 0 {
-                    break;
-                }
-                fifo.push(&monitor_scratch[..got * 2]);
-            }
             continue;
         }
         // No OUT URB exists yet, so anything else is not ours.
-        thread::sleep(Duration::from_micros(200));
+        wait_for_reap(config.fd);
     }
     out_stats.underruns_start = out_stats.underruns;
 
@@ -1280,9 +1402,9 @@ pub(crate) fn run_usb_plan(
                 fill_out_urb(
                     out_ptrs[index],
                     packet_out,
-                    &mut fifo,
-                    &monitor_consumer,
-                    &mut monitor_scratch,
+                    fifo
+                        .as_mut()
+                        .expect("have_out built the monitor fifo"),
                     &mut out_stats,
                 );
             }
@@ -1316,14 +1438,14 @@ pub(crate) fn run_usb_plan(
         let done = match unsafe { sys::reap(config.fd) } {
             Ok(pointer) => pointer,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_micros(200));
+                wait_for_reap(config.fd);
                 continue;
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         };
         if done.is_null() {
-            thread::sleep(Duration::from_micros(200));
+            wait_for_reap(config.fd);
             continue;
         }
 
@@ -1339,7 +1461,7 @@ pub(crate) fn run_usb_plan(
                     &mut histogram,
                     &mut stats,
                     record,
-                    &monitor_producer,
+                    fifo.as_mut(),
                     &mut packet_stereo,
                     &mut peak,
                 );
@@ -1359,30 +1481,96 @@ pub(crate) fn run_usb_plan(
             continue;
         }
 
-        if let Some(index) = out_ptrs.iter().position(|&pointer| pointer == done) {
-            if out_flight[index] {
-                out_flight[index] = false;
-                outstanding -= 1;
-            }
-            unsafe {
-                clear_urb(done);
-                fill_out_urb(
-                    done,
-                    packet_out,
-                    &mut fifo,
-                    &monitor_consumer,
-                    &mut monitor_scratch,
-                    &mut out_stats,
-                );
-            }
-            match unsafe { sys::submit(config.fd, done) } {
-                Ok(()) => {
-                    out_flight[index] = true;
-                    outstanding += 1;
+        if out_ptrs.iter().any(|&pointer| pointer == done) {
+            let mut pending: [*mut UsbdevfsUrb; DEPTH_MAX as usize + 1] =
+                [std::ptr::null_mut(); DEPTH_MAX as usize + 1];
+            let mut pending_len = 0usize;
+            pending[pending_len] = done;
+            pending_len += 1;
+
+            // Before filling this OUT URB, absorb every capture completion that
+            // is already queued. The IN URB covering the same interval finishes
+            // first but may still be waiting to be reaped; filling ahead of it
+            // is what zero-pads one whole OUT URB at the start of a take.
+            let bound = depth.in_urbs + depth.out_urbs;
+            for _ in 0..bound {
+                let extra = match unsafe { sys::reap(config.fd) } {
+                    Ok(pointer) => pointer,
+                    Err(_) => break,
+                };
+                if extra.is_null() {
+                    break;
                 }
-                Err(error) => {
-                    if submit_error.is_none() {
-                        submit_error = Some(error.raw_os_error().unwrap_or(0));
+                if let Some(in_index) = in_ptrs.iter().position(|&pointer| pointer == extra) {
+                    if in_flight[in_index] {
+                        in_flight[in_index] = false;
+                        outstanding -= 1;
+                    }
+                    unsafe {
+                        absorb_in(
+                            extra,
+                            packet_in,
+                            &mut histogram,
+                            &mut stats,
+                            record,
+                            fifo.as_mut(),
+                            &mut packet_stereo,
+                            &mut peak,
+                        );
+                        clear_urb(extra);
+                    }
+                    match unsafe { sys::submit(config.fd, extra) } {
+                        Ok(()) => {
+                            in_flight[in_index] = true;
+                            outstanding += 1;
+                        }
+                        Err(error) => {
+                            if submit_error.is_none() {
+                                submit_error = Some(error.raw_os_error().unwrap_or(0));
+                            }
+                        }
+                    }
+                } else if let Some(out_index) =
+                    out_ptrs.iter().position(|&pointer| pointer == extra)
+                {
+                    // Another OUT completed too; it is filled after the absorb.
+                    if out_flight[out_index] {
+                        out_flight[out_index] = false;
+                        outstanding -= 1;
+                    }
+                    if pending_len < pending.len() {
+                        pending[pending_len] = extra;
+                        pending_len += 1;
+                    }
+                }
+            }
+
+            for slot in 0..pending_len {
+                let pointer = pending[slot];
+                let Some(index) = out_ptrs.iter().position(|&candidate| candidate == pointer)
+                else {
+                    continue;
+                };
+                unsafe {
+                    clear_urb(pointer);
+                    fill_out_urb(
+                        pointer,
+                        packet_out,
+                        fifo
+                            .as_mut()
+                            .expect("have_out built the monitor fifo"),
+                        &mut out_stats,
+                    );
+                }
+                match unsafe { sys::submit(config.fd, pointer) } {
+                    Ok(()) => {
+                        out_flight[index] = true;
+                        outstanding += 1;
+                    }
+                    Err(error) => {
+                        if submit_error.is_none() {
+                            submit_error = Some(error.raw_os_error().unwrap_or(0));
+                        }
                     }
                 }
             }
@@ -1390,7 +1578,7 @@ pub(crate) fn run_usb_plan(
         }
 
         // A pointer the kernel returned that is not ours: leave it alone.
-        thread::sleep(Duration::from_micros(200));
+        wait_for_reap(config.fd);
     }
 
     // Ask the kernel to discard whatever is still in flight, then reap it. The
@@ -1445,6 +1633,21 @@ pub(crate) fn run_usb_plan(
         }
     }
 
+    let monitor_fill_max_ms = frames_to_ms(out_stats.fill_frames_max as u64, config.rate);
+    let monitor_fill_avg_ms = if out_stats.fill_samples > 0 {
+        frames_to_ms(
+            out_stats.fill_frames_sum / out_stats.fill_samples,
+            config.rate,
+        )
+    } else {
+        0
+    };
+    let (fifo_capacity, high_water) = fifo
+        .as_ref()
+        .map_or((0, 0), |fifo| (fifo.capacity(), fifo.high_water()));
+    let fifo_capacity_ms = frames_to_ms(fifo_capacity as u64, config.rate);
+    let high_water_ms = frames_to_ms(high_water as u64, config.rate);
+
     Ok(UsbIoReport {
         packets_in: histogram_rows(&histogram),
         missed_in: stats.missed_in,
@@ -1453,11 +1656,15 @@ pub(crate) fn run_usb_plan(
         dropped_ring: stats.dropped_ring,
         underruns_out: out_stats.underruns,
         underruns_out_start: out_stats.underruns_start,
-        dropped_out: fifo.dropped(),
+        dropped_out: fifo.as_ref().map_or(0, |fifo| fifo.dropped()),
         out_packets: out_stats.packets,
         out_bytes: out_stats.bytes,
         monitor_ms: depth.monitor_ms(),
         in_delivery_ms: depth.in_delivery_ms(),
+        monitor_fill_max_ms,
+        monitor_fill_avg_ms,
+        fifo_capacity_ms,
+        high_water_ms,
         in_depth: depth,
         out_depth: depth,
         out_rate,
@@ -1530,6 +1737,10 @@ fn run_usb_take(config: UsbConfig, stop: Arc<AtomicBool>) -> Result<UsbReport, S
         in_depth: (io.in_depth.in_urbs, io.in_depth.in_packets),
         out_depth: (io.out_depth.out_urbs, io.out_depth.out_packets),
         in_delivery_ms: io.in_delivery_ms,
+        monitor_fill_max_ms: io.monitor_fill_max_ms,
+        monitor_fill_avg_ms: io.monitor_fill_avg_ms,
+        fifo_capacity_ms: io.fifo_capacity_ms,
+        high_water_ms: io.high_water_ms,
         out_rate: io.out_rate,
         setinterface: io.setinterface,
         sched: io.sched,
@@ -2353,24 +2564,26 @@ mod tests {
 
     #[test]
     fn the_out_fifo_drops_the_oldest_and_pads_an_underrun() {
-        let mut fifo = OutFifo::new(96);
+        // Trim happens at the high water, not at the physical capacity.
+        let mut fifo = OutFifo::new(200, 96);
         let block: Vec<f32> = (0..100)
             .flat_map(|frame| {
-                // Frame 4 is the first that survives the drop; a distinct
+                // Frame 4 is the first that survives the trim; a distinct
                 // in-range value proves it leads the packet.
                 let value = if frame == 4 { 0.25 } else { -0.25 };
                 [value, value]
             })
             .collect();
         fifo.push(&block);
-        assert_eq!(fifo.dropped(), 4, "the oldest four frames go");
+        assert_eq!(fifo.dropped(), 4, "the oldest four frames go at the high water");
+        assert_eq!(fifo.len(), 96);
 
         let mut packet = [0u8; 48 * 4];
         assert_eq!(fifo.fill_packet(48, &mut packet), 48);
         let left = i16::from_le_bytes([packet[0], packet[1]]);
         assert_eq!(left, crate::wav::to_i16(0.25), "frame 4, not frame 0, leads");
 
-        let mut fifo = OutFifo::new(96);
+        let mut fifo = OutFifo::new(96, 96);
         let short: Vec<f32> = (0..10).flat_map(|_| [1.0f32, 1.0]).collect();
         fifo.push(&short);
         let mut packet = [0x7fu8; 48 * 4];
@@ -2401,16 +2614,20 @@ mod tests {
     fn the_monitor_priming_threshold_is_the_whole_out_depth() {
         let prime = OUT_URB_COUNT * OUT_PACKETS_PER_URB * (192 / 4);
         let frames_per_out_urb = OUT_PACKETS_PER_URB * (192 / 4);
+        let frames_per_in_urb = PACKETS_PER_URB * (192 / 4);
         assert_eq!(prime, 384, "eight 1 ms packets of 48 frames");
-        let mut fifo = OutFifo::new(monitor_fifo_frames(prime, frames_per_out_urb));
+        let capacity = monitor_fifo_capacity(prime, frames_per_in_urb, frames_per_out_urb);
+        let high_water = monitor_high_water(prime, frames_per_in_urb);
+        let mut fifo = OutFifo::new(capacity, high_water);
         assert_eq!(fifo.len(), 0, "the monitor starts empty");
         let block: Vec<f32> = (0..prime).flat_map(|_| [0.1f32, 0.1]).collect();
         fifo.push(&block);
         assert_eq!(fifo.len(), prime, "the fifo holds the whole runway");
-        assert_eq!(fifo.dropped(), 0, "priming is not trimmed by the backlog bound");
-        assert!(
-            monitor_fifo_frames(prime, frames_per_out_urb) >= prime + frames_per_out_urb,
-            "one URB of refill fits on top of the runway"
+        assert_eq!(fifo.dropped(), 0, "priming is not trimmed");
+        assert_eq!(high_water, prime + frames_per_in_urb, "one capture burst of headroom");
+        assert_eq!(
+            capacity,
+            prime + frames_per_in_urb + frames_per_out_urb + OUT_BACKLOG_FRAMES
         );
     }
 
@@ -2480,9 +2697,16 @@ mod tests {
                 assert_eq!(prime, out_urbs * out_packets * frames_per_packet);
                 assert_eq!(depth.monitor_ms(), (out_urbs * out_packets) as u32);
                 let frames_per_out_urb = out_packets * frames_per_packet;
-                let capacity = monitor_fifo_frames(prime, frames_per_out_urb);
-                assert_eq!(capacity, prime + frames_per_out_urb + OUT_BACKLOG_FRAMES);
-                let mut fifo = OutFifo::new(capacity);
+                let frames_per_in_urb = depth.in_packets * frames_per_packet;
+                let capacity =
+                    monitor_fifo_capacity(prime, frames_per_in_urb, frames_per_out_urb);
+                let high_water = monitor_high_water(prime, frames_per_in_urb);
+                assert_eq!(
+                    capacity,
+                    prime + frames_per_in_urb + frames_per_out_urb + OUT_BACKLOG_FRAMES
+                );
+                assert_eq!(high_water, prime + frames_per_in_urb);
+                let mut fifo = OutFifo::new(capacity, high_water);
                 let block: Vec<f32> = (0..prime).flat_map(|_| [0.1f32, 0.1]).collect();
                 fifo.push(&block);
                 assert_eq!(fifo.len(), prime, "a {out_urbs}x{out_packets} depth primes whole");
@@ -2496,6 +2720,57 @@ mod tests {
                 ..UsbDepth::DEFAULT
             };
             assert_eq!(depth.in_delivery_ms(), in_packets as u32);
+        }
+    }
+
+    #[test]
+    fn the_monitor_fifo_trims_at_its_high_water_at_every_depth() {
+        let frames = 48usize;
+        for in_packets in 1..=8usize {
+            for out_urbs in 1..=8usize {
+                for out_packets in 1..=8usize {
+                    let depth = UsbDepth {
+                        in_urbs: 4,
+                        in_packets,
+                        out_urbs,
+                        out_packets,
+                    };
+                    let in_burst = in_packets * frames;
+                    let out_burst = out_packets * frames;
+                    let prime = depth.prime_frames(frames);
+                    let capacity = monitor_fifo_capacity(prime, in_burst, out_burst);
+                    let high_water = monitor_high_water(prime, in_burst);
+                    assert!(capacity > high_water, "the capacity leaves room above the high water");
+
+                    let mut fifo = OutFifo::new(capacity, high_water);
+                    let prime_block: Vec<f32> = (0..prime).flat_map(|_| [0.25f32, 0.25]).collect();
+                    fifo.push(&prime_block);
+                    assert_eq!(fifo.len(), prime, "the prime sits at the runway");
+                    assert_eq!(fifo.dropped(), 0);
+
+                    // One whole capture burst may land on top, still lossless.
+                    let burst: Vec<f32> = (0..in_burst).flat_map(|_| [0.5f32, 0.5]).collect();
+                    fifo.push(&burst);
+                    assert_eq!(fifo.len(), high_water, "one IN burst fills to the high water");
+                    assert_eq!(fifo.dropped(), 0, "a burst at the trim point is not loss");
+
+                    // A second burst drops exactly its own frames, and counts them.
+                    fifo.push(&burst);
+                    assert_eq!(fifo.len(), high_water);
+                    assert_eq!(
+                        fifo.dropped(),
+                        in_burst as u64,
+                        "the excess is counted, never silently lost"
+                    );
+
+                    // The OUT side then drains without a pad while audio holds.
+                    let mut out_burst_bytes = vec![0u8; out_burst * 4];
+                    for packet in 0..out_packets {
+                        let slice = &mut out_burst_bytes[packet * frames * 4..(packet + 1) * frames * 4];
+                        assert_eq!(fifo.fill_packet(frames, slice), frames);
+                    }
+                }
+            }
         }
     }
 
@@ -2648,26 +2923,70 @@ mod tests {
                 data.as_mut_ptr() as *mut c_void,
             );
         }
-        let (producer, consumer) = monbus::new(monbus::MIN_FRAMES);
         // Three of the four 48-frame packets exist; the fourth must zero-fill.
         let block: Vec<f32> = (0..144).flat_map(|_| [0.5f32, 0.5]).collect();
-        producer.push(&block);
         let frames_per_out_urb = packets * (packet / 4);
-        let mut fifo = OutFifo::new(monitor_fifo_frames(
-            OUT_URB_COUNT * frames_per_out_urb,
-            frames_per_out_urb,
-        ));
-        let mut scratch = vec![0.0f32; monbus::MIN_FRAMES * 2];
+        let frames_per_in_urb = PACKETS_PER_URB * (packet / 4);
+        let prime = OUT_URB_COUNT * frames_per_out_urb;
+        let mut fifo = OutFifo::new(
+            monitor_fifo_capacity(prime, frames_per_in_urb, frames_per_out_urb),
+            monitor_high_water(prime, frames_per_in_urb),
+        );
+        fifo.push(&block);
         let mut stats = OutStats::default();
-        unsafe {
-            fill_out_urb(pointer, packet, &mut fifo, &consumer, &mut scratch, &mut stats)
-        };
+        unsafe { fill_out_urb(pointer, packet, &mut fifo, &mut stats) };
         assert_eq!(stats.packets, packets as u64, "every packet is submitted");
         assert_eq!(stats.bytes, (packet * packets) as u64, "192 bytes per packet");
         assert_eq!(stats.underruns, 1, "only the last packet fell short");
         assert_eq!(stats.underruns_start, 0, "no warm-up underrun was snapshotted");
+        assert_eq!(stats.fill_samples, 1, "the fill was observed");
+        assert_eq!(stats.fill_frames_max, 144, "the fifo held three packets");
         assert_eq!(fifo.len(), 0, "the audio that existed was played");
         assert_eq!(data[3 * packet], 0, "the short packet is silence, not stale audio");
+    }
+
+    #[test]
+    fn absorbing_the_completed_capture_before_refilling_removes_the_start_underrun() {
+        let packet = 192usize;
+        let frames = packet / 4;
+        let out_packets = 4usize; // 1x4: a 4 ms runway
+        let in_packets = 8usize; // one IN burst is 8 ms
+        let out_burst = out_packets * frames;
+        let in_burst = in_packets * frames;
+        let prime = out_burst; // out_urbs = 1
+        let capacity = monitor_fifo_capacity(prime, in_burst, out_burst);
+        let high_water = monitor_high_water(prime, in_burst);
+
+        let mut urb = Urb::new(out_packets);
+        let mut data = vec![0u8; packet * out_packets];
+        let pointer = urb.ptr();
+        unsafe {
+            prepare_urb(pointer, 0x02, packet, out_packets, data.as_mut_ptr() as *mut c_void);
+        }
+
+        // Old order: the first URB drains the whole prime, then the refill runs
+        // before the capture covering that interval has been absorbed.
+        let mut fifo = OutFifo::new(capacity, high_water);
+        fifo.push(&vec![0.5f32; prime * 2]);
+        let mut stats = OutStats::default();
+        unsafe { fill_out_urb(pointer, packet, &mut fifo, &mut stats) };
+        assert_eq!(stats.underruns, 0, "the prime fills the first OUT URB");
+        unsafe { clear_urb(pointer); fill_out_urb(pointer, packet, &mut fifo, &mut stats) };
+        assert_eq!(
+            stats.underruns, out_packets as u64,
+            "refilling ahead of the capture zero-pads one whole URB"
+        );
+
+        // New order: absorb the capture burst that covers the same interval
+        // first, then refill from the fresher fifo.
+        let mut fifo = OutFifo::new(capacity, high_water);
+        fifo.push(&vec![0.5f32; prime * 2]);
+        let mut stats = OutStats::default();
+        unsafe { fill_out_urb(pointer, packet, &mut fifo, &mut stats) };
+        fifo.push(&vec![0.5f32; in_burst * 2]);
+        unsafe { clear_urb(pointer); fill_out_urb(pointer, packet, &mut fifo, &mut stats) };
+        assert_eq!(stats.underruns, 0, "absorb-then-refill leaves no gap");
+        assert_eq!(fifo.len(), in_burst - out_burst, "steady fill stays near the runway");
     }
 
     #[test]
@@ -2715,6 +3034,10 @@ mod tests {
             in_depth: (4, 8),
             out_depth: (2, 4),
             in_delivery_ms: 8,
+            monitor_fill_max_ms: 9,
+            monitor_fill_avg_ms: 7,
+            fifo_capacity_ms: 13,
+            high_water_ms: 11,
             out_rate: UsbOutRate {
                 ret: 3,
                 errno: 0,
@@ -2750,6 +3073,10 @@ mod tests {
             "\"in_depth\":{\"urbs\":4,\"packets\":8}",
             "\"out_depth\":{\"urbs\":2,\"packets\":4}",
             "\"in_delivery_ms\":8",
+            "\"monitor_fill_max_ms\":9",
+            "\"monitor_fill_avg_ms\":7",
+            "\"fifo_capacity_ms\":13",
+            "\"high_water_ms\":11",
             "\"out_rate\":{\"ret\":3,\"errno\":0,\"raw\":\"80bb00\",\"hz\":48000}",
             "\"setinterface\":{\"ret\":0,\"errno\":0}",
             "\"sched\":{\"policy\":1,\"priority\":80,\"errno\":13}",

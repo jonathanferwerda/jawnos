@@ -2,14 +2,17 @@
 # covers:    the direct-USB (usbfs) backend: the kernel structs and ioctl numbers
 #            match arm64, the pure monitor/histogram/report helpers and their Rust
 #            unit tests run on a host with no phone, the shallow OUT depth and its
-#            priming threshold, the configurable 1..=8 depth and its two ABIs
-#            (`jawn_audio_set_usb_depth`, `jawn_audio_roundtrip_usb`), the
-#            bus-frame segment table and click placement of the latency probe, the
-#            playback GET_CUR rate probe, the C ABI `jawn_audio_start_usb` is
-#            additive, the take owns one process-wide control slot shared with the
-#            Oboe take, and the driver leaks (never frees) an URB the kernel still
-#            owns and never closes Java's fd. The real device path is proven on the
-#            UM2 gate, so this test is the host half.
+#            priming threshold, the direct on-thread monitor fifo (no cross-thread
+#            ring) with its high-water trim and observed fill counters, the
+#            absorb-before-refill ordering, the poll-driven reap, the configurable
+#            1..=8 depth and its two ABIs (`jawn_audio_set_usb_depth`,
+#            `jawn_audio_roundtrip_usb`), the bus-frame segment table and click
+#            placement of the latency probe, the playback GET_CUR rate probe, the
+#            C ABI `jawn_audio_start_usb` is additive, the take owns one
+#            process-wide control slot shared with the Oboe take, and the driver
+#            leaks (never frees) an URB the kernel still owns and never closes
+#            Java's fd. The real device path is proven on the UM2 gate, so this
+#            test is the host half.
 
 use strict;
 use warnings;
@@ -60,7 +63,7 @@ sub cargo_available {
 
 # --- the pure logic runs on a machine with no phone --------------------------
 SKIP: {
-	skip 'no cargo toolchain on this machine', 12 unless cargo_available();
+	skip 'no cargo toolchain on this machine', 14 unless cargo_available();
 
 	my $target = tempdir( CLEANUP => 1 );
 	local $ENV{'CARGO_TARGET_DIR'} = $target;
@@ -121,6 +124,16 @@ SKIP: {
 		$out,
 		qr/usb_device::tests::the_roundtrip_report_carries_the_bus_frame_measurement/,
 		'the round-trip report names its method and precision'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::the_monitor_fifo_trims_at_its_high_water_at_every_depth/,
+		'the direct monitor fifo trims at its high water at every depth'
+	);
+	like(
+		$out,
+		qr/usb_device::tests::absorbing_the_completed_capture_before_refilling_removes_the_start_underrun/,
+		'absorbing the capture before refilling removes the start underrun'
 	);
 }
 
@@ -232,7 +245,16 @@ like( $usb, qr/sys::control_in\(/, 'the playback rate is probed with a class GET
 like( $usb, qr/monitor_runway_ms\(/, 'the report carries the monitor runway' );
 like( $usb, qr/const OUT_BACKLOG_FRAMES: usize = 96;/, 'the monitor backlog is bounded at 96 frames' );
 like( $usb, qr/record\.push\(/, 'capture feeds the record ring' );
-like( $usb, qr/monitor\.push\(/, 'and the monitor ring' );
+like( $usb, qr/fifo\.push\(/, 'the monitor frames go straight into the loop\'s own fifo' );
+unlike( $usb, qr/MONITOR_RING_FRAMES|monitor_producer/, 'there is no cross-thread monitor ring' );
+like( $usb, qr/fn monitor_high_water\(/, 'the fifo trims at a high water, not its capacity' );
+like( $usb, qr/fn monitor_fifo_capacity\(/, 'and is sized for the prime plus both bursts' );
+like( $usb, qr/fn wait_for_reap\(/, 'the loop waits with poll rather than a fixed sleep' );
+like( $usb, qr/sys::wait_reap\(/, 'and reaps as soon as the fd signals' );
+like( $usb, qr/monitor_fill_max_ms/, 'the report carries the observed maximum fill' );
+like( $usb, qr/monitor_fill_avg_ms/, 'and the average fill' );
+like( $usb, qr/fifo_capacity_ms/, 'the fifo capacity in ms' );
+like( $usb, qr/high_water_ms/, 'and its high water in ms' );
 like( $usb, qr/\\"packets_in\\":\{\}/, 'the report carries the packet-length histogram' );
 like( $usb, qr/\\"missed_in\\":\{\}/, 'the missed-frame count' );
 like( $usb, qr/\\"underruns_out\\":\{\}/, 'the playback underruns' );
