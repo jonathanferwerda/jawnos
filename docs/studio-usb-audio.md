@@ -6,8 +6,12 @@ and `SET_CUR` for 48 kHz stalls (`EPIPE`), so the engine runs the strict UAC1
 rate sequence (Sec. 2.1), verifies it with `GET_CUR`, and then **resamples the
 monitor 48 -> 32** and sends 128-byte packets (Sec. 2.2). Capture, the take and
 the DSP stay at 48 kHz. A rate this 1 ms-packet path cannot carry as whole
-frames (44.1 kHz) still leaves the monitor off and records why. The device gate
-is now “does the monitor sound continuous at 32 kHz”, not “does the rate set”.
+frames (44.1 kHz) still leaves the monitor off and records why. The 32 kHz
+monitor works: four takes on the tablet, all audible, with the resample in place
+(Sec. 5.1). **8 ms is clean when the fifo does not trim** (one take: 0 drops);
+the same preset trimmed 1,336 frames on another and crackled. 4/2 ms crackle
+more. `SCHED_FIFO` is still EPERM, and the next tuning is the OUT shape at the
+same runway (Sec. 8).
 
 ## 1. Why a direct path
 
@@ -168,8 +172,9 @@ done.
 Cable round trip, patch cable OUT -> IN: **2.841 ms**, score 0.462. The tablet's
 HCD returns `start_frame = 0`, so this is the monotonic fallback (±1-2 ms), which
 also includes the OUT scheduling delay. The Linux ALSA path on the same
-interface measures 2.71-2.79 ms. The 0.462 score is partly the 48 kHz chirp
-played into a 32 kHz endpoint; re-measure after the rate fix.
+interface measures 2.71-2.79 ms. The rate sequence proved the endpoint will not
+move to 48 kHz, so this probe is still a 48 kHz chirp into a 32 kHz endpoint;
+its score is not comparable until the probe resamples the chirp too (Sec. 8).
 
 Monitor depth sweep after the two-URB fix (engine v0.1.3848, app 1370):
 
@@ -178,6 +183,28 @@ Monitor depth sweep after the two-URB fix (engine v0.1.3848, app 1370):
 | 8 ms (2×4) | 0-8 (the prime) | 0 | 4 | a couple of clicks |
 | 4 ms (2×2) | 16 | 572 | 2 | more clicks |
 | 2 ms (2×1) | 83 | 3,886 | 1 | lots of clicks |
+
+### 5.1 The 32 kHz monitor resample — 2026-11-26
+
+Engine v0.1.3869, app 1370, `out_rate.hz 32000`, `rate_set.verified false`
+(`EPIPE`), `monitor_off null` on all four takes. Every take was audible, so the
+48 -> 32 monitor path is in service. Four takes, one after another:
+
+| preset | out depth | out_lag_ms | dropped_out | underruns_out | fill max/avg | heard |
+| --- | --- | --- | --- | --- | --- | --- |
+| 8 ms | 2×4 | 32 | 1,336 | 4 | 16/10 | a little crackling |
+| 4 ms | 2×2 | 6 | 188 | 2 | 8/5 | more crackling |
+| 2 ms | 2×1 | 78 | 3,694 | 1 | 4/3 | a lot |
+| 8 ms | 2×4 | -4 | **0** | 8 | 16/10 | **clean** |
+
+The clean 8 ms take and the crackling one share a depth and a fill pattern
+(max 16, avg 10), so the difference was whether a capture burst pushed the fifo
+over its high water and trimmed. `dropped_out` is the audible quantity here;
+`underruns_out` alone (8 on the clean take) does not explain the clicks. The
+fill sits at the high water (prime + one IN burst) in every preset, so an 8 ms
+IN burst can arrive before the 4 ms OUT refill drains. More, smaller OUT URBs at
+the same runway (4×2 or 8×1) are the next thing to try; the engine's depth ABI
+already accepts them, only the app's preset mapping needs to ask.
 
 ## 6. The pacing lessons
 
@@ -201,20 +228,24 @@ Monitor depth sweep after the two-URB fix (engine v0.1.3848, app 1370):
 
 The direct loop is **~2.8 ms** before any queue, so 2-3 ms end to end is below
 the interface's own floor. The practical monitor adds the input delivery and the
-output runway; the 8 ms preset is the current clean-ish setting. Without RT,
-4 ms starves. A deeper pipeline at the same runway (4×2 or 8×1 OUT with 8×2 IN)
-buys refill slack; a negative nice or a performance-core affinity is worth
-trying where `SCHED_FIFO` is refused. Below ~3 ms needs a high-speed UAC2
-interface (125 us microframes) and a feedback-aware output path; the current
-backend assumes full-speed 1 ms frames.
+output runway; the 8 ms preset is the clean setting when the fifo does not trim
+(Sec. 5.1), and its observed fill averages 10 ms because the high water is the
+prime plus one IN burst. Without RT, 4 ms and 2 ms starve. A deeper pipeline at
+the same runway (4×2 or 8×1 OUT with 8×2 IN) buys refill slack; a negative nice
+or a performance-core affinity is worth trying where `SCHED_FIFO` is refused.
+Below ~3 ms needs a high-speed UAC2 interface (125 us microframes) and a
+feedback-aware output path; the current backend assumes full-speed 1 ms frames.
 
 ## 8. Next
 
-1. **Monitor at 32 kHz**: run the UM2 take at 8/4/2 and read `out_rate.hz`
-   (32000), `out_packets`, `underruns_out` and `monitor_fill_*`. If the monitor is
-   continuous, re-run the cable round trip and record the 3:2 resample's effect on
-   the score. If it starves at 4 ms, the next tuning is the 4×2 / 8×1 shape below.
-2. The 4×2 / 8×1 output shape with an 8×2 input at the same 8 ms runway.
+1. **Monitor at 32 kHz**: answered (Sec. 5.1). The resample is in service and 8
+   ms was clean when the fifo did not trim. Re-run the cable round trip when the
+   OUT shape below is chosen, so the score is measured against the final
+   monitor.
+2. **OUT shape at 8 ms**: 4×2 or 8×1 OUT with the same 8×2 input runway, so the
+   fifo drains more often and a capture burst is less likely to trim. The engine
+   accepts it today through `jawn_audio_set_usb_depth`; the app's monitor-preset
+   mapping is the change.
 3. A per-device latency preset in the Studio configuration (Safe 16 / Balanced 8
    / Low 4 / Ultra 2), storing the measured floor and the last take's health; Auto
    picks the smallest preset that ran clean.
