@@ -95,17 +95,24 @@ my $sessions_for = sub {
 	my $half_life = defined $opt{'half_life'} && $opt{'half_life'} > 0 ? $opt{'half_life'} : 6;
 	my $min_sessions = defined $opt{'min_sessions'} ? $opt{'min_sessions'} : 3;
 	my $now = 0 + ($opt{'now'} || &subs::rightNow());
+	# The column is text, so a negative (pre-1970) bound compares lexicographically
+	# and needs the numeric cast. A modern bound does not: asking for the plain
+	# column keeps the (app,timestamp) index and lets the query stop at the limit
+	# instead of sorting the app's whole history (the same choice log_reader makes
+	# for the centre view). Vape's 7,591 stops made that sort the usual line's cost.
+	my $stamp = $now < 0 ? 'cast(timestamp as integer)' : 'timestamp';
+	my $now_arg = $now < 0 ? $now : "$now";
 
 	my $stop_rows = &subs::db_query(
-		q{select * from appointments where app = ? and type = ? and cast(timestamp as integer) <= ? order by cast(timestamp as integer) desc limit ?},
-		$app, 'stop', $now, $limit
+		qq{select * from appointments where app = ? and type = ? and $stamp <= ? order by $stamp desc limit ?},
+		$app, 'stop', $now_arg, $limit
 	)->hashes || [];
 	my $rows = $stop_rows;
 	my $fallback = 0;
 	if (scalar(@{$stop_rows}) < $min_sessions) {
 		$rows = &subs::db_query(
-			q{select * from appointments where app = ? and type = ? and coalesce(source, '') not in ('task','default','guide') and coalesce(source_uuid, '') = '' and cast(timestamp as integer) <= ? order by cast(timestamp as integer) desc limit ?},
-			$app, 'usual', $now, $limit
+			qq{select * from appointments where app = ? and type = ? and coalesce(source, '') not in ('task','default','guide') and coalesce(source_uuid, '') = '' and $stamp <= ? order by $stamp desc limit ?},
+			$app, 'usual', $now_arg, $limit
 		)->hashes || [];
 		$fallback = 1;
 	}
@@ -174,9 +181,12 @@ my $task_rows_for = sub {
 	return [] unless $configured && @{$configured};
 	my @apps = map { $_->{'task'} } @{$configured};
 	my $placeholders = join ',', ('?') x scalar(@apps);
+	# A modern window keeps the plain column so the (app,timestamp) index serves
+	# the range; only a pre-1970 bound needs the numeric cast (see sessions_for).
+	my $stamp = ($from < 0 || $to < 0) ? 'cast(timestamp as integer)' : 'timestamp';
 	my $sql = "select * from appointments where app in ($placeholders) and coalesce(source, '') in (?, ?)"
-		. " and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ?"
-		. " order by cast(timestamp as integer) asc";
+		. " and $stamp >= ? and $stamp < ?"
+		. " order by $stamp asc";
 	# A task row written before `source` was kept has no source either; it is
 	# still the person's completion when its app is in the checklist and the
 	# moment falls in the session window. Provenance, when present, still wins
@@ -226,12 +236,27 @@ my $tasks_for = sub {
 	$total_weight += $_->{'weight'} for @sessions;
 
 	my (%fractions, %present, %newest_present);
+	# Read the task rows once for the whole span. A query per session was up to
+	# sixty round trips on an app with a full checklist; the windows never
+	# overlap, so one read plus the filter below gives the same rows.
+	my @windows;
 	for (my $i = 0; $i < @sessions; $i++) {
 		my $session = $sessions[$i];
 		my $window_end = $session->{'end'} + $TASK_TAIL;
 		my $next_start = $i > 0 ? $sessions[$i - 1]{'start'} : undef;
 		$window_end = $next_start if defined $next_start && $next_start < $window_end;
-		my $rows = $task_rows_for->($app, \@configured, $session->{'start'}, $window_end);
+		push @windows, [ $session->{'start'}, $window_end ];
+	}
+	my @starts = sort { $a <=> $b } map { $_->[0] } @windows;
+	my @ends = sort { $b <=> $a } map { $_->[1] } @windows;
+	my $all_rows = @windows ? $task_rows_for->($app, \@configured, $starts[0], $ends[0]) : [];
+	for (my $i = 0; $i < @sessions; $i++) {
+		my $session = $sessions[$i];
+		my ($from, $to) = @{ $windows[$i] };
+		my $rows = [ grep {
+			my $ts = 0 + ($_->{'timestamp'} // 0);
+			$ts >= $from && $ts < $to;
+		} @{$all_rows} ];
 
 		# Duplicate completions in one session are one completion: keep the
 		# first after the start, as the checklist itself would.
@@ -330,7 +355,10 @@ sub usual_template_fields {
 	my @weighted;
 	my $index = 0;
 	foreach my $row ( @{$rows} ) {
-		push @weighted, { row => $row, weight => 0.5 ** ($index / $half_life) };
+		# Decode a row's data once. The loops below ask for up to twenty-five keys
+		# per row, and re-decoding the JSON for each one made a transaction
+		# template the profile's whole cost (dozens of rows x 25 decodes).
+		push @weighted, { row => $row, data => $data_hash->($row->{'data'}), weight => 0.5 ** ($index / $half_life) };
 		$index++;
 	}
 
@@ -340,7 +368,7 @@ sub usual_template_fields {
 	foreach my $key (qw(amount tax total quantity duration)) {
 		my @pairs;
 		foreach my $weighted ( @weighted ) {
-			my $data = $data_hash->($weighted->{'row'}{'data'});
+			my $data = $weighted->{'data'};
 			my $value = $weighted->{'row'}{$key};
 			$value = $data->{$key} unless defined $value && length "$value";
 			next unless defined $value && "$value" =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
@@ -354,7 +382,7 @@ sub usual_template_fields {
 	foreach my $key (qw(item vendor account unit movement state currency camera recorder machine feed screen)) {
 		my @pairs;
 		foreach my $weighted ( @weighted ) {
-			my $data = $data_hash->($weighted->{'row'}{'data'});
+			my $data = $weighted->{'data'};
 			my $value = $weighted->{'row'}{$key};
 			$value = $data->{$key} unless defined $value && length "$value";
 			next unless defined $value && length "$value";
@@ -368,7 +396,7 @@ sub usual_template_fields {
 	foreach my $key (qw(camera recorder machine screen screen_name feed source)) {
 		my @pairs;
 		foreach my $weighted ( @weighted ) {
-			my $row_data = $data_hash->($weighted->{'row'}{'data'});
+			my $row_data = $weighted->{'data'};
 			next unless exists $row_data->{$key} && defined $row_data->{$key};
 			push @pairs, { value => "$row_data->{$key}", weight => $weighted->{'weight'} };
 		}
@@ -453,14 +481,23 @@ sub usual_profile {
 	my $tasks = $tasks_for->($app, $sessions, %opt);
 
 	my $floor = $now - 365 * 86400 * 1000;
+	# Keep the plain column for a modern bound so the index serves the range and
+	# the order; only a pre-1970 floor needs the numeric cast (see sessions_for).
+	my $stamp = $floor < 0 ? 'cast(timestamp as integer)' : 'timestamp';
+	my $floor_arg = $floor < 0 ? $floor : "$floor";
+	# The twenty rows per type are wanted newest-first, and idx2_appts (app,
+	# timestamp) gives exactly that order for a modern bound, so the query stops
+	# after the rows it needs instead of sorting every row of the type (which is
+	# what idx12_appts plus a temp B-tree did on vape's 7,591 stops).
+	my $recent_from = $floor < 0 ? 'appointments' : 'appointments indexed by idx2_appts';
 	# Our own usual presses are not evidence of what the person does with the
 	# app: a task/default/guide usual row would make `usual` a candidate for
 	# every app and drown a rarer real kind. The exclusion is SQL-side and
 	# repeated below so a stubbed reader cannot smuggle one in.
 	my $exclusion = q{type != 'usual' and coalesce(source, '') not in ('task','default','guide')};
 	my $types = &subs::db_query(
-		"select distinct type from appointments where app = ? and cast(timestamp as integer) >= ? and $exclusion order by type",
-		$app, $floor
+		"select distinct type from appointments where app = ? and $stamp >= ? and $exclusion order by type",
+		$app, $floor_arg
 	)->hashes || [];
 
 	# A flat tail of forty hides a rare kind behind a chatty one (vape's two
@@ -473,13 +510,13 @@ sub usual_profile {
 		# The twenty rows are the template's evidence; the count decides whether
 		# the kind is real at all, so it is asked over the whole window.
 		my $count_row = &subs::db_query(
-			"select count(*) as n from appointments where app = ? and type = ? and cast(timestamp as integer) >= ? and $exclusion",
-			$app, $type, $floor
+			"select count(*) as n from appointments where app = ? and type = ? and $stamp >= ? and $exclusion",
+			$app, $type, $floor_arg
 		)->hashes->[0];
 		$real_count{$type} = 0 + ($count_row->{'n'} // 0);
 		my $rows = &subs::db_query(
-			"select * from appointments where app = ? and type = ? and cast(timestamp as integer) >= ? and $exclusion order by cast(timestamp as integer) desc limit 20",
-			$app, $type, $floor
+			"select * from $recent_from where app = ? and type = ? and $stamp >= ? and $exclusion order by $stamp desc limit 20",
+			$app, $type, $floor_arg
 		)->hashes || [];
 		foreach my $row ( @{$rows} ) {
 			next if ($row->{'type'} // '') eq 'usual';

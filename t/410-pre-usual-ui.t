@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part12.pm templates/appointment_wrapper.html.ep public/js/manager/dialog.js public/js/manager/manager/09_app_back.js public/js/manager/manager/06_appointment_distance.js public/js/manager/manager/02_web_nfc.js
+# tests-for: lib/JawnOS/Manager/Part12.pm templates/appointment_wrapper.html.ep public/js/manager/dialog.js public/js/manager/manager/09_app_back.js public/js/manager/manager/06_appointment_distance.js public/js/manager/manager/02_web_nfc.js public/css/universal.css
 # covers:    the Pre-usual button beside the usual, the line under the Extra
 #            group's buttons that says what the usual fills in, and the press
 #            paths for an ambiguous or capture usual: the ask re-sends the same
@@ -22,6 +22,7 @@ my $dialog = read_file("$root/public/js/manager/dialog.js");
 my $app_back = read_file("$root/public/js/manager/manager/09_app_back.js");
 my $distance = read_file("$root/public/js/manager/manager/06_appointment_distance.js");
 my $nfc = read_file("$root/public/js/manager/manager/02_web_nfc.js");
+my $css = read_file("$root/public/css/universal.css");
 
 # --- the button beside the usual ---------------------------------------------
 like($part12, qr/name => 'pre_usual', icon => 'pre_usual_button'/,
@@ -67,6 +68,18 @@ like($dialog, qr/jawnos_usual_choice_open[\s\S]*?'Escape'/,
 like($dialog, qr/jawnos_usual_choice_ok = null;[\s\S]*?jawnos_usual_choice_open = false;/,
 	'closing clears the choice state');
 
+# --- the dialog's own row layout --------------------------------------------
+# Each candidate is its own left-aligned row with the radio at the left; the
+# labels used to flow inline, so the radios ran along the sentence.
+like($css, qr/#alert \.usual_choice_list \{ display: block; text-align: left;/,
+	'the choices are a left-aligned block, not one run of inline labels');
+like($css, qr/#alert \.usual_choice \{ display: flex; align-items: flex-start;/,
+	'each candidate is its own row');
+like($css, qr/#alert \.usual_choice > input\[type="radio"\] \{ flex: 0 0 auto;/,
+	'and its radio keeps the left edge and its width');
+like($css, qr/#alert \.usual_remember_label \{ display: flex; align-items: center; justify-content: flex-start;/,
+	'the remember box stays on the left under the choices');
+
 # --- the press paths ---------------------------------------------------------
 like($app_back, qr/response\['usual_ask'\]/, 'an ambiguous press is a question');
 like($app_back, qr/jawnosUsualChoice\(ask\['candidates'\]/,
@@ -93,8 +106,12 @@ like($app_back, qr/data\.usual_remember = usual_remember/, 'and the remember fla
 like($app_back, qr/url: '\/manager\/usual'/, 'the summary line is fetched');
 like($app_back, qr/data: \{ app: app \}/, 'by app');
 like($app_back, qr/t\('Usual: '\) \+ t\(line\)/, 'and shows the one line under the buttons');
-like($app_back, qr/type == 'usual' \|\| type == 'pre_usual'\) \{ usualSummaryRefresh/,
+like($app_back, qr/type == 'usual' \|\| type == 'pre_usual'\) \{\s*usualSummaryRefresh\(app, /,
 	'a written usual refreshes the line');
+like($app_back, qr/response\['usual_line'\] !== undefined/,
+	'the press reply carries the line the press already computed');
+like($app_back, qr/typeof line === 'string'/,
+	'a carried line is painted without a second fetch');
 
 my $ask_at = index($app_back, "response['usual_ask']");
 my $clear_at = index($app_back, 'appClearer(app)');

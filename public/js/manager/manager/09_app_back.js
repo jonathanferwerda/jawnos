@@ -417,8 +417,11 @@ function managerReset(caller,e,press) {
 			//	}
 				calculator();
 			// the line under the Extra group's buttons follows the press that
-			// just wrote one
-			if (type == 'usual' || type == 'pre_usual') { usualSummaryRefresh(app); }
+			// just wrote one; the reply already carries it when the server
+			// computed the profile for the press
+			if (type == 'usual' || type == 'pre_usual') {
+				usualSummaryRefresh(app, (response && response['usual_line'] !== undefined) ? String(response['usual_line']) : null);
+			}
 		//	}
 		},
 		function(error) { console.log(error) });
@@ -516,8 +519,22 @@ function usualSummaryFill(app, force) {
 	});
 }
 
-function usualSummaryRefresh(app) {
-	$('.appointment[app="' + app + '"] .usual_summary[app="' + app + '"]').attr('stale', 'yes');
+function usualSummaryRefresh(app, line) {
+	var spans = $('.appointment[app="' + app + '"] .usual_summary[app="' + app + '"]');
+	// The press already computed this profile, so its reply carries the line: no
+	// second /manager/usual read after every press. A reply without one (an older
+	// server) falls back to the fetch.
+	if (typeof line === 'string') {
+		spans.removeAttr('stale').removeAttr('loading');
+		if (!line.length) {
+			spans.removeAttr('filled').text('');
+			return;
+		}
+		var t = (typeof jawnosT === 'function') ? jawnosT : function (s) { return s; };
+		spans.attr('filled', 'yes').text(t('Usual: ') + t(line));
+		return;
+	}
+	spans.attr('stale', 'yes');
 	usualSummaryFill(app, true);
 }
 

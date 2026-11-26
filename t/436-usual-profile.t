@@ -30,11 +30,13 @@ use JawnOSTest;
 }
 
 my (%stops, %usual, %candidates, %task_rows, %settings);
+my @queries;
 
 {
 	no warnings 'redefine';
 	local *subs::db_query = sub {
 		my ($sql, @args) = @_;
+		push @queries, $sql;
 		my $app = $args[0];
 		my $strict = $sql =~ /type != 'usual'/ ? 1 : 0;
 		my $excluded = sub {
@@ -208,6 +210,7 @@ my (%stops, %usual, %candidates, %task_rows, %settings);
 		{ app => 'shower', type => 'image', timestamp => 1_500_000, data => encode_json({ camera => 0 }) },
 	];
 
+	@queries = ();
 	my $profile = &subs::usual_profile('shower', now => 5_000_000);
 	my @names = map { $_->{'task'} } @{ $profile->{'tasks'} };
 	is_deeply(\@names, [qw(cleaning_ears brush_teeth washing drying mess_up_hair deodorant)],
@@ -223,6 +226,25 @@ my (%stops, %usual, %candidates, %task_rows, %settings);
 	is($task{'brush_teeth'}{'count'}, 1, 'a blank-source task row is still the person\'s completion');
 	is($profile->{'sessions'}, 4, 'the profile reports the sessions it measured');
 	is($profile->{'duration'}, 600_000, 'and the weighted session length');
+
+	is(scalar(grep { /app in \(/ } @queries), 1,
+		'the task rows are read once for the whole span, not once per session');
+
+	# A modern clock (milliseconds since epoch) keeps the plain timestamp column
+	# so the (app,timestamp) index serves the range and the order; the numeric
+	# cast is only for a pre-1970 bound. The twenty recent rows per type then read
+	# idx2_appts instead of sorting every row of the type.
+	$stops{'modern'} = [
+		stop_row(1_799_000_000_000, 600_000, app => 'modern'),
+		stop_row(1_798_000_000_000, 600_000, app => 'modern'),
+	];
+	$candidates{'modern'} = $stops{'modern'};
+	@queries = ();
+	my $modern = &subs::usual_profile('modern', now => 1_800_000_000_000);
+	ok(!(grep { /cast\(timestamp as integer\)/ } @queries),
+		'a modern profile never casts the timestamp column');
+	ok((grep { /indexed by idx2_appts/ && /limit 20/ } @queries),
+		'the recent rows per type read idx2_appts');
 
 	# --------------------------------------------------------------- candidates
 	my @signatures = map { $_->{'signature'} } @{ $profile->{'candidates'} };

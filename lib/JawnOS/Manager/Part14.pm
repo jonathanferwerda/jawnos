@@ -809,6 +809,10 @@ sub manager_reset($c) {
 		$returner->{'uuid'} = $uuid;
 		$returner->{'usual_kind'} = $result->{'signature'}
 			if defined $result->{'signature'} && length "$result->{'signature'}";
+		# The profile the press just used is the line's answer, so the client can
+		# paint it from this reply instead of asking /manager/usual a second time.
+		$returner->{'usual_line'} = &subs::usual_summary_line($profile, $result->{'signature'})
+			if defined $result->{'signature'} && length "$result->{'signature'}";
 		$appt_header = $result->{'appt_header'};
 		$header_appts = $result->{'header_appts'};
 		$returner->{'usual_capture'} = $result->{'capture'} if $result->{'capture'};
