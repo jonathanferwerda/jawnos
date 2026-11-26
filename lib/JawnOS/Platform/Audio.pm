@@ -31,7 +31,7 @@ our @EXPORT_OK = qw(
 	get_volume set_volume get_mute set_mute
 	default set_default
 	stream_inputs set_stream_input_volume set_stream_input_mute
-	play_argv record_argv player_argv speak_argv
+	play_argv record_argv player_argv speak_argv player_available
 );
 
 BEGIN {
@@ -58,6 +58,14 @@ sub which {
 	my ($name) = @_;
 	return undef unless defined $name && length $name;
 	return JawnOS::Platform::tool_path($name);
+}
+
+# Can this machine fork a local player? The chime and the voice both fall back
+# to the open browser when it cannot: Windows has no SoX `play`, and the desktop
+# shell there hears sound through the page (docs/platform-roadmap.md). A phone
+# answers through its bridge instead, so callers keep that branch of their own.
+sub player_available {
+	return which('play') ? 1 : 0;
 }
 
 sub _exec {

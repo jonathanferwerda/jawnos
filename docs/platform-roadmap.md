@@ -253,8 +253,8 @@ container. Keep them:
 | BLE bridge (watches/boards) | BlueZ | CoreBluetooth | WinRT | Must |
 | Watch/teletype HTTP+WS | yes | direct | direct | Must |
 | Chat / WebRTC / mic / camera / screen | Qt | Qt + OS permissions | Qt + OS permissions | Must |
-| Music remote audio | PipeWire | CoreAudio | WASAPI | Must |
-| TTS / voice | Piper/espeak/sox | CoreAudio + `say` | WASAPI | Must |
+| Music remote audio | PipeWire | CoreAudio | browser (WebAudio) | Must |
+| TTS / voice | Piper/espeak/sox | CoreAudio + `say` | browser (WebAudio) | Must |
 | LAN discovery, presence, mDNS | ifconfig/avahi | native DNS-SD | native DNS-SD | Must |
 | Tailscale / tailnet controls | CLI | app/CLI | service/CLI | Must |
 | Notifications, clipboard, open-with | xclip/notify-send | native | native | Must |
@@ -320,7 +320,7 @@ model have already landed (P3, below).
 | `Platform::Process` | `/proc` identity, state, CPU ticks and the group scan; P1 folded the request-side readers, the master and `manager_killer` onto it | `ps`/`sysctl` (P2), `Win32::Process`/`tasklist` (P3) |
 | `Platform::Net` | `ip`/`ifconfig`/`route`/`arp` parsers; P1 moved hostname and own-address reads here | `ifconfig`/`route`/`netstat` (P2), `ipconfig`/`Get-Net*` (P3) |
 | `Platform::Mdns` | Avahi browse and publish | `dns-sd` (P2), the DNS-SD API (P3) |
-| `Platform::Audio` | pactl, then wpctl, then amixer; devices, volume, default, player/recorder argv | CoreAudio (P2), WASAPI (P3) |
+| `Platform::Audio` | pactl, then wpctl, then amixer; devices, volume, default, player/recorder argv | CoreAudio (P2); Windows hears sound in the browser, not through this seam |
 | `Platform::Serial` | `/dev/ttyACM*` and `/dev/ttyUSB*`, stty, the shared console protocol | `/dev/cu.*` (P2), `COM*` (P3) |
 | `Platform::Print` | the CUPS client, ipptool ink, scanimage | CUPS (P2), the spooler (P3) |
 | `Platform::Shell` | clipboard, opener, notification, terminal list | `pbcopy`/`open`/`osascript` (P2), `clip`/`ShellExecute`/toasts (P3) |
@@ -421,6 +421,17 @@ lane wired: `webview\JawnOSShell.exe` is a C# WebView2 window with the Linux tra
 built by `prepare-webview.ps1` and started by `launch.ps1` when the machine has the Evergreen
 WebView2 runtime. The Qt shell is the fallback when the payload carries `runtime\python`.
 
+**Windows sound is the browser's — no engine.** The audio engine (`perl/audio/jawn-audio`, the
+WASAPI/ASIO device seam) is not built or run on Windows: `scripts/build_engine.pl` says so and
+stages nothing. A machine with no SoX `play` hands the notification chime (`type => 'sound'`) and
+piper's voice (`type => 'speech'`, the WAV base64 in the frame) to the open page over the socket it
+already holds; the desktop shells disable the autoplay gesture requirement, so an alarm still rings
+with no one at the screen. Music, calls and screening already play in the browser
+(`perl/Music/04_music_websockets.pl`'s browser role). Linux keeps its local voice and its engine.
+The gate is `JawnOS::Platform::Audio::player_available()`; the client half lives in
+`public/js/manager/websocket/01_message_handler.js`. The one cost: with no page open, a Windows box
+has no chime and no voice.
+
 **Next:**
 
 - The restart verdict is written **before** the tree swap, so control is briefly unavailable during
@@ -434,7 +445,7 @@ WebView2 runtime. The Qt shell is the fallback when the payload carries `runtime
 - The `Platform::Process` Windows backend (v0.1.2589) is exercised on VM200 by the master's
   liveness checks and `manager_killer.pl`, including the OpenProcess liveness path (v0.1.2629).
 - Windows platform modules: `Win32::Process`/`Proc::ProcessTable`/`tasklist`, `ipconfig`/`Get-Net*`
-  / `netstat -ano`, DNS-SD, WASAPI, `COM*`, the spooler, WinRT BLE, clipboard/toasts/`ShellExecute`;
+  / `netstat -ano`, DNS-SD, `COM*`, the spooler, WinRT BLE, clipboard/toasts/`ShellExecute`;
   `LOCALAPPDATA` and `%TEMP%` in `Paths`.
 - Wrap the tested bundle in one signed per-user `Setup.exe`: `installer/windows/jawnos.iss`
   (Inno Setup 6) installs under `%LOCALAPPDATA%`, owns the files, the shortcuts and the uninstall,

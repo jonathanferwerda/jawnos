@@ -340,4 +340,20 @@ SKIP: {
 		'and the next pass queues the lead again before it reads a block' );
 }
 
+# --- a Windows machine stages nothing --------------------------------------
+# The engine is not a Windows target: the house hears sound through the browser
+# there (docs/platform-roadmap.md, P3). The script says so rather than failing
+# inside cargo, and --check still answers honestly for a binary it cannot have.
+{
+	open( my $script_fh, '<', $script ) or die "$script: $!";
+	local $/;
+	my $text = <$script_fh>;
+	close $script_fh;
+	like( $text, qr/\$\^O\s+eq\s+'MSWin32'/, 'the build script names Windows' );
+	like( $text, qr/skip: the audio engine is not built on Windows/,
+		'and skips it in a sentence' );
+	like( $text, qr/missing: the audio engine is not built on Windows/,
+		'while --check still answers missing' );
+}
+
 done_testing();

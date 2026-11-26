@@ -8,6 +8,41 @@
 var wsMessageQueue = [];
 var wsMessageFlushTimer = null;
 
+// --- the browser as the machine's speaker -----------------------------------
+// Windows has no audio engine and no SoX, so the server hands a notification's
+// chime and piper's voice here over the socket the page already holds. The
+// desktop shell turns off the autoplay gesture requirement
+// (QWebEngineSettings::PlaybackRequiresUserGesture, and the WebView2 shell's
+// equivalent), so an alarm can still ring with no one at the screen. A plain
+// browser tab keeps the usual rule and stays silent until someone touches it.
+var jawnosSpeechChannel = null;
+
+function jawnosSoundPlay(src, revoke) {
+	var audio = new Audio(src);
+	if (revoke) {
+		audio.addEventListener('ended', function () { try { URL.revokeObjectURL(src); } catch (e) { } });
+		audio.addEventListener('error', function () { try { URL.revokeObjectURL(src); } catch (e) { } });
+	}
+	try {
+		var played = audio.play();
+		if (played && played.catch) { played.catch(function () { }); }
+	}
+	catch (e) { }
+	return audio;
+}
+
+function jawnosSpeechPlay(encoded, mime) {
+	if (!encoded || typeof encoded !== 'string') { return null; }
+	var raw;
+	try { raw = atob(encoded); } catch (e) { return null; }
+	var bytes = new Uint8Array(raw.length);
+	for (var i = 0; i < raw.length; i++) { bytes[i] = raw.charCodeAt(i); }
+	var blob = new Blob([bytes], { type: mime || 'audio/wav' });
+	if (jawnosSpeechChannel) { try { jawnosSpeechChannel.pause(); } catch (e) { } }
+	jawnosSpeechChannel = jawnosSoundPlay(URL.createObjectURL(blob), true);
+	return jawnosSpeechChannel;
+}
+
 // One place that puts a freshly rendered appointment header on the screen. A
 // live push, a reset response and a reconnect's catch-up all carry one, so all
 // three land the same way: the wrapper, its timestamp, and the clock that reads
@@ -179,6 +214,14 @@ function wsMessageDispatch(raw) {
 				jawnosNoticeUpdate(updateUuid, { title: data['title'], message: data['message'], app: data['app'], icon: data['icon'] });
 			}
 			if (typeof jawnosNotificationsTaskbarLoad === 'function') { jawnosNotificationsTaskbarLoad(); }
+		}
+		else if (data['type'] == 'sound') {
+			// The machine's chime, when it has no local player to fork it to.
+			if (data['sound']) { jawnosSoundPlay(String(data['sound'])); }
+		}
+		else if (data['type'] == 'speech') {
+			// piper's clip, rendered on the server and carried in the frame.
+			jawnosSpeechPlay(data['audio'], data['mime']);
 		}
 		else if (data['type'] == 'stayingAlive') {
 			// The Controller is the Network app's tab now; keep whatever the

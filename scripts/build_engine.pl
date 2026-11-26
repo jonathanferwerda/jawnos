@@ -30,6 +30,9 @@
 #
 # $ENV{CARGO} names the toolchain (default `cargo` on PATH), and
 # $ENV{CARGO_TARGET_DIR} is honoured so a test can build into a scratch folder.
+#
+# Windows is not a target: the house hears sound through the browser there
+# (docs/platform-roadmap.md), so a Windows run says so once and stages nothing.
 use strict;
 use warnings;
 
@@ -71,6 +74,19 @@ for ( my $i = 0; $i < @ARGV; $i++ ) {
 	}
 }
 my $build_features = defined $features ? $features : 'alsa,jack';
+
+# Windows has no engine: the sound there is the browser's. Say so once instead
+# of failing inside cargo, and keep --check honest - a machine that cannot
+# stage the binary reports it missing. --android still cross-compiles, since
+# that is the phone's library, not this machine's engine.
+if ( $^O eq 'MSWin32' && !$android ) {
+	if ($check) {
+		print "missing: the audio engine is not built on Windows\n";
+		exit 1;
+	}
+	print "skip: the audio engine is not built on Windows; the browser plays the sound\n";
+	exit 0;
+}
 
 if ($check) {
 	if ( -x $out ) {

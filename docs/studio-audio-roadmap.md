@@ -1451,7 +1451,11 @@ P3's drift work and P4's uplink being live first.
 
 ### P8 — Other platforms
 
-CoreAudio and WASAPI behind the same device trait — the seam `docs/platform-roadmap.md` P2/P3 opens.
+**Windows never runs the engine.** The house there hears sound through the browser: a notification's
+chime and piper's voice cross the websocket and play in the page, and `scripts/build_engine.pl`
+refuses to build (docs/platform-roadmap.md, P3). WASAPI and ASIO are not planned; the engine stays
+the Linux box that owns the interface. CoreAudio on macOS is undecided until a Mac exists, and the
+same browser channel already gives a Mac its sound.
 Deliberately last: one excellent Linux engine beats three mediocre ones.
 
 ---

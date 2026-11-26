@@ -41,6 +41,26 @@ sub notification_event_uuid($seed) {
 	return 'notevent-' . Mojo::Util::md5_sum($bytes);
 }
 
+# Where the browser finds a notification's sound. Only the shipped folder is
+# served (public/sounds/notifications), so a path outside it answers '' and a
+# caller on a machine with no local player stays silent rather than inventing a
+# URL. The settings store the file as `./public/sounds/...` (Configure and the
+# custom upload both name it that way); an http(s) URL or an already-web path is
+# what the page wants, and any other absolute path is a filesystem path, not a
+# URL.
+sub sound_web_url {
+	my ($file) = @_;
+	return '' unless defined $file && length $file;
+	return $file if $file =~ m{^https?://}i;
+	return $file if $file =~ m{^/sounds/}i;
+	return '' if $file =~ m{^/};
+	(my $path = $file) =~ s{^\./}{};
+	$path =~ s{^public/}{};
+	$path =~ s{.*/public/}{};
+	return '' unless $path =~ m{^sounds/}i;
+	return '/' . $path;
+}
+
 sub notification_sender($m,$db) {
 	my $origin = &subs::format_name(&subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' })) ||&subs::shorthand_name(&subs::machine_hostname());
 
@@ -117,15 +137,30 @@ sub notification_sender($m,$db) {
 		}, { name => "Audio file player" });
 	}
 	else {
-		&subs::subprocessor(sub {
+		# The chime and the voice are the machine's own sound. A Linux box
+		# forks the local player; a machine with no player (Windows) hands
+		# both to the open browser, which the desktop shell lets autoplay.
+		# The phone keeps its own notification channel, never the page.
+		my $local_player = $device eq 'mobile'
+			? 1 : JawnOS::Platform::Audio::player_available();
+		if ($local_player) {
+			&subs::subprocessor(sub {
+				if ($sound) {
+					my @argv = JawnOS::Platform::Audio::player_argv($sound_file);
+					system(@argv) if @argv;
+				}
+				if ($words) {
+					&subs::say_it($words);
+				}
+			}, { name => "Synth player" });
+		}
+		else {
 			if ($sound) {
-				my @argv = JawnOS::Platform::Audio::player_argv($sound_file);
-				system(@argv) if @argv;
+				my $url = &subs::sound_web_url($sound_file);
+				&Websocket::send('server', { type => 'sound', sound => $url }) if length $url;
 			}
-			if ($words) {
-				&subs::say_it($words);
-			}
-		}, { name => "Synth player" });
+			&subs::say_it($words) if $words;
+		}
 	}
 
 	my $image;

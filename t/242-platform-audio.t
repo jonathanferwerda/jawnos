@@ -323,6 +323,25 @@ OUT
 	is((JawnOS::Platform::Audio::play_argv(rate => 44100))[0], 'pacat', 'the player falls back to the bare name');
 	is((JawnOS::Platform::Audio::record_argv(rate => 8000))[0], 'parec', 'the recorder too');
 	is_deeply([ JawnOS::Platform::Audio::speak_argv('hi', 'en-us') ], [], 'and espeak is absent');
+	is(JawnOS::Platform::Audio::player_available(), 0, 'and with no PATH there is no local player');
+}
+
+# ============================================================================
+# the local player probe (the browser fallback's switch)
+# ============================================================================
+{
+	# The argv block below has pacat/parec/espeak but no SoX `play`, so the gate
+	# that sends a chime or a voice to the browser is closed.
+	local $ENV{'PATH'} = "$tools_dir:$os_bin";
+	is(JawnOS::Platform::Audio::player_available(), 0,
+		'a machine with no SoX play hears through the browser');
+
+	my $play_dir = "$scratch/player";
+	make_path($play_dir);
+	write_exe("$play_dir/play", 'exit 0');
+	local $ENV{'PATH'} = "$play_dir:$os_bin";
+	is(JawnOS::Platform::Audio::player_available(), 1,
+		'a machine with SoX play keeps its local voice');
 }
 
 # ============================================================================

@@ -156,6 +156,37 @@ sub say_render_wav {
 	return $made ? $wav : '';
 }
 
+# Send a finished WAV to the browsers on this machine.
+#
+# Windows has no shell player, so the voice it renders has no sink to fork.
+# The frame carries the audio itself - base64 in the message the socket already
+# sends - so nothing is served from a directory and nothing outlives the
+# utterance. The cap keeps a runaway render out of a socket frame; a normal
+# sentence is far under it.
+our $say_broadcast_max_bytes = 2 * 1024 * 1024;
+
+sub say_broadcast_wav {
+	my ($wav) = @_;
+	return 0 unless defined $wav && length $wav && -f $wav && -s $wav;
+	my $size = -s $wav;
+	if ($size > $say_broadcast_max_bytes) {
+		eval { $log->info('say: the clip is too long to send to the browser (' . $size . ' bytes)') } if $log;
+		unlink $wav;
+		return 0;
+	}
+	my $bytes = read_file($wav, binmode => ':raw');
+	unlink $wav;
+	return 0 unless defined $bytes && length $bytes;
+	# The notification card already broadcasts through this socket, so the
+	# browser hears the voice on the same channel it hears the chime.
+	&Websocket::send('server', {
+		type => 'speech',
+		audio => encode_base64($bytes, ''),
+		mime => 'audio/wav',
+	});
+	return 1;
+}
+
 # The speaking, with no event loop of its own to reset. say_it runs it in a
 # child - a fork on Unix, perl/subprocessor_worker.pl on a box without fork -
 # because a request may speak and still have to answer (Leave says goodbye).
@@ -172,6 +203,13 @@ sub say_speak {
 	if (($spec->{'engine'} || '') eq 'piper') {
 		my $wav = &subs::say_render_wav($text, $pick);
 		if ($wav) {
+			# A machine with no shell player (Windows) has no sink to fork:
+			# hand the finished clip to the open browser instead. The phone
+			# keeps its bridge and a Linux box keeps its local voice.
+			if ($device ne 'mobile' && !JawnOS::Platform::Audio::player_available()) {
+				&subs::say_broadcast_wav($wav);
+				return;
+			}
 			my $player = &subs::say_player_command();
 			# the app plays it natively on a phone; only a desktop has a
 			# shell player to fall back to
