@@ -2613,6 +2613,9 @@ var music_remote_state = { playing: null, key: '', file: '', title: '', type: ''
 // the house's watcher (jp_data). A frame is fetched only when the second moves.
 var music_remote_watch = null;
 var music_remote_watch_key = '';
+var music_remote_watch_at = 0;
+// the target|library pair whose remoted list this window has already restored
+var music_remote_library_applied = '';
 var music_remote_poll_timer = 0;
 var music_remote_progress_timer = 0;
 var music_remote_level_timer = 0;
@@ -2634,7 +2637,7 @@ function musicRemoteSnapshotRestore() {
 	musicVideoPaint();
 	musicVideoEnhanceApply();
 }
-function musicRemotePaint() {
+function musicRemotePaint(skip_library) {
 	var target = musicRemoteTarget();
 	var mode = !!target;
 	$('#music').toggleClass('music_remote_mode', mode);
@@ -2650,6 +2653,8 @@ function musicRemotePaint() {
 		musicRemoteFullscreenPaint();
 		music_remote_watch = null;
 		music_remote_watch_key = '';
+		music_remote_watch_at = 0;
+		music_remote_library_applied = '';
 		// the bar goes back to this machine's own level and mute
 		$('#music_volume').val(musicVolumeLevel());
 		updateMusicMuteIcon();
@@ -2677,12 +2682,41 @@ function musicRemotePaint() {
 		music_remote_progress_timer = setInterval(musicRemoteProgressPaint, 1000);
 	}
 	musicRemoteProgressPaint();
+	if (!skip_library) { musicRemoteLibraryRestore(); }
 	if (!music_remote_poll_timer) {
 		music_remote_poll_timer = setInterval(function() {
 			if (musicRemoteTarget()) { musicRemoteStateLoad(); }
 			else { musicRemotePaint(); }
 		}, 4000);
 	}
+}
+// Put the remoted library back after a reload: the controller's shell is its
+// own (its library setting stays local), so the target and the chosen library
+// ride on #music. The pair is applied once per target/library.
+function musicRemoteLibraryRestore() {
+	var target = musicRemoteTarget();
+	if (!target) { return; }
+	var library = $('#music').attr('remote_library') || '';
+	var key = target + '|' + library;
+	if (key === music_remote_library_applied) { return; }
+	music_remote_library_applied = key;
+	if (library && library !== 'local' && library !== 'none') {
+		searchMusic({ library: library, keep_library: 1 });
+	}
+	else {
+		// no remembered choice (a first connect, or This machine's own list): ask
+		// the host for its window, whose select then names the value to keep
+		searchMusic({ library: target, remote_view: 1, keep_library: 1, select_library: library || undefined });
+	}
+}
+// A controlled machine's remoted library is that machine's, so it is forgotten
+// when the window is pointed somewhere else (or back to This machine). This
+// machine's own library setting is untouched.
+function musicRemoteLibraryClear() {
+	if (($('#music').attr('remote_library') || '') === '') { music_remote_library_applied = ''; return; }
+	$('#music').attr('remote_library', '');
+	music_remote_library_applied = '';
+	settingSetter({ app: 'music', setting: 'remote_library', value: '' });
 }
 function musicRemoteStateLoad() {
 	var target = musicRemoteTarget();
@@ -2768,12 +2802,18 @@ function musicRemoteWatchPaint() {
 		|| (music_remote_state.type || '') != 'video' || !music_remote_state.file) {
 		music_remote_watch = null;
 		music_remote_watch_key = '';
+		music_remote_watch_at = 0;
 		return;
 	}
 	var at = Math.max(0, Math.floor(parseFloat(music_remote_state.display) || parseFloat(music_remote_state.currentTime) || 0));
 	var origin = music_remote_state.remote_uuid || musicRemoteTarget();
 	var key = music_remote_state.file + '#' + at + '@' + origin;
 	if (key === music_remote_watch_key) { return; }
+	// The progress tick runs every second; fetch at most one frame a second, and
+	// only when the second itself moved. The remote's ffmpeg makes each frame.
+	var now = Date.now();
+	if (now - music_remote_watch_at < 900) { return; }
+	music_remote_watch_at = now;
 	music_remote_watch_key = key;
 	var url = '/file_open?file=' + encodeURIComponent(music_remote_state.file) +
 		'&thumb=ya&position=' + at + '&remote_uuid=' + encodeURIComponent(origin);
@@ -2848,6 +2888,7 @@ function musicRemoteProgressPaint() {
 	$('#elapsed_progress').text(clock(now));
 	$('#total_progress').text(clock(duration));
 	$('#video_time_display').text(clock(now));
+	musicRemoteWatchPaint();
 }
 // A seek in the peer's window moves its thumb now; the host's own save answers
 // on the next poll. Until then the position the person chose is the truth.
@@ -3139,6 +3180,8 @@ function musicRemoteChoose(target) {
 				}
 				return;
 			}
+			// the remoted library belonged to the machine just left, so forget it
+			musicRemoteLibraryClear();
 			if (!target) {
 				$('#music').attr('remote_target', '');
 				musicRemoteSnapshotRestore();
@@ -3150,14 +3193,14 @@ function musicRemoteChoose(target) {
 			musicRemoteLocalViewSave();
 			$('#music').attr('remote_target', target);
 			musicRemoteSnapshotSave();
-			musicRemotePaint();
+			musicRemotePaint(1);
 			// the peer's Music app is the thing being controlled: open it so the
 			// first transport press has somewhere to land
 			musicRemoteSend('open');
 			// ask for the host's own window: its current queue, selected artists
 			// and albums, and its search word. searchMusic swaps the lists in
 			// place, so local playback is not touched.
-			searchMusic({ library: target, remote_view: 1 });
+			searchMusic({ library: target, remote_view: 1, keep_library: 1 });
 		}
 	});
 }
@@ -6093,6 +6136,13 @@ function searchMusic(data) {
 			// player and the rest of the window untouched: no flash, and the
 			// <video> element is never destroyed, so playback is not interrupted.
 			var fragment = $('<div></div>').html(response.html);
+			// The host's own library choice rides in its configuration panel; read
+			// it before the panel is replaced, so the controller can show and
+			// remember which library the controlled machine is on.
+			var host_library;
+			if (remote_view && remoteTargetAtSearch) {
+				host_library = fragment.find('#music_library_select').val();
+			}
 			var in_place = fragment.find('#music_files').length > 0 && $('#music_files').length > 0;
 			// a full render would tear the <video> down; park a loaded one first
 			var keep_video = !!v.src;
@@ -6151,11 +6201,23 @@ function searchMusic(data) {
 			if (remoteTargetAtSearch) { $('#music').attr('remote_target', remoteTargetAtSearch); }
 			// a remote render brings the host's configuration panel; keep the
 			// controller's own library choice in its select
-			if (select_library !== undefined) {
-				$('#music_library_select').val(select_library);
+			var shown_library = (select_library !== undefined) ? select_library : host_library;
+			if (shown_library !== undefined && $('#music_library_select').length) {
+				$('#music_library_select').val(shown_library || 'local');
+				if (remote_view && remoteTargetAtSearch) {
+					settingSetter({ app: 'music', setting: 'remote_library', value: shown_library || 'local' });
+					$('#music').attr('remote_library', shown_library || 'local');
+					music_remote_library_applied = remoteTargetAtSearch + '|' + (shown_library || 'local');
+				}
 			}
 			else if (library !== undefined && $('#music_library_select').length) {
 				$('#music_library_select').val(library || 'local');
+			}
+			// A remoted library's list comes from that peer, not from the host's
+			// own server: follow the host's choice with a direct search.
+			if (remote_view && remoteTargetAtSearch && shown_library
+				&& shown_library !== 'local' && shown_library !== 'none') {
+				searchMusic({ library: shown_library, keep_library: 1 });
 			}
 			musicTitleFit();
 			$.each(response.artist, function(i,v) {
@@ -6364,22 +6426,24 @@ $(document).on('change', '#music_library_select', function() {
 	// their stored paths would be scanned (and found empty) at the new one
 	$('.music_album').attr('active', 'no');
 	$('.music_artist').attr('active', 'no');
-	// A remote library is that machine's Music app: choosing another remote
-	// switches the window's control to it, rather than dropping the session
-	// and showing a list nothing is driving. Local and None leave remote mode.
+	// The face of a peer's Music app changes that machine's library, not this
+	// window's: the controlled player looks at the remoted library and plays
+	// its tracks. This window keeps its own shell and remote target, and it
+	// remembers the choice so a reload puts the same remoted list back.
 	var target = musicRemoteTarget();
 	if (target) {
-		// The face of a peer's Music app changes that machine's library, not this
-		// window's: the controlled player looks at the remoted library and plays
-		// its tracks. This window keeps its own shell and remote target.
-		$.post('/music/remote_setting', { target: target, setting: 'library', value: library });
-		if (library && library !== 'local' && library !== 'none') {
-			searchMusic({ library: library, keep_library: 1 });
-		}
-		else {
-			// ask the controlled machine for its own window (its local or none list)
-			searchMusic({ library: target, remote_view: 1, keep_library: 1, select_library: library });
-		}
+		settingSetter({ app: 'music', setting: 'remote_library', value: library });
+		$('#music').attr('remote_library', library);
+		music_remote_library_applied = target + '|' + library;
+		$.post('/music/remote_setting', { target: target, setting: 'library', value: library }).always(function() {
+			if (library && library !== 'local' && library !== 'none') {
+				searchMusic({ library: library, keep_library: 1 });
+			}
+			else {
+				// ask the controlled machine for its own window (its local or none list)
+				searchMusic({ library: target, remote_view: 1, keep_library: 1, select_library: library });
+			}
+		});
 		return;
 	}
 	if (library === 'local') { musicRemoteLocalViewRestore(); return; }

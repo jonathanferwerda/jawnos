@@ -290,8 +290,44 @@ like($music, qr/function musicRemoteWatchPaint\(\)/, 'the controller advertises 
 like($music, qr/advertise_watching != 'on'/, 'only when Me advertises watching');
 like($music, qr/&remote_uuid=' \+ encodeURIComponent\(origin\)/, 'from the file\'s own peer');
 like($jp, qr/returner\['music_remote'\]/, 'and jpWatcher carries it');
+my ($watch_hunk) = $music =~ /function musicRemoteWatchPaint\(\) \{(.*?)\n\}/s;
+ok(defined $watch_hunk && length $watch_hunk, 'the watch paint is readable as a hunk');
+like($watch_hunk || '', qr/now - music_remote_watch_at < 900/, 'a frame is fetched at most about once a second');
+like($watch_hunk || '', qr/music_remote_watch_at = now;/, 'and the last fetch is remembered');
+my ($progress_hunk) = $music =~ /function musicRemoteProgressPaint\(\) \{(.*?)\n\}/s;
+ok(defined $progress_hunk && length $progress_hunk, 'the progress tick is readable as a hunk');
+like($progress_hunk || '', qr/musicRemoteWatchPaint\(\);/, 'so the advertised frame follows the peer clock, not just the four-second poll');
+like($music, qr/music_remote_watch_at = 0;/, 'leaving remote mode arms the throttle again');
 like($music, qr/setting == 'normalize'/, 'normalization is applied in the peer player');
 like($music, qr/setting == 'video'/, 'video enhancement is applied in the peer player');
+
+# --- the remoted library is remembered across a reload ----------------------
+like($music_tpl, qr/remote_library="<%= \$crate->\{'settings'\}->\{'remote_library'\} \|\| '' %>"/,
+	'the window carries the remembered remoted library');
+like($help, qr/remembers the choice for that machine/, 'the help says the remoted library is remembered');
+my ($restore_hunk) = $music =~ /function musicRemoteLibraryRestore\(\) \{(.*?)\n\}/s;
+ok(defined $restore_hunk && length $restore_hunk, 'musicRemoteLibraryRestore is readable as a hunk');
+like($restore_hunk || '', qr/\$\('#music'\)\.attr\('remote_library'\)/, 'it reads the pair from the window');
+like($restore_hunk || '', qr/if \(key === music_remote_library_applied\) \{ return; \}/, 'and applies a pair once');
+like($restore_hunk || '', qr/searchMusic\(\{ library: library, keep_library: 1 \}\)/, 'a remoted peer list is asked for directly');
+like($restore_hunk || '', qr/select_library: library \|\| undefined/, 'a host-owned list asks the host for its own window');
+like($music, qr/music_remote_library_applied = '';/, 'leaving remote mode forgets the stored pair');
+my ($clear_hunk) = $music =~ /function musicRemoteLibraryClear\(\) \{(.*?)\n\}/s;
+ok(defined $clear_hunk && length $clear_hunk, 'musicRemoteLibraryClear is readable as a hunk');
+like($clear_hunk || '', qr/settingSetter\(\{ app: 'music', setting: 'remote_library', value: '' \}\)/,
+	'the forgotten pair is cleared from this machine\'s settings');
+my ($choose_hunk) = $music =~ /function musicRemoteChoose\(target\) \{(.*?)\n\}/s;
+ok(defined $choose_hunk && length $choose_hunk, 'musicRemoteChoose is readable as a hunk');
+like($choose_hunk || '', qr/musicRemoteLibraryClear\(\)/, 'choosing a target forgets the machine just left');
+like($choose_hunk || '', qr/musicRemotePaint\(1\)/, 'and paints before the library is restored');
+like($choose_hunk || '', qr/searchMusic\(\{ library: target, remote_view: 1, keep_library: 1 \}\)/,
+	'the host window is asked without moving this machine\'s library');
+like($music, qr/host_library = fragment\.find\('#music_library_select'\)\.val\(\);/,
+	"the controller reads the host's own library before the panel is swapped");
+like($music, qr/settingSetter\(\{ app: 'music', setting: 'remote_library', value: shown_library \|\| 'local' \}\)/,
+	'and remembers it on this machine');
+like($music, qr/searchMusic\(\{ library: shown_library, keep_library: 1 \}\)/,
+	'a remoted host library is shown from the peer it names');
 
 # --- the controlled machine's outputs ---------------------------------------
 like($remote, qr{/music/remote_outputs}, 'the controlled machine offers its outputs');
