@@ -39,8 +39,8 @@
 		right: 0;
 		bottom: 0;
 		z-index: 70002;
-		/* the bar plus the chain's bounded scroll box */
-		max-height: 344px;
+		/* the bar plus the chain's bounded scroll box, scaled with the pedal size */
+		max-height: min(calc(344px * var(--studio-pedal-zoom, 1)), 80vh);
 		overflow: hidden;
 		background-color: var(--panel-2);
 		border-top: 3px solid var(--line);
@@ -82,7 +82,7 @@
 		align-items: flex-start;
 		gap: 12px;
 		min-height: 0;
-		max-height: 240px;
+		max-height: min(calc(240px * var(--studio-pedal-zoom, 1)), 70vh);
 		overflow-x: auto;
 		overflow-y: hidden;
 		padding: 10px;
@@ -109,6 +109,7 @@
 	}
 	#studio_pedalboard_rack .pedal {
 		margin: 0;
+		zoom: var(--studio-pedal-zoom, 1);
 	}
 	.studio_board_tools {
 		position: absolute;
@@ -197,8 +198,26 @@
 		min-height: 18px;
 		line-height: 16px;
 		padding: 0 4px;
-		/* the palette keeps the left; Close sits at the right edge */
+	}
+	/* The size buttons and Close travel together at the right edge of the bar. */
+	.studio_board_size {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
 		margin-left: auto;
+	}
+	#studio_pedalboard_zoom_out,
+	#studio_pedalboard_zoom_in {
+		font-size: 12px;
+		height: 18px;
+		min-height: 18px;
+		line-height: 16px;
+		padding: 0 6px;
+	}
+	#studio_pedalboard_zoom_out:disabled,
+	#studio_pedalboard_zoom_in:disabled {
+		opacity: .4;
+		cursor: var(--jawnos-cursor-not-allowed, not-allowed);
 	}
 	#studio_palette_add {
 		font-size: 12px;
@@ -276,7 +295,7 @@
 		left: 5px;
 		right: 5px;
 		top: 27px;
-		bottom: 30px;
+		bottom: 40px;
 		z-index: 4;
 		display: flex;
 		flex-direction: column;
@@ -374,47 +393,35 @@
 		width: auto;
 		z-index: 6;
 	}
-	/* The footswitch is the pedal's own stomp switch: a domed treadle in the
-	   case, and the lamp beside it reads the same state. Press it, or the lamp,
-	   and the pedal switches where it stands. */
+	/* The footswitch is the pedal's own stomp switch: the artwork's own stomp
+	   image laid over the case. Its on/off state is the image itself - the src
+	   and state attributes are painted from the insert's bypass - and pressing
+	   it switches the pedal where it stands. */
 	.studio_pedal_foot {
 		position: absolute;
 		left: 50%;
-		bottom: 4px;
-		width: 74px;
-		height: 22px;
+		bottom: 2px;
+		width: 40%;
+		height: 16%;
 		min-width: 0;
-		min-height: 22px;
-		max-height: 22px;
+		min-height: 0;
 		padding: 0;
-		line-height: 18px;
-		font-size: 10px;
-		letter-spacing: .06em;
-		text-transform: uppercase;
 		box-sizing: border-box;
 		transform: translateX(-50%);
-		border: 2px solid color-mix(in srgb, var(--panel-2) 25%, #000);
+		object-fit: contain;
 		border-radius: 11px;
-		background:
-			radial-gradient(120% 160% at 50% -20%, rgba(255, 255, 255, .5), transparent 55%),
-			linear-gradient(180deg, color-mix(in srgb, var(--ink) 22%, var(--panel)) 0%, color-mix(in srgb, var(--ink) 38%, var(--panel)) 55%, color-mix(in srgb, var(--ink) 52%, var(--panel)) 100%);
-		color: var(--ink);
-		text-shadow: 0 1px 0 rgba(255, 255, 255, .28), 0 -1px 0 rgba(0, 0, 0, .4);
-		box-shadow: 0 3px 0 color-mix(in srgb, var(--panel-2) 25%, #000), inset 0 1px 0 rgba(255, 255, 255, .55), inset 0 -4px 8px rgba(0, 0, 0, .3);
 		cursor: var(--jawnos-cursor-pointer, pointer);
 		z-index: 7;
 	}
 	.studio_pedal_foot[aria-pressed="true"] {
-		background:
-			radial-gradient(120% 160% at 50% -20%, rgba(255, 255, 255, .5), transparent 55%),
-			linear-gradient(180deg, color-mix(in srgb, var(--accent) 62%, var(--panel)) 0%, color-mix(in srgb, var(--accent) 44%, var(--panel)) 60%, color-mix(in srgb, var(--accent) 32%, var(--panel)) 100%);
-		color: var(--accent-ink, #fff);
-		text-shadow: 0 -1px 0 rgba(0, 0, 0, .35);
-		box-shadow: 0 3px 0 color-mix(in srgb, var(--panel-2) 25%, #000), 0 0 10px color-mix(in srgb, var(--accent) 55%, transparent), inset 0 1px 0 rgba(255, 255, 255, .45);
+		filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 60%, transparent));
+	}
+	.studio_pedal_foot[aria-pressed="false"] {
+		opacity: .85;
+		filter: grayscale(.25);
 	}
 	.studio_pedal_foot:active {
-		bottom: 3px;
-		box-shadow: 0 2px 0 color-mix(in srgb, var(--panel-2) 25%, #000), inset 0 2px 5px rgba(0, 0, 0, .45);
+		bottom: 1px;
 	}
 	/* The lamp: a 14px roundel. The unlit state is a dark red disc with a pale
 	   ring (never invisible); on it is a bright green with a soft glow. Every
@@ -499,6 +506,7 @@
 		border: 1px dashed var(--accent);
 		border-radius: 4px;
 		background: var(--accent-soft, var(--panel-2));
+		zoom: var(--studio-pedal-zoom, 1);
 	}
 	/* a tile dims when bypassed, but its lamp must stay readable */
 	.studio_rack_tile.studio_rack_off .studio_pedal_led {
@@ -831,25 +839,33 @@
 		overflow-y: auto;
 		background-color: var(--panel-2);
 	}
-	/* Configure is a full-window sheet. It takes the height the grid leaves,
-	   and its own settings table plus the engine panel scroll inside it, so
-	   nothing is clipped in a short window. The window's width and colour come
-	   from here, not from inline style on the element. */
+	/* Configure covers the whole Studio window: an absolute sheet over the
+	   layout bar, the viewer, the grid and the pedalboard, so it never takes a
+	   flex row or resizes a panel. Its own settings table plus the engine panel
+	   scroll inside it, so nothing is clipped in a short window. The window's
+	   width and colour come from here, not from inline style on the element. */
 	#studio_config {
-		flex: 1 1 auto;
+		position: absolute;
+		inset: 0;
+		z-index: 80000;
+		width: auto;
+		height: auto;
 		min-height: 0;
-		width: 100%;
 		box-sizing: border-box;
 		overflow-y: auto;
 		overflow-x: hidden;
-		padding: 4px 10px;
+		/* The window's title bar floats over the top of the sheet; keep the
+		   settings clear of it, and keep the sheet under it in every mode. */
+		padding: calc(var(--navbar_h, 36px) + 4px) 10px 4px 10px;
 		background-color: var(--panel);
 	}
-	/* The class stands the desk down while Configure is open: the viewer and the
-	   interior panel windows are out of the way. */
-	#studio.studio_config_open #studio_viewer { display: none; }
-	#studio.studio_config_open #studio_grid {
-		display: none;
+	/* The class stands the desk down while Configure is open: the layout bar, the
+	   viewer, the grid and the docked pedalboard are out of the way. */
+	#studio.studio_config_open #studio_layout_bar,
+	#studio.studio_config_open #studio_viewer,
+	#studio.studio_config_open #studio_grid,
+	#studio.studio_config_open #pedalboard {
+		display: none !important;
 	}
 	/* The desk is the panels' screen: every panel is an interior window,
 	   positioned and stacked inside this box. It never scrolls; a panel's own

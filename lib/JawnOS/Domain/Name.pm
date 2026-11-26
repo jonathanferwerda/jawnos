@@ -306,6 +306,38 @@ sub person_name_rename {
 	return 1;
 }
 
+# The Studio's saved pedalboard library is one library for the house: a board
+# saved on one machine should appear on every machine. `studio` is otherwise a
+# protected, machine-local app, so only this one setting is shared; `pedal_zoom`
+# and every other studio row stay local.
+sub studio_shared_setting($app, $setting) {
+	return 0 unless defined $app && defined $setting;
+	return ($app eq 'studio' && $setting eq 'pedalboards') ? 1 : 0;
+}
+
+# One library from two: a board is its name, and the copy with the later `used`
+# stamp wins. The Studio page saves the whole list, so a machine that has not yet
+# seen a board saved elsewhere must never drop it; the same merge is what a peer
+# row goes through. Boards are newest-used first, the order the page draws.
+sub studio_pedalboards_merge($left, $right) {
+	my @lists = grep { ref $_ eq 'ARRAY' } ($left, $right);
+	return undef unless @lists;
+	my %board;
+	foreach my $list (@lists) {
+		foreach my $entry ( @{$list} ) {
+			next unless ref $entry eq 'HASH';
+			my $name = (defined $entry->{'name'} && !ref $entry->{'name'}) ? $entry->{'name'} : '';
+			next unless length $name;
+			my $used = (defined $entry->{'used'} && !ref $entry->{'used'}
+				&& $entry->{'used'} =~ /^\s*\d+(?:\.\d+)?\s*$/)
+				? $entry->{'used'} + 0 : 0;
+			my $copy = { %{$entry}, name => $name, used => $used };
+			if (!$board{$name} || $used > $board{$name}->{'used'}) { $board{$name} = $copy; }
+		}
+	}
+	return [ sort { ($b->{'used'} <=> $a->{'used'}) || ($a->{'name'} cmp $b->{'name'}) } values %board ];
+}
+
 sub setting_setter {
 	%setting_memo = ();
 	my $settings = shift;
@@ -359,6 +391,41 @@ sub setting_setter {
 	# it arrived with, so an older build's per-device row cannot take the house
 	# value over.
 	$dev = &warranty_device() if !$sync && (($setting // '') eq 'warranty');
+	# The Studio's pedalboard library is one library for the house, so a local
+	# save lands on the house row every machine reads. A peer replay keeps the
+	# device it arrived with, so an older build's per-device row cannot take the
+	# shared library over.
+	$dev = &warranty_device() if !$sync && &studio_shared_setting($app, $setting);
+	# The library is a set of boards, not one opaque value. Merge this write into
+	# the house row by board name and its own `used` stamp, so a stale page or an
+	# older peer cannot replace a board saved on another machine with the list it
+	# happened to be holding. A write that adds nothing is not repeated, which
+	# keeps the sync digest quiet.
+	if (&studio_shared_setting($app, $setting) && defined $value && !ref $value) {
+		my $old = eval { &db_raw('select value from settings where app=? and device=? and setting=? order by cast(server_time as integer) desc limit 1', $app, &warranty_device(), $setting) };
+		my $old_raw = ($old && ref $old eq 'ARRAY' && scalar @{$old}) ? $old->[0]->{'value'} : undef;
+		my $old_list = defined $old_raw ? eval { decode_json($old_raw) } : undef;
+		my $new_list = eval { decode_json($value) };
+		my $merged = &studio_pedalboards_merge(
+			(ref $old_list eq 'ARRAY' ? $old_list : undef),
+			(ref $new_list eq 'ARRAY' ? $new_list : undef)
+		);
+		if ($merged) {
+			my $encoded = encode_json($merged);
+			my $old_encoded = (ref $old_list eq 'ARRAY') ? encode_json($old_list) : undef;
+			if (defined $old_encoded && $old_encoded eq $encoded) {
+				return { app => $app, timestamp => $timestamp, setting => $setting, value => $old_raw,
+					device => $dev, browser_tab_id => $browser_tab_id };
+			}
+			$value = $encoded;
+			$settings->{'server_time'} = &rightNow();
+		}
+		elsif (defined $old_raw && ref $new_list ne 'ARRAY') {
+			# A malformed library never wipes a good one.
+			return { app => $app, timestamp => $timestamp, setting => $setting, value => $old_raw,
+				device => $dev, browser_tab_id => $browser_tab_id };
+		}
+	}
 	my ($db,$database) = &database_grabber();
 	my $server_time = $settings->{'server_time'} || &rightNow();
 
@@ -677,9 +744,12 @@ sub setting_grabber {
 	# per-device row is only the fallback, so a machine that has not been migrated
 	# still answers with what it used to hold.
 	my $warranty_house = (($settings->{'setting'} // '') eq 'warranty' && !$device_defined);
-	my $machine = (!$device_defined && !$warranty_house && &setting_app_is_machine($app));
+	# The Studio's pedalboard library is one library for the house, like a
+	# warranty, so a read with no device of its own asks the house row.
+	my $studio_house = (&studio_shared_setting($app, $settings->{'setting'}) && !$device_defined);
+	my $machine = (!$device_defined && !$warranty_house && !$studio_house && &setting_app_is_machine($app));
 	$settings->{'device'} = $settings->{'device'} || ($machine ? &setting_machine_device() : &device_setter());
-	$settings->{'device'} = &warranty_device() if $warranty_house;
+	$settings->{'device'} = &warranty_device() if $warranty_house || $studio_house;
 	my $returner;
 	# benign and settings are parameters of this sub, not columns of the settings
 	# table; riding into the where clause they made the select die with 'no such
@@ -719,10 +789,11 @@ sub setting_grabber {
 			$returner = $list->[0]->{'value'};
 		}
 	}
-	if ($warranty_house && !(defined $returner && length $returner)) {
-		# an older build stored a warranty per device; read this device's row
-		# until the backfill has written the house one
-		my $legacy = eval { &db_select_simple('settings', ['value'], { app => $app, setting => 'warranty', device => &device_setter() }) };
+	if (($warranty_house || $studio_house) && !(defined $returner && length $returner)) {
+		# an older build stored these per device; read this device's row until
+		# the house one has been written
+		my $legacy_setting = $warranty_house ? 'warranty' : $settings->{'setting'};
+		my $legacy = eval { &db_select_simple('settings', ['value'], { app => $app, setting => $legacy_setting, device => &device_setter() }) };
 		if ($legacy) {
 			my $rows = $legacy->hashes;
 			$returner = $rows->[-1]->{'value'} if scalar @{$rows};
@@ -948,6 +1019,15 @@ sub settings_grabber {
 	foreach my $s ( @{$list } ) {
 		next unless defined $s->{'setting'};
 		$returner->{$s->{'setting'}} = $s->{'value'};
+	}
+	# The Studio's saved pedalboard library is one library for the house, stored
+	# on the house row (device 'all'). However this machine's class row was read
+	# above, the house row wins for this one key, so settings_grabber({app=>
+	# 'studio'}) shows the same boards on every machine.
+	if (!$device_defined && ($app // '') eq 'studio'
+		&& (!$settings->{'settings'} || grep { $_ eq 'pedalboards' } @{$settings->{'settings'}})) {
+		my $house = eval { &db_raw('select value from settings where app=? and device=? and setting=?', 'studio', &warranty_device(), 'pedalboards') };
+		$returner->{'pedalboards'} = $house->[-1]->{'value'} if $house && scalar @{$house};
 	}
 	# A warranty is one value for the house (warranty_device): the house row wins
 	# over this device's legacy one, so the Configure panel shows what every

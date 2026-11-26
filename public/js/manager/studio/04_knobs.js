@@ -349,9 +349,17 @@ $(document).on('change mousemove touchmove','.knob_control',function() {
 	var input = $(this);
 	var channel = input.attr('channel');
 	var control = input.attr('control');
+	var tile = input.closest('.studio_rack_tile');
 
 	studioKnobPaint(input);
-	if (/^[0-9]+$/.test(channel)) { studioApplyChannel(channel); }
+	if (tile.length) {
+		// A knob on the board is one insert's control, so it edits that insert and
+		// posts the live engine param (the tempo resolver and the save included).
+		// The strip knobs and the hidden library tiles below still move their
+		// whole macro instead.
+		studioInsertControl(tile.attr('channel'), tile.attr('insert'), control, input.val(), tile.attr('chain'));
+	}
+	else if (/^[0-9]+$/.test(channel)) { studioApplyChannel(channel); }
 	else { studioApplyPedals(); }
 	// Pan is part of the engine clip plan; other knobs are not, so only a pan
 	// change on a running engine posts a replacement plan.
@@ -362,6 +370,10 @@ $(document).on('change mousemove touchmove','.knob_control',function() {
 
 $(document).on('click', '.button_control', function(e) {
 	var b = $(this);
+	// The board's artwork footswitch belongs to the pedal handler in 09_pedals.js.
+	// Painting its `status` here would flip a second, disagreeing switch; Jtune's
+	// own pink `automatic` button is not a foot, so it keeps this handler.
+	if (b.hasClass('studio_pedal_stomp') || b.hasClass('studio_pedal_foot')) { return; }
 	var tile = b.closest('.pedal');
 	// The tuner's pink switch is its power, not an effect's bypass; stop the
 	// click so the tile's own handler cannot toggle it a second time.

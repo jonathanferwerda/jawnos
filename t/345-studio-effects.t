@@ -89,7 +89,7 @@ like($markup, qr/class="studio_pedal_model pedal_select"/,
 like($markup, qr/\@\{\$k->\{'options'\}\}/, 'the dropdown lists the options the contract carries');
 like($knobs, qr/studioApplyPedals\(\);[\s\S]*studioRackRenderAll\(\);/,
 	'a model change is pushed through the insert setters');
-like($rack, qr/'\.studio_pedal_model'/, 'the model dropdown handler is wired to the rack');
+like($rack, qr/'\.studio_pedal_model(?:, \.studio_pedal_text)?'/, 'the model dropdown handler is wired to the rack');
 
 # --- the rack: add, order, bypass, remove ----------------------------------
 unlike($markup, qr/id="studio_effect_palette"/, 'the old layout-bar effect palette is gone');
@@ -311,7 +311,7 @@ like($rack, qr/function studioRackMove\(ch, name, delta, chain\)/,
 like($markup, qr/<button type="button" class="studio_rack_up hover"/, 'Up is an explicit button');
 like($markup, qr/<button type="button" class="studio_rack_down hover"/, 'Down is an explicit button');
 like($markup, qr/<button type="button" class="studio_rack_remove hover"/, 'X is an explicit button');
-like($markup, qr/<button type="button" class="studio_pedal_foot hover"/, 'the footswitch is an explicit button');
+like($markup, qr/class="button_control studio_pedal_foot studio_pedal_stomp" role="button" tabindex="0"/, 'the footswitch is the keyboard-reachable artwork stomp');
 like($rack, qr/tools\.find\('button'\)\.attr\('type', 'button'\);/,
 	'a cloned tool keeps type=button');
 like($style, qr/\.studio_board_tools\s*\{[^}]*z-index:\s*6/s,
@@ -341,7 +341,6 @@ $controls =~ s/\\'/'/g;
 for my $label (
 	'The effects in this track\'s chain, in order',
 	'Drag to reorder this effect',
-	'Bypass this effect without removing it',
 	'Move this effect earlier in the chain',
 	'Move this effect later in the chain',
 	'Remove this effect from the chain',

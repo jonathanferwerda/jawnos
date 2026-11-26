@@ -952,6 +952,9 @@ $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', fu
 	} else {
 		studio.addClass('studio_config_open');
 		config.show();
+		// Configure covers the whole window, so the docked pedalboard would
+		// sit over its settings; put the board away as it opens.
+		if (typeof studioPedalboardOpen === 'function') { studioPedalboardOpen(false); }
 		studioUpdateLatencyInfo();
 		studioEngineStatus();
 		studioOutputLoad();
@@ -1883,6 +1886,13 @@ function studioListenStart(quiet, channel, ch, fallback) {
 			studioEngineListening = true;
 			studioListenSetActive(true);
 			studioListenChannel = (typeof data.channel === 'number') ? data.channel : Number(listen_channel);
+			// The engine armed the insert names, not their knob positions. Push the
+			// values the board already shows now that the Listen is the live path, so
+			// the monitor starts with this track's settings rather than the builders'
+			// defaults. A re-arm (a pedal added, moved or stomped) starts here too.
+			if (typeof studioEnginePushInsertValues === 'function') {
+				studioEnginePushInsertValues((ch === undefined || ch === null || ch === '') ? studioSelectedChannel : ch);
+			}
 			if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
 			studioListenRender(data);
 			studioListenPollStart();

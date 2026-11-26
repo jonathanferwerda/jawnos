@@ -153,8 +153,11 @@ function studioRackFallbackTile(ins) {
 		label.appendTo(controls);
 	});
 	controls.appendTo(tile);
-	$('<button type="button" class="studio_pedal_foot hover" aria-pressed="false"></button>')
-		.attr('hint', studioLayoutText('Bypass this effect without removing it')).text(studioLayoutText('On')).appendTo(tile);
+	$('<img class="button_control studio_pedal_foot studio_pedal_stomp" role="button" tabindex="0" control="stomp" colour="ruby_red" state="depressed" aria-pressed="false">')
+		.attr('effect', ins.name)
+		.attr('hint', studioLayoutText('Bypass this effect without removing it'))
+		.attr('src', jawnosStudioButtonIcon('depressed', 'ruby_red'))
+		.appendTo(tile);
 	return tile;
 }
 
@@ -218,7 +221,16 @@ function studioRackTile(ch, ins, chain) {
 	// draws tiles without a lamp pass, so a bypassed insert must not show "On".
 	tile.find('.studio_pedal_foot')
 		.attr('aria-pressed', on ? 'true' : 'false')
-		.text(studioLayoutText(on ? 'On' : 'Off'));
+		.each(function () {
+			var foot = $(this);
+			// The new board draws the footswitch as artwork; a button is only the
+			// fallback an insert with no library tile can still be built from.
+			if (foot.is('button')) { foot.text(studioLayoutText(on ? 'On' : 'Off')); return; }
+			foot.attr({
+				state: on ? 'pressed' : 'depressed',
+				src: jawnosStudioButtonIcon(on ? 'pressed' : 'depressed', foot.attr('colour') || 'ruby_red')
+			});
+		});
 	if (tile.attr('data-tuner') === 'yes') {
 		// Jtune's lamp is the tuner's light, not an effect lamp: paint it from the
 		// tuner, so opening the board never shows a stale colour.
@@ -438,6 +450,7 @@ function studioRackMove(ch, name, delta, chain) {
 	if (out) { studioRebuildOutputs(ch); } else { studioRebuildInserts(ch); }
 	studioRackRender(ch);
 	studioSaver();
+	studioListenRearm(ch, chain);
 	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
@@ -516,7 +529,14 @@ function studioUpdatePedalLamps() {
 		}
 		tile.find('.studio_pedal_foot')
 			.attr('aria-pressed', on ? 'true' : 'false')
-			.text(studioLayoutText(on ? 'On' : 'Off'));
+			.each(function () {
+				var foot = $(this);
+				if (foot.is('button')) { foot.text(studioLayoutText(on ? 'On' : 'Off')); return; }
+				foot.attr({
+					state: on ? 'pressed' : 'depressed',
+					src: jawnosStudioButtonIcon(on ? 'pressed' : 'depressed', foot.attr('colour') || 'ruby_red')
+				});
+			});
 	});
 	// the tuner listens only while its insert is on, wherever the board puts it
 	if (typeof studioTunerSync === 'function') { studioTunerSync(); }
@@ -638,6 +658,14 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 	studioTogglePedal(tile.attr('channel') || studioPaletteChannel(), name, tile.attr('chain'));
 });
 
+// The artwork stomp is an image, so it has no native button key handling. Keep
+// Enter and Space working exactly as they did when the stomp was a <button>.
+$(document).on('keydown', '#pedalboard .studio_pedal_foot', function (e) {
+	if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') { return; }
+	e.preventDefault();
+	$(this).trigger('click');
+});
+
 $(document).on('click', '.studio_rack_up', function () {
 	var t = studioTileTarget(this);
 	if (t) { studioRackMove(t.ch, t.name, -1, t.chain); }
@@ -721,10 +749,16 @@ $(document).on('input change', '.studio_insert_control', function () {
 	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val(), row.attr('chain'));
 });
 
-// A text badge has no artwork to reveal on the shelf, so it opens the sheet on
-// the selected track's chain.
-// The shelf's reverb model dropdown is a macro over every reverb in the racks.
-$(document).on('change', '.studio_pedal_model', function () {
+// A dropdown or a typed field on a tile edits that insert live; outside the
+// rack (the hidden library tiles) it is still the global macro over every
+// insert of the kind. The shelf's reverb model dropdown is one such macro.
+$(document).on('change', '.studio_pedal_model, .studio_pedal_text', function () {
+	var input = $(this);
+	var tile = input.closest('.studio_rack_tile');
+	if (tile.length) {
+		studioInsertControl(tile.attr('channel'), tile.attr('insert'), input.attr('control'), input.val(), tile.attr('chain'));
+		return;
+	}
 	studioApplyPedals();
 	studioRackRenderAll();
 	studioSaver();
@@ -898,3 +932,67 @@ $(document).on('click', '.studio_track_fx', function () {
 });
 
 $(function () { studioBoardPresetsRefresh(); });
+
+// ---- pedal size ------------------------------------------------------------
+//
+// The board's tiles are one CSS size, driven by a custom property the markup
+// emits from the saved `pedal_zoom` setting. The two buttons beside Close nudge
+// it a step at a time; the value is clamped to the range the stylesheet was laid
+// out for and persisted so the board opens at the size it was left at.
+var studioBoardZoomMin = 0.75;
+var studioBoardZoomMax = 1.6;
+var studioBoardZoomStep = 0.15;
+
+function studioBoardZoomValue() {
+	var board = $('#pedalboard');
+	if (!board.length) { return 1; }
+	var z = parseFloat(board.attr('data-zoom'));
+	if (!isFinite(z) && board[0] && window.getComputedStyle) {
+		z = parseFloat(window.getComputedStyle(board[0]).getPropertyValue('--studio-pedal-zoom'));
+	}
+	if (!isFinite(z)) { z = 1; }
+	return Math.max(studioBoardZoomMin, Math.min(studioBoardZoomMax, z));
+}
+
+// One place writes the size: the attribute the stylesheet can read back, the
+// custom property it multiplies by, and the two buttons' enabled state. Returns
+// the value it settled on, rounded so a decimal never drifts in the setting.
+function studioBoardZoomApply(z) {
+	var board = $('#pedalboard');
+	z = parseFloat(z);
+	if (!isFinite(z)) { z = 1; }
+	z = Math.max(studioBoardZoomMin, Math.min(studioBoardZoomMax, z));
+	z = Math.round(z * 100) / 100;
+	if (!board.length) { return z; }
+	board.attr('data-zoom', z);
+	if (board[0] && board[0].style && board[0].style.setProperty) {
+		board[0].style.setProperty('--studio-pedal-zoom', String(z));
+	}
+	$('#studio_pedalboard_zoom_out').prop('disabled', z <= studioBoardZoomMin);
+	$('#studio_pedalboard_zoom_in').prop('disabled', z >= studioBoardZoomMax);
+	return z;
+}
+
+function studioBoardZoom(delta) {
+	if (!$('#pedalboard').length) { return studioBoardZoomValue(); }
+	var z = studioBoardZoomApply(studioBoardZoomValue() + (Number(delta) || 0) * studioBoardZoomStep);
+	studioSaveSettings([{ setting: 'pedal_zoom', value: String(z) }]);
+	return z;
+}
+
+$(document).on('click', '#studio_pedalboard_zoom_out', function (e) {
+	e.preventDefault();
+	studioBoardZoom(-1);
+});
+
+$(document).on('click', '#studio_pedalboard_zoom_in', function (e) {
+	e.preventDefault();
+	studioBoardZoom(1);
+});
+
+// The markup already carries the saved value, so the first paint only settles
+// the buttons and the attribute; nothing is written back on open.
+$(function () {
+	if (!$('#pedalboard').length) { return; }
+	studioBoardZoomApply(studioBoardZoomValue());
+});

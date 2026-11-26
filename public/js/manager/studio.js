@@ -832,11 +832,35 @@ function studioApplyMonitor(from_user, force_tap_device) {
 
 // Persist an app-wide preference (capture quality) without rebuilding the
 // window: the studio endpoint stores settings and hands back markup we ignore.
+// A save that touched the pedalboard library also answers with the house's
+// merged list; take it so a board saved on another machine appears here too.
 function studioSaveSettings(settings) {
+	// Only a library save can change the dropdown's order; a zoom or capture save
+	// must not move the board the person is looking at.
+	var saved_boards = false;
+	$.each(settings || [], function (i, entry) {
+		if (entry && entry.setting === 'pedalboards') { saved_boards = true; }
+	});
 	$.ajax({
 		url: '/manager/studio',
 		type: 'GET',
-		data: { timestamp: Date.now(), data: JSON.stringify({ settings: settings }) }
+		data: { timestamp: Date.now(), data: JSON.stringify({ settings: settings }) },
+		success: function (reply) {
+			if (!saved_boards || !reply || !reply.settings || reply.settings.pedalboards === undefined) { return; }
+			var library;
+			try { library = JSON.parse(reply.settings.pedalboards); } catch (e) { return; }
+			if (!library || typeof library.length !== 'number') { return; }
+			var select = $('#studio_board_presets');
+			var chosen_name = select.find('option:selected').text();
+			window.jawnos_studio_pedalboards = library;
+			if (typeof studioBoardPresetsRefresh === 'function') { studioBoardPresetsRefresh(); }
+			// The merged order may differ; keep the same board selected by name.
+			if (chosen_name) {
+				select.find('option').each(function () {
+					if ($(this).text() === chosen_name) { select.val($(this).val()); return false; }
+				});
+			}
+		}
 	});
 }
 
@@ -1781,6 +1805,12 @@ function studioEngineTakeStart(takes, punch, done) {
 				};
 				studioEngineRecording = true;
 				if (mixer['time']) { mixer['time']['engine_take'] = true; }
+				// The take plan names the inserts but not their knob positions. Now that
+				// the engine is the live path (studioEngineRecording above), push each
+				// armed channel's board values so the take records what the page shows.
+				if (typeof studioEnginePushInsertValues === 'function') {
+					$.each(built.channels, function (i, ch) { studioEnginePushInsertValues(ch); });
+				}
 				if (typeof studioFlushClicks === 'function') { studioFlushClicks(); }
 				studioEnginePollStart();
 				studioEngineRender(data);

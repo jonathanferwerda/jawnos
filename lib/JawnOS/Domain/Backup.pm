@@ -1308,6 +1308,11 @@ sub durable_settings_where {
 	# tarot mode and variant are house choices a person makes once. They are the
 	# app's only per-device rows allowed to start a pull; the draw lists are house
 	# rows and already pass above.
+	#
+	# The Studio app is protected for its local working state, but its saved
+	# pedalboard library is one library for the house: a board saved on one
+	# machine must reach the others, so that one row is a trigger even before it
+	# has been migrated onto the house row. Every other studio setting stays out.
 	my @apps = ('__president', 'cache', 'websocket_messages', 'ai_budget', 'ai_jobs', 'staged_fixes', 'staged_records', 'staged_appointments', 'sync_log', 'backups', 'sync_jobs', @gb::protected);
 	my %seen;
 	@apps = grep { !$seen{$_}++ } @apps;
@@ -1319,7 +1324,8 @@ sub durable_settings_where {
 	# the digest, so a deck whose pair had just been re-issued was denied by a
 	# peer that was otherwise live. Including it makes every Now Me rotate the
 	# digest and the peers pull the new row on the next tick.
-	return "(app not in ($app_list) or device = 'all' or (app = 'cards' and setting in ('mode','variant')))"
+	return "(app not in ($app_list) or device = 'all' or (app = 'cards' and setting in ('mode','variant'))"
+		. " or (app = 'studio' and setting = 'pedalboards'))"
 		. " and not (app = '__president' and setting = 'clothesline')"
 		. " and setting not in ('open_tabs','scrollTop','jopen','dimensions','utility_controller','remote_connect_timer','remote_upgrade','remote_backup_lock','remote_auth_probe_timer','ws_pa','chip_chyea','settings_sync_timer','remote_sync_state','log','schema_version','toggle','ci','errors','email_config')"
 		. " and setting not like 'remote\\_%' escape '\\'";

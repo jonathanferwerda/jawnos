@@ -163,6 +163,20 @@ function studioEffectBrowserOnly(name) {
 	return kind === 'stereowidener';
 }
 
+// ---- renamed controls -------------------------------------------------------
+// A control the contract renamed. A saved song still carries the old shelf
+// name, and its value is the same 0..100 slider, so only the name the engine
+// hears changes. The browser keeps a setter for the old name; both the param
+// path and the value push read this map.
+var studioEffectControlAliases = {
+	'distortion.gain': 'drive'
+};
+
+function studioEffectControlName(kind, control) {
+	var key = studioEffectKind(kind) + '.' + control;
+	return studioEffectControlAliases[key] || control;
+}
+
 // ---- tempo sync ------------------------------------------------------------
 // A synced time control stores a division string in `values.sync` and resolves
 // it against the song's BPM. The string is the page's, not the engine's: the
@@ -311,6 +325,25 @@ function studioEngineIsPath() {
 		|| (typeof studioListenActive !== 'undefined' && studioListenActive);
 }
 
+// The engine keeps a take and a listen apart: a take's knob is addressed by its
+// 0-based track, while a listen's strip is `target: "listen"` and carries no
+// track. A knob posted with the take address during a monitor was refused with
+// "no take is running", which is why the monitor only heard a change after a
+// pedal or Monitor re-armed it. Name the session that is actually running.
+function studioEngineParamSession() {
+	if (typeof studioEngineRecording !== 'undefined' && studioEngineRecording) { return 'take'; }
+	if (typeof studioListenActive !== 'undefined' && studioListenActive) { return 'listen'; }
+	return '';
+}
+
+function studioEngineParamAddress(track, name, value) {
+	var session = studioEngineParamSession();
+	if (session === 'listen') {
+		return { data: { action: 'param', target: 'listen', name: name, value: value }, key: 'listen:' + name };
+	}
+	return { data: { action: 'param', track: track, name: name, value: value }, key: (session || 'take') + ':' + track + ':' + name };
+}
+
 var studioEngineParamTimers = {};
 var studioEngineParamErrorShown = false;
 
@@ -322,6 +355,10 @@ function studioEngineParamPost(data, key) {
 	// is the page's too: the engine is sent the resolved time or rate instead.
 	if (data && /^(?:master_)?stereowidener\./.test(String(data.name || ''))) { return; }
 	if (data && /\.sync$/.test(String(data.name || ''))) { return; }
+	// A direct-USB or native bridge owns the capture and its own plan; it has no
+	// engine socket to address, so a knob move is not posted into a refusal.
+	if (typeof studioUsbListening !== 'undefined' && studioUsbListening) { return; }
+	if (typeof studioNativeListening !== 'undefined' && studioNativeListening) { return; }
 	if (!studioEngineIsPath()) { return; }
 	if (studioEngineParamTimers[key]) { clearTimeout(studioEngineParamTimers[key]); }
 	studioEngineParamTimers[key] = setTimeout(function () {
@@ -353,11 +390,10 @@ function studioEngineParamPost(data, key) {
 function studioEngineInsertParam(ch, insertName, control, value) {
 	var track = Math.max(0, (parseInt(ch, 10) || 1) - 1);
 	var kind = studioEffectKind(insertName);
+	control = studioEffectControlName(kind, control);
 	var name = kind + '.' + control;
-	studioEngineParamPost(
-		{ action: 'param', track: track, name: name, value: studioEffectNatural(kind, control, value) },
-		'take:' + track + ':' + name
-	);
+	var address = studioEngineParamAddress(track, name, studioEffectNatural(kind, control, value));
+	studioEngineParamPost(address.data, address.key);
 }
 
 // A value already in the effect's own units, for a tempo-synced time or rate
@@ -367,11 +403,50 @@ function studioEngineInsertParam(ch, insertName, control, value) {
 function studioEngineInsertParamNatural(ch, insertName, control, value) {
 	var track = Math.max(0, (parseInt(ch, 10) || 1) - 1);
 	var kind = studioEffectKind(insertName);
+	control = studioEffectControlName(kind, control);
 	var name = kind + '.' + control;
-	studioEngineParamPost(
-		{ action: 'param', track: track, name: name, value: value },
-		'take:' + track + ':' + name
-	);
+	var address = studioEngineParamAddress(track, name, value);
+	studioEngineParamPost(address.data, address.key);
+}
+
+// A newly armed Listen or take starts at the builders' defaults. This walks a
+// channel's In inserts and posts the values the board is already showing, so the
+// take begins where the page sounds. The browser-only insert has no engine slot,
+// and the sync string is the page's; a synced time or rate travels in its
+// resolved natural units instead. An old song's renamed control is folded into
+// the contract's name, and the post helper drops everything while the engine is
+// not the path.
+function studioEnginePushInsertValues(ch) {
+	var c = (typeof studioAudio !== 'undefined' && studioAudio && studioAudio.channels) ? studioAudio.channels[ch] : null;
+	if (!c) { return; }
+	(c.inserts || []).forEach(function (ins) {
+		if (!ins || studioEffectBrowserOnly(ins.name)) { return; }
+		var kind = studioEffectKind(ins.name);
+		var values = ins.values || {};
+		var controls = {};
+		Object.keys(values).forEach(function (control) {
+			// The tempo sync field is a string the engine never hears.
+			if (studioEffectTyped(kind, control)) { return; }
+			var canonical = studioEffectControlName(kind, control);
+			// An old alias and the contract's name are one control; when both are
+			// present, the contract's name is the one the board is showing.
+			if (control !== canonical && controls[canonical] !== undefined) { return; }
+			controls[canonical] = values[control];
+		});
+		Object.keys(controls).forEach(function (control) {
+			var value = controls[control];
+			if (studioTempoControls[kind] === control) {
+				var natural = studioTempoResolveValue(kind, values['sync'], studioTempoBpm());
+				if (natural === null) {
+					if (value === undefined) { return; }
+					natural = studioEffectNatural(kind, control, value);
+				}
+				studioEngineInsertParamNatural(ch, ins.name, control, natural);
+				return;
+			}
+			studioEngineInsertParam(ch, ins.name, control, value);
+		});
+	});
 }
 
 // The master rack is its own address: `master_comp` is the wire prefix the
@@ -996,7 +1071,12 @@ function studioEffectDistortion(ctx, name) {
 	};
 	fx.setters['drive'] = drive;
 	// The old shelf pedal's knob is called gain; the contract calls it drive.
-	fx.setters['gain'] = drive;
+	// The setter keeps working for an old song, and mirrors the value onto the
+	// contract's name so the engine push has one control to send.
+	fx.setters['gain'] = function (v) {
+		fx.values['drive'] = v;
+		drive(v);
+	};
 	fx.set('drive', 50);
 	return fx;
 }

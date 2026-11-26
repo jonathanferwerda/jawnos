@@ -146,8 +146,10 @@ our $studio = {
 	},{ 
 		name => 'Distorjawn',
 		image => 'distorjawn',
+		# The artwork pedal uses the contract's `drive` control; the browser keeps
+		# a legacy `gain` alias so old songs still load.
 		knobs => [{
-			control => 'gain', colour => 'grey_plain', left => '29%', top => '26%', width => '33%'
+			control => 'drive', colour => 'grey_plain', left => '29%', top => '26%', width => '33%'
 		}]
 	},{ 
 		name => 'Delayed',

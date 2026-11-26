@@ -566,6 +566,20 @@ sub action_28412 {
 			}
 		}
 	}
+	# The pedalboard library is house-wide, but an older Studio kept it on this
+	# machine's device row. Publish the library this page shows to the house row
+	# once, so the other machines see the boards that were already saved here;
+	# a house row that exists is never overwritten by this migration.
+	if (defined $settings->{'pedalboards'} && length $settings->{'pedalboards'}) {
+		my $house = eval { &subs::setting_grabber({ app => 'studio', setting => 'pedalboards', device => &subs::warranty_device() }) };
+		if (!defined $house || !length $house) {
+			&subs::setting_setter({ app => 'studio', setting => 'pedalboards', value => $settings->{'pedalboards'} });
+		}
+	}
+	# A save may have merged a board saved on another machine into the house
+	# library. Answer with what the house now holds, so the page's Saved
+	# pedalboards list can pick up the union without a reload.
+	$settings = &subs::settings_grabber({ app => 'studio' }) if $data->{'settings'};
 
 
 	if ($data->{'last_song'}) {

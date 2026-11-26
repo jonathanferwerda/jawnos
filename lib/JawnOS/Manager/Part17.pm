@@ -356,6 +356,12 @@ sub merge_table_rows {
 									# protected app (`__president` and `utility_controller` included).
 									my $cards_setting = (($r->{'app'} // '') eq 'cards') ? ($r->{'setting'} // '') : '';
 									my $cards_shared = $cards_setting =~ /^(?:mode|variant|day|week|month|year|free|cycle|spread|all)$/ ? 1 : 0;
+									# The Studio's saved pedalboard library is one library for the house,
+									# like the tarot draw lists. Let only `pedalboards` leave `studio`'s
+									# local protection; the zoom, the selection and every other studio row
+									# stay on this machine.
+									my $studio_setting = (($r->{'app'} // '') eq 'studio') ? ($r->{'setting'} // '') : '';
+									my $studio_shared = ($studio_setting eq 'pedalboards') ? 1 : 0;
 									# The clothesline is one line for the House. Its rail, head switches
 									# and every app's hang are written on the house row; let those
 									# through even though `__president` is protected, while the rest of
@@ -366,10 +372,10 @@ sub merge_table_rows {
 									# A draw list lives on the house row (`device = 'all'`); keep it one on
 									# arrival so cards_list reads it. Mode and variant are per-device and
 									# join this device's class as usual.
-									my $house_wide = ($clothesline_shared || ($cards_shared && $cards_setting =~ /^(?:day|week|month|year|free|cycle|spread|all)$/
+									my $house_wide = ($clothesline_shared || $studio_shared || ($cards_shared && $cards_setting =~ /^(?:day|week|month|year|free|cycle|spread|all)$/
 										&& ($r->{'device'} // '') eq 'all')) ? 1 : 0;
 									#next if $protected == 1;
-									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$cards_shared && !$clothesline_shared)) {
+									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$cards_shared && !$clothesline_shared && !$studio_shared)) {
 										# A machine that has just joined the house gives birth to
 										# setting_initializer's defaults before its first settings sync -
 										# navigation 'none', an empty duration, a fresh colour. Those rows
@@ -441,7 +447,7 @@ sub merge_table_rows {
 												$r->{'app'}, $r->{'setting'}, $r->{'subsetting'}, $r->{'server_time'}, @device_args)->hashes :
 											&subs::db_query('select app,setting,value from settings where app=? and setting=? and cast(server_time as integer) >= cast(? as integer)' . $device_clause,
 												$r->{'app'}, $r->{'setting'}, $r->{'server_time'}, @device_args)->hashes;
-										if (scalar @{$time_check} == 0 || $heal) {
+										if (scalar @{$time_check} == 0 || $heal || $studio_shared) {
 											# A peer can carry an older copy under a device key this machine does
 											# not compare with the time check. Name the write so a 72-hour watch
 											# can see a newer value being covered by an older one.
