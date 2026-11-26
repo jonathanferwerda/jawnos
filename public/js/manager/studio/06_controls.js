@@ -23,6 +23,99 @@ $(document).on('change', '#studio_listen_input', function () {
 });
 $(document).on('change', '#studio_listen_gain', function () { studioListenParam($(this).val()); });
 
+// ---- the engine's output ---------------------------------------------------
+// Sound owns the device choice and the supervisor restarts the engine on it.
+// Studio shows the same choice here so the transport can say what the take is
+// playing through without opening another window. `GET /manager/sound/plan`
+// answers the device list, the saved choice and what the running engine has;
+// `POST /manager/sound/device` is the same write Sound's picker makes.
+function studioOutputValue(choice) {
+	var value = (choice && choice.backend ? choice.backend : '') + '|'
+		+ (choice && choice.device ? choice.device : '');
+	if (choice && choice.backend === 'pipewire' && choice.card && choice.profile) {
+		value += '|' + choice.card + '|' + choice.profile;
+	}
+	return (value === '|') ? '' : value;
+}
+
+// The device's name as the badge reads it. A picker entry is often
+// `ALSA — Long card name`; the badge wants the card, not the backend prefix.
+function studioOutputLabel() {
+	var select = $('#studio_output_device');
+	if (!select.length) { return ''; }
+	return String(select.find('option:selected').text() || '').replace(/^\s*(?:ALSA|PipeWire)\s*[\u2014-]\s*/, '');
+}
+
+function studioOutputLoad() {
+	var select = $('#studio_output_device');
+	if (!select.length) { return; }
+	$.ajax({
+		url: '/manager/sound/plan',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		success: function (audio) {
+			audio = audio || {};
+			var devices = audio.devices || [];
+			var saved = audio.engine_device || {};
+			var running = audio.engine || {};
+			select.empty();
+			$.each(devices, function (i, device) {
+				var value = device.id || ((device.backend || '') + '|' + (device.device || ''));
+				if (!value || value === '|') { return; }
+				select.append($('<option></option>').attr('value', value)
+					.text(device.name || device.device || value));
+			});
+			// The saved choice is what Apply will use; a running engine that has a
+			// different device is said so below. A device this machine no longer
+			// offers still reads back rather than becoming the first row.
+			var chosen = studioOutputValue(saved) || studioOutputValue(running);
+			if (chosen) {
+				select.val(chosen);
+				if (select.val() !== chosen) {
+					select.append($('<option></option>').attr('value', chosen).text(chosen));
+					select.val(chosen);
+				}
+			}
+			var note = '';
+			if (saved.backend && running.backend
+				&& (saved.backend !== running.backend || saved.device !== running.device)) {
+				note = studioAudioLabel('The engine is on') + ' ' + (running.device || running.backend)
+					+ '; ' + studioAudioLabel('apply to switch');
+			}
+			$('#studio_output_note').text(note);
+			studioAudioPathRender();
+		},
+		error: function () { $('#studio_output_note').text(studioAudioLabel('the engine output could not be read')); }
+	});
+}
+
+function studioOutputApply() {
+	var parts = String($('#studio_output_device').val() || '').split('|');
+	if (parts.length < 2 || !parts[0] || !parts[1]) { return; }
+	var data = { backend: parts[0], device: parts[1] };
+	if (parts.length >= 4 && parts[2] && parts[3]) { data.card = parts[2]; data.profile = parts[3]; }
+	$.ajax({
+		url: '/manager/sound/device',
+		type: 'POST',
+		data: data,
+		dataType: 'json',
+		success: function (result) {
+			result = result || {};
+			if (!result.ok) {
+				$('#studio_output_note').text(result.error || studioAudioLabel('the engine output could not be saved'));
+				return;
+			}
+			$('#studio_output_note').text(studioAudioLabel('Output saved; the engine is restarting'));
+			setTimeout(studioOutputLoad, 1500);
+		},
+		error: function () { $('#studio_output_note').text(studioAudioLabel('the engine output could not be saved')); }
+	});
+}
+
+$(document).on('change', '#studio_output_device', function () { studioAudioPathRender(); });
+$(document).on('click', '#studio_output_apply', function () { studioOutputApply(); });
+
 async function studioStop() {
 	// The engine owns the transport clock and click while it is on; stopping
 	// the browser transport stops the engine's output too.
@@ -31,7 +124,12 @@ async function studioStop() {
 	// a stop during the count-in cancels the take that never started
 	mixer['time']['punch_in'] = null;
 	mixer['time']['pending_takes'] = null;
+	mixer['time']['engine_pending'] = null;
 	mixer['time']['engine_count_in'] = null;
+	// The Record button's engine take closes its WAV on this stop; the answer
+	// imports it as a normal take on each channel that armed it.
+	if (typeof studioEngineTakeArmed !== 'undefined' && studioEngineTakeArmed
+		&& typeof studioEngineStop === 'function') { studioEngineStop(); }
 	studioFlushSources();
 	studioAudio.playSeg = null;
 	studioAudio.schedSeg = null;
@@ -88,6 +186,7 @@ function studioTime(command, fromEngine) {
 	}
 
 	if (!mixer['time']['status']) { mixer['time']['status'] = 'stop'; }
+	if (typeof studioAudioPathRender === 'function') { studioAudioPathRender(); }
 	var button = $('#studio_' + mixer['time']['status'] );
 
 	$.each(mixer['buttons'], function(i,v) {
@@ -816,6 +915,7 @@ $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', fu
 		config.show();
 		studioUpdateLatencyInfo();
 		studioEngineStatus();
+		studioOutputLoad();
 	}
 });
 

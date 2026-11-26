@@ -47,6 +47,7 @@ sub routes {
 	[44021, 'get',  '/manager/controller/power', 'action_44021'],
 	[44022, 'post', '/manager/studio/latency', 'action_44022'],
 	[44023, 'post', '/manager/studio/take', 'action_44023'],
+	[44045, 'get', '/manager/studio/take_file', 'action_44045'],
 	[44033, 'post', '/manager/studio/transport', 'action_44033'],
 	[44034, 'post', '/manager/studio/clip', 'action_44034'],
 	[44035, 'post', '/manager/studio/synth', 'action_44035'],

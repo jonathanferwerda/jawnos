@@ -1464,6 +1464,39 @@ sub action_44023 {
 	return;
 }
 
+# GET /manager/studio/take_file
+#
+# Serve one WAV the engine recorded for this Studio. The engine answers a take
+# with an absolute path, and the browser fetches that path by name, so this
+# route is the authority on what may be read: a direct child of the recording
+# folder whose name is the engine take's own `studio-take-<epoch>-<n>.wav` (or
+# its per-track `-ch<n>` form). Nothing else on disk is reachable here, and the
+# `file` argument cannot name a directory, a prefix or a traversal.
+sub action_44045 {
+	my $c = shift;
+	my $asked = $c->param('file');
+	my $folder = &studio_take_folder();
+	my $path;
+	if (length $folder && defined $asked && !ref $asked && length $asked) {
+		my ($volume, $dir, $base) = File::Spec->splitpath($asked);
+		my $parent = defined $dir && length $dir ? Cwd::abs_path($dir) : undef;
+		my $root = Cwd::abs_path($folder);
+		if (defined $parent && defined $root && $parent eq $root
+			&& $base =~ /\Astudio-take-\d+-\d+(?:-ch\d+)?\.wav\z/) {
+			$path = Cwd::abs_path($asked);
+		}
+	}
+	unless (defined $path && -f $path && -r $path) {
+		$c->render(json => { ok => 0, error => 'no such recorded take on this machine' }, status => 404);
+		return;
+	}
+	$c->res->headers->content_type('audio/wav');
+	# A finished take is written once and read once; never let a browser cache
+	# turn a second fetch of the same name into the previous take's bytes.
+	$c->res->headers->cache_control('private, no-store');
+	$c->reply->file($path);
+}
+
 # POST /manager/studio/transport
 #
 # The engine's transport, which owns the browser transport's clock and

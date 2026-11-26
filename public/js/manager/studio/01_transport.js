@@ -917,6 +917,7 @@ function studioEngineTransportStart(pos, ready, exact) {
 		// rendering the takes while the browser starts its own copy and click.
 		if (mixer['time']['engine_transport']) { studioEngineTransportStop(); }
 		else { mixer['time']['engine_transport'] = false; }
+		if (typeof studioAudioPathRender === 'function') { studioAudioPathRender(); }
 		return;
 	}
 	if (mixer['time'] && mixer['time']['engine_count_in']) { return; }
@@ -943,6 +944,7 @@ function studioEngineTransportStart(pos, ready, exact) {
 	// staging refusal drops it again for a clean fallback.
 	studioEngineTransportStarting = true;
 	mixer['time']['engine_transport'] = true;
+	if (typeof studioAudioPathRender === 'function') { studioAudioPathRender(); }
 	(ready || studioEngineClipStageAll(plan)).then(function (clips) {
 		studioEngineTransportStarting = false;
 		if (!mixer['time']['engine_transport']) { return; }
@@ -1011,6 +1013,7 @@ function studioEngineTransportDrop() {
 	studioEngineTransportStarting = false;
 	studioEngineClipsCancel();
 	mixer['time']['engine_transport'] = false;
+	if (typeof studioAudioPathRender === 'function') { studioAudioPathRender(); }
 	studioEngineClock.valid = false;
 	studioEngineTransportPollStop();
 	// The engine no longer plays the chart: hand it back to the browser
@@ -1054,6 +1057,7 @@ function studioEngineTransportStop() {
 	// stop, and must not throw out of the rest of studioInit.
 	var was = !!(mixer['time'] && mixer['time']['engine_transport']);
 	if (mixer['time']) { mixer['time']['engine_transport'] = false; }
+	if (typeof studioAudioPathRender === 'function') { studioAudioPathRender(); }
 	if (!was) { return; }
 	studioEngineTransportPost('stop', {}, function () {});
 }

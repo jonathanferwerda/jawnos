@@ -509,6 +509,7 @@
 				<img class="little_thumb mark hover" hint="Drop a mark" id="studio_mark" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
 				<img class="little_thumb metronome hover" hint="Metronome" id="studio_metronome" src="<%= &subs::icon_for('/images/studio/metronome.png') %>">
 				<span class="studio_monitor_note" id="studio_monitor_note" aria-live="polite"></span>
+				<span class="studio_audio_path" id="studio_audio_path" aria-live="polite" hint="<%= &subs::ui('Which side is recording and playing: the engine or this browser') %>"><%= &subs::ui('Browser') %></span>
 				<input class="studio_transport_field" id="studio_bpm" value="120" hint="<%= &subs::ui('Tempo in beats per minute') %>">
 				<input class="studio_transport_field" id="studio_signature" value="4/4" hint="<%= &subs::ui('Time signature') %>">
 				<% foreach my $k ( grep { $_->{'placement'} eq 'metronome' } @{$gb::studio->{'knobs'}}) { %>
@@ -712,6 +713,14 @@
 					</tr>
 					<tr>
 						<td colspan="2" style="padding-top:14px;"><b><%= &subs::ui('Engine take') %></b><br><span style="font-size:12px;"><%= &subs::ui('records on the native audio engine, beside the browser transport; the browser audio path is left alone') %></span></td>
+					</tr>
+					<tr>
+						<td><%= &subs::ui('Output') %><br><span style="font-size:12px;"><%= &subs::ui('the interface the engine plays and records through') %></span></td>
+						<td>
+							<select id="studio_output_device" hint="<%= &subs::ui('Choose the output the engine plays through') %>"></select>
+							<button type="button" id="studio_output_apply" hint="<%= &subs::ui('Use this output and restart the engine') %>"><%= &subs::ui('Use this output') %></button>
+							<span id="studio_output_note" aria-live="polite"></span>
+						</td>
 					</tr>
 					<tr>
 						<td><%= &subs::ui('Start, stop and the strip') %><br><span style="font-size:12px;"><%= &subs::ui('seconds; one to eight tracks, each picking its own input and mono or stereo; each track records through its own rack; gain goes 0 to 4 and pan -1 to 1') %></span></td>

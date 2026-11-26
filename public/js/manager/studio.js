@@ -1072,6 +1072,46 @@ var studioEngineMonitorArmed = false;
 // The monitor bus gain the engine last reported, 0 to 4. `monitor_input` stays
 // true when the gain is 0, so the pressed state needs both to say silence.
 var studioEngineMonitorLevel = 1;
+// The take the transport's Record button armed on the engine. It keeps the
+// channel each engine track records, the rate its frame counts are in, and the
+// song position the first sample belongs to, so the WAV can become a normal
+// take when the engine closes it. `imported` makes the status poll and the stop
+// answer share one finish path.
+var studioEngineTakeArmed = null;
+
+// What the transport is actually doing: the engine or this browser. The badge
+// beside the controls is the answer for a person, not a diagnostic. It reads
+// the same flags the audio path reads, so an engine refusal shows immediately.
+function studioAudioPathRender() {
+	var el = $('#studio_audio_path');
+	if (!el.length) { return; }
+	var status = (mixer['time'] && mixer['time']['status']) || 'stop';
+	var backend = (typeof studioAudioBackend === 'function') ? studioAudioBackend() : 'browser';
+	var recording = (status == 'record');
+	var engine_play = !!(mixer['time'] && mixer['time']['engine_transport']);
+	var engine_ready = (backend === 'engine')
+		&& (typeof studioEngineAvailable === 'undefined' || studioEngineAvailable !== false);
+	var side;
+	var label;
+	if (recording) {
+		side = studioEngineRecording ? 'engine' : 'browser';
+		label = studioAudioLabel(studioEngineRecording ? 'Engine recording' : 'Browser recording');
+	}
+	else if (status == 'play') {
+		side = engine_play ? 'engine' : 'browser';
+		label = studioAudioLabel(engine_play ? 'Engine playback' : 'Browser playback');
+	}
+	else {
+		side = engine_ready ? 'engine' : 'browser';
+		label = studioAudioLabel(side === 'engine' ? 'Engine ready' : 'Browser');
+	}
+	var device = (typeof studioOutputLabel === 'function') ? studioOutputLabel() : '';
+	if (side === 'engine' && device) { label += ' \u00b7 ' + device; }
+	el.text(label)
+		.removeClass('engine browser recording playback')
+		.addClass(side)
+		.toggleClass('recording', recording);
+}
 
 function studioEngineAnswer(data) {
 	if (!data || typeof data !== 'object') {
@@ -1091,6 +1131,7 @@ function studioEngineFailed(xhr) {
 	studioEngineRecording = false;
 	if (mixer['time']) { mixer['time']['engine_take'] = false; }
 	studioEngineShowError((data && data.error) ? data.error : studioAudioLabel('the audio engine did not answer'));
+	studioAudioPathRender();
 }
 
 function studioEnginePollStart() {
@@ -1313,12 +1354,17 @@ function studioEngineStatus() {
 			// the Input pickers from it, keeping any choice already made.
 			studioEngineInputRows();
 			if (typeof data.error === 'string' && data.error.length) { studioEngineShowError(data.error); }
+			var wasRecording = studioEngineRecording;
 			studioEngineRecording = (data.state === 'recording');
 			// The engine take owns the click while it records; a completed or
 			// failed take hands the browser metronome back.
 			if (mixer['time']) { mixer['time']['engine_take'] = studioEngineRecording; }
 			studioEngineRender(data);
+			// A take that ends on its own (the engine's length bound, or the
+			// Configure panel's Stop) is still a take: import the closed WAV.
+			if (wasRecording && !studioEngineRecording && studioEngineTakeArmed) { studioEngineTakeFinish(data); }
 			if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(); }
+			studioAudioPathRender();
 			if (studioEngineRecording) { studioEnginePollStart(); }
 			else { studioEnginePollStop(); }
 		},
@@ -1581,6 +1627,209 @@ function studioEngineStartNow(punch) {
 	});
 }
 
+// ---- Record on the engine ---------------------------------------------------
+// The transport's Record button asks the engine for every channel it can take:
+// a real interface input, whether the jack names one or the channel has none.
+// An app (Synth, Drums, Music, Marker), a screen share and a channel send have
+// no interface channel, so they stay on the browser's own MediaRecorder.
+function studioEngineTakeChannel(ch) {
+	var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+	if (!plug) { return true; }
+	return (typeof studioInputIsDevice === 'function' && studioInputIsDevice(plug));
+}
+
+// The engine plan for the channels the Record button can hand over. Track `i`
+// is `channels[i]`, so one WAV per track maps back to one Studio channel.
+function studioEngineTakePlan(takes) {
+	var plan = [];
+	var channels = [];
+	$.each(takes || [], function (i, take) {
+		if (!take || take.loop) { return; }
+		var ch = String(take.ch);
+		if (!/^[0-9]+$/.test(ch) || !studioEngineTakeChannel(ch)) { return; }
+		var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+		var input = plug ? studioInputListenChannel(plug) : Math.min(1, Math.max(0, parseInt(ch, 10) - 1));
+		var inserts = [];
+		var strip = studioAudio.channels[ch];
+		if (strip && strip.inserts) {
+			strip.inserts.forEach(function (ins) {
+				if (!ins || ins.bypassed || !ins.name) { return; }
+				// Widgets the native engine cannot build stay in the browser; the
+				// take records the rest rather than refusing the whole channel.
+				if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
+				inserts.push(studioEffectKind(ins.name));
+			});
+		}
+		plan.push({ input: input, channels: 1, inserts: inserts });
+		channels.push(ch);
+	});
+	return plan.length ? { channels: channels, plan: plan } : null;
+}
+
+// The engine gives its capture stream to one owner: a Listen and a take cannot
+// share it. Record stops a running Listen first, without reopening the browser
+// capture, because the take's own live input is the monitor now.
+function studioEngineTakeListenRelease(done) {
+	if (typeof studioListenActive === 'undefined' || !studioListenActive) { done(); return; }
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: { action: 'listen_stop' },
+		dataType: 'json',
+		success: function () {
+			studioListenActive = false;
+			studioEngineListening = false;
+			if (typeof studioListenPollStop === 'function') { studioListenPollStop(); }
+			if (typeof studioListenSetActive === 'function') { studioListenSetActive(false); }
+			done();
+		},
+		// The take's own answer is the useful one; a failed stop still tries.
+		error: function () { done(); }
+	});
+}
+
+// The engine refused the take (a busy device, an input it does not have). Hand
+// the same channels back to the browser recorder so a refusal never costs the
+// performance. The browser captures are reopened before the takes start.
+function studioEngineTakeBrowserFallback(takes, punch) {
+	if (!takes || !takes.length) { return; }
+	var wait = [];
+	$.each(takes, function (i, take) {
+		if (!take || typeof studioInputStreamGrabber !== 'function') { return; }
+		wait.push(studioInputStreamGrabber(String(take.ch), take.loop ? 'loop' : 'rec'));
+	});
+	var start = function () {
+		$.each(takes, function (i, take) {
+			if (take && typeof studioStartTake === 'function') { studioStartTake(String(take.ch), !!take.loop, punch); }
+		});
+	};
+	if (window.Promise && wait.length) { Promise.all(wait).then(start, start); }
+	else { setTimeout(start, 300); }
+}
+
+// Start the engine take for the channels `studioEngineTakePlan` accepts. `done`
+// tells the caller whether the engine took them; a refusal is handled by the
+// same callback so the browser path and a count-in share one decision.
+function studioEngineTakeStart(takes, punch, done) {
+	var built = studioEngineTakePlan(takes);
+	if (!built) { if (done) { done(false); } return false; }
+	var monitored = (typeof studioMonitoredChannel === 'function') ? studioMonitoredChannel() : null;
+	var monitor = false;
+	if (monitored !== null) {
+		$.each(built.channels, function (i, ch) { if (String(ch) === String(monitored)) { monitor = true; } });
+	}
+	var transportRunning = !!(mixer['time'] && mixer['time']['engine_transport']);
+	// The transport already owns the click; a take beside it must not open one
+	// of its own. With the transport stopped the take's click is the metronome.
+	var click = transportRunning ? null : studioEngineClick();
+	var rate = Number(studioEngineDeviceRate) || 48000;
+	var at = (typeof punch === 'number' && punch > 0) ? punch : ((mixer['time'] && mixer['time']['position']) || 0);
+	var request = {
+		action: 'start',
+		// A Record take ends on Stop, not on a guessed length; the route's own
+		// ceiling is one hour.
+		seconds: 3600,
+		tracks_json: JSON.stringify(built.plan),
+		master_json: JSON.stringify(studioEngineMasterList()),
+		click_json: click ? JSON.stringify(click) : '',
+		monitor_input: monitor ? 'true' : 'false',
+		monitor_gain: '1'
+	};
+	if (at > 0) { request.start_at = Math.round(at * rate); }
+	var sent = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+	studioEngineTakeListenRelease(function () {
+		$.ajax({
+			url: '/manager/studio/take',
+			type: 'POST',
+			data: request,
+			dataType: 'json',
+			success: function (data) {
+				data = studioEngineAnswer(data);
+				if (data.ok !== true) {
+					studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
+					if (done) { done(false); }
+					return;
+				}
+				var now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+				// The browser reached the punch before the engine opened the input.
+				// Half the round trip is the best estimate of that gap, and placing
+				// the first sample there keeps the take on the same grid.
+				var delay = Math.max(0, now - sent) / 2000;
+				studioEngineTakeArmed = {
+					channels: built.channels, plan: built.plan, rate: rate,
+					punch: at, startTime: at + delay, imported: false
+				};
+				studioEngineRecording = true;
+				if (mixer['time']) { mixer['time']['engine_take'] = true; }
+				if (typeof studioFlushClicks === 'function') { studioFlushClicks(); }
+				studioEnginePollStart();
+				studioEngineRender(data);
+				studioAudioPathRender();
+				if (done) { done(true); }
+			},
+			error: function () {
+				studioEngineShowError(studioAudioLabel('the audio engine did not answer'));
+				if (done) { done(false); }
+			}
+		});
+	});
+	return true;
+}
+
+// The engine closed the take: its WAV is now a normal Studio take on each of
+// the channels that armed it. `tracks` carries one path per track when the take
+// recorded more than one; the single-track line keeps its historical fields.
+function studioEngineTakeFinish(data) {
+	var armed = studioEngineTakeArmed;
+	if (!armed || armed.imported) { return false; }
+	armed.imported = true;
+	studioEngineTakeArmed = null;
+	studioEnginePollStop();
+	studioEngineRecording = false;
+	if (mixer['time']) { mixer['time']['engine_take'] = false; }
+	var rate = Number(armed.rate) || Number(studioEngineDeviceRate) || 48000;
+	var rows = [];
+	if (data && Array.isArray(data.tracks) && data.tracks.length) { rows = data.tracks; }
+	else if (data && data.path) { rows = [{ path: data.path, frames: data.frames }]; }
+	var imported = 0;
+	$.each(armed.channels, function (i, ch) {
+		var row = rows[i] || rows[0] || {};
+		var path = row.path || (data && data.path);
+		var frames = Number(row.frames);
+		if (!(frames > 0) && data && Number(data.frames) > 0) { frames = Number(data.frames); }
+		if (!path || !(frames > 0)) { return; }
+		ch = String(ch);
+		if (!mixer[ch]) { mixer[ch] = {}; }
+		if (!mixer[ch].media) { mixer[ch].media = {}; }
+		if (!mixer[ch].media.out) { mixer[ch].media.out = []; }
+		var ir = mixer[ch].media.out.length;
+		var el = document.createElement('video');
+		el.className = 'studio_video';
+		el.id = 'studio_channel_' + ch + '_' + ir;
+		el.style.display = 'none';
+		el.preload = 'auto';
+		$('#studio_track_container').append(el);
+		var src = '/manager/studio/take_file?file=' + encodeURIComponent(path);
+		el.src = src;
+		var take = {
+			uuid: null, startTime: Math.max(0, Number(armed.startTime) || armed.punch || 0),
+			offset: 0, duration: frames / rate, status: 'stop', track: el,
+			loop: false, encoding: 'audio/wav', src: src, engine: true
+		};
+		mixer[ch].media.out[ir] = take;
+		if (typeof studioTakeRequestBuffer === 'function') { studioTakeRequestBuffer(take); }
+		mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
+		imported++;
+	});
+	if (imported && typeof studioDrawTracks === 'function') { studioDrawTracks(); }
+	studioAudioPathRender();
+	// A Monitor that was on before Record was let go so the take owned the
+	// capture; hand it back now that the file is closed.
+	if (typeof studioMonitoredChannel === 'function' && studioMonitoredChannel() !== null
+		&& typeof studioApplyMonitor === 'function') { studioApplyMonitor(true); }
+	return imported > 0;
+}
+
 function studioEngineStop() {
 	// Stop during a count-in cancels the take that never started; nothing is
 	// recording yet, so there is no engine take to stop.
@@ -1605,6 +1854,8 @@ function studioEngineStop() {
 			}
 			if (typeof data.error === 'string' && data.error.length) { studioEngineShowError(data.error); }
 			studioEngineRender(data);
+			if (typeof studioEngineTakeFinish === 'function') { studioEngineTakeFinish(data); }
+			studioAudioPathRender();
 		},
 		error: studioEngineFailed
 	});

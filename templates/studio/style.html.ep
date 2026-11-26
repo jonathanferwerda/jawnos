@@ -1446,6 +1446,18 @@
 		max-width: 220px;
 		line-height: 1.2;
 	}
+	/* The transport's Engine/Browser badge: the path a take is actually on, not
+	   a setting. Engine gets the accent, a live recording the alarm colour. */
+	.studio_audio_path {
+		font-size: 11px;
+		padding: 2px 6px;
+		border-radius: 4px;
+		background: var(--panel-2);
+		border: 1px solid var(--accent-line, var(--accent));
+		white-space: nowrap;
+	}
+	.studio_audio_path.engine { color: var(--accent); }
+	.studio_audio_path.recording { color: var(--danger, #c53030); font-weight: 600; }
 	.studio_monitor_toggle[aria-pressed="true"] {
 		background: var(--accent-soft, var(--accent));
 		border-color: var(--accent-line, var(--accent));

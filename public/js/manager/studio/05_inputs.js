@@ -1141,21 +1141,34 @@ function studioStopTake(ch, ir) {
 
 // Start the takes held back by a count-in, once the transport reaches the
 // punch-in point. The takes are anchored to that point, not to the tick that
-// notices it, so a loop still starts exactly on the bar line.
+// notices it, so a loop still starts exactly on the bar line. The engine's
+// share of them starts here too, at the same punch-in beat.
 function studioStartPendingTakes() {
 	var punch = mixer['time']['punch_in'];
 	if (punch === undefined || punch === null) { return; }
 	if (mixer['time']['position'] < punch) { return; }
 	var pending = mixer['time']['pending_takes'] || [];
+	var engine_pending = mixer['time']['engine_pending'] || null;
 	mixer['time']['punch_in'] = null;
 	mixer['time']['pending_takes'] = null;
+	mixer['time']['engine_pending'] = null;
 	$.each(pending, function (n, a) {
 		if (!mixer[a.ch]) { mixer[a.ch] = {}; }
 		if (!mixer[a.ch].media) { mixer[a.ch].media = {}; }
 		studioStartTake(a.ch, a.loop, punch);
 	});
+	if (engine_pending && engine_pending.takes && engine_pending.takes.length) {
+		studioEngineTakeStart(engine_pending.takes, punch, function (ok) {
+			// The engine refused at the beat, not when Record was pressed: hand
+			// those channels to the browser take exactly as an immediate refusal.
+			if (!ok) { studioEngineTakeBrowserFallback(engine_pending.takes, punch); }
+		});
+	}
 }
 
+// Which armed channels the engine can take. A loop take repeats a region the
+// engine take does not have, and an app, a screen share or a channel send has
+// no interface input, so both stay on the browser recorder.
 async function studioRecord() {
 	if (mixer['time']['status'] == 'record') { return; }
 
@@ -1182,9 +1195,23 @@ async function studioRecord() {
 		else { mixer['time']['loop_region'] = null; }
 	}
 
+	// The engine records every channel that names an interface input whenever
+	// it is available; the browser keeps the rest. Splitting here, before the
+	// count-in, is what lets both halves land on the same punch-in beat.
+	var engine_takes = [];
+	var browser_takes = [];
+	var engine_ready = (typeof studioAudioBackend === 'function' && studioAudioBackend() === 'engine')
+		&& (typeof studioEngineAvailable === 'undefined' || studioEngineAvailable !== false)
+		&& typeof studioEngineTakeStart === 'function';
+	$.each(takes, function (n, a) {
+		if (a.loop || !engine_ready || !studioEngineTakeChannel(a.ch)) { browser_takes.push(a); }
+		else { engine_takes.push(a); }
+	});
+
 	mixer['time']['status'] = 'record';
 	mixer['time']['punch_in'] = null;
 	mixer['time']['pending_takes'] = null;
+	mixer['time']['engine_pending'] = null;
 	mixer['time']['position'] = punch;
 
 	// A count-in runs the transport up to the punch-in point with clicks; the
@@ -1193,17 +1220,24 @@ async function studioRecord() {
 	if (count_in > 0) {
 		mixer['time']['position'] = punch - count_in;
 		mixer['time']['punch_in'] = punch;
-		mixer['time']['pending_takes'] = takes;
+		mixer['time']['pending_takes'] = browser_takes;
+		mixer['time']['engine_pending'] = engine_takes.length ? { takes: engine_takes, punch: punch } : null;
 	}
 	studioTime('start');
 
 	if (count_in <= 0) {
-		$.each(takes, function(n, a) {
+		$.each(browser_takes, function(n, a) {
 			if (!mixer[a.ch]) { mixer[a.ch] = {}; }
 			if (!mixer[a.ch].media) { mixer[a.ch].media = {}; }
 			studioStartTake(a.ch, a.loop, punch);
 		});
+		if (engine_takes.length) {
+			studioEngineTakeStart(engine_takes, punch, function (ok) {
+				if (!ok) { studioEngineTakeBrowserFallback(engine_takes, punch); }
+			});
+		}
 	}
+	studioAudioPathRender();
 	studioSyncTakes();
 }
 

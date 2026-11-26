@@ -102,6 +102,10 @@ function studioInit(data) {
 			// the drum panel reads its state from the song (restored above) and
 			// builds its voices once the window is on the page
 			if (typeof studioDrumsInit === 'function') { studioDrumsInit(); }
+			// The transport's Engine/Browser badge and the output's name come from
+			// the same Sound plan; neither waits for Configure to be opened.
+			if (typeof studioOutputLoad === 'function') { studioOutputLoad(); }
+			if (typeof studioAudioPathRender === 'function') { studioAudioPathRender(); }
 			studioUpdateKnobHints();
 			if ($('#studio').attr('uuid')) {
 				if (!data['uuid']) {
