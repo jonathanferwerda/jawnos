@@ -441,6 +441,15 @@ WAV work. Piper also links the Visual C++ 2015-2022 x64 runtime; the build copie
 beside `piper.exe`, so a clean Windows install needs no redistributable. The house's own Jonathan
 voice needs the newer Piper and stays a Linux/phone install.
 
+**Measured on VM200** (2026-11-26): `build-portable.ps1` staged the tools and the LJSpeech
+voice; `sox.exe --version` answered `SoX v14.4.2`, and the installed `piper.exe` rendered a
+97,440-byte WAV from one sentence. The install itself completed as the user. Two defects were
+found and fixed in the same work: the SoX Windows build has no MP3 decoder (so the chimes stay
+in the browser), and Piper needs the VC++ 2015-2022 x64 runtime, whose three DLLs now travel
+beside `piper.exe`. The house did not stay up after that install (the test started it under a
+QEMU task whose process tree ended), so the audible chime/voice check through the WebView2
+shell is still to do.
+
 **Next:**
 
 - The restart verdict is written **before** the tree swap, so control is briefly unavailable during
