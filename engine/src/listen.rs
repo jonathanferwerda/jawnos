@@ -22,7 +22,8 @@ use std::sync::Arc;
 
 use crate::device::Device;
 use crate::effect::{Channel, InsertKind};
-use crate::mixer::ParamQueue;
+use crate::mixer::{Mixer, ParamQueue};
+use crate::plan::{ChannelPlan, PlanInsert};
 
 /// The strip a listener arms: which input, and the strip's knobs.
 #[derive(Clone, Debug)]
@@ -68,6 +69,10 @@ pub struct ListenStrip {
     mono: Vec<f32>,
     /// One stereo block: the strip's output, before conversion.
     stereo: Vec<f32>,
+    /// The master rack the plan named, built into `master` by `prepare`.
+    master_plan: Vec<PlanInsert>,
+    /// The house mastering pass, after the strip's pan. `None` is no rack.
+    master: Option<Mixer>,
 }
 
 impl ListenStrip {
@@ -88,6 +93,24 @@ impl ListenStrip {
             params,
             mono: Vec::new(),
             stereo: Vec::new(),
+            master_plan: Vec::new(),
+            master: None,
+        }
+    }
+
+    /// The strip a take plan describes: the same [`Channel`] the take records
+    /// (`ChannelPlan::channel`), the plan's input channel, and its master rack.
+    /// This is what makes a live monitor sound like the take it belongs to:
+    /// one definition of the trim, the pedals, the pan and the mastering pass.
+    pub fn from_plan(plan: &ChannelPlan, params: Option<Arc<ParamQueue>>) -> Self {
+        ListenStrip {
+            channel: plan.channel(),
+            input: plan.input,
+            params,
+            mono: Vec::new(),
+            stereo: Vec::new(),
+            master_plan: plan.master.clone(),
+            master: None,
         }
     }
 
@@ -118,6 +141,24 @@ impl ListenStrip {
         self.channel.prepare(rate, period);
         self.mono = vec![0.0; period];
         self.stereo = vec![0.0; period * 2];
+        if !self.master_plan.is_empty() {
+            // An empty mixer is the house's mastering pass: `run_master` is the
+            // one bus shared by a transport, a playback and this listener.
+            let kinds: Vec<InsertKind> =
+                self.master_plan.iter().map(|insert| insert.kind).collect();
+            let mut rack = Mixer::new(&[], &[]);
+            rack.set_master_chain(&kinds, rate, period);
+            for insert in &self.master_plan {
+                let prefix = insert.kind.master_prefix().unwrap_or(insert.kind.name());
+                for (knob, value) in &insert.knobs {
+                    rack.set_master(&format!("{prefix}.{knob}"), *value);
+                }
+            }
+            rack.prepare(rate, period);
+            self.master = Some(rack);
+        } else {
+            self.master = None;
+        }
     }
 
     /// Apply every waiting control change at the top of a block.
@@ -215,7 +256,12 @@ impl ListenStrip {
         }
         self.channel
             .process(&self.mono[..frames], &mut self.stereo[..stereo])
-            .map_err(|error| format!("listen strip: {error:?}"))
+            .map_err(|error| format!("listen strip: {error:?}"))?;
+        if let Some(rack) = self.master.as_mut() {
+            rack.run_master(&mut self.stereo[..stereo])
+                .map_err(|error| format!("listen master: {error}"))?;
+        }
+        Ok(())
     }
 
     /// The strip's channel, for the unit test that proves the chain order.
@@ -922,6 +968,39 @@ mod tests {
         let mut out = vec![0.0f32; 4];
         let error = strip.process_f32(&[0.0; 4], 2, &mut out).unwrap_err();
         assert!(error.contains("outside"), "{error}");
+    }
+
+    #[test]
+    fn a_listen_strip_can_be_built_from_a_take_plan() {
+        // The same plan a take records through: input 1, a trim, and the song's
+        // master rack after the pan. The rack's ceiling is what tells the two
+        // renders apart, so the monitor keeps the chain the take belongs to.
+        fn peak(plan_text: &str) -> f32 {
+            let plan = crate::plan::parse_plan(Some(plan_text))
+                .expect("valid")
+                .expect("not raw");
+            let mut strip = ListenStrip::from_plan(&plan, None);
+            strip.prepare(RATE, 64);
+            let mut input = vec![0.0f32; 128];
+            for frame in 0..64 {
+                input[frame * 2 + 1] = 0.8;
+            }
+            let mut out = vec![0.0f32; 128];
+            let mut peak = 0.0f32;
+            for _ in 0..8 {
+                strip.process_f32(&input, 2, &mut out).expect("render");
+                peak = peak.max(out.iter().cloned().fold(0.0, f32::max));
+            }
+            peak
+        }
+
+        let dry = peak(r#"{"channel":1,"gain":4}"#);
+        let limited = peak(r#"{"channel":1,"gain":4,"master_limiter":{"ceiling":-24}}"#);
+        assert!(dry > 1.0, "the instrument channel was not monitored: {dry}");
+        assert!(
+            limited < dry * 0.5,
+            "the master rack did not run: dry {dry}, limited {limited}"
+        );
     }
 
     #[test]

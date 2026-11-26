@@ -45,6 +45,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::control::{error_json, into_c_string, json_escape, lock_control};
+use crate::listen::ListenStrip;
 use crate::monbus;
 use crate::plan::ChannelPlan;
 #[cfg(target_os = "android")]
@@ -656,41 +657,68 @@ fn monitor_fallback_rate(packet: usize, endpoint_hz: u32) -> Option<u32> {
     }
 }
 
-/// Little-endian 16-bit stereo to the duplicated mono the rings carry. The left
-/// sample is the mono value, exactly as `plan::Strip` reads the ring; the two
-/// halves are never summed, so a mic that lands on one channel keeps its level.
+/// Little-endian 16-bit stereo capture into the fixed buffers a take reuses.
+///
+/// `raw` holds both captured channels interleaved. `mono` is the plan's channel
+/// duplicated into both halves: that is what the record ring carries and the
+/// take's strip reads, exactly as it did when the ring was always the left
+/// sample. `input` says which channel that is (`0` mic, `1` instrument).
+///
+/// The monitor is the plan's strip (trim, pedals, pan) and then the song's
+/// master rack, so a listener hears what the take will sound like; without a
+/// plan it is the same duplicated mono the ring carries.
 ///
 /// The record ring is the one cross-thread hop left; the monitor's frames go
 /// straight into the loop's own [`OutFifo`], because both sides run on the same
 /// USB thread.
+#[allow(clippy::too_many_arguments)]
 fn decode_packet(
     packet: &[u8],
-    stereo: &mut [f32],
+    raw: &mut [f32],
+    mono: &mut [f32],
+    stripped: &mut [f32],
+    mut strip: Option<&mut ListenStrip>,
+    input: usize,
     record: &monbus::Producer,
     monitor: Option<&mut OutFifo>,
     stats: &mut InStats,
     peak: &mut f32,
 ) {
-    let frames = (packet.len() / 4).min(stereo.len() / 2);
+    let frames = (packet.len() / 4)
+        .min(raw.len() / 2)
+        .min(mono.len() / 2)
+        .min(stripped.len() / 2);
     for frame in 0..frames {
         let offset = frame * 4;
-        let sample = i16::from_le_bytes([packet[offset], packet[offset + 1]]);
-        let value = f32::from(sample) / 32768.0;
+        let left = f32::from(i16::from_le_bytes([packet[offset], packet[offset + 1]])) / 32768.0;
+        let right =
+            f32::from(i16::from_le_bytes([packet[offset + 2], packet[offset + 3]])) / 32768.0;
+        raw[frame * 2] = left;
+        raw[frame * 2 + 1] = right;
+        let value = if input == 0 { left } else { right };
         let magnitude = value.abs();
         if magnitude > *peak {
             *peak = magnitude;
         }
-        stereo[frame * 2] = value;
-        stereo[frame * 2 + 1] = value;
+        mono[frame * 2] = value;
+        mono[frame * 2 + 1] = value;
     }
     if frames > 0 {
-        let block = &stereo[..frames * 2];
         // A full record ring drops the newest frames; count them here rather
         // than letting the loss disappear into frames_captured - frames_written.
-        stats.dropped_ring += record.push(block) as u64;
+        stats.dropped_ring += record.push(&mono[..frames * 2]) as u64;
         // Still the monitor's problem, not the take's: count its drops on the
         // fifo (visible as `dropped_out`), never silently.
         if let Some(fifo) = monitor {
+            let block = match strip.as_mut() {
+                Some(strip) => match strip.process_f32(&raw[..frames * 2], 2, stripped) {
+                    Ok(rendered) => &stripped[..rendered * 2],
+                    // The strip was prepared for this packet at setup, so this
+                    // cannot happen; the dry channel is better than silence.
+                    Err(_) => &mono[..frames * 2],
+                },
+                None => &mono[..frames * 2],
+            };
             fifo.push(block);
         }
     }
@@ -721,7 +749,11 @@ unsafe fn absorb_in(
     stats: &mut InStats,
     record: &monbus::Producer,
     mut monitor: Option<&mut OutFifo>,
-    stereo: &mut [f32],
+    mut strip: Option<&mut ListenStrip>,
+    input: usize,
+    raw: &mut [f32],
+    mono: &mut [f32],
+    stripped: &mut [f32],
     peak: &mut f32,
 ) {
     let header = &*done;
@@ -740,7 +772,11 @@ unsafe fn absorb_in(
             let slice = std::slice::from_raw_parts(base.add(index * packet), length);
             decode_packet(
                 slice,
-                stereo,
+                raw,
+                mono,
+                stripped,
+                strip.as_deref_mut(),
+                input,
                 record,
                 monitor.as_deref_mut(),
                 stats,
@@ -1144,6 +1180,12 @@ pub struct UsbReport {
     pub dropped_ring: u64,
     pub dropped_disk: u64,
     pub peak: f32,
+    /// The input channel the take and the monitor read: 0 is the left/mic
+    /// channel, 1 the right/instrument one (the plan's `channel`).
+    pub monitor_channel: usize,
+    /// The master rack the monitor ran, e.g. `master_limiter`. Empty is none:
+    /// the take's WAV never carries it, so the report says what was heard.
+    pub monitor_master: String,
     pub plan: String,
     pub take: String,
 }
@@ -1178,6 +1220,8 @@ pub(crate) struct UsbIoReport {
     setinterface: UsbSetInterface,
     sched: UsbSched,
     peak: f32,
+    monitor_channel: usize,
+    monitor_master: String,
 }
 
 /// The take's configuration, captured from the C ABI's arguments.
@@ -1215,7 +1259,7 @@ fn histogram_json(rows: &[(u32, u64)]) -> String {
 /// One JSON object, the same status style the Oboe backend emits.
 fn report_json(report: &UsbReport) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"rate_set\":{{\"target\":{},\"ret\":{},\"errno\":{},\"recipient\":\"{}\",\"verified\":{}}},\"monitor_off\":{},\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"rate_set\":{{\"target\":{},\"ret\":{},\"errno\":{},\"recipient\":\"{}\",\"verified\":{}}},\"monitor_off\":{},\"monitor_channel\":{},\"monitor_master\":\"{}\",\"plan\":\"{}\",\"take\":\"{}\"}}",
         report.rate,
         histogram_json(&report.packets_in),
         report.missed_in,
@@ -1260,6 +1304,8 @@ fn report_json(report: &UsbReport) -> String {
         json_escape(report.rate_set.recipient),
         report.rate_set.verified,
         optional_json_string(report.monitor_off),
+        report.monitor_channel,
+        json_escape(&report.monitor_master),
         json_escape(&report.plan),
         json_escape(&report.take),
     )
@@ -1751,8 +1797,25 @@ pub(crate) fn run_usb_plan(
     let mut monitor_resampler =
         (have_out && monitor_out_rate != config.rate)
             .then(|| MonitorResampler::new(config.rate, monitor_out_rate));
-    // At most one packet's worth of duplicated mono samples.
+    // At most one packet's worth of frames. `packet_stereo` is the plan's input
+    // channel duplicated, which is what the record ring carries and the take's
+    // strip reads; `raw_block` keeps both captured channels for the strip;
+    // `stripped_block` is the strip's own stereo output.
     let mut packet_stereo = vec![0.0f32; (packet_in / 2).max(2)];
+    let mut raw_block = vec![0.0f32; (packet_in / 2).max(2)];
+    let mut stripped_block = vec![0.0f32; (packet_in / 2).max(2)];
+    // The plan is the take's strip, so the monitor runs the same chain: the
+    // input it names, its trim and pedals, its pan, and the song's master rack.
+    let input = config.plan.as_ref().map_or(0, |plan| plan.input);
+    let mut monitor_strip = have_out.then(|| {
+        let plan = config
+            .plan
+            .as_ref()
+            .expect("a monitor without a plan has no strip to run");
+        let mut strip = ListenStrip::from_plan(plan, None);
+        strip.prepare(config.rate, (packet_in / 4).max(1));
+        strip
+    });
 
     let mut histogram = vec![0u64; packet_in + 2];
     let mut stats = InStats::default();
@@ -1823,7 +1886,11 @@ pub(crate) fn run_usb_plan(
                     &mut stats,
                     record,
                     fifo.as_mut(),
+                    monitor_strip.as_mut(),
+                    input,
+                    &mut raw_block,
                     &mut packet_stereo,
+                    &mut stripped_block,
                     &mut peak,
                 );
                 clear_urb(done);
@@ -1914,7 +1981,11 @@ pub(crate) fn run_usb_plan(
                     &mut stats,
                     record,
                     fifo.as_mut(),
+                    monitor_strip.as_mut(),
+                    input,
+                    &mut raw_block,
                     &mut packet_stereo,
+                    &mut stripped_block,
                     &mut peak,
                 );
                 clear_urb(done);
@@ -1966,7 +2037,11 @@ pub(crate) fn run_usb_plan(
                             &mut stats,
                             record,
                             fifo.as_mut(),
+                            monitor_strip.as_mut(),
+                            input,
+                            &mut raw_block,
                             &mut packet_stereo,
+                            &mut stripped_block,
                             &mut peak,
                         );
                         clear_urb(extra);
@@ -2137,6 +2212,12 @@ pub(crate) fn run_usb_plan(
         setinterface,
         sched,
         peak,
+        monitor_channel: input,
+        monitor_master: config
+            .plan
+            .as_ref()
+            .map(|plan| plan.master_label())
+            .unwrap_or_default(),
     })
 }
 
@@ -2221,6 +2302,8 @@ fn run_usb_take(config: UsbConfig, stop: Arc<AtomicBool>) -> Result<UsbReport, S
         dropped_ring: io.dropped_ring,
         dropped_disk: drained.dropped,
         peak: io.peak,
+        monitor_channel: io.monitor_channel,
+        monitor_master: io.monitor_master,
         plan: plan_label,
         take,
     })
@@ -3736,6 +3819,8 @@ mod tests {
             dropped_ring: 0,
             dropped_disk: 0,
             peak: 0.31,
+            monitor_channel: 1,
+            monitor_master: "master_limiter".to_string(),
             plan: "tone+delay".to_string(),
             take: "/data/a\"b\\c.wav".to_string(),
         };

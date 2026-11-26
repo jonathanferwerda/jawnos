@@ -1,4 +1,4 @@
-# tests-for: engine/src/usb_device.rs engine/src/lib.rs engine/src/oboe_device.rs engine/src/control.rs
+# tests-for: engine/src/usb_device.rs engine/src/lib.rs engine/src/oboe_device.rs engine/src/control.rs engine/src/plan.rs engine/src/listen.rs
 # covers:    the direct-USB (usbfs) backend: the kernel structs and ioctl numbers
 #            match arm64, the pure monitor/histogram/report helpers and their Rust
 #            unit tests run on a host with no phone, the shallow OUT depth and its
@@ -13,7 +13,8 @@
 #            the SET_CUR/GET_CUR playback-rate sequence (endpoint recipient, an
 #            interface fallback, and no success without a readback), the 48 -> 32
 #            monitor resample when the endpoint refuses 48 kHz while the capture
-#            stays at 48 kHz, the
+#            stays at 48 kHz, the take plan's input channel and master rack, the
+#            monitor running the take's own strip and `Mixer::run_master`, the
 #            C ABI `jawn_audio_start_usb` is additive, the take owns one
 #            process-wide control slot shared with the Oboe take, and the driver
 #            leaks (never frees) an URB the kernel still owns and never closes

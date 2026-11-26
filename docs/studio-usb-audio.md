@@ -10,8 +10,10 @@ frames (44.1 kHz) still leaves the monitor off and records why. The 32 kHz
 monitor works: four takes on the tablet, all audible, with the resample in place
 (Sec. 5.1). **8 ms is clean when the fifo does not trim** (one take: 0 drops);
 the same preset trimmed 1,336 frames on another and crackled. 4/2 ms crackle
-more. `SCHED_FIFO` is still EPERM, and the next tuning is the OUT shape at the
-same runway (Sec. 8).
+more. The monitor now runs the take's own strip and the song's master rack
+(Sec. 3.1), so a guitar on channel 1 is heard through its pedals. `SCHED_FIFO`
+is still EPERM, and the next tuning is the OUT shape at the same runway
+(Sec. 8).
 
 ## 1. Why a direct path
 
@@ -109,13 +111,19 @@ is unaffected.
 - Kernel structs are `#[repr(C)]` with compile-time size assertions; the `_IOC`
   numbers are derived and tested; `USBDEVFS_URB_TYPE_ISO` is 0, not 1.
 - Capture: 4 URBs × 8 packets by default, `ISO_ASAP`, resubmit; 16-bit LE stereo
-  is decoded into the same duplicated-mono record ring the Oboe take uses, so
-  the strip, `DiskWriter` and reports are unchanged.
-- Monitor: one FIFO on the USB thread between IN decode and OUT fill, primed to
-  the output runway and trimmed at a high water; every trim is counted. At least
-  two OUT URBs stay in flight. When the endpoint runs below 48 kHz, a linear
-  resampler converts each OUT packet (48 -> 32 at the UM2's rate) while the FIFO
-  stays in 48 kHz frames.
+  is decoded into both channels, and the take's plan chooses the one the record
+  ring carries (`channel` 0 = left/mic, 1 = right/instrument, default 0). The
+  ring is duplicated mono, so the strip, `DiskWriter` and reports are unchanged.
+- Monitor: the plan's strip, then the song's master rack, then one FIFO on the
+  USB thread between IN decode and OUT fill, primed to the output runway and
+  trimmed at a high water; every trim is counted. The strip is
+  `listen::ListenStrip::from_plan`, so it runs the same `Channel` (trim, pedals,
+  pan) the take records and `Mixer::run_master` for the rack — a listener hears
+  what the take belongs to, not a second, dry path. The WAV still carries only
+  the channel strip; the rack runs once at mixdown. At least two OUT URBs stay
+  in flight. When the endpoint runs below 48 kHz, a linear resampler converts
+  each OUT packet (48 -> 32 at the UM2's rate) while the FIFO stays at 48 kHz
+  frames.
 - Safety: every in-flight URB is `DISCARDURB`ed and reaped before its buffer is
   freed; an URB the kernel still owns after the bounded reap is deliberately
   leaked; the fd is owned by Java and is never closed or freed here.
@@ -143,8 +151,31 @@ char *jawn_audio_roundtrip_usb(int fd,
 `monitor_fill_max_ms`, `monitor_fill_avg_ms`, `fifo_capacity_ms`,
 `high_water_ms`, `out_rate` (the monitor's device rate; 32000 means the packets
 are resampled), `rate_set` (target, the `SET_CUR` return and errno, which
-recipient accepted it, and `verified`), `monitor_off`, and the existing capture
+recipient accepted it, and `verified`), `monitor_off`, `monitor_channel` and
+`monitor_master` (what the live path actually ran), and the existing capture
 counters.
+
+### 3.1 The plan a take and its monitor share
+
+The plan is one JSON object, read by `engine/src/plan.rs`. It is additive: a
+plan written before these keys parses exactly as it did.
+
+| key | meaning |
+| --- | --- |
+| `channel` | `0` (left/mic) or `1` (right/instrument); the input the take records and the monitor listens to. Default `0`. |
+| `gain`, `pan` | the strip's trim and placement. |
+| `<insert>` / `inserts` | the track pedals, in key order (`fuzz`, `delay`, …). |
+| `master` | the master rack: an array of names (`["master_comp","master_limiter"]`) or an object carrying each one's knobs. A bare `master_*` key is also the rack. |
+
+```json
+{"channel":1,"gain":1.0,"pan":0.0,
+ "fuzz":{"gain":0.6,"tone":0.5,"level":0.8},
+ "master":{"master_comp":{"thresh":-18},"master_limiter":{"ceiling":-1}}}
+```
+
+The rack is the house's fixed five (`mixer::MASTER_ORDER`) whatever order the
+plan names, and a track pedal named in `master` is refused with the list the
+rack does hold.
 
 ## 4. The app
 
@@ -161,6 +192,11 @@ The Studio panel puts **USB take (direct)** first, with a device line and
 Refresh, a `Monitor buffer (ms)` select (8/4/2), the result line, and the USB
 probe (which now also runs the cable round trip). The final report is written to
 `/sdcard/Download/jawnos-usb-take-<stamp>.json` with the WAV path and counters.
+
+Its **Take through** select still offers only `raw` and the tone+delay fixture,
+so today it sends a plan with no `channel` and no `master`: the engine reads the
+mic and the monitor is dry. Sending `channel` (mic/guitar) and the Studio
+master rack in that plan is the next app change (Sec. 8).
 
 ## 5. Measurements (tablet, 2026-11-26)
 
@@ -204,7 +240,8 @@ over its high water and trimmed. `dropped_out` is the audible quantity here;
 fill sits at the high water (prime + one IN burst) in every preset, so an 8 ms
 IN burst can arrive before the 4 ms OUT refill drains. More, smaller OUT URBs at
 the same runway (4×2 or 8×1) are the next thing to try; the engine's depth ABI
-already accepts them, only the app's preset mapping needs to ask.
+already accepts them. App 1371 asks for 8 ms as 8×2 IN / 4×2 OUT, and that is
+the setting the guitar milestone measures.
 
 ## 6. The pacing lessons
 
@@ -238,27 +275,29 @@ feedback-aware output path; the current backend assumes full-speed 1 ms frames.
 
 ## 8. Next
 
-1. **Monitor at 32 kHz**: answered (Sec. 5.1). The resample is in service and 8
-   ms was clean when the fifo did not trim. Re-run the cable round trip when the
-   OUT shape below is chosen, so the score is measured against the final
-   monitor.
-2. **OUT shape at 8 ms**: 4×2 or 8×1 OUT with the same 8×2 input runway, so the
-   fifo drains more often and a capture burst is less likely to trim. The engine
-   accepts it today through `jawn_audio_set_usb_depth`; the app's monitor-preset
-   mapping is the change.
-3. A per-device latency preset in the Studio configuration (Safe 16 / Balanced 8
-   / Low 4 / Ultra 2), storing the measured floor and the last take's health; Auto
-   picks the smallest preset that ran clean.
-4. Playback of a file into the UM2.
-5. A high-speed UAC2 interface for the sub-3 ms target.
+1. **The app sends the channel and the rack.** The take panel's `raw`/fixture
+   plan needs a channel pick (mic / guitar, i.e. 0 / 1) and the song's master
+   rack, so the live monitor runs them (Sec. 3.1). Then the milestone test: the
+   guitar on channel 1, a couple of pedals, the rack on, at the 8 ms preset
+   (IN 8×2 / OUT 4×2), with the take recording at the same time.
+2. **The backend picker** in the Studio configuration, in the row that lists
+   ALSA / PipeWire / JACK: Oboe vs. Direct (USB) now, populated per attached
+   device, with ASIO (asio4all / the DAW's ASIO) the Windows entry later.
+3. A per-device latency preset (Safe 16 / Balanced 8 / Low 4 / Ultra 2),
+   storing the measured floor and the last take's health; Auto picks the
+   smallest preset that ran clean.
+4. Resample the probe's chirp, so its score is comparable at the 32 kHz
+   endpoint (Sec. 5).
+5. Playback of a file into the UM2.
+6. A high-speed UAC2 interface for the sub-3 ms target.
 
 ## 9. Reproduce
 
 - App 1370; patch cable OUT -> IN and tap **USB probe** for `usb_roundtrip`; run
   the USB take at monitor buffer 8/4/2.
 - Pull `/sdcard/Download/jawnos-usb-take-*.json` and read `out_lag_ms`,
-  `dropped_out`, `underruns_out`, `monitor_fill_*`, `out_rate`, `rate_set` and
-  `monitor_off`.
+  `dropped_out`, `underruns_out`, `monitor_fill_*`, `out_rate`, `rate_set`,
+  `monitor_off`, `monitor_channel` and `monitor_master`.
 - The probe's `usb_iso` and `usb_roundtrip` live in
   `/sdcard/Download/jawnos-usb-probe-*.json`; `usb_roundtrip` now runs the same
   rate sequence before the chirp and reports its own `rate_set`.

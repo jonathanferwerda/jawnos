@@ -56,15 +56,23 @@ impl PlanInsert {
     }
 }
 
-/// One Channel's plan: the strip's own two knobs and its inserts in order.
+/// One Channel's plan: the strip's own two knobs, the input it reads, its
+/// inserts in order, and the song's master rack after them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChannelPlan {
+    /// The device input this strip reads: `0` is the left/mic channel and `1`
+    /// the right/instrument channel of the engine's stereo capture. A plan that
+    /// names no `channel` reads 0, exactly as every plan did before the field.
+    pub input: usize,
     /// Clamped to [`Channel::MAX_GAIN`] when read.
     pub gain: f32,
     /// Clamped to -1..=1. It is carried for the report and for a future stereo
     /// path; a mono take has no second channel to place it in.
     pub pan: f32,
     pub inserts: Vec<PlanInsert>,
+    /// The master rack, after the channel strip and its pan. Empty is no rack,
+    /// which is what every plan before the field described.
+    pub master: Vec<PlanInsert>,
     /// The sidecar's label, when the plan named one.
     pub name: Option<String>,
 }
@@ -83,6 +91,16 @@ impl ChannelPlan {
                 .collect::<Vec<&str>>()
                 .join("+"),
         }
+    }
+
+    /// The master rack's names in chain order, e.g. `master_comp+master_limiter`.
+    /// Empty when the plan carries no master inserts.
+    pub fn master_label(&self) -> String {
+        self.master
+            .iter()
+            .map(|insert| insert.kind.master_prefix().unwrap_or(insert.kind.name()))
+            .collect::<Vec<&str>>()
+            .join("+")
     }
 
     /// Build the channel this plan describes. Allocation happens here, on the
@@ -110,19 +128,24 @@ impl ChannelPlan {
 /// reuses. Built on the setup thread ([`Strip::new`]) so `prepare` allocates
 /// once; [`Strip::process`] then runs a captured block with no allocation.
 ///
-/// The ring carries duplicated mono. Without a plan this writes the left
-/// sample unchanged — the raw path. With a plan it runs the channel's trim and
-/// inserts in place and still writes one channel: a mono WAV stays mono, so the
-/// plan's `pan` is carried and reported but has no second channel to place it
-/// in.
+/// The ring carries both captured channels. Without a plan this writes the
+/// left sample unchanged — the raw path. With a plan it reads the plan's
+/// `channel`, runs the channel's trim and inserts in place and still writes one
+/// channel: a mono WAV stays mono, so the plan's `pan` is carried and reported
+/// but has no second channel to place it in. The master rack is not part of the
+/// WAV: a take is one channel of the song and the rack runs once at mixdown.
 pub struct Strip {
     channel: Option<Channel>,
+    /// The frame sample this strip reads: the plan's `channel`. A plan that
+    /// named none reads 0, exactly as the strip always did.
+    input: usize,
     left: Vec<f32>,
 }
 
 impl Strip {
     pub fn new(plan: Option<ChannelPlan>, rate: u32, period: usize) -> Self {
         let period = period.max(1);
+        let input = plan.as_ref().map_or(0, |plan| plan.input);
         let channel = plan.map(|plan| {
             let mut channel = plan.channel();
             channel.prepare(rate, period);
@@ -130,6 +153,7 @@ impl Strip {
         });
         Strip {
             channel,
+            input,
             left: vec![0.0f32; period],
         }
     }
@@ -144,7 +168,7 @@ impl Strip {
     pub fn process(&mut self, stereo: &[f32], mono: &mut [i16], got: usize) {
         let got = got.min(self.left.len()).min(mono.len());
         for (slot, frame) in self.left.iter_mut().zip(stereo.chunks_exact(2)).take(got) {
-            *slot = frame[0];
+            *slot = frame.get(self.input).copied().unwrap_or(frame[0]);
         }
         if let Some(channel) = self.channel.as_mut() {
             // `got` never exceeds the prepared period (the ring pop is sized to
@@ -182,20 +206,67 @@ pub fn parse_plan(text: Option<&str>) -> Result<Option<ChannelPlan>, String> {
 }
 
 fn parse_object(fields: Vec<(String, Json)>) -> Result<ChannelPlan, String> {
+    let mut input = 0usize;
     let mut gain = 1.0f32;
     let mut pan = 0.0f32;
     let mut name = None;
     let mut order: Vec<String> = Vec::new();
     let mut knobs: Vec<(String, Vec<(String, f32)>)> = Vec::new();
+    // The master rack is a second chain, not a track insert: its names and
+    // knobs are kept apart from the strip's and ordered by the house contract.
+    let mut master_order: Vec<InsertKind> = Vec::new();
+    let mut master_knobs: Vec<(InsertKind, Vec<(String, f32)>)> = Vec::new();
 
     // First pass: the chain order, the strip's knobs, and each insert's knobs.
     for (key, value) in fields {
         match key.as_str() {
+            "channel" => {
+                let index = number(&key, &value)?;
+                if index.fract() != 0.0 || !(0.0..=1.0).contains(&index) {
+                    return Err(
+                        "\"channel\" must be 0 (left/mic) or 1 (right/instrument)".to_string()
+                    );
+                }
+                input = index as usize;
+            }
             "gain" => gain = Channel::clamp_gain(number(&key, &value)? as f32),
             "pan" => pan = Channel::clamp_pan(number(&key, &value)? as f32),
             "name" => match value {
                 Json::Str(text) => name = Some(text),
                 _ => return Err("\"name\" must be a string".to_string()),
+            },
+            "master" => match value {
+                Json::Array(items) => {
+                    for item in items {
+                        let word = match item {
+                            Json::Str(word) => word,
+                            _ => {
+                                return Err(
+                                    "\"master\" must hold master insert names".to_string()
+                                )
+                            }
+                        };
+                        let kind = master_kind(&word)?;
+                        if !master_order.contains(&kind) {
+                            master_order.push(kind);
+                        }
+                    }
+                }
+                Json::Object(object) => {
+                    for (word, values) in object {
+                        let kind = master_kind(&word)?;
+                        if !master_order.contains(&kind) {
+                            master_order.push(kind);
+                        }
+                        master_knobs.push((kind, knob_object(kind, values)?));
+                    }
+                }
+                Json::Null => {}
+                _ => {
+                    return Err(
+                        "\"master\" must be an array of names or an object of them".to_string()
+                    )
+                }
             },
             "inserts" => match value {
                 Json::Array(items) => {
@@ -211,6 +282,14 @@ fn parse_object(fields: Vec<(String, Json)>) -> Result<ChannelPlan, String> {
                 }
                 _ => return Err("\"inserts\" must be an array of insert names".to_string()),
             },
+            // A bare `master_comp` key is the rack's insert, not a track pedal.
+            _ if key.starts_with("master_") => {
+                let kind = master_kind(&key)?;
+                if !master_order.contains(&kind) {
+                    master_order.push(kind);
+                }
+                master_knobs.push((kind, knob_object(kind, value)?));
+            }
             _ => {
                 let kind = InsertKind::parse(&key)
                     .ok_or_else(|| format!("no such insert: {key}"))?;
@@ -232,12 +311,50 @@ fn parse_object(fields: Vec<(String, Json)>) -> Result<ChannelPlan, String> {
         }
         inserts.push(insert);
     }
+    // The rack is the house's fixed chain whatever order the plan named; a slot
+    // the plan left out is simply not in it (mixer::MASTER_ORDER).
+    master_order.sort_by_key(|kind| master_rank(*kind));
+    let mut master = Vec::with_capacity(master_order.len());
+    for kind in master_order {
+        let mut insert = PlanInsert::new(kind);
+        if let Some((_, values)) = master_knobs.iter().find(|(slot, _)| *slot == kind) {
+            insert.knobs = values.clone();
+        }
+        master.push(insert);
+    }
     Ok(ChannelPlan {
+        input,
         gain,
         pan,
         inserts,
+        master,
         name,
     })
+}
+
+/// One master insert name, refused when the effect is not one of the rack's
+/// five. A track pedal in `master` would sit in the chain but answer no knob, so
+/// it is named back to the caller instead of silently ignored.
+fn master_kind(word: &str) -> Result<InsertKind, String> {
+    let kind = InsertKind::parse(word).ok_or_else(|| format!("no such insert: {word}"))?;
+    if kind.master_prefix().is_some() {
+        return Ok(kind);
+    }
+    let rack = crate::mixer::MASTER_ORDER
+        .iter()
+        .filter_map(|kind| kind.master_prefix())
+        .collect::<Vec<&str>>()
+        .join(", ");
+    Err(format!(
+        "{word} is not a master insert (the rack holds: {rack})"
+    ))
+}
+
+fn master_rank(kind: InsertKind) -> usize {
+    crate::mixer::MASTER_ORDER
+        .iter()
+        .position(|slot| *slot == kind)
+        .unwrap_or(usize::MAX)
 }
 
 /// One insert object's knobs, validated against the effect's own control list.
@@ -622,7 +739,7 @@ mod tests {
     #[test]
     fn the_fixture_strip_runs_the_channel_after_capture() {
         // The callback's stereo ring carries duplicated mono; the strip reads
-        // the left sample, runs the tone+delay fixture, and writes mono. The
+        // the plan's channel, runs the tone+delay fixture, and writes mono. The
         // echo is at 200 ms, so a burst in the first blocks comes back 9,600
         // frames later (the DSP's own assertion lives in effect.rs).
         let plan = parse_plan(Some(FIXTURE_PLAN))
@@ -651,5 +768,52 @@ mod tests {
         assert!(dry > 0, "the burst was not written");
         assert!(echo > dry / 4, "the repeat was not written: dry {dry}, echo {echo}");
         assert!(gap < echo / 4, "the delay echoed before its time: gap {gap}, echo {echo}");
+    }
+
+    #[test]
+    fn a_plan_names_the_input_channel_and_the_strip_reads_it() {
+        let plan = parse_plan(Some(r#"{"channel":1}"#))
+            .expect("valid")
+            .expect("not raw");
+        assert_eq!(plan.input, 1);
+        let mut strip = Strip::new(Some(plan), 48_000, 8);
+        // Left is the mic, right is the instrument: the strip must take right.
+        let stereo = [0.5f32, -0.25, 0.5, -0.25];
+        let mut mono = [0i16; 8];
+        strip.process(&stereo, &mut mono, 2);
+        assert_eq!(&mono[..2], &[-8_192, -8_192]);
+    }
+
+    #[test]
+    fn a_channel_outside_the_stereo_capture_is_refused() {
+        assert!(parse_plan(Some(r#"{"channel":2}"#))
+            .unwrap_err()
+            .contains("0 (left/mic) or 1"));
+        assert!(parse_plan(Some(r#"{"channel":0.5}"#)).is_err());
+    }
+
+    #[test]
+    fn the_master_rack_is_the_house_order_whatever_the_plan_named() {
+        let plan = parse_plan(Some(r#"{"master":["master_limiter","master_comp"]}"#))
+            .expect("valid")
+            .expect("not raw");
+        assert!(plan.inserts.is_empty(), "a master insert is not a track pedal");
+        assert_eq!(plan.master.len(), 2);
+        assert_eq!(plan.master[0].kind, InsertKind::Compressor);
+        assert_eq!(plan.master[1].kind, InsertKind::Limiter);
+        assert_eq!(plan.master_label(), "master_comp+master_limiter");
+    }
+
+    #[test]
+    fn master_knobs_ride_the_rack_and_a_track_pedal_is_refused() {
+        let plan = parse_plan(Some(r#"{"master_comp":{"thresh":-20}}"#))
+            .expect("valid")
+            .expect("not raw");
+        assert_eq!(plan.master[0].kind, InsertKind::Compressor);
+        assert_eq!(plan.master[0].knobs, vec![("thresh".to_string(), -20.0)]);
+
+        let error = parse_plan(Some(r#"{"master":["tone"]}"#)).unwrap_err();
+        assert!(error.contains("tone is not a master insert"), "{error}");
+        assert!(error.contains("master_comp"), "{error}");
     }
 }
