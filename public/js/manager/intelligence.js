@@ -3,7 +3,7 @@
 // Agents, Evaluations, Providers and History. The server draws every panel and
 // every History range in the one request; this script swaps what is shown,
 // filters the evaluation rows, remembers the pill and range a person left, and
-// sends a frequency change through the app's cadence route.
+// sends a frequency or weekday change through the app's one cadence route.
 var intelligenceSectionKey = 'intelligence_section';
 var intelligenceSectionDefault = 'overview';
 var intelligenceHistoryKey = 'intelligence_history_range';
@@ -109,24 +109,25 @@ function intelligenceEvalFilter(state) {
 }
 
 // --- changing a scope's frequency -------------------------------------------
-// The cadence setting and its Minion schedule are one thing: the route calls
-// evaluation_cadence_apply and answers with what now exists, not what was
-// asked for. The weekdays ride the core settings rail; after they save, the
-// cadence is applied again so the cron is rebuilt with the new days.
+// The cadence setting, the weekdays and the Minion schedule are one thing: the
+// route saves any weekdays in the same request and calls evaluation_cadence_apply,
+// then answers with what now exists, not what was asked for.
 function intelligenceNote(text) {
 	var note = $('#intelligence .intelligence_note').first();
 	if (!note.length) { return; }
 	note.text(text || '');
 }
 
-function intelligenceCadenceSave(scope, cadence) {
+function intelligenceCadenceSave(scope, cadence, days) {
 	if (!scope) { return; }
 	intelligenceNote('');
+	var payload = { app: scope, cadence: cadence };
+	if (typeof days !== 'undefined') { payload.days = days; }
 	$.ajax({
 		url: '/manager/intelligence/cadence',
 		type: 'POST',
 		dataType: 'json',
-		data: { app: scope, cadence: cadence },
+		data: payload,
 		success: function(response) {
 			var now = (response && response.cadence) ? response.cadence : cadence;
 			var row = $('#intelligence .intelligence_cadence').filter(function() {
@@ -163,13 +164,7 @@ $(document).on('change', '#intelligence .intelligence_days', function() {
 	var nights = pick.val() || [];
 	var value = nights.length ? nights.join(',') : 'none';
 	var cadence = pick.closest('tr').find('.intelligence_cadence').val() || 'off';
-	if (typeof settingSetter !== 'function') {
-		intelligenceCadenceSave(scope, cadence);
-		return;
-	}
-	Promise.resolve(settingSetter({ app: scope, setting: 'nightly_evaluation_days', value: value }))
-		.then(function() { intelligenceCadenceSave(scope, cadence); },
-			function() { intelligenceNote(jawnosT('Could not save the evaluation days.')); });
+	intelligenceCadenceSave(scope, cadence, value);
 });
 
 function intelligenceRestore() {

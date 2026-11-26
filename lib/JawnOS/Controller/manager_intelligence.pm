@@ -38,7 +38,7 @@ sub action_92001 {
 		recent      => $recent,
 	};
 
-	my $content = $c->render_to_string(template => 'apps/intelligence', data => $data);
+	my $content = $c->render_to_string(template => 'apps/intelligence', intel => $data);
 	my $contents = &window_maker({
 		user_agent => $c->param('user_agent'),
 		app => 'intelligence',
@@ -51,16 +51,22 @@ sub action_92001 {
 # POST /manager/intelligence/cadence
 #
 # Change one scope's frequency from the Evaluations table. The setting is the
-# wish and the schedule is the mechanism, so this calls evaluation_cadence_apply
-# (the same arranger the app's own controls use) and answers with what now
-# exists rather than what was asked for. The weekdays are a plain setting and
-# ride the core settings rail; the client re-applies the cadence after saving
-# them so the cron is rebuilt with the new days.
+# wish and the schedule is the mechanism, so this saves the weekdays (when the
+# request carries them), applies the cadence and answers with what now exists
+# rather than what was asked for. One request means a weekday change cannot be
+# saved without the cron being rebuilt from it.
 sub action_92002 {
 	my $c = shift;
 	my $app = &subs::unformat_name($c->param('app')) || '__president';
 	my $cadence = $c->param('cadence');
 	$cadence = 'off' unless defined $cadence && length $cadence;
+	my $days = $c->param('days');
+	if (defined $days) {
+		my %seen;
+		my @keep = grep { !$seen{$_}++ } grep { /^[0-6]$/ } split /,/, $days;
+		my $value = @keep ? join(',', @keep) : 'none';
+		eval { &subs::setting_setter({ app => $app, setting => 'nightly_evaluation_days', value => $value }) };
+	}
 	my $schedule = &subs::evaluation_cadence_apply($app, $cadence);
 	$c->render(json => {
 		ok       => 'yes',

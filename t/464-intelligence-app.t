@@ -228,11 +228,16 @@ subs::preload($_) for qw(
 	like($controller, qr/sub\s+action_92001\b/, 'the controller defines action_92001');
 	like($controller, qr/sub\s+action_92002\b/, 'the controller defines the cadence action');
 	like($controller, qr/evaluation_cadence_apply\(\$app, \$cadence\)/, 'the cadence action uses the schedule arranger');
+	like($controller, qr/nightly_evaluation_days/, 'the cadence action saves the weekdays');
+	like($controller, qr/intel\s*=>\s*\$data/, 'the panels use a non-reserved stash name');
+	unlike($controller, qr/render_to_string\([^;]*data\s*=>\s*\$data/s,
+		'the panels are not passed as Mojo response data');
 	like($controller, qr/app\s*=>\s*'intelligence'/, 'the controller opens the intelligence window');
 	my $names = read_file("$FindBin::Bin/../lib/JawnOS/Routes.pm");
 	like($names, qr/\bmanager_intelligence\b/, 'the route module is registered in @NAMES');
 
 	my $tpl = read_file("$FindBin::Bin/../templates/apps/intelligence.html.ep");
+	like($tpl, qr/ref \$intel eq 'HASH'/, 'the template reads the intel stash');
 	like($tpl, qr/display:flex; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; white-space:nowrap/,
 		'the pill row scrolls sideways and never wraps');
 	like($tpl, qr/border-radius:999px/, 'the pills are rounded');
@@ -251,7 +256,8 @@ subs::preload($_) for qw(
 	like($js, qr/localStorage\.setItem\(intelligenceSectionKey/, 'the section pill is remembered');
 	like($js, qr/localStorage\.setItem\(intelligenceHistoryKey/, 'the history range is remembered');
 	like($js, qr/url:\s*'\/manager\/intelligence\/cadence'/, 'the cadence picker posts to the app route');
-	like($js, qr/setting:\s*'nightly_evaluation_days'/, 'the weekday picker saves the days setting');
+	like($js, qr/payload\.days/, 'the weekday picker sends days in the cadence request');
+	unlike($js, qr/settingSetter/, 'the weekdays are not a second request');
 
 	my $menu = read_file("$FindBin::Bin/../templates/start_menu/start_menu.html.ep");
 	like($menu, qr/id="intelligence_toggle"/, 'the start menu carries the intelligence icon');

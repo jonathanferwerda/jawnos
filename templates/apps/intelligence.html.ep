@@ -1,4 +1,4 @@
-<% my $d = (ref $data eq 'HASH') ? $data : {}; %>
+<% my $d = (ref $intel eq 'HASH') ? $intel : {}; %>
 <% my $num = sub { my ($n) = @_; $n = 0 unless defined $n && $n =~ /^-?\d+(?:\.\d+)?$/; my $s = sprintf('%.0f', $n); $s =~ s/(\d)(?=(\d{3})+(?!\d))/$1,/g; return $s; }; %>
 <% my $pct = sub { my ($n) = @_; $n = 0 unless defined $n && $n =~ /^-?\d+(?:\.\d+)?$/; return sprintf('%.1f', $n); }; %>
 <% my $money = sub { my ($v, $currency) = @_; return '' unless defined $v && $v =~ /^-?\d+(?:\.\d+)?$/; return sprintf('%.2f %s', $v, defined $currency ? $currency : ''); }; %>
