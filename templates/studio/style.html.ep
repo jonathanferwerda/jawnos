@@ -580,14 +580,14 @@
 		font-size: 14px;
 	}
 	#studio_time_display {
-		font-size: 30px;
+		font-size: 24px;
 	}
 	#studio_time_duration {
-		font-size: 14px;
+		font-size: 12px;
 		opacity: .65;
 	}
 	#studio_time_beats {
-		font-size: 12px;
+		font-size: 11px;
 		opacity: .8;
 	}
 	#studio_track_container {
@@ -2340,6 +2340,12 @@
 		outline: 2px solid var(--accent-line, var(--accent));
 		outline-offset: 1px;
 	}
+	/* where the arrow keys are: dashed, so it is never mistaken for a beat or
+	   for the column the scheduler is sounding */
+	.studio_drums_step.studio_drums_cursor {
+		outline: 2px dashed var(--accent-line, var(--accent));
+		outline-offset: 1px;
+	}
 	.studio_drums_key_state {
 		font-size: 11px;
 		color: var(--ink-muted, var(--ink));
@@ -2387,11 +2393,11 @@
 			flex-basis: 56px !important;
 		}
 		#studio_time_display {
-			font-size: 24px;
+			font-size: 20px;
 		}
 		#studio_time_duration,
 		.studio_transport_sep {
-			font-size: 12px;
+			font-size: 11px;
 		}
 	}
 	/* The transport's controls are larger, and the jog wheel is twice their size. */

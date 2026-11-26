@@ -484,8 +484,8 @@ like($studio_js, qr/engine_path && studioEngineListening/,
 	'a confirmed engine Listen keeps the browser tap off');
 like($studio_js, qr/var app_monitor = ch_app && on && !!input;/,
 	'Monitor on an app swaps it to the In chain');
-like($studio_js, qr/var live = \(ch_app && !app_monitor\) \|\| \(on && !ch_app && !!input && !listening\);/,
-	'an app is live while patched; a device only while Monitor is on');
+like($studio_js, qr/var live = \(!ch_drums && ch_app && !app_monitor\) \|\| \(on && !ch_app && !!input && !listening\);/,
+	'an app is live while patched, the kit and a device only while Monitor is on');
 like($studio_js, qr/c\.live\.gain\.value = live \? 1 : 0;/,
 	'the live path is the channel output');
 like($studio_js, qr/c\.monGain\.gain\.value = app_monitor \? 1 : 0;/,

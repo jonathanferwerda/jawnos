@@ -329,7 +329,15 @@ sub sync_rows_pull {
 							# Every band was walked. Fewer rows than the map promised is a
 							# short read (a band changed under us), not a reconciled table:
 							# name it so the pull retries instead of reporting success.
-							$fetch_error = 'short band read: ' . $fetched . ' of ' . $expected if $expected && $fetched < $expected;
+							# A carry-only stream (routers, window_events, the where
+							# tables, paired_devices...) is written while it is read, so
+							# its map is a picture that moves under the walk. Fewer rows
+							# than the map named is the stream changing, not a lost read:
+							# the next pull carries it again. Failing here made every
+							# laptop pull stop on "routers: short read" and no table
+							# behind it ever merged.
+							$fetch_error = 'short band read: ' . $fetched . ' of ' . $expected
+								if $expected && $fetched < $expected && !$carry{$table};
 							return undef;
 						}
 						($cur_from, $cur_to) = &subs::sync_bucket_range($bucket_maps->{$table}->{'band'}, $b);

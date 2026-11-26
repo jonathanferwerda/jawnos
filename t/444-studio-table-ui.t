@@ -132,9 +132,9 @@ like($markup, qr/<span class="studio_transport_clock"><span id="studio_time_disp
 	'the markup starts at m:ss.ffff with the beats line underneath');
 like($style, qr/\.studio_transport_time\s*\{[^}]*flex-direction:\s*column[^}]*align-items:\s*flex-end/s,
 	'the clock stacks the beats under the time');
-like($style, qr/#studio_time_display\s*\{\s*font-size:\s*30px/m,
+like($style, qr/#studio_time_display\s*\{\s*font-size:\s*24px/m,
 	'the time is the big read');
-like($style, qr/#studio_time_beats\s*\{\s*font-size:\s*12px/m,
+like($style, qr/#studio_time_beats\s*\{\s*font-size:\s*11px/m,
 	'and the beats line is smaller');
 like($layout, qr/\$\('#studio_time_duration'\)\.html\(studioClockLabel\(mixer\['time'\]\['duration'\]\)\)/,
 	'the remote mirror writes the same duration format');

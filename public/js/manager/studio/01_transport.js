@@ -603,12 +603,18 @@ function studioEngineClipPlan() {
 function studioEngineAppRouting(app) {
 	var routing = [];
 	var anySolo = studioAnySolo();
+	// The kit is an instrument that sounds only through the channel being
+	// monitored; routing it at unity without that was the phantom kit the
+	// browser used to play. The synth keeps its live-while-patched rule.
+	var drums_monitor = (app === 'drums' && typeof studioMonitoredChannel === 'function')
+		? studioMonitoredChannel() : null;
 	$.each(mixer, function (ch, m) {
 		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
 		var plug = studioChannelInput(ch);
 		if (!plug || plug.app !== app) { return; }
 		var silent = m.mute || (anySolo && !m.solo);
 		var gain = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()) * (silent ? 0 : 1);
+		if (app === 'drums' && (drums_monitor === null || String(drums_monitor) !== String(ch))) { gain = 0; }
 		var pan = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
 		// Only enabled inserts travel; the Stereo Widener is browser-only, so it
 		// is left out rather than refusing the app's voices.
@@ -789,6 +795,13 @@ function studioEngineDrumPlan() {
 	if (typeof studioDrumsEngineChosen === 'function' && !studioDrumsEngineChosen()) {
 		return { kit: studioDrums.kit, length: 1, loop: 0, steps: {}, routing: studioEngineAppRouting('drums') };
 	}
+	var routing = studioEngineAppRouting('drums');
+	// An empty routing means "unpatched" to the engine, which plays the app at
+	// unity, centre and dry. With no channel carrying the kit there is nothing
+	// to hear, so hand it a silent chart instead of a phantom kit.
+	if (!routing.length) {
+		return { kit: studioDrums.kit, length: 1, loop: 0, steps: {}, routing: routing };
+	}
 	var length = studioDrums.lengthSteps || 16;
 	var steps = {};
 	studioDrumsVoices().forEach(function (v) {
@@ -800,7 +813,7 @@ function studioEngineDrumPlan() {
 		length: length,
 		loop: studioDrums.loop ? 1 : 0,
 		steps: steps,
-		routing: studioEngineAppRouting('drums')
+		routing: routing
 	};
 	// A named player is the expression layer. Machine leaves both fields off,
 	// so the engine plays the grid exactly as written; a chart without them is

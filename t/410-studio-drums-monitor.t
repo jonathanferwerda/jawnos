@@ -1,10 +1,12 @@
 # tests-for: public/js/manager/studio/11_drums.js public/js/manager/studio.js public/js/manager/studio/05_inputs.js public/js/manager/studio/01_transport.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js perl/help/topics_apps.pl
 # covers:    Every live input joins the channel's output path (fader, Out
 #            pedals, output cord) while the In chain stays the recording path.
-#            The drum and synth buses mute their own direct output while a
-#            channel carries them; Music mutes its own player; every app input
-#            builds its graph when patched and again on load; Monitor swaps an
-#            app to the In chain and gates a device's live path.
+#            The drum kit is an instrument, not a player: its direct output is
+#            never heard, and the channel that carries it is live only while
+#            that channel is monitored; the synth stays live while patched.
+#            Music mutes its own player; every app input builds its graph when
+#            patched and again on load; Monitor swaps an app to the In chain and
+#            gates a device's live path.
 
 use strict;
 use warnings;
@@ -41,17 +43,17 @@ like($studio, qr/c\.source\.connect\(c\.trim\);[\s\S]{0,180}c\.source\.connect\(
 like($studio, qr/c\.live\.gain\.value = \(typeof studioInputIsApp === 'function' && studioInputIsApp\(plug\)\) \? 1 : 0;/,
 	'an app is live; a device waits for Monitor');
 
-# --- the kit is live through the channel, its dry feed muted while patched --
+# --- the kit is an instrument: no dry feed, live only while monitored -------
 like($drums, qr/studioDrums\.direct = ctx\.createGain\(\);/, 'the kit owns a direct gain');
 like($drums, qr/studioDrums\.out\.connect\(studioDrums\.direct\);/, 'the kit output feeds it');
 like($drums, qr/studioDrums\.direct\.connect\(studioAudio\.master\);/, 'and it reaches the master');
-like($drums, qr/function studioDrumsPatchDirect\(\)/, 'the direct feed follows whether a channel carries the kit');
-like($drums, qr/studioDrums\.direct\.gain\.value = patched \? 0 : 1;/, 'it is muted while patched, restored otherwise');
+like($drums, qr/function studioDrumsPatchDirect\(\)/, 'one helper states the direct-feed rule');
+like($drums, qr/studioDrums\.direct\.gain\.value = 0;/, 'the direct feed is never opened');
 like($studio, qr/tap\.connect\(c\.trim\);[\s\S]{0,100}tap\.connect\(c\.live\);/,
 	'the kit tap feeds the record and live paths');
-like($studio, qr/c\.live\.gain\.value = 1;/, 'the kit is live through the channel output');
+like($studio, qr/c\.live\.gain\.value = 0;/, 'the kit attaches with its live path shut');
 like($studio, qr/if \(typeof studioDrumsPatchDirect === 'function'\) \{ studioDrumsPatchDirect\(\); \}/,
-	'attaching the kit mutes its direct feed');
+	'attaching the kit keeps its direct feed shut');
 
 # --- the synth is the same shape -------------------------------------------
 like($studio, qr/function studioSynthPatchDirect\(\)/, 'the synth direct feed is managed too');
@@ -60,10 +62,18 @@ like($studio, qr/node\.connect\(ctx\.destination\)/, 'and restored when no chann
 
 # --- Monitor: apps swap to In, devices gate the live path -------------------
 like($studio, qr/var app_monitor = ch_app && on && !!input;/, 'Monitor on an app selects the In chain');
-like($studio, qr/var live = \(ch_app && !app_monitor\) \|\| \(on && !ch_app && !!input && !listening\);/,
-	'apps live while patched; devices only while monitored');
+like($studio, qr/var ch_drums = !!\(ch_app && ch_input && String\(ch_input\['app'\] \|\| ''\) === 'drums'\);/,
+	'the kit is named apart from the other apps');
+like($studio, qr/var live = \(!ch_drums && ch_app && !app_monitor\) \|\| \(on && !ch_app && !!input && !listening\);/,
+	'the kit and devices are live only while monitored; other apps while patched');
 like($studio, qr/c\.live\.gain\.value = live \? 1 : 0;/, 'the live path is the channel output');
 like($studio, qr/c\.monGain\.gain\.value = app_monitor \? 1 : 0;/, 'the In tap is only the app monitor comparison');
+like($studio, qr/if \(from_user && typeof studioEngineClipsChanged === 'function'\) \{ studioEngineClipsChanged\(\); \}/,
+	'a Monitor press re-sends the engine kit routing');
+like($transport, qr/if \(app === 'drums' && \(drums_monitor === null \|\| String\(drums_monitor\) !== String\(ch\)\)\) \{ gain = 0; \}/,
+	'the engine kit is routed only through the monitored channel');
+like($transport, qr/if \(!routing\.length\) \{[\s\S]{0,160}steps: \{\}/,
+	'an unpatched kit reaches the engine as a silent chart, never unity');
 
 # --- an engine take never monitors an unmonitored track ---------------------
 like($studio, qr/var monitor = \(typeof studioMonitoredChannel === 'function' && studioMonitoredChannel\(\) !== null\);/,
@@ -93,10 +103,11 @@ like($transport, qr/if \(typeof studioSynthPatchDirect === 'function'\) \{ studi
 	'detaching restores the synth direct feed');
 
 # --- the help topic states the rule ----------------------------------------
-like($help, qr/the kit is heard through the channel\\'s output/,
-	'help says the kit follows the channel output');
-like($help, qr/its own dry feed is muted while patched/, 'and that the dry feed is muted while patched');
-like($help, qr/Synth, Music and Marker follow the same rule/, 'help says every app input follows the rule');
-like($help, qr/press Monitor on an app to hear the In chain/, 'and that Monitor swaps to the In chain');
+like($help, qr/it is heard only while that channel is being monitored/,
+	'help says the kit is heard only while its channel is monitored');
+like($help, qr/own dry feed never reaches the master/,
+	'and that the kit has no dry feed of its own');
+like($help, qr/Synth, Music and Marker are different/, 'help separates the other apps');
+like($help, qr/Monitor swaps it to the In chain/, 'and that Monitor swaps to the In chain');
 
 done_testing();

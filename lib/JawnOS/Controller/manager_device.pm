@@ -142,17 +142,36 @@ sub action_37983 {
 	my $c = shift;
 	&app_schema_ensure();
 	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
-	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	# The challenge is the first thing an app asks for after a boot, and the
+	# database can still be opening or held by a sync write. A failed read used
+	# to die on ->hashes and answer 500, which the app cannot retry; say the
+	# house is busy instead and let the next press ask again.
+	my $rows = eval {
+		$device_uuid
+			? &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes
+			: []
+	};
+	return $c->render(json => { ok => 0, error => 'busy', retry => 1 }) if $@ || !defined $rows;
+	my $device = $rows->[0];
 	unless ($device) { return $c->render(json => { ok => 0, error => 'not paired' }); }
 	my $purpose = ($c->param('purpose') || '') eq 'enroll' ? 'enroll' : 'login';
 	my $ip = $c->tx->remote_address || '?';
 	my $now = &subs::rightNow();
-	my $recent = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'app_challenge', $ip . ':%', $now - 60000)->hash->{'n'} || 0;
+	my $recent_row = eval {
+		&subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?',
+			'app_challenge', $ip . ':%', $now - 60000)->hash
+	};
+	return $c->render(json => { ok => 0, error => 'busy', retry => 1 }) if $@ || !$recent_row;
+	my $recent = $recent_row->{'n'} || 0;
 	if ($recent >= 30) { return $c->render(json => { ok => 0, error => 'too many' }); }
 	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'app_challenge', app => '__president', server_time => $now, timestamp => $now });
 	my $nonce = &subs::random_string_creator(40);
 	&subs::db_query('delete from cache where context = ? and server_time < ?', 'app_nonce', $now - 180000);
-	&subs::db_insert('cache', { uuid => $purpose . ':' . $device_uuid . ':' . $nonce, context => 'app_nonce', app => '__president', server_time => $now, timestamp => $now });
+	# The nonce is the answer: a challenge the store did not keep would make the
+	# signed login fail with "no challenge" and look like a bad key.
+	unless (&subs::db_insert('cache', { uuid => $purpose . ':' . $device_uuid . ':' . $nonce, context => 'app_nonce', app => '__president', server_time => $now, timestamp => $now })) {
+		return $c->render(json => { ok => 0, error => 'busy', retry => 1 });
+	}
 	$c->render(json => { ok => 1, nonce => $nonce, seconds => 120 });
 }
 
@@ -161,7 +180,13 @@ sub action_38011 {
 	my $c = shift;
 	&app_schema_ensure();
 	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
-	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	my $rows = eval {
+		$device_uuid
+			? &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes
+			: []
+	};
+	return $c->render(json => { ok => 0, error => 'busy', retry => 1 }) if $@ || !defined $rows;
+	my $device = $rows->[0];
 	unless ($device) { return $c->render(json => { ok => 0, error => 'not paired' }); }
 	my ($pubkey, $kind) = &app_key_for($device);
 	return $c->render(json => { ok => 0, error => 'no app key' }) unless $pubkey;
@@ -200,10 +225,20 @@ sub action_38048 {
 	my $c = shift;
 	&app_schema_ensure();
 	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
-	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	my $rows = eval {
+		$device_uuid
+			? &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes
+			: []
+	};
+	return $c->render(json => { ok => 0, error => 'busy', retry => 1 }) if $@ || !defined $rows;
+	my $device = $rows->[0];
 	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device;
 	my ($pubkey, $kind) = &app_key_for($device);
-	my $pending = &subs::db_select('device_requests', undef, { device_uuid => $device_uuid, kind => 'app', status => 'pending' })->hashes->[0];
+	my $pending_rows = eval {
+		&subs::db_select('device_requests', undef, { device_uuid => $device_uuid, kind => 'app', status => 'pending' })->hashes
+	};
+	return $c->render(json => { ok => 0, error => 'busy', retry => 1 }) if $@ || !defined $pending_rows;
+	my $pending = $pending_rows->[0];
 	if ($pending && ($pending->{'server_time'} || 0) < &subs::rightNow() - 3600000) {
 		# Too old for a person to still be looking at it. Expire it here so the
 		# app-required page asks again instead of waiting on a dead request.
@@ -239,7 +274,10 @@ sub action_38076 {
 	my $c = shift;
 	my $pubkey = $c->param('app_pubkey') || '';
 	return $c->render(json => { ok => 0, error => 'no key' }) unless $pubkey =~ /BEGIN PUBLIC KEY/;
-	my $device = &subs::db_select('paired_devices', [ 'uuid', 'name' ], { app_pubkey => $pubkey, status => 'active' })->hash;
+	my $device = eval {
+		&subs::db_select('paired_devices', [ 'uuid', 'name' ], { app_pubkey => $pubkey, status => 'active' })->hash
+	};
+	return $c->render(json => { ok => 0, error => 'busy', retry => 1 }) if $@ || !defined $device;
 	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device && ($device->{'uuid'} || '') ne '';
 	$log->info('app identify: paired device ' . $device->{'uuid'});
 	$c->render(json => { ok => 1, uuid => $device->{'uuid'}, name => ($device->{'name'} || '') });
@@ -254,7 +292,13 @@ sub action_38088 {
 	&app_schema_ensure();
 	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
 	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
-	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	my $rows = eval {
+		$device_uuid
+			? &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes
+			: []
+	};
+	return $c->render(json => { ok => 0, error => 'busy', retry => 1 }) if $@ || !defined $rows;
+	my $device = $rows->[0];
 	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device;
 	my ($existing) = &app_key_for($device);
 	return $c->render(json => { ok => 1, already => 1 }) if $existing;
@@ -289,12 +333,14 @@ sub action_38088 {
 	my $now = &subs::rightNow();
 	my $code = &subs::device_request_code();
 	my $uuid = &subs::random_string_creator(25);
-	&subs::db_insert('device_requests', {
+	unless (&subs::db_insert('device_requests', {
 		uuid => $uuid, name => $name, pubkey => $device->{'pubkey'}, agent => substr($c->req->headers->user_agent // '', 0, 400),
 		code => $code, status => 'pending', device_uuid => $device_uuid, kind => 'app',
 		app_pubkey => $pubkey, app_kind => $kind, remote_address => ($c->tx->remote_address || ''),
 		timestamp => $now, server_time => $now,
-	});
+	})) {
+		return $c->render(json => { ok => 0, error => 'busy', retry => 1 });
+	}
 	&device_request_notify($c, $name, $code);
 	$c->render(json => { ok => 1, uuid => $uuid, code => $code });
 }

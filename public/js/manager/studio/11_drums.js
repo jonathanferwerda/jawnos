@@ -368,6 +368,9 @@ function studioDrumsRenderLength() {
 		var step = parseInt($(this).attr('data-step'), 10) || 0;
 		$(this).css('display', step < length ? '' : 'none');
 	});
+	// A shorter chart can hide the cell the arrows were on; repaint the cursor
+	// on the clamped cell so it is never left off the grid.
+	if (studioDrums.cursor) { studioDrumsCursorSet(studioDrums.cursor.voice, studioDrums.cursor.step); }
 }
 
 function studioDrumsRenderSteps(voice) {
@@ -449,13 +452,14 @@ function studioDrumsBus() {
 		studioDrums.buffers = {};
 	}
 	if (!studioDrums.out) {
-		// The kit bus is heard through the master chain when no channel is
-		// monitoring it. direct is the clean comparison: a monitored app
-		// channel mutes it so the channel input pedals are heard alone.
+		// The kit has no output of its own. It is heard only through a channel
+		// whose input is the kit and which is being monitored, so the direct
+		// path stays muted; it is kept so the bus has one shape whatever the
+		// patch is, and studioDrumsPatchDirect states the rule in one place.
 		studioDrums.out = ctx.createGain();
 		studioDrums.out.gain.value = 0.9;
 		studioDrums.direct = ctx.createGain();
-		studioDrums.direct.gain.value = 1;
+		studioDrums.direct.gain.value = 0;
 		studioDrums.out.connect(studioDrums.direct);
 		studioDrums.direct.connect(studioAudio.master);
 		studioDrums.rec = ctx.createGain();
@@ -490,17 +494,13 @@ function studioDrumsRouteSelection() {
 	studioDrums.routedDest = c.recDest;
 }
 
-// The kit's own dry feed is off while any channel has the kit as its input:
-// that channel's live path (fader, Out chain, output cord) is the kit's sound.
-// With no drum input the direct feed returns.
+// The kit is an instrument, not a player: it never opens a speaker by itself.
+// Its sound is the channel it is patched into, heard only while that channel is
+// the one being monitored, so the direct feed to the master stays shut. The
+// function keeps every attach and detach on the same answer.
 function studioDrumsPatchDirect() {
 	if (!studioDrums || !studioDrums.direct) { return; }
-	var patched = false;
-	$.each(studioAudio.channels || {}, function (ch) {
-		var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
-		if (plug && String(plug['app'] || '') === 'drums') { patched = true; }
-	});
-	studioDrums.direct.gain.value = patched ? 0 : 1;
+	studioDrums.direct.gain.value = 0;
 }
 
 function studioDrumsBuild(ctx) {
@@ -1130,7 +1130,12 @@ $(document).on('click', '.studio_drums_key', function (e) {
 
 $(document).on('click', '.studio_drums_voice', function (e) {
 	e.preventDefault();
-	studioDrumsTrigger($(this).attr('data-voice'), 80, false);
+	var voice = $(this).attr('data-voice');
+	var cursor = studioDrumsCursor();
+	studioDrumsTrigger(voice, 80, false);
+	// The row button is the tone's own name; land the cursor on it so the
+	// arrows continue through that tone's beats.
+	if (cursor) { studioDrumsCursorSet(voice, cursor.step); }
 });
 
 $(document).on('click', '.studio_drums_lamp', function (e) {
@@ -1145,6 +1150,9 @@ $(document).on('click', '.studio_drums_step', function (e) {
 	e.preventDefault();
 	var voice = $(this).attr('data-voice');
 	var step = parseInt($(this).attr('data-step'), 10) || 0;
+	// A click is also where the arrow keys start from, so the grid and the
+	// keyboard agree about the cell the person means.
+	studioDrumsCursorSet(voice, step);
 	if (!studioDrums.steps[voice]) { return; }
 	var current = studioDrums.steps[voice][step] || 0;
 	// A plain click places a beat at 70; Shift places a full accent at 100.
@@ -1589,6 +1597,104 @@ function studioDrumsLoopTake(ch, at, buffer) {
 	return take;
 }
 
+// ---- the step grid's arrow keys -------------------------------------------
+// The grid takes the arrow keys while the drums panel is the surface in use:
+// Left and Right walk the steps, Up and Down change the voice, and Ctrl with
+// Up or Down tunes the beat under the cursor. The cursor is a place on the
+// grid, not a selection: it never changes what a take or a clip means.
+
+function studioDrumsGridVoices() {
+	return studioDrumsVoices().map(function (v) { return v.name; });
+}
+
+// The cursor's own cell, clamped to the chart and the voices that exist now.
+function studioDrumsCursor() {
+	var voices = studioDrumsGridVoices();
+	if (!voices.length) { return null; }
+	var length = studioDrums.lengthSteps || 16;
+	if (!studioDrums.cursor || typeof studioDrums.cursor !== 'object') {
+		studioDrums.cursor = { voice: voices[0], step: 0 };
+	}
+	var vi = voices.indexOf(studioDrums.cursor.voice);
+	if (vi < 0) { vi = 0; }
+	var step = parseInt(studioDrums.cursor.step, 10) || 0;
+	step = Math.max(0, Math.min(length - 1, step));
+	studioDrums.cursor = { voice: voices[vi], step: step };
+	return { voice: voices[vi], step: step, voices: voices, length: length, index: vi };
+}
+
+// Paint the one cursor cell, and bring it into view in the panel's scroll box.
+function studioDrumsCursorSet(voice, step) {
+	var voices = studioDrumsGridVoices();
+	if (!voices.length) { return null; }
+	var length = studioDrums.lengthSteps || 16;
+	var vi = Math.max(0, voices.indexOf(voice));
+	studioDrums.cursor = {
+		voice: voices[vi],
+		step: Math.max(0, Math.min(length - 1, parseInt(step, 10) || 0))
+	};
+	var cell = $('#studio_drums .studio_drums_step[data-voice="' + studioDrums.cursor.voice + '"][data-step="' + studioDrums.cursor.step + '"]');
+	$('#studio_drums .studio_drums_step').removeClass('studio_drums_cursor').removeAttr('aria-current');
+	if (cell.length) {
+		cell.addClass('studio_drums_cursor').attr('aria-current', 'true');
+		var el = cell[0];
+		if (el.scrollIntoView) { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+	}
+	return studioDrums.cursor;
+}
+
+function studioDrumsGridMove(key) {
+	var c = studioDrumsCursor();
+	if (!c) { return false; }
+	if (key === 'ArrowLeft') { return !!studioDrumsCursorSet(c.voice, c.step - 1); }
+	if (key === 'ArrowRight') { return !!studioDrumsCursorSet(c.voice, c.step + 1); }
+	if (key === 'ArrowUp') { return !!studioDrumsCursorSet(c.voices[Math.max(0, c.index - 1)], c.step); }
+	if (key === 'ArrowDown') { return !!studioDrumsCursorSet(c.voices[Math.min(c.voices.length - 1, c.index + 1)], c.step); }
+	return false;
+}
+
+// Ctrl+Up/Down tunes the beat under the cursor by ten, inside the ten-to-one-
+// hundred range the velocity menu uses. An empty step is placed at seventy on
+// the way up, so a beat can be made and tuned in the same visit; there is
+// nothing to soften on the way down.
+function studioDrumsGridVelocity(delta) {
+	var c = studioDrumsCursor();
+	if (!c) { return false; }
+	var row = studioDrums.steps[c.voice];
+	if (!row) { return false; }
+	var value = parseInt(row[c.step], 10) || 0;
+	if (!value) {
+		if (delta < 0) { return true; }
+		value = 70;
+	}
+	else { value = Math.max(10, Math.min(100, value + delta)); }
+	row[c.step] = value;
+	studioDrumsRenderSteps(c.voice);
+	studioDrumsTrigger(c.voice, value, false);
+	studioDrumsSaver();
+	return true;
+}
+
+// Arrow keys walk the grid while the drums panel is the surface the person is
+// using; Ctrl with Up or Down tunes the beat under the cursor. Typing and the
+// key-learning mode keep every arrow to themselves.
+$(document).on('keydown', function (e) {
+	if (!$('#studio').is(':visible') || !$('#studio_drums').length) { return; }
+	if (!studioDrums.gridFocus || studioDrums.learn || studioDrumsTyping()) { return; }
+	if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') { return; }
+	if (e.metaKey || e.altKey || e.shiftKey) { return; }
+	var handled = false;
+	if (e.ctrlKey) {
+		handled = (e.key === 'ArrowUp' || e.key === 'ArrowDown')
+			? studioDrumsGridVelocity(e.key === 'ArrowUp' ? 10 : -10)
+			: false;
+	}
+	else {
+		handled = studioDrumsGridMove(e.key);
+	}
+	if (handled) { e.preventDefault(); e.stopPropagation(); }
+});
+
 // The guard that keeps a track name from playing a kick: a mapped key only
 // sounds when no text field has focus and Studio was the last window touched.
 $(document).on('keydown', function (e) {
@@ -1627,6 +1733,9 @@ $(document).on('keydown', function (e) {
 // so in words, so a person is never guessing.
 $(document).on('pointerdown', function (e) {
 	studioDrums.focus = !!$(e.target).closest('#studio').length;
+	// The arrows belong to the drums grid only while the panel is the surface
+	// being used; a press on the timeline hands them back to whatever it owns.
+	studioDrums.gridFocus = !!$(e.target).closest('#studio_drums').length;
 	studioDrumsFocusState();
 });
 

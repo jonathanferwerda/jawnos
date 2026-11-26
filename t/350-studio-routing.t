@@ -72,7 +72,7 @@ like($drums, qr/if \(c\.drumTap\) \{[\s\S]*?c\.drumTap\.node\.disconnect\(c\.dru
 like($drums, qr/studioDrums\.out\.connect\(tap\);/, 'the bus feeds a gain tap');
 like($drums, qr/tap\.connect\(c\.trim\);/, 'the tap enters the channel’s tone stack');
 like($drums, qr/tap\.connect\(c\.live\);/, 'and the channel live path (fader, Out pedals, output cord)');
-like($drums, qr/c\.live\.gain\.value = 1;/, 'the kit is live through the channel output');
+like($drums, qr/c\.live\.gain\.value = 0;/, 'the kit attaches with its live path shut until Monitor opens it');
 like($drums, qr/c\.drumTap = \{ node: studioDrums\.out, gain: tap \};/, 'the tap is kept for detaching');
 like($drums, qr/studioApplyChannel\(ch\);[\s\S]*studioRebuildInserts\(ch\);/, 'the channel and its In chain are applied');
 like($drums, qr/if \(typeof studioDrumsRouteSelection === 'function'\) \{ studioDrumsRouteSelection\(\); \}/,

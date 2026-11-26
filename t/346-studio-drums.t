@@ -367,7 +367,7 @@ like($code, qr/var percent = Math\.max\(1, Math\.min\(100, Math\.round\(velocity
 like($code, qr/studioDrumsPlay\(voice, ctx\.currentTime \+ 0\.008, percent \/ 100\)/,
 	'the play path still receives a 0..1 fraction');
 like($code, qr/studioDrums\.steps\[voice\]\[step\] = percent;/, 'recording writes the same percent');
-like($code, qr/studioDrumsTrigger\(\$\(this\)\.attr\('data-voice'\), 80, false\)/,
+like($code, qr/var voice = \$\(this\)\.attr\('data-voice'\);[\s\S]{0,200}studioDrumsTrigger\(voice, 80, false\)/,
 	'the voice button auditions at 80');
 
 # --- the velocity menu ------------------------------------------------------

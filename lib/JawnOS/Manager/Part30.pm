@@ -241,8 +241,13 @@ sub app_nonce_take {
 	$ttl ||= 120000;
 	return 0 unless defined $nonce && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
 	my $stamp = $purpose . ':' . $device_uuid . ':' . $nonce;
-	my $seen = &subs::db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'app_nonce', $stamp)->hashes->[0];
-	return 0 unless $seen && $seen->{'server_time'} && $seen->{'server_time'} > &subs::rightNow() - $ttl;
+	# A cache the database could not answer must not crash the login: an
+	# unreadable nonce is the same as an absent one, and the app asks again.
+	my $seen = eval {
+		&subs::db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'app_nonce', $stamp)->hashes->[0]
+	};
+	return 0 if $@ || !$seen;
+	return 0 unless $seen->{'server_time'} && $seen->{'server_time'} > &subs::rightNow() - $ttl;
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'app_nonce', $stamp);
 	return 1;
 }
@@ -508,7 +513,17 @@ sub app_schema_ensure {
 		# for an ADD COLUMN that is already satisfied; it is not an exception,
 		# so the eval below never saw it and every unlock filled the log. Skip
 		# the statement when the column is already there.
-		next if &subs::db_query('select 1 from pragma_table_info(?) where name=?', $table, $column)->hashes->[0];
+		my $has_column = eval {
+			&subs::db_query('select 1 from pragma_table_info(?) where name=?', $table, $column)->hashes->[0]
+		};
+		# A locked database here is transient. Do not memoise a half-run pass:
+		# leave the flag down so the next app request tries the schema again,
+		# and never die here (that took the challenge down with it).
+		if ($@) {
+			$app_schema_done = 0;
+			return;
+		}
+		next if $has_column;
 		eval { &subs::db_query("ALTER TABLE $table ADD COLUMN $column $type") };
 	}
 	# Backfill the rows that predate the column. Idempotent: only blanks move.

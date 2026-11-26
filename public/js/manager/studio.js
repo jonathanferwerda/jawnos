@@ -678,7 +678,9 @@ function studioAttachDrums(ch) {
 	studioDrums.out.connect(tap);
 	tap.connect(c.trim);
 	tap.connect(c.live);
-	c.live.gain.value = 1;
+	// The kit reaches the In chain (a take, and the Monitor tap) but not the
+	// live output: Monitor is what opens that, for the drums alone.
+	c.live.gain.value = 0;
 	c.drumTap = { node: studioDrums.out, gain: tap };
 	// The kit is live through the channel output now; mute its own dry feed.
 	if (typeof studioDrumsPatchDirect === 'function') { studioDrumsPatchDirect(); }
@@ -780,8 +782,12 @@ function studioApplyMonitor(from_user, force_tap_device) {
 		// An app is live through the channel output while it is patched; Monitor
 		// swaps it to the In chain, the signal the take records. A device joins
 		// the same output only while Monitor is on and the engine is not listening.
+		var ch_drums = !!(ch_app && ch_input && String(ch_input['app'] || '') === 'drums');
 		var app_monitor = ch_app && on && !!input;
-		var live = (ch_app && !app_monitor) || (on && !ch_app && !!input && !listening);
+		// The kit is heard only while its channel is the one being monitored: it
+		// is an instrument rather than a player, so patching it in does not open
+		// a speaker on its own. Every other app stays live while patched.
+		var live = (!ch_drums && ch_app && !app_monitor) || (on && !ch_app && !!input && !listening);
 		if (c.live) { c.live.gain.value = live ? 1 : 0; }
 		c.monGain.gain.value = app_monitor ? 1 : 0;
 	});
@@ -801,6 +807,9 @@ function studioApplyMonitor(from_user, force_tap_device) {
 		else if (studioListenActive) { studioListenStop(); }
 	}
 	if (typeof studioMonitorButtonRender === 'function') { studioMonitorButtonRender(); }
+	// The engine's kit follows the same rule, so a Monitor press re-sends its
+	// channel gains as part of the transport plan.
+	if (from_user && typeof studioEngineClipsChanged === 'function') { studioEngineClipsChanged(); }
 }
 
 // Persist an app-wide preference (capture quality) without rebuilding the
