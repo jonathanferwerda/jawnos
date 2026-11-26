@@ -816,6 +816,34 @@ sub db_query {
 	return eval { return $db->query($query, @params)  } if $db;
 }
 
+# The Sys panel's database totals: one row per table, ordered by name. A table
+# whose pages SQLite cannot read answers no count at all, and the old inline
+# dereference turned that into a 500 for the whole panel - one damaged table hid
+# every other total and the repair that would fix it. Such a table still gets a
+# row, marked unreadable, and the rest of the panel loads. Doctor, in Enc, is the
+# repair; this only keeps its diagnosis visible.
+sub database_table_stats {
+	my $tables = &db_query("select name from sqlite_master where type = 'table' order by name");
+	my @stats;
+	foreach my $row ( @{ ($tables ? $tables->hashes : []) || [] } ) {
+		my $name = $row->{'name'};
+		next unless defined $name && length $name;
+		my $ident = $name;
+		$ident =~ s/"/""/g;
+		my $results = eval { &db_query('select count(*) from "' . $ident . '"') };
+		my $hash = $results ? eval { $results->hash } : undef;
+		my $count = (ref $hash eq 'HASH' && defined $hash->{'count(*)'}) ? $hash->{'count(*)'} : undef;
+		my %stat = (
+			formatted_table => &format_name($name),
+			table => $name,
+		);
+		if (defined $count) { $stat{'count'} = $count }
+		else { $stat{'unreadable'} = 1 }
+		push @stats, \%stat;
+	}
+	return \@stats;
+}
+
 # The rows from a query as a plain arrayref of hashes - what db_query's
 # ->hashes gives back, but over the shared handle with a statement cache and
 # without the Mojo::SQLite::Results object and its per-call finalize. The hot

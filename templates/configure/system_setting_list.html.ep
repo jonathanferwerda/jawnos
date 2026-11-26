@@ -9,7 +9,7 @@
 			<summary><%= sprintf(&subs::lang('configure.database_totals'), scalar @{$stats}) %></summary>
 			<div id="stats" class="cfg-actions">
 				<% foreach my $s ( @{$stats} ) { %>
-					<span class="stat" id="<%= $s->{'table'} %>_stat"><b><%= $s->{'formatted_table'} %>:</b> <%= $s->{'count'} %></span>
+					<span class="stat" id="<%= $s->{'table'} %>_stat"<% if ($s->{'unreadable'}) { %> hint="<%= &subs::ui('This table could not be read. Doctor, in Enc, repairs the database.') %>"<% } %>><b><%= $s->{'formatted_table'} %>:</b> <% if ($s->{'unreadable'}) { %><%= &subs::ui('unreadable') %><% } else { %><%= $s->{'count'} %><% } %></span>
 				<% } %>
 			</div>
 		</details>

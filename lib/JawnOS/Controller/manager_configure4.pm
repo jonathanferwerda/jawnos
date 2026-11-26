@@ -459,15 +459,10 @@ sub action_19179 {
 	foreach my $dt ( @gb::device_types ) {
 		$settings->{$dt} = &subs::settings_grabber({ app => '__president', device => $dt });
 	}
-	my $stats = [];
-	# list the tables from the metadata table instead of shelling out to the
-	# sqlite3 binary on every load of the system settings page
-	my $table_names = &subs::db_query("select name from sqlite_master where type = 'table' order by name")->hashes;
-	foreach my $row ( @{$table_names} ) {
-		my $d = $row->{'name'};
-		my $results = &subs::db_query('select count(*) from ' . $d);
-		push @{$stats}, { formatted_table => &subs::format_name($d), table => $d, count => $results->hash->{'count(*)'} };
-	}
+	# The tables come from the metadata table, not the sqlite3 binary, on every
+	# load of the system settings page. A table the database cannot read is a row
+	# marked unreadable, not a 500 for the whole panel.
+	my $stats = &subs::database_table_stats();
 	push @{$stats}, { formatted_table => 'Downloads', table => 'download', count => &subs::setting_grabber({ app => '__president', setting => 'download_count' }) || 0 };
 
 	my $evaluation = &subs::cache_get({ app => '__president', context => 'evaluation' }) || {};
