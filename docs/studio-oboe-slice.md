@@ -746,3 +746,53 @@ records the number. The UM2 patch-cable and default speaker/mic runs landed on 2
 - On-device runs: the disk-queue take and both round-trip rows landed on 2026-11-25 (§11.8) —
   UM2 patch cable **13.111 ms** median, phone speaker/mic **58.55 ms** median; item 5 is
   **measured** and recorded in `docs/studio-mobile-audio.md` §6.
+
+### 11.10 The buffer and burst requests (app 1360)
+
+`engine/src/oboe_device.rs` now *asks* for a smaller Android buffer instead of accepting
+whatever the HAL picked. Nothing about this is a claimed improvement until the tablet's
+round trip says so; the report lets that comparison be made run by run.
+
+**What 1359 showed.** Both measured rows were granted a **96-frame burst** and a
+**2,976-frame input buffer**. At 48 kHz the buffer alone is 62 ms, which is more than the phone
+row's whole 58.55 ms round trip and 31 bursts deep — the HAL filled toward its capacity rather
+than stopping at a low-latency floor. The output differed only because it was Shared.
+
+**What the engine asks for now.** One table, both directions; the report reads every grant
+back, so a HAL that refuses is visible rather than assumed:
+
+| Request | Constant | Why |
+| --- | --- | --- |
+| Burst | `REQUESTED_BURST_FRAMES = 48` | one frame at 48 kHz; half the 1359 grant |
+| Burst fallback | `FALLBACK_BURST_FRAMES = 96` | the value 1359 granted unasked, so it is the known-good floor |
+| Running buffer | `REQUESTED_BUFFER_FRAMES = 192` | 4 ms, four 48-frame bursts (two 96-frame) |
+| Buffer capacity | `REQUESTED_CAPACITY_FRAMES = 384` | 8 ms: enough to hold 192 and grow back after an xrun, far below 2,976 |
+
+- Every open sets the capacity at build time, then calls `set_buffer_size_in_frames(192)`
+  **after open and before start**. A refused resize is not fatal: the stream keeps the granted
+  floor and the report carries it.
+- Inputs ask for `InputPreset::Unprocessed` (no AGC, noise suppression or voice EQ). Outputs
+  ask for `Usage::Media` + `ContentType::Music` so the HAL stays on the media path.
+- The first attempt refuses Oboe's format and channel conversion
+  (`set_channel_conversion_allowed(false)`, `set_format_conversion_allowed(false)`); a device
+  that refuses that open is retried with both allowed and the report says which attempt ran.
+- Oboe's Rust API has no per-stream burst setter, so the burst goes through the process-wide
+  `DefaultStreamValues::set_frames_per_burst` before each build. AAudio may ignore it; the grant
+  is read back. **Global side effect:** any Oboe stream opened later in the process inherits it,
+  including the app's C++ `JawnAudioOboe` monitor. The monitor caches its own request and reads
+  its own grant, so it is a default rather than a forced change.
+
+**The attempt order** is `(48, strict)`, `(48, conversions allowed)`, `(96, conversions
+allowed)`. Each attempt gets its own monitor ring because it consumes its callback; only the
+ring of the open that succeeded is used.
+
+**Additive report keys.** The take keeps `buffer`/`frames` and gains `buffer_requested`,
+`burst_requested`, `buffer_capacity`, `conversion`. The round trip keeps `buffer_in/out` and
+`burst_in/out` and gains `buffer_requested_in/out`, `burst_requested_in/out`,
+`buffer_capacity_in/out`, `conversion_in/out`. Nothing was renamed, so 1359-era sidecars still
+read the same and the app panel shows the new keys in its `report:` line with no Java change.
+
+**Verifying it needs the tablet.** §11.8's two rows, re-run on 1360: the UM2 patch cable three
+times, then the default speaker/mic row. Compare `buffer_in`/`burst_in` against the requests;
+if the grant did not move, the HAL refused and the measured number stands unchanged. Do not
+record a latency improvement from the buffer size alone.

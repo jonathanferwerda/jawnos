@@ -249,6 +249,36 @@ SKIP: {
 	like( $device, qr/set_channel_count::<Mono>\(\)/, 'mono is requested' );
 	like( $device, qr/SharingMode::Exclusive/, 'exclusive is tried first' );
 	like( $device, qr/SharingMode::Shared/, 'with a shared fallback' );
+	# The app-1360 buffer/burst experiment. The 2,976-frame input buffer (62 ms)
+	# granted to the 1359 probe is the outlier; these requests pull it down and the
+	# report reads the grant back, so a refusal is visible instead of assumed.
+	like( $device, qr/pub const REQUESTED_BURST_FRAMES: i32 = 48;/, 'the burst request is one frame at 48 kHz' );
+	like( $device, qr/pub const FALLBACK_BURST_FRAMES: i32 = 96;/, 'with the measured 96-frame floor as the fallback' );
+	like( $device, qr/pub const REQUESTED_BUFFER_FRAMES: i32 = 192;/, 'the running-buffer request is 4 ms' );
+	like( $device, qr/pub const REQUESTED_CAPACITY_FRAMES: i32 = 384;/, 'the buffer-capacity request is 8 ms' );
+	like(
+		$device,
+		qr/const OPEN_ATTEMPTS:.*\(REQUESTED_BURST_FRAMES, ConversionMode::Strict\)/s,
+		'the strict 48-frame attempt is tried first'
+	);
+	like($device, qr/FALLBACK_BURST_FRAMES, ConversionMode::Fallback/, 'and the 96-frame fallback is last');
+	like($device, qr/DefaultStreamValues::set_frames_per_burst\(/, 'the burst goes through the process-wide Oboe default');
+	like($device, qr/set_input_preset\(InputPreset::Unprocessed\)/, 'inputs ask for the unprocessed preset');
+	like( $device, qr/set_usage\(Usage::Media\)/, 'outputs declare media usage' );
+	like( $device, qr/set_content_type\(ContentType::Music\)/, 'and a music content type' );
+	like( $device, qr/set_channel_conversion_allowed\(false\)/, 'the strict attempt refuses channel conversion' );
+	like( $device, qr/set_format_conversion_allowed\(false\)/, 'and format conversion' );
+	like( $device, qr/set_buffer_size_in_frames\(REQUESTED_BUFFER_FRAMES\)/, 'the running buffer is requested after open' );
+	like( $device, qr/get_buffer_capacity_in_frames\(\)/, 'the granted capacity is read back' );
+	my @capacities = $device =~ /set_buffer_capacity_in_frames\(REQUESTED_CAPACITY_FRAMES\)/g;
+	is( scalar @capacities, 3, 'the capture stream and both probe streams set the capacity' );
+	like( $device, qr/\\"buffer_requested\\":\{\}/, 'report_json names the requested buffer' );
+	like( $device, qr/\\"burst_requested\\":\{\}/, 'the requested burst' );
+	like( $device, qr/\\"buffer_capacity\\":\{\}/, 'and the granted capacity' );
+	like( $device, qr/\\"conversion\\":\\"\{\}\\"/, 'plus which open attempt ran' );
+	like( $probe, qr/\\"buffer_requested_in\\":\{\}/, 'the round-trip report carries the request per stream' );
+	like( $probe, qr/\\"buffer_capacity_out\\":\{\}/, 'and the granted capacity per stream' );
+	like( $probe, qr/\\"conversion_out\\":\\"\{\}\\"/, 'and each stream\'s open attempt' );
 }
 
 done_testing();

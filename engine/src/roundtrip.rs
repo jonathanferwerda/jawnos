@@ -261,6 +261,22 @@ pub struct RoundTripReport {
     pub output_buffer_frames: usize,
     pub input_burst: usize,
     pub output_burst: usize,
+    /// What the probe asked for with `set_buffer_size_in_frames` after each open.
+    /// Beside `buffer_in`/`buffer_out`, a grant that did not move is visible as a
+    /// refusal rather than mistaken for a request that was honoured.
+    pub input_buffer_requested: i32,
+    pub output_buffer_requested: i32,
+    /// The burst put into the process-wide Oboe default before each build (48, or
+    /// the 96 fallback). The grant is `burst_in`/`burst_out`.
+    pub input_burst_requested: i32,
+    pub output_burst_requested: i32,
+    /// `getBufferCapacityInFrames()`: the ceiling the running buffer may grow to.
+    pub input_buffer_capacity: usize,
+    pub output_buffer_capacity: usize,
+    /// `strict` when that stream refused Oboe's format/channel conversion, or
+    /// `conversion-allowed` when it was reopened with both allowed.
+    pub conversion_input: String,
+    pub conversion_output: String,
     pub sharing_input: String,
     pub sharing_output: String,
     pub performance_input: String,
@@ -284,7 +300,7 @@ impl RoundTripReport {
     /// even though the streams themselves need a phone.
     pub fn to_json(&self) -> String {
         format!(
-            "{{\"ok\":true,\"backend\":\"oboe\",\"probe\":\"roundtrip\",\"method\":\"{}\",\"device_in\":\"{}\",\"device_out\":\"{}\",\"device_in_id\":{},\"device_out_id\":{},\"rate\":{},\"channels_in\":{},\"channels_out\":{},\"buffer_in\":{},\"buffer_out\":{},\"burst_in\":{},\"burst_out\":{},\"sharing_in\":\"{}\",\"sharing_out\":\"{}\",\"performance_in\":\"{}\",\"performance_out\":\"{}\",\"xruns_in\":{},\"xruns_out\":{},\"input_frames\":{},\"output_frames\":{},\"input_dropped\":{},\"click_frame\":{},\"heard_frame\":{},\"score\":{:.3},\"round_trip_ms\":{:.3},\"round_trip_frames\":{:.1}}}",
+            "{{\"ok\":true,\"backend\":\"oboe\",\"probe\":\"roundtrip\",\"method\":\"{}\",\"device_in\":\"{}\",\"device_out\":\"{}\",\"device_in_id\":{},\"device_out_id\":{},\"rate\":{},\"channels_in\":{},\"channels_out\":{},\"buffer_in\":{},\"buffer_out\":{},\"burst_in\":{},\"burst_out\":{},\"buffer_requested_in\":{},\"buffer_requested_out\":{},\"burst_requested_in\":{},\"burst_requested_out\":{},\"buffer_capacity_in\":{},\"buffer_capacity_out\":{},\"conversion_in\":\"{}\",\"conversion_out\":\"{}\",\"sharing_in\":\"{}\",\"sharing_out\":\"{}\",\"performance_in\":\"{}\",\"performance_out\":\"{}\",\"xruns_in\":{},\"xruns_out\":{},\"input_frames\":{},\"output_frames\":{},\"input_dropped\":{},\"click_frame\":{},\"heard_frame\":{},\"score\":{:.3},\"round_trip_ms\":{:.3},\"round_trip_frames\":{:.1}}}",
             json_escape(&self.method),
             json_escape(&self.device_in),
             json_escape(&self.device_out),
@@ -297,6 +313,14 @@ impl RoundTripReport {
             self.output_buffer_frames,
             self.input_burst,
             self.output_burst,
+            self.input_buffer_requested,
+            self.output_buffer_requested,
+            self.input_burst_requested,
+            self.output_burst_requested,
+            self.input_buffer_capacity,
+            self.output_buffer_capacity,
+            json_escape(&self.conversion_input),
+            json_escape(&self.conversion_output),
             json_escape(&self.sharing_input),
             json_escape(&self.sharing_output),
             json_escape(&self.performance_input),
@@ -490,6 +514,14 @@ mod tests {
             output_buffer_frames: 2_976,
             input_burst: 96,
             output_burst: 96,
+            input_buffer_requested: 192,
+            output_buffer_requested: 192,
+            input_burst_requested: 48,
+            output_burst_requested: 48,
+            input_buffer_capacity: 384,
+            output_buffer_capacity: 384,
+            conversion_input: "strict".to_string(),
+            conversion_output: "conversion-allowed".to_string(),
             sharing_input: "Exclusive".to_string(),
             sharing_output: "Shared".to_string(),
             performance_input: "LowLatency".to_string(),
@@ -526,6 +558,14 @@ mod tests {
             "performance_out",
             "buffer_in",
             "buffer_out",
+            "buffer_requested_in",
+            "buffer_requested_out",
+            "burst_requested_in",
+            "burst_requested_out",
+            "buffer_capacity_in",
+            "buffer_capacity_out",
+            "conversion_in",
+            "conversion_out",
             "xruns_in",
             "xruns_out",
         ] {

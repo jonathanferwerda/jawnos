@@ -35,8 +35,9 @@ use std::time::{Duration, Instant};
 
 use oboe::{
     AudioInputCallback, AudioInputStreamSafe, AudioOutputCallback, AudioOutputStreamSafe,
-    AudioStream, AudioStreamBase, AudioStreamBuilder, AudioStreamSafe, DataCallbackResult, Input,
-    Mono, Output, PerformanceMode, SharingMode,
+    AudioStream, AudioStreamBase, AudioStreamBuilder, AudioStreamSafe, ContentType,
+    DataCallbackResult, DefaultStreamValues, Input, InputPreset, Mono, Output, PerformanceMode,
+    SharingMode, Usage,
 };
 
 use crate::disk::DiskWriter;
@@ -48,6 +49,71 @@ use crate::roundtrip::RoundTripReport;
 /// The rate the slice asks for. The report carries the rate actually granted;
 /// a device that refuses 48 kHz is reported, never silently resampled.
 pub const REQUESTED_RATE: u32 = 48_000;
+
+/// The burst every stream asks the HAL for: one frame at 48 kHz, 1 ms.
+///
+/// The measurement on app 1359 is why this request exists. The tablet granted a
+/// 96-frame burst and a **2,976-frame input buffer** (62 ms at 48 kHz) to both
+/// the default and the USB input, and 62 ms alone covers the phone row's whole
+/// 58.55 ms round trip. 2,976 is 31 bursts, so the HAL had filled the buffer
+/// toward its capacity instead of stopping at the low-latency floor. Oboe's
+/// Rust API has no per-stream burst setter — only the process-wide
+/// `DefaultStreamValues` — so this is a default installed before every build,
+/// and it is a request: AAudio takes the HAL's own "optimal" burst and may
+/// ignore it. Every report reads the grant back rather than trusting this.
+pub const REQUESTED_BURST_FRAMES: i32 = 48;
+
+/// The burst asked for when an open at [`REQUESTED_BURST_FRAMES`] is refused.
+/// 96 is the value the tablet granted without asking, so it is the known-good
+/// floor rather than a guess.
+pub const FALLBACK_BURST_FRAMES: i32 = 96;
+
+/// The running buffer asked for after open and before start: 4 ms at 48 kHz,
+/// four 48-frame bursts (two 96-frame ones). `set_buffer_size_in_frames` shrinks
+/// the running buffer inside the capacity; a refusal is not fatal — the granted
+/// floor stays and the report carries it.
+pub const REQUESTED_BUFFER_FRAMES: i32 = 192;
+
+/// The buffer *capacity* asked for at build time: 8 ms at 48 kHz. AAudio must
+/// be able to hold the 4 ms running buffer (and grow it back after an xrun) but
+/// must not be handed the 62 ms it chose for itself on app 1359.
+pub const REQUESTED_CAPACITY_FRAMES: i32 = 384;
+
+/// Whether the strict (no-conversion) open was accepted. Reported additively so
+/// a smaller buffer can be attributed to the request and not to an Oboe
+/// converter that quietly re-opened the stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConversionMode {
+    Strict,
+    Fallback,
+}
+
+impl ConversionMode {
+    fn label(self) -> &'static str {
+        match self {
+            ConversionMode::Strict => "strict",
+            ConversionMode::Fallback => "conversion-allowed",
+        }
+    }
+}
+
+/// The three open attempts, lowest latency first: 48 frames per burst with both
+/// conversions refused, the same burst with them allowed (some HALs refuse a
+/// strict open), then the 96-frame fallback with conversions allowed.
+const OPEN_ATTEMPTS: [(i32, ConversionMode); 3] = [
+    (REQUESTED_BURST_FRAMES, ConversionMode::Strict),
+    (REQUESTED_BURST_FRAMES, ConversionMode::Fallback),
+    (FALLBACK_BURST_FRAMES, ConversionMode::Fallback),
+];
+
+/// What one `open_*` asked for and how it got there. The granted values are read
+/// back from the stream after the buffer request; this records only the
+/// request, so the report can put requested beside granted.
+struct StreamSetup {
+    buffer_requested: i32,
+    burst_requested: i32,
+    conversion: ConversionMode,
+}
 
 /// The most frames one callback may hand us. Sized once at setup; a callback
 /// that arrives larger is truncated and its extra frames counted, never
@@ -78,6 +144,19 @@ pub struct OboeReport {
     pub frames: usize,
     /// `getBufferSizeInFrames()`.
     pub buffer_frames: usize,
+    /// What this module asked for with `setBufferSizeInFrames` after open. The
+    /// granted size is `buffer_frames` beside it, so a refusal reads as a grant
+    /// that did not move.
+    pub buffer_requested: i32,
+    /// The frames per burst put into the process-wide Oboe default before the
+    /// build (48, or the 96 fallback). The granted burst is `frames`.
+    pub burst_requested: i32,
+    /// `getBufferCapacityInFrames()`: the ceiling the running buffer may grow to.
+    pub buffer_capacity: usize,
+    /// `strict` when the open refused Oboe's format/channel conversion, or
+    /// `conversion-allowed` when that attempt was refused and the stream was
+    /// reopened with both allowed.
+    pub conversion: String,
     pub channels: usize,
     /// `getSharingMode()`: `"Exclusive"` or `"Shared"`.
     pub sharing: String,
@@ -153,26 +232,41 @@ pub fn run_capture_plan(
     let enabled = Arc::new(AtomicBool::new(true));
 
     let attempt = |sharing: SharingMode| -> Result<
-        (oboe::AudioStreamAsync<Input, CaptureCallback>, Consumer),
+        (
+            oboe::AudioStreamAsync<Input, CaptureCallback>,
+            Consumer,
+            StreamSetup,
+        ),
         String,
     > {
-        let (producer, consumer) = monbus::new(RING_FRAMES);
-        let callback = CaptureCallback::new(
-            producer,
-            Arc::clone(&peak),
-            Arc::clone(&frames),
-            Arc::clone(&callbacks),
-            Arc::clone(&dropped_callback),
-            Arc::clone(&dropped_ring),
-            Arc::clone(&enabled),
-        );
-        open_stream(device_id, sharing, callback).map(|stream| (stream, consumer))
+        // Each open attempt gets its own ring because it consumes its callback;
+        // only the ring of the attempt that opened is kept beside the stream.
+        let mut drained = None;
+        let opened = open_stream(device_id, sharing, || {
+            let (producer, consumer) = monbus::new(RING_FRAMES);
+            drained = Some(consumer);
+            CaptureCallback::new(
+                producer,
+                Arc::clone(&peak),
+                Arc::clone(&frames),
+                Arc::clone(&callbacks),
+                Arc::clone(&dropped_callback),
+                Arc::clone(&dropped_ring),
+                Arc::clone(&enabled),
+            )
+        })?;
+        let (stream, setup) = opened;
+        Ok((
+            stream,
+            drained.expect("open_stream built a callback and a ring"),
+            setup,
+        ))
     };
 
     // Exclusive first for the lowest latency, then Shared: Android grants
     // exclusive capture only when nobody else owns the mic, which is normal on
     // a phone with an assistant listening.
-    let (mut stream, consumer) = match attempt(SharingMode::Exclusive) {
+    let (mut stream, consumer, setup) = match attempt(SharingMode::Exclusive) {
         Ok(pair) => pair,
         Err(exclusive) => attempt(SharingMode::Shared).map_err(|shared| {
             format!(
@@ -183,7 +277,10 @@ pub fn run_capture_plan(
 
     let rate = stream.get_sample_rate().max(1) as u32;
     let frames_per_burst = stream.get_frames_per_burst().max(1) as usize;
+    // Read after the open's buffer request, so these are the granted values the
+    // take will actually run with.
     let buffer_frames = stream.get_buffer_size_in_frames().max(0) as usize;
+    let buffer_capacity = stream.get_buffer_capacity_in_frames().max(0) as usize;
     let channels = stream.get_channel_count() as i32 as usize;
     let sharing = format!("{:?}", stream.get_sharing_mode());
     let performance = format!("{:?}", stream.get_performance_mode());
@@ -266,6 +363,10 @@ pub fn run_capture_plan(
         rate,
         frames: frames_per_burst,
         buffer_frames,
+        buffer_requested: setup.buffer_requested,
+        burst_requested: setup.burst_requested,
+        buffer_capacity,
+        conversion: setup.conversion.label().to_string(),
         channels,
         sharing,
         performance,
@@ -315,18 +416,24 @@ pub fn run_roundtrip(
     device_out: Option<i32>,
 ) -> Result<RoundTripReport, String> {
     let try_pair = |sharing: SharingMode| -> Result<ProbePair, String> {
-        let (producer, consumer) = monbus::new(RING_FRAMES);
         let frames = Arc::new(AtomicU64::new(0));
         let dropped = Arc::new(AtomicU64::new(0));
         let enabled = Arc::new(AtomicBool::new(true));
-        let input_callback = ProbeInput::new(
-            producer,
-            Arc::clone(&frames),
-            Arc::clone(&dropped),
-            Arc::clone(&enabled),
-        );
-        let mut input = open_probe_input(device_in, sharing, input_callback)
-            .map_err(|error| format!("input ({sharing:?}): {error}"))?;
+        // The ring belongs to whichever open attempt succeeds; earlier attempts
+        // build and drop their own.
+        let mut drained = None;
+        let (mut input, input_setup) = open_probe_input(device_in, sharing, || {
+            let (producer, consumer) = monbus::new(RING_FRAMES);
+            drained = Some(consumer);
+            ProbeInput::new(
+                producer,
+                Arc::clone(&frames),
+                Arc::clone(&dropped),
+                Arc::clone(&enabled),
+            )
+        })
+        .map_err(|error| format!("input ({sharing:?}): {error}"))?;
+        let consumer = drained.expect("open_probe_input built a callback and a ring");
         let rate = input.get_sample_rate().max(1) as u32;
         if rate != REQUESTED_RATE {
             return Err(format!(
@@ -338,13 +445,14 @@ pub fn run_roundtrip(
         let click_frame = (rate as i64 / 4).max(1);
         let played = Arc::new(AtomicBool::new(false));
         let output_frames = Arc::new(AtomicU64::new(0));
-        let output_callback = ProbeOutput::new(
-            click,
-            click_frame,
-            Arc::clone(&played),
-            Arc::clone(&output_frames),
-        );
-        let mut output = match open_probe_output(device_out, sharing, output_callback) {
+        let (mut output, output_setup) = match open_probe_output(device_out, sharing, || {
+            ProbeOutput::new(
+                click.clone(),
+                click_frame,
+                Arc::clone(&played),
+                Arc::clone(&output_frames),
+            )
+        }) {
             Ok(output) => output,
             Err(error) => {
                 let _ = input.stop();
@@ -362,6 +470,8 @@ pub fn run_roundtrip(
         Ok(ProbePair {
             input,
             output,
+            input_setup,
+            output_setup,
             consumer,
             frames,
             dropped,
@@ -382,8 +492,12 @@ pub fn run_roundtrip(
 
     let input_burst = pair.input.get_frames_per_burst().max(1) as usize;
     let output_burst = pair.output.get_frames_per_burst().max(1) as usize;
+    // Read after each open's buffer request, so these are the grant the probe
+    // will run with, beside the capacity the HAL allows it to grow to.
     let input_buffer = pair.input.get_buffer_size_in_frames().max(0) as usize;
     let output_buffer = pair.output.get_buffer_size_in_frames().max(0) as usize;
+    let input_capacity = pair.input.get_buffer_capacity_in_frames().max(0) as usize;
+    let output_capacity = pair.output.get_buffer_capacity_in_frames().max(0) as usize;
     let input_channels = pair.input.get_channel_count() as i32 as usize;
     let output_channels = pair.output.get_channel_count() as i32 as usize;
     let sharing_input = format!("{:?}", pair.input.get_sharing_mode());
@@ -525,6 +639,14 @@ pub fn run_roundtrip(
         output_buffer_frames: output_buffer,
         input_burst,
         output_burst,
+        input_buffer_requested: pair.input_setup.buffer_requested,
+        output_buffer_requested: pair.output_setup.buffer_requested,
+        input_burst_requested: pair.input_setup.burst_requested,
+        output_burst_requested: pair.output_setup.burst_requested,
+        input_buffer_capacity: input_capacity,
+        output_buffer_capacity: output_capacity,
+        conversion_input: pair.input_setup.conversion.label().to_string(),
+        conversion_output: pair.output_setup.conversion.label().to_string(),
         sharing_input,
         sharing_output,
         performance_input,
@@ -546,6 +668,8 @@ pub fn run_roundtrip(
 struct ProbePair {
     input: oboe::AudioStreamAsync<Input, ProbeInput>,
     output: oboe::AudioStreamAsync<Output, ProbeOutput>,
+    input_setup: StreamSetup,
+    output_setup: StreamSetup,
     consumer: Consumer,
     frames: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
@@ -657,69 +781,201 @@ impl AudioOutputCallback for ProbeOutput {
     }
 }
 
-fn open_probe_input(
-    device_id: Option<i32>,
-    sharing: SharingMode,
-    callback: ProbeInput,
-) -> Result<oboe::AudioStreamAsync<Input, ProbeInput>, String> {
-    let mut builder = AudioStreamBuilder::default()
-        .set_direction::<Input>()
-        .set_performance_mode(PerformanceMode::LowLatency)
-        .set_sharing_mode(sharing)
-        .set_sample_rate(REQUESTED_RATE as i32)
-        .set_channel_count::<Mono>()
-        .set_format::<f32>();
-    if let Some(id) = device_id {
-        builder = builder.set_device_id(id);
+/// Refuse Oboe's implicit format and channel conversions on the first attempt:
+/// a converter is latency the measurement did not ask for, and it hides which
+/// shape the HAL really opened. Some devices refuse a strict open, so the caller
+/// retries with both allowed and the report names which attempt ran.
+fn apply_conversion_policy<D, C, T>(
+    builder: AudioStreamBuilder<D, C, T>,
+    conversion: ConversionMode,
+) -> AudioStreamBuilder<D, C, T> {
+    match conversion {
+        ConversionMode::Strict => builder
+            .set_channel_conversion_allowed(false)
+            .set_format_conversion_allowed(false),
+        ConversionMode::Fallback => builder,
     }
-    builder
-        .set_callback(callback)
-        .open_stream()
-        .map_err(|error| error.to_string())
 }
 
-fn open_probe_output(
-    device_id: Option<i32>,
-    sharing: SharingMode,
-    callback: ProbeOutput,
-) -> Result<oboe::AudioStreamAsync<Output, ProbeOutput>, String> {
-    let mut builder = AudioStreamBuilder::default()
-        .set_direction::<Output>()
-        .set_performance_mode(PerformanceMode::LowLatency)
-        .set_sharing_mode(sharing)
-        .set_sample_rate(REQUESTED_RATE as i32)
-        .set_channel_count::<Mono>()
-        .set_format::<f32>();
-    if let Some(id) = device_id {
-        builder = builder.set_device_id(id);
-    }
-    builder
-        .set_callback(callback)
-        .open_stream()
-        .map_err(|error| error.to_string())
+/// Install the burst request for the next build. Oboe's Rust API exposes no
+/// per-stream burst setter, so this is the process-wide default and it is only a
+/// request: AAudio takes the HAL's "optimal" burst and may ignore it (OpenSL ES
+/// uses it). The report always reads the granted burst back.
+///
+/// Global side effect: any other Oboe stream opened after this in the same
+/// process inherits the value — including the app's C++ `JawnAudioOboe` monitor
+/// (`app/src/main/cpp/JawnAudioOboe.cpp`), which caches its own request in
+/// `requestedBurst_` but opens whatever this default says. Nothing here assumes
+/// the request was honoured, so a monitor opened after a take is no worse off
+/// than before; it just asks for 48 instead of the HAL's 96 when it has no
+/// request of its own.
+fn request_burst(frames: i32) {
+    DefaultStreamValues::set_frames_per_burst(frames);
 }
 
-/// Build and open one input stream. The builder is consumed by `open_stream`,
-/// so the caller retries with a fresh callback for the shared fallback.
-fn open_stream(
+/// Ask for the small running buffer after open and before start. A refusal is
+/// not fatal: the stream keeps the size it was granted, and the caller reads
+/// that floor back with `get_buffer_size_in_frames`.
+fn request_buffer<S: AudioStreamSafe>(stream: &mut S) {
+    let _ = stream.set_buffer_size_in_frames(REQUESTED_BUFFER_FRAMES);
+}
+
+fn open_probe_input<F>(
     device_id: Option<i32>,
     sharing: SharingMode,
-    callback: CaptureCallback,
-) -> Result<oboe::AudioStreamAsync<Input, CaptureCallback>, String> {
-    let mut builder = AudioStreamBuilder::default()
-        .set_direction::<Input>()
-        .set_performance_mode(PerformanceMode::LowLatency)
-        .set_sharing_mode(sharing)
-        .set_sample_rate(REQUESTED_RATE as i32)
-        .set_channel_count::<Mono>()
-        .set_format::<i16>();
-    if let Some(id) = device_id {
-        builder = builder.set_device_id(id);
+    mut make: F,
+) -> Result<(oboe::AudioStreamAsync<Input, ProbeInput>, StreamSetup), String>
+where
+    F: FnMut() -> ProbeInput,
+{
+    let mut refusals = Vec::new();
+    for (burst, conversion) in OPEN_ATTEMPTS {
+        request_burst(burst);
+        let builder = AudioStreamBuilder::default()
+            .set_direction::<Input>()
+            .set_performance_mode(PerformanceMode::LowLatency)
+            .set_sharing_mode(sharing)
+            .set_sample_rate(REQUESTED_RATE as i32)
+            .set_channel_count::<Mono>()
+            .set_format::<f32>()
+            .set_buffer_capacity_in_frames(REQUESTED_CAPACITY_FRAMES)
+            // Unprocessed turns off AGC, noise suppression and the voice EQ: they
+            // cost frames on the capture path and colour a round trip.
+            .set_input_preset(InputPreset::Unprocessed);
+        let builder = apply_conversion_policy(builder, conversion);
+        let builder = match device_id {
+            Some(id) => builder.set_device_id(id),
+            None => builder,
+        };
+        match builder.set_callback(make()).open_stream() {
+            Ok(mut stream) => {
+                request_buffer(&mut stream);
+                return Ok((
+                    stream,
+                    StreamSetup {
+                        buffer_requested: REQUESTED_BUFFER_FRAMES,
+                        burst_requested: burst,
+                        conversion,
+                    },
+                ));
+            }
+            Err(error) => refusals.push(format!(
+                "{burst} frames per burst, {}: {error}",
+                conversion.label()
+            )),
+        }
     }
-    builder
-        .set_callback(callback)
-        .open_stream()
-        .map_err(|error| error.to_string())
+    Err(format!(
+        "cannot open the probe input at 48 kHz mono f32 ({})",
+        refusals.join("; ")
+    ))
+}
+
+fn open_probe_output<F>(
+    device_id: Option<i32>,
+    sharing: SharingMode,
+    mut make: F,
+) -> Result<(oboe::AudioStreamAsync<Output, ProbeOutput>, StreamSetup), String>
+where
+    F: FnMut() -> ProbeOutput,
+{
+    let mut refusals = Vec::new();
+    for (burst, conversion) in OPEN_ATTEMPTS {
+        request_burst(burst);
+        let builder = AudioStreamBuilder::default()
+            .set_direction::<Output>()
+            .set_performance_mode(PerformanceMode::LowLatency)
+            .set_sharing_mode(sharing)
+            .set_sample_rate(REQUESTED_RATE as i32)
+            .set_channel_count::<Mono>()
+            .set_format::<f32>()
+            .set_buffer_capacity_in_frames(REQUESTED_CAPACITY_FRAMES)
+            // Media/Music keeps the stream on the media volume and routing path;
+            // without it the HAL may pick a communication-style path, which is
+            // the deep-buffer, higher-latency route.
+            .set_usage(Usage::Media)
+            .set_content_type(ContentType::Music);
+        let builder = apply_conversion_policy(builder, conversion);
+        let builder = match device_id {
+            Some(id) => builder.set_device_id(id),
+            None => builder,
+        };
+        match builder.set_callback(make()).open_stream() {
+            Ok(mut stream) => {
+                request_buffer(&mut stream);
+                return Ok((
+                    stream,
+                    StreamSetup {
+                        buffer_requested: REQUESTED_BUFFER_FRAMES,
+                        burst_requested: burst,
+                        conversion,
+                    },
+                ));
+            }
+            Err(error) => refusals.push(format!(
+                "{burst} frames per burst, {}: {error}",
+                conversion.label()
+            )),
+        }
+    }
+    Err(format!(
+        "cannot open the probe output at 48 kHz mono f32 ({})",
+        refusals.join("; ")
+    ))
+}
+
+/// Build and open one input stream. The builder is consumed by `open_stream`, so
+/// the callback is built per attempt (the shared fallback and the strict/loose
+/// retries each need a fresh one).
+fn open_stream<F>(
+    device_id: Option<i32>,
+    sharing: SharingMode,
+    mut make: F,
+) -> Result<(oboe::AudioStreamAsync<Input, CaptureCallback>, StreamSetup), String>
+where
+    F: FnMut() -> CaptureCallback,
+{
+    let mut refusals = Vec::new();
+    for (burst, conversion) in OPEN_ATTEMPTS {
+        request_burst(burst);
+        let builder = AudioStreamBuilder::default()
+            .set_direction::<Input>()
+            .set_performance_mode(PerformanceMode::LowLatency)
+            .set_sharing_mode(sharing)
+            .set_sample_rate(REQUESTED_RATE as i32)
+            .set_channel_count::<Mono>()
+            .set_format::<i16>()
+            .set_buffer_capacity_in_frames(REQUESTED_CAPACITY_FRAMES)
+            // Unprocessed: no AGC, noise suppression or voice EQ between the
+            // microphone and the take.
+            .set_input_preset(InputPreset::Unprocessed);
+        let builder = apply_conversion_policy(builder, conversion);
+        let builder = match device_id {
+            Some(id) => builder.set_device_id(id),
+            None => builder,
+        };
+        match builder.set_callback(make()).open_stream() {
+            Ok(mut stream) => {
+                request_buffer(&mut stream);
+                return Ok((
+                    stream,
+                    StreamSetup {
+                        buffer_requested: REQUESTED_BUFFER_FRAMES,
+                        burst_requested: burst,
+                        conversion,
+                    },
+                ));
+            }
+            Err(error) => refusals.push(format!(
+                "{burst} frames per burst, {}: {error}",
+                conversion.label()
+            )),
+        }
+    }
+    Err(format!(
+        "cannot open the Oboe input at 48 kHz mono i16 ({})",
+        refusals.join("; ")
+    ))
 }
 
 /// The audio callback's only state. Everything it touches is fixed-size or
@@ -945,11 +1201,15 @@ fn lock_control() -> std::sync::MutexGuard<'static, Control> {
 /// One JSON object, matching the engine's existing status style.
 fn report_json(report: &OboeReport, take: &str) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"oboe\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"buffer\":{},\"channels\":{},\"sharing\":\"{}\",\"performance\":\"{}\",\"xruns\":{},\"frames_captured\":{},\"frames_written\":{},\"dropped\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"dropped_callback\":{},\"peak\":{:.6},\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"oboe\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"buffer\":{},\"buffer_requested\":{},\"burst_requested\":{},\"buffer_capacity\":{},\"conversion\":\"{}\",\"channels\":{},\"sharing\":\"{}\",\"performance\":\"{}\",\"xruns\":{},\"frames_captured\":{},\"frames_written\":{},\"dropped\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"dropped_callback\":{},\"peak\":{:.6},\"plan\":\"{}\",\"take\":\"{}\"}}",
         json_escape(&report.device),
         report.rate,
         report.frames,
         report.buffer_frames,
+        report.buffer_requested,
+        report.burst_requested,
+        report.buffer_capacity,
+        json_escape(&report.conversion),
         report.channels,
         json_escape(&report.sharing),
         json_escape(&report.performance),
@@ -1291,6 +1551,10 @@ mod tests {
             rate: 48_000,
             frames: 192,
             buffer_frames: 960,
+            buffer_requested: 192,
+            burst_requested: 48,
+            buffer_capacity: 384,
+            conversion: "strict".to_string(),
             channels: 1,
             sharing: "Exclusive".to_string(),
             performance: "LowLatency".to_string(),
@@ -1311,6 +1575,10 @@ mod tests {
             "\"rate\":48000",
             "\"frames\":192",
             "\"buffer\":960",
+            "\"buffer_requested\":192",
+            "\"burst_requested\":48",
+            "\"buffer_capacity\":384",
+            "\"conversion\":\"strict\"",
             "\"sharing\":\"Exclusive\"",
             "\"performance\":\"LowLatency\"",
             "\"frames_captured\":288000",
