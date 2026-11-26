@@ -290,7 +290,9 @@ sub power_last_discharge_save {
 
 # The charging estimate. The charger holds the terminal near 4.2 V, so the
 # resting table cannot say how full the pack is; the last unplugged reading is
-# the floor. A real charge still moves the display: the PMIC's current,
+# the floor. On the first read of a session the terminal is not at that ceiling
+# yet, and the resting table can raise the floor when the last reading was taken
+# under load. A real charge then moves the display: the PMIC's current,
 # integrated over the time since the last read, raises that floor. The running
 # estimate is persisted, so a reboot while charging continues from it instead
 # of falling back to the floor. Only the PMIC's full report sets 100%.
@@ -343,6 +345,14 @@ sub power_battery_charging_hold {
 			my $state = &power_charging_state();
 			my $saved = $state->{'percentage'};
 			my $saved_at = $state->{'at'};
+			# On the first read of a charging session the terminal voltage has
+			# not been pulled to the charger's CV ceiling yet; below 4.05 V the
+			# resting table is a better floor than a load-drooped last reading.
+			my $voltage = $battery->{'voltage'} || 0;
+			if ((!defined $saved || !defined $saved_at)
+				&& defined $ocv && $voltage > 0 && $voltage < 4.05 && $ocv > $held) {
+				$held = $ocv;
+			}
 			if (defined $saved && defined $saved_at && $saved >= $held) {
 				$held = $saved;
 				my $dt = $now - $saved_at;

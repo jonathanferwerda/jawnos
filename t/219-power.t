@@ -690,6 +690,16 @@ SH
 	subs::power_battery_charging_hold($out);
 	is($memo{'last_discharge'}, 37, 'an unplugged reading is stored for the next charge');
 	ok(!exists $memo{'charging'}, 'and the charging estimate is dropped');
+
+	# A pack that read 1% under load and is already at 3.712 V on the charger
+	# starts from the resting table, not the load-drooped reading.
+	$memo{'last_discharge'} = 1;
+	delete $memo{'charging'};
+	my $floor = subs::power_battery_charging_hold({
+		%{$charging}, percentage => 30, voltage => 3.712,
+	});
+	is($floor->{'percentage'}, 30, 'the first charging read uses the higher resting estimate');
+	is($floor->{'percentage_charging'}, 1, 'and still marks it as a charging estimate');
 }
 
 # --- the low-battery guard ---------------------------------------------------
