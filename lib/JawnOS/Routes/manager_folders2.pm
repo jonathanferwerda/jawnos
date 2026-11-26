@@ -13,6 +13,7 @@ sub routes {
 	[30530, 'get', '/manager/folders/archive/dirs', 'action_30530'],
 	[30537, 'post', '/manager/folders/archive/probe', 'action_30537'],
 	[30562, 'post', '/manager/folders/archive/receive', 'action_30562'],
+	[30580, 'post', '/manager/folders/archive/changed', 'action_30580'],
 	[30651, 'post', '/manager/folders/file/open', 'action_30651'],
 	[30660, 'post', '/manager/folders/archive/discard', 'action_30660'],
 	[30700, 'post', '/manager/folders/cloud', 'action_30700'],

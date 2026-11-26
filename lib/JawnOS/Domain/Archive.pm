@@ -1112,6 +1112,39 @@ sub archive_manifest_rescan_start {
 	return $id ? 1 : 0;
 }
 
+# Tell the active peers that a location's listing moved. A peer spoils its
+# local copy and queues a refresh, so an open window sees the new rows on its
+# next search instead of waiting for the hourly check. A sleeping peer misses
+# the note; its own hourly check still catches up.
+sub archive_manifest_notify {
+	my $data = shift || {};
+	my $location = $data->{'location'};
+	return 0 unless (defined $location && length $location);
+	my $machines = eval { &subs::remote_machine_lister({ connection => 'active' }) } || [];
+	my $sent = 0;
+	foreach my $rm ( @{$machines} ) {
+		next unless ref $rm eq 'HASH';
+		my $uuid = $rm->{'uuid'} || '';
+		next unless length $uuid;
+		my $agent = eval { &remote_agent_for($uuid) };
+		next unless (ref $agent eq 'HASH' && $agent->{'ua'} && $agent->{'manager'});
+		# this is a courtesy note, not a transfer: a dead peer must not hold the
+		# rescan job for the long rail default
+		eval {
+			$agent->{'ua'}->connect_timeout(4);
+			$agent->{'ua'}->request_timeout(8);
+			$agent->{'ua'}->inactivity_timeout(8);
+		};
+		my $res = eval {
+			$agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/archive/changed' => form => {
+				location => $location
+			})->result->json;
+		};
+		$sent++ if (ref $res eq 'HASH' && ($res->{'status'} // '') eq 'ok');
+	}
+	return $sent;
+}
+
 # What a client that may already hold a copy should be told. The listing's own
 # fingerprint, the media sweep and a read of the rows answer three cases:
 #   - both parts match what the client sent: nothing to send;
@@ -1299,7 +1332,8 @@ sub archive_manifest_rescan_job {
 	if ($dest->{'error'}) { $job->fail($dest->{'error'}); return }
 	unless (-d $dest->{'folder'}) {
 		&archive_manifest_write({ dir => $dest->{'folder'}, rows => [] });
-		$job->finish({ location => $data->{'location'}, rows => 0, files => 0 });
+		my $notified = &archive_manifest_notify({ location => $data->{'location'} });
+		$job->finish({ location => $data->{'location'}, rows => 0, files => 0, notified => $notified });
 		return;
 	}
 	my @files = &dir_listing([$dest->{'folder'}], 1);
@@ -1317,7 +1351,9 @@ sub archive_manifest_rescan_job {
 	}
 	my $written = &archive_manifest_write({ dir => $dest->{'folder'}, rows => \@rows });
 	$job->note(progress => 'read ' . scalar(@files) . ' files');
-	$job->finish({ location => $data->{'location'}, rows => $written->{'rows'}, files => scalar @files });
+	$job->note(progress => 'telling active peers the listing moved');
+	my $notified = &archive_manifest_notify({ location => $data->{'location'} });
+	$job->finish({ location => $data->{'location'}, rows => $written->{'rows'}, files => scalar @files, notified => $notified });
 }
 
 # What an archive machine holds for a location, asked for by uuid, with the
@@ -1423,6 +1459,21 @@ sub archive_manifest_local_touch {
 	return $now;
 }
 
+# A peer told us its listing changed. Spoil the stored check time without
+# rewriting the rows: the next search sees a stale copy and refreshes, and the
+# notification route also queues that refresh now. The short-lived copy in this
+# process is dropped so a search here cannot return the old rows.
+sub archive_manifest_local_stale {
+	my $data = shift || {};
+	my $key = &archive_manifest_local_key($data->{'remote_uuid'}, $data->{'location'});
+	my $where = { app => 'archive', context => 'manifest', subcontext => sha256_hex($key) };
+	$where->{'device'} = $device if defined $device;
+	# 1, not 0: db_update stamps a false server_time with now
+	eval { &subs::db_update('cache', { server_time => 1 }, $where) };
+	delete $archive_manifest_memo{$key};
+	return 1;
+}
+
 # Begin a background revalidation. The search side never waits: it has the local
 # rows already. The job asks the machine for its digest and, when it differs,
 # fetches and stores the new rows. The memo keeps one process from enqueuing the
@@ -1444,6 +1495,16 @@ sub archive_manifest_refresh_start {
 		} ] => { retries => 1 });
 	};
 	return $id ? 1 : 0;
+}
+
+# A notification is a real event, not a search loop: it may ask for a check even
+# when this process already has one queued from a search a moment ago.
+sub archive_manifest_refresh_force {
+	my ($data, $local) = @_;
+	$data ||= {};
+	my $key = &archive_manifest_local_key($data->{'remote_uuid'}, $data->{'location'});
+	delete $archive_manifest_refresh_memo{$key};
+	return &archive_manifest_refresh_start($data, $local);
 }
 
 # One revalidation: a digest question first, the rows only when the answer

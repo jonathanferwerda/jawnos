@@ -443,6 +443,38 @@ sub action_30562 {
 	$c->render(json => { status => 'ok', path => $dest->{'path'}, size => $written, sha256 => $sha });
 }
 
+# A peer whose archive listing changed tells us to refresh our copy. The peer is
+# already verified by the time this runs; its row names the uuid the local copy
+# was stored under. A peer with no copy here has nothing to spoil.
+# POST /manager/folders/archive/changed
+sub action_30580 {
+	my $c = shift;
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
+	my $location = $c->param('location');
+	my $rm = &peer_row_for_request($c);
+	my $remote_uuid = $rm ? ($rm->{'uuid'} || '') : '';
+	if (!defined $location || !length $location || !length $remote_uuid) {
+		$c->render(json => { status => 'ok', changed => 0 });
+		return;
+	}
+	my $local = &subs::archive_manifest_local_read({ remote_uuid => $remote_uuid, location => $location });
+	unless ($local) {
+		$c->render(json => { status => 'ok', changed => 0 });
+		return;
+	}
+	# a second note before the refresh has run does not queue a second job
+	my $already_stale = (($local->{'checked'} || 0) <= 1);
+	&subs::archive_manifest_local_stale({ remote_uuid => $remote_uuid, location => $location });
+	my $queued = 0;
+	unless ($already_stale) {
+		$queued = &subs::archive_manifest_refresh_force({ remote_uuid => $remote_uuid, location => $location }, $local);
+	}
+	$c->render(json => { status => 'ok', changed => 1, queued => $queued });
+}
+
 # Throw away a partial copy, at the sender's request after a cancel. The
 # original never leaves its machine; only <destination>.part and its sidecar go.
 # A partial that records another source is refused rather than deleted, so a
