@@ -82,7 +82,7 @@ change stays behind the same `oboe` feature and the same `OboeReport` contract.
 | A local 16-bit WAV through `DiskWriter` | Multi-track recording |
 | A status/report line: rate, frames, buffer, sharing and performance mode, xruns, timestamps | Patchbay and `Plan.pm` routing |
 | `--backend oboe` in `--run`, `--backends --json` naming `oboe` | A required monitoring path (monitoring stays headphone-only, last) |
-| A foreground service and an in-process/JNI start path | Direct USB access through `UsbManager` |
+| A foreground service and an in-process/JNI start path | Direct USB access through `UsbManager` (now its own slice: `docs/studio-usb-audio.md`) |
 | The `docs/studio-mobile-audio.md` §6 round-trip measurement | Browser UI changes or DSP rewrites |
 
 ## 2. Engine patch list
@@ -408,7 +408,7 @@ mic for every device feature.
 | Foreground service | `startForeground` must name the type. `microphone` requires `RECORD_AUDIO` to be granted *before* the call on Android 14+; `connectedDevice` covers the USB interface. Android 12+ refuses a start from the background, so the service starts from the activity or a user action. |
 | Microphone permission | `RECORD_AUDIO` (`AndroidManifest.xml:69`) is runtime. The existing `JawnAudioOboe` already requests it (`REQ_PERMS = 7101`); the service should refuse to start with a sentence, not crash, when it is missing. |
 | Audio focus | Capture alone needs none. Monitoring or playback needs `AudioFocusRequest`: `AUDIOFOCUS_GAIN` for a whole session, `AUDIOFOCUS_GAIN_TRANSIENT` for one take. On `AUDIOFOCUS_LOSS_TRANSIENT`, mute monitoring and keep recording (D14); never drop the take. On permanent loss, close the WAV cleanly. |
-| USB | Use the HAL's `AudioDeviceInfo` and pass its id to `set_device_id`. A direct `UsbManager` path needs USB permission and cannot do isochronous transfers; it is out of scope. |
+| USB | Use the HAL's `AudioDeviceInfo` and pass its id to `set_device_id`. Java's `UsbRequest` is bulk/interrupt only, but the connection's usbfs fd can carry isochronous URBs; that is the separate direct path in `docs/studio-usb-audio.md`. The HAL remains the default. |
 | Screen off | A foreground service keeps the process; a `PARTIAL_WAKE_LOCK` (released in `onDestroy`) is what keeps the CPU on for audio when the screen sleeps. Add it with the service, and let the notification say a take is running. |
 | Storage | App-private files directory; `DiskWriter` writes as it records, so a kill costs the tail, not the take. The manager imports the WAV later. |
 
