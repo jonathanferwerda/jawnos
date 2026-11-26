@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Manager/Part14.pm
-# covers:    a resumed session's children are reopened completely, not left as type=start with stop_seen set; a resume only considers sessions that had started by the press
+# covers:    a resumed session's children are reopened completely, not left as type=start with stop_seen set; a resume only considers sessions that had started by the press; a session resumed after its parent ended detaches, so the parent's stop cannot close it again
 
 use strict;
 use warnings;
@@ -50,5 +50,15 @@ like($resolve_block, qr/and timestamp <= \? order by timestamp DESC LIMIT 1/,
 
 like($resume_branch, qr/and timestamp <= \? order by timestamp DESC LIMIT 1/,
 	'the resume branch fallback applies the same bound');
+
+# --- a resume detaches from a parent that has already ended ----------------
+# The resumed row keeps its source_uuid only while that parent still runs. If
+# the parent has ended, the row continues on its own, so a later merge of the
+# parent's stop cannot close it again.
+
+like($resolve_block, qr/source_parent_ended/, 'the pre-relay resolution asks whether the parent has ended');
+like($resolve_block, qr/detach_source/, 'and relays that answer to every peer');
+like($resume_branch, qr/source_parent_ended/, 'the resume branch can answer for itself');
+like($resume_branch, qr/source_uuid => undef/, 'an ended parent is detached from the resumed row');
 
 done_testing();

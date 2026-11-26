@@ -30,12 +30,12 @@ my $part29  = read_file("$root/lib/JawnOS/Manager/Part29.pm");
 # --- manager_reset resolves the target before it relays ----------------------
 
 my $stop_resolve = index($part14, "if (\$type eq 'stop') {");
-my $relay        = index($part14, "&remote_relay_request(\$c, { dissemination => 'yes' })");
+my $relay        = index($part14, '&remote_relay_request($c, $relay_params)');
 ok($stop_resolve >= 0, 'manager_reset resolves a stop that named no session');
 ok($relay >= 0, 'and it still relays the press');
 ok($stop_resolve < $relay, 'the resolution happens before the relay, so the uuid travels with it');
 
-my ($between) = $part14 =~ /(my \$target_uuid = .*?&remote_relay_request\(\$c, \{ dissemination => 'yes' \}\);)/s;
+my ($between) = $part14 =~ /(my \$target_uuid = .*?&remote_relay_request\(\$c, \$relay_params\);)/s;
 like($between, qr/&subs::stop_target_row\(\$app, \$target_uuid, \$timestamp\)/,
 	'the press is resolved before the relay even when the client named a session');
 like($between, qr/\$target_uuid = \(\$resolved && \$resolved->\{'uuid'\}\) \? \$resolved->\{'uuid'\} : &subs::random_string_creator\(40\);/,

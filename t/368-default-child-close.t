@@ -172,6 +172,54 @@ is($resumed->{'type'}, 'start', 'a child reopened for a resume is left running')
 ok(!defined $resumed->{'stop_seen'} || !length $resumed->{'stop_seen'},
 	'even though the parent copy here is still the older stop');
 
+# --- a replayed parent stop does not re-close the resumed child -------------
+merge_row('appointments', {
+	app => 'programming', uuid => 'p5', type => 'stop', timestamp => '1000',
+	stop_timestamp => '9000', duration => '-8000', stop_seen => 'yes',
+	server_time => '9000', seen => 'yes',
+});
+my $replayed = appointment('c5');
+is($replayed->{'type'}, 'start', 'a replayed parent stop leaves the resumed child running');
+ok(!defined $replayed->{'stop_seen'} || !length $replayed->{'stop_seen'},
+	'with no stop flag');
+
+# --- a stop written before the resume cannot outrank it --------------------
+# On a peer that has not closed its parent copy yet, the parent stop arrives
+# after the child was resumed. The stop's own write time (9000) is older than
+# the resume (9500), so it must not close the child.
+$db->insert('appointments', {
+	app => 'programming', uuid => 'p7', type => 'start', timestamp => '1000',
+	server_time => '1000', seen => 'yes',
+});
+$db->insert('appointments', {
+	app => 'vibe_coding', uuid => 'c7', type => 'start', timestamp => '1000',
+	server_time => '9500', source_uuid => 'p7', source => 'press', seen => 'yes',
+});
+merge_row('appointments', {
+	app => 'programming', uuid => 'p7', type => 'stop', timestamp => '1000',
+	stop_timestamp => '9000', duration => '-8000', stop_seen => 'yes',
+	server_time => '9000', seen => 'yes',
+});
+my $late_stop = appointment('c7');
+is($late_stop->{'type'}, 'start', 'a stop written before the resume does not close it');
+ok(!defined $late_stop->{'stop_seen'} || !length $late_stop->{'stop_seen'},
+	'and leaves no stop flag');
+
+# --- the helper a resume uses to decide whether to detach ------------------
+$db->insert('appointments', {
+	app => 'programming', uuid => 'p8', type => 'stop', timestamp => '1000',
+	stop_timestamp => '9000', duration => '-8000', stop_seen => 'yes',
+	server_time => '9000', seen => 'yes',
+});
+$db->insert('appointments', {
+	app => 'programming', uuid => 'p9', type => 'start', timestamp => '1000',
+	server_time => '1000', seen => 'yes',
+});
+ok(subs::source_parent_ended('p8'), 'a closed parent has ended');
+ok(subs::source_parent_ended('no-such-row'), 'a missing parent has ended too');
+ok(!subs::source_parent_ended('p9'), 'a running parent keeps the session linked');
+ok(!subs::source_parent_ended(''), 'a session with no parent needs no detach');
+
 # --- a stale stop replay does not close a newer open session ----------------
 $db->insert('appointments', {
 	app => 'programming', uuid => 'p6', type => 'start', timestamp => '1000',

@@ -545,6 +545,20 @@ sub source_parent_link {
 	return $link;
 }
 
+# The parent that names a session has already ended when its row is closed or
+# gone. A resumed row that was an option or model of such a parent continues on
+# its own: there is no running parent left for a later stop to close it, and the
+# merge reconciliation must stop treating it as a child. A parent that is still
+# running (or paused) keeps the link, so its own stop still closes the child.
+sub source_parent_ended {
+	my ($source_uuid) = @_;
+	return 0 unless defined $source_uuid && length $source_uuid;
+	my $parent = &subs::db_select('appointments', undef, { uuid => $source_uuid })->hashes->[0];
+	return 1 unless $parent && ($parent->{'uuid'} // '') ne '';
+	return 1 if (defined $parent->{'stop_seen'} && length $parent->{'stop_seen'});
+	return (($parent->{'type'} // '') =~ /^(?:stop|cancel)$/) ? 1 : 0;
+}
+
 # A model/option session is a child appointment whose source_uuid names the
 # parent session. The parent's own model/options list is what its details view
 # reads, so the list follows the session: a start that attaches a child to a
@@ -621,17 +635,26 @@ sub default_children_close {
 		? $parent->{'stop_timestamp'}
 		: ((defined $parent->{'timestamp'} && length $parent->{'timestamp'}) ? $parent->{'timestamp'} : &subs::rightNow());
 	$stop = 0 + $stop;
+	# The close belongs to the moment the parent's stop was written, not to the
+	# moment this merge happens to run. Stamped at the stop, a peer's close can
+	# never outrank a resume written after it, and the resume wins the merge on
+	# every machine.
+	my $parent_at = 0 + ($parent->{'server_time'} // 0);
+	my $close_at = $parent_at > 0 ? $parent_at : &subs::rightNow();
 	my @queue = ($uuid);
 	my %seen = ($uuid => 1);
 	my @closed;
 	while (scalar @queue) {
 		my $from = shift @queue;
-		my $children = &subs::db_query("select uuid, app, timestamp from appointments where source_uuid = ? and (type = 'start' or type = 'record') and stop_seen is null order by cast(timestamp as integer)",
+		my $children = &subs::db_query("select uuid, app, timestamp, server_time from appointments where source_uuid = ? and (type = 'start' or type = 'record') and stop_seen is null order by cast(timestamp as integer)",
 			$from)->hashes || [];
 		foreach my $child ( @{$children} ) {
 			my $child_uuid = $child->{'uuid'};
 			next unless defined $child_uuid && length $child_uuid && !$seen{$child_uuid};
 			$seen{$child_uuid} = 1;
+			# A child written after the parent's stop is a resume, not a session the
+			# stop left behind. Leave it - and its own children - running.
+			next if $parent_at > 0 && (0 + ($child->{'server_time'} // 0)) > $parent_at;
 			my $start = (defined $child->{'timestamp'} && $child->{'timestamp'} =~ /^\d+$/)
 				? 0 + $child->{'timestamp'} : $stop;
 			&subs::db_update('appointments', {
@@ -640,7 +663,7 @@ sub default_children_close {
 				stop_timestamp => $stop,
 				stop_seen => 'yes',
 				seen => 'yes',
-				server_time => &subs::rightNow(),
+				server_time => $close_at,
 			}, { uuid => $child_uuid, app => $child->{'app'} });
 			push @closed, { app => $child->{'app'}, uuid => $child_uuid };
 			push @queue, $child_uuid;

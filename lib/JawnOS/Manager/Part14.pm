@@ -110,6 +110,7 @@ sub manager_reset($c) {
 	my $target_uuid = $c->param('uuid') || '';
 	my $uuid = $c->param('uuid') || &subs::random_string_creator(40);
 	$c->param('uuid' => $uuid);
+	my $resume_source_uuid;
 	# A resume reopens the row its last stop/cancel left. Resolve that row now,
 	# before the relay, the way a stop names the session it closes: every machine
 	# then reopens one and the same row instead of each reading "the newest
@@ -118,11 +119,12 @@ sub manager_reset($c) {
 	# the newest start is bounded by the press timestamp, as a stop's fallback is.
 	if ($type eq 'resume' && !$target_uuid) {
 		my $resume_at = $timestamp || &subs::rightNow();
-		my $last = &subs::db_query('select uuid from appointments where app = ? and (type = ? or type = ?) and timestamp <= ? order by timestamp DESC LIMIT 1', $app, 'stop','cancel', $resume_at)->hashes->[0];
+		my $last = &subs::db_query('select uuid, source_uuid from appointments where app = ? and (type = ? or type = ?) and timestamp <= ? order by timestamp DESC LIMIT 1', $app, 'stop','cancel', $resume_at)->hashes->[0];
 		if ($last && $last->{'uuid'}) {
 			$target_uuid = $last->{'uuid'};
 			$uuid = $target_uuid;
 			$c->param('uuid' => $uuid);
+			$resume_source_uuid = $last->{'source_uuid'};
 		}
 	}
 	# A stop names one row before it is relayed, resolved here on the machine
@@ -138,6 +140,20 @@ sub manager_reset($c) {
 		$target_uuid = ($resolved && $resolved->{'uuid'}) ? $resolved->{'uuid'} : &subs::random_string_creator(40);
 		$uuid = $target_uuid;
 		$c->param('uuid' => $uuid);
+	}
+	# A session that was an option or model of a parent that has already ended
+	# resumes on its own: the parent's stop must not close it again on the next
+	# merge. Decide it here, on the machine that received the press, and relay the
+	# answer so every peer detaches the same row instead of each reading its own -
+	# possibly lagging - copy of the parent. A caller that named a uuid is
+	# answered from that row.
+	if ($type eq 'resume') {
+		if (!defined $resume_source_uuid && $target_uuid) {
+			my $linked = &subs::db_query('select source_uuid from appointments where uuid = ? limit 1', $target_uuid)->hash;
+			$resume_source_uuid = $linked ? $linked->{'source_uuid'} : undef;
+		}
+		$c->param('detach_source' => &subs::source_parent_ended($resume_source_uuid) ? 'yes' : 'no')
+			if defined $resume_source_uuid;
 	}
 	my $returner = { app => $app, timestamp => $timestamp, server_time => $server_time, init => $init, uuid => $uuid };
 	# A media press names the machine that does the work (the camera, scan and
@@ -158,9 +174,11 @@ sub manager_reset($c) {
 		$c->param('duration', $usual_duration)
 	}
 	my ($appt_header, $header_appts);
+	my $relay_params = { dissemination => 'yes' };
+	$relay_params->{'detach_source'} = $c->param('detach_source') // '' if $type eq 'resume';
 	&subs::subprocessor(sub {
 	  Mojo::IOLoop->reset;
-		&remote_relay_request($c, { dissemination => 'yes' });
+		&remote_relay_request($c, $relay_params);
 	}, { name => 'reset remote relay' });
 	my $duration = &duration_read($c->param('duration'));
 	# A value the person typed but the reader could not parse falls back to the
@@ -971,6 +989,13 @@ elsif ($type eq 'delay') {
 		# own newer copy will arrive by sync. Guessing "the newest" here could
 		# reopen a different session.
 		if ($old->[0]) {
+			# A resume of a session whose parent has already ended continues it on
+			# its own, so a later merge of that parent's stop cannot close it again.
+			# The answer was decided before the relay; a caller that named the row
+			# itself (no pre-relay resolution) is answered here.
+			my $detach_source = $c->param('detach_source');
+			$detach_source = &subs::source_parent_ended($old->[0]->{'source_uuid'}) ? 'yes' : 'no'
+				unless defined $detach_source && length $detach_source;
 			$duration = $c->param('duration') =~ /[a-z0-9A-Z]/ ? (abs($duration) * -1) : $timestamp - $old->[0]->{'timestamp'};
 			$uuid = $old->[0]->{'uuid'};
 			&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $old->[0]->{'app'}, 'state' => 'on', timestamp => $old->[0]->{'timestamp'} });
@@ -988,7 +1013,8 @@ elsif ($type eq 'delay') {
 					seen => $seen,
 					duration => ((abs $duration) * -1),
 					stop_timestamp => $c->param('duration') =~ /[a-zA-Z0-9]/ ? $old->[0]->{'timestamp'} + abs(&duration_read($c->param('duration')) // 0) : undef,
-					stop_seen => undef
+					stop_seen => undef,
+					($detach_source eq 'yes' ? (source_uuid => undef) : ())
 				}, {
 					app => $app,
 					uuid => $old->[0]->{'uuid'}
