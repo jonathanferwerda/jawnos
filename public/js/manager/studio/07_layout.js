@@ -113,7 +113,7 @@ function studioDefaultPanelLayout(size) {
 	var width = size.width;
 	var height = size.height;
 	if (width < 720) {
-		var transportH = Math.max(64, Math.min(104, Math.round(height * 0.18)));
+		var transportH = Math.max(112, Math.min(120, Math.round(height * 0.18)));
 		var drumsH = Math.max(110, Math.min(190, Math.round(height * 0.24)));
 		var synthH = Math.max(110, Math.min(190, Math.round(height * 0.22)));
 		var mixerH = Math.max(110, Math.min(170, Math.round(height * 0.24)));
@@ -137,7 +137,7 @@ function studioDefaultPanelLayout(size) {
 			}
 		};
 	}
-	var transportHeight = Math.max(64, Math.min(112, Math.round(height * 0.16)));
+	var transportHeight = Math.max(112, Math.min(120, Math.round(height * 0.16)));
 	var mixerHeight = Math.max(120, Math.min(220, Math.round(height * 0.28)));
 	var synthHeight = Math.max(150, Math.min(220, Math.round(height * 0.25)));
 	var middleTop = transportHeight + gap;
@@ -178,6 +178,13 @@ function studioApplyPanelGeometry(name) {
 		return;
 	}
 	var box = studioPanelBox(state.left, state.top, state.width, state.height);
+	// The transport's row carries the jog wheel and the clock's two lines.
+	// A song saved before the clock grew still opens with both readable.
+	if (name === 'transport') {
+		var desk = studioPanelDeskSize();
+		box.height = Math.min(desk.height, Math.max(box.height, 112));
+		box.top = Math.max(0, Math.min(box.top, desk.height - box.height));
+	}
 	state.left = box.left;
 	state.top = box.top;
 	state.width = box.width;
@@ -1281,6 +1288,105 @@ $(document).on('click', '.studio_track_delete', function () {
 	if (typeof studioPedalboardFollow === 'function') { studioPedalboardFollow(); }
 });
 
+// A narrow track panel clips its actions row, so a press and hold (or a
+// right-click with a mouse) offers the commands that do not fit: the channel's
+// input and output pickers, and Delete.
+function studioTrackPanelMenu(ch, at) {
+	$('.studio_menu').remove();
+	var menu = $('<div class="studio_menu studio_track_menu"></div>')
+		.attr('data-channel', ch)
+		.attr('data-x', at.x)
+		.attr('data-y', at.y);
+	$('<div class="studio_menu_head"></div>').text(studioLayoutText('Track') + ' ' + ch).appendTo(menu);
+	var row = function (action, label) {
+		$('<button type="button" class="studio_menu_row"></button>')
+			.attr('data-studio-track-action', action)
+			.text(studioLayoutText(label))
+			.appendTo(menu);
+	};
+	row('input', 'Channel in');
+	row('output', 'Channel out');
+	row('delete', 'Delete track');
+	studioPanelMenuPlace(menu, at.x, at.y);
+}
+
+$(document).on('contextmenu', '.studio_track_panel', function (e) {
+	var ch = $(this).attr('channel');
+	if (!ch) { return; }
+	e.preventDefault();
+	studioTrackPanelMenu(ch, { x: e.clientX, y: e.clientY });
+});
+
+$(document).on('click', '.studio_track_menu .studio_menu_row', function () {
+	var row = $(this);
+	var menu = row.closest('.studio_track_menu');
+	var ch = menu.attr('data-channel');
+	var at = { x: Number(menu.attr('data-x')) || 0, y: Number(menu.attr('data-y')) || 0 };
+	var action = row.attr('data-studio-track-action');
+	$('.studio_menu').remove();
+	if (!ch) { return; }
+	if (action === 'input' || action === 'output') {
+		if (typeof channelSelect === 'function') { channelSelect(ch, action, at); }
+	}
+	else if (action === 'delete') {
+		studioRemoveTrack(ch);
+		// The board may have been sitting under this row; it follows the new
+		// selection, or closes when none is left.
+		if (typeof studioPedalboardFollow === 'function') { studioPedalboardFollow(); }
+	}
+});
+
+// A finger has no second button: a still press on the panel opens the same
+// menu, and the press that ends the hold is swallowed so it cannot also select
+// the track behind the menu. A press that moves is a scroll or a drag.
+var studioTrackHoldTimer = 0;
+var studioTrackHoldAt = null;
+var studioTrackHoldOpened = false;
+
+$(document).on('touchstart', '.studio_track_panel', function (e) {
+	var touch = e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0];
+	if (!touch) { return; }
+	// The panel is dense with controls, and a touch's target is adjusted to
+	// the nearest one; the hold is taken anywhere but the resize grip, and
+	// the click that ends it is swallowed below, so a quick tap still
+	// presses the control it landed on.
+	var under = document.elementFromPoint
+		? document.elementFromPoint(touch.clientX, touch.clientY)
+		: e.target;
+	if (under && under.closest && under.closest('.studio_track_resize')) { return; }
+	studioTrackHoldOpened = false;
+	studioTrackHoldAt = { x: touch.clientX, y: touch.clientY, ch: $(this).attr('channel') };
+	clearTimeout(studioTrackHoldTimer);
+	studioTrackHoldTimer = setTimeout(function () {
+		if (!studioTrackHoldAt || !studioTrackHoldAt.ch) { return; }
+		studioTrackHoldOpened = true;
+		studioTrackPanelMenu(studioTrackHoldAt.ch, studioTrackHoldAt);
+	}, 500);
+});
+
+$(document).on('touchmove', '.studio_track_panel', function (e) {
+	var touch = e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0];
+	if (!touch || !studioTrackHoldAt) { return; }
+	if (Math.abs(touch.clientX - studioTrackHoldAt.x) > 10 || Math.abs(touch.clientY - studioTrackHoldAt.y) > 10) {
+		clearTimeout(studioTrackHoldTimer);
+		studioTrackHoldAt = null;
+	}
+});
+
+$(document).on('touchend touchcancel', '.studio_track_panel', function () {
+	clearTimeout(studioTrackHoldTimer);
+	studioTrackHoldAt = null;
+});
+
+document.addEventListener('click', function (event) {
+	if (!studioTrackHoldOpened) { return; }
+	studioTrackHoldOpened = false;
+	if (event.target && event.target.closest && event.target.closest('.studio_track_panel')) {
+		event.preventDefault();
+		event.stopPropagation();
+	}
+}, true);
+
 $(document).on('change', '.studio_track_name', function () {
 	var ch = $(this).attr('channel');
 	if (!/^[0-9]+$/.test(ch)) { return; }
@@ -2212,7 +2318,7 @@ function studioRemoteRender(state) {
 	});
 	if (duration > 0) { mixer['time']['duration'] = duration; }
 	else { mixer['time']['duration'] = 0; }
-	$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
+	$('#studio_time_duration').html(studioClockLabel(mixer['time']['duration']));
 	if (typeof studioTimeDisplay === 'function') { studioTimeDisplay(); }
 	$('#studio_play').css({ 'background-color': studioRemoteTruthy(tr.playing) ? 'yellow' : '' });
 	$('#studio_stop').css({ 'background-color': studioRemoteTruthy(tr.playing) ? '' : 'lightgreen' });
@@ -2322,7 +2428,7 @@ function studioRemoteInterceptClick(event) {
 	if (el.closest('#studio_new').length) { stop(); studioRemoteCommand('song', { action: 'new' }); return; }
 	// Controls the command vocabulary does not carry yet stay local-silent: a
 	// controller must not start a monitor, open a capture, or delete the mirror.
-	if (el.closest('#studio_pedals, #pedalboard_hamburger, #studio_config_toggle, #studio_video_toggle, #studio_open').length) { stop(); return; }
+	if (el.closest('#studio_config_toggle, #studio_video_toggle, #studio_open').length) { stop(); return; }
 	if (el.closest('#studio_track_monitor, .studio_jack, .studio_cord, .studio_track_fx, .studio_track_automation, .studio_track_delete').length) { stop(); return; }
 	if (el.closest('#studio_drums .studio_drums_voice, #studio_drums .studio_drums_step, #studio_drums .studio_drums_lamp, #studio_drums .studio_drums_key, #studio_drums_save_loop, #studio_drums_bar_add, #studio_drums_bar_remove, #studio_drums_beat_add, #studio_drums_beat_remove').length) { stop(); return; }
 	if (el.closest('#pedalboard').length) { stop(); return; }

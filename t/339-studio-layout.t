@@ -250,7 +250,7 @@ unlike($layout, qr/studio_panel_floating|studioManualReflow|studioExitArrange|st
 	'the old float/dock/packing engine is gone');
 
 # --- Arrange lays the windows in the DAW order ------------------------------
-like($layout, qr/var transportHeight = Math\.max\(64, Math\.min\(112/, 'the transport window keeps a slim top band');
+like($layout, qr/var transportHeight = Math\.max\(112, Math\.min\(120/, 'the transport window keeps a band tall enough for the jog wheel and the two-line clock');
 like($layout, qr/drums: \{ left: tracksWidth \+ gap, top: middleTop/, 'the drums sit beside the timeline');
 like($layout, qr/mixer: \{ left: 0, top: height - mixerHeight/, 'the console sits at the foot');
 like($layout, qr/if \(width < 720\)/, 'a narrow desk stacks the windows');
@@ -284,20 +284,21 @@ like($style, qr/studio_track_automation_lane/, 'an automation lane exists for th
 # --- the pedalboard is a bottom sheet, opened from the layout bar ----------
 like($markup, qr/id="studio_pedalboard_close"/, 'the pedalboard has a close control');
 like($edit, qr/function studioPedalboardOpen\(show\)/, 'one open/close path serves every control');
-like($edit, qr/\$\('#studio_pedals'\)\.attr\('aria-pressed'/, 'the Pedals button follows the sheet');
-like($edit, qr/'#studio_pedals, #pedalboard_hamburger'/, 'the Pedals button and the old burger both toggle it');
+unlike($edit, qr/#studio_pedals/, 'no Pedals button is left to mirror');
+unlike($edit, qr/pedalboard_hamburger/, 'the transport burger is gone from the open path');
 like($layout, qr/'#studio_pedalboard_close'[\s\S]*studioPedalboardOpen\(false\)/, 'the close control hides the sheet');
 like($layout, qr/studioPedalboardOpen\(true\)/, 'FX opens the sheet rather than toggling it');
 like($layout, qr/click', '\.studio_track_fx'[\s\S]*?studioRackRender\(ch\)[\s\S]*?studioPedalboardOpen\(true\);/,
 	'FX selects the track, draws its chain and opens the pedalboard');
 unlike($layout, qr/studio_fx_open/, 'FX no longer opens a rack inside the track row');
-like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_pedals"[^>]*hint="[^"]*Open or close the pedalboard/,
-	'the Pedals button sits in the layout bar');
-like($markup, qr/id="studio_pedals"[^>]*aria-pressed="false"/, 'the Pedals button starts closed');
-like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_config_toggle"[\s\S]*id="studio_loop"[\s\S]*id="studio_grid"/,
-	'Configure and Loop moved into the layout bar');
-like($markup, qr/class="studio_transport_row"[\s\S]*id="pedalboard_hamburger"/,
-	'the old burger stays in the transport row');
+like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_audio_path"[^>]*hint="[^"]*Which side is recording and playing/,
+	'the Engine/Browser badge sits where the Pedals button was');
+unlike($markup, qr/id="studio_pedals"/, 'the layout bar has no Pedals button');
+unlike($markup, qr/id="pedalboard_hamburger"/, 'the transport carries no pedalboard button');
+like($markup, qr/class="studio_transport_row"[\s\S]*id="studio_time_display"[\s\S]*id="studio_loop"/,
+	'the repeat button now lives in the transport, after the clock');
+like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_config_toggle"[\s\S]*id="studio_audio_path"/,
+	'Configure and the Engine/Browser badge share the layout bar');
 like($style, qr/#pedalboard\s*\{[^}]*position:\s*absolute/s, 'the pedalboard is a sheet, not a flex row');
 like($style, qr/#pedalboard\s*\{[^}]*left:\s*0[^}]*right:\s*0[^}]*bottom:\s*0/s, 'the sheet pins to the window foot');
 like($style, qr/#pedalboard\s*\{[^}]*z-index:\s*70002/s, 'the sheet floats above the panels and windows');
@@ -393,7 +394,8 @@ like($help, qr/'Show automation for this track'/, 'help names the automation tog
 like($help, qr/'Delete this track'/, 'help names the per-track delete');
 like($help, qr/'Open the pedalboard for this track'/, 'help names the FX button');
 like($help, qr/'Close the pedalboard'/, 'help names the pedalboard close');
-like($help, qr/'Open or close the pedalboard'/, 'help names the Pedals button');
+like($help, qr/'Tap to select; press and hold for channel in, out and delete'/,
+	'help names the track panel\'s hold menu');
 like($help, qr/never lists effects/, 'help says the track panel keeps its height');
 like($help, qr/Every track has a compact panel/, 'help describes the per-track panel');
 like($help, qr/panel window of its own/, 'help describes the drum window');

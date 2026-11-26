@@ -89,6 +89,24 @@
 		box-sizing: border-box;
 		border-bottom: 1px solid var(--line);
 	}
+	/* A mouse with one wheel can still move the board: the wheel scrolls the
+	   rack sideways (04_knobs) and this thin bar can be dragged. The shared
+	   sheet hides every scrollbar, so the board asks for its own one back. */
+	#studio_pedalboard_rack {
+		scrollbar-width: thin;
+	}
+	#studio_pedalboard_rack::-webkit-scrollbar {
+		display: block;
+		height: 10px;
+	}
+	#studio_pedalboard_rack::-webkit-scrollbar-track {
+		background: color-mix(in srgb, var(--ink) 8%, transparent);
+		border-radius: 5px;
+	}
+	#studio_pedalboard_rack::-webkit-scrollbar-thumb {
+		background: var(--line);
+		border-radius: 5px;
+	}
 	#studio_pedalboard_rack .pedal {
 		margin: 0;
 	}
@@ -539,20 +557,38 @@
 		width: 24px;
 		height: 24px;
 	}
+	/* The clock is the transport's biggest read: minutes and seconds with
+	   ten-thousandths on top, and the bar and beat, to a hundredth of a beat,
+	   underneath it in a smaller line. */
 	.studio_transport_time {
+		display: inline-flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0;
+		margin-left: auto;
+		line-height: 1.05;
+		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
+	}
+	.studio_transport_clock {
 		display: inline-flex;
 		align-items: baseline;
 		gap: 3px;
-		margin-left: auto;
-		font-size: 18px;
-		white-space: nowrap;
 	}
 	.studio_transport_sep {
 		opacity: .5;
-		font-size: 13px;
+		font-size: 14px;
 	}
 	#studio_time_display {
-		font-size: 18px;
+		font-size: 30px;
+	}
+	#studio_time_duration {
+		font-size: 14px;
+		opacity: .65;
+	}
+	#studio_time_beats {
+		font-size: 12px;
+		opacity: .8;
 	}
 	#studio_track_container {
 		/* the hidden media elements live inside the track area, a clipped 1px box:
@@ -907,9 +943,6 @@
 		top: 50%;
 		margin-left: -2px;
 		margin-top: -2px;
-	}
-	#studio_time_display {
-		font-size: 18px;
 	}
 	/* Studio follows the shared window stack. Its old z-index pin
 	   (`39999 !important`) kept it above the dock and taskbar, but it also
@@ -2353,6 +2386,13 @@
 			width: 56px;
 			flex-basis: 56px !important;
 		}
+		#studio_time_display {
+			font-size: 24px;
+		}
+		#studio_time_duration,
+		.studio_transport_sep {
+			font-size: 12px;
+		}
 	}
 	/* The transport's controls are larger, and the jog wheel is twice their size. */
 	.studio_transport_row .little_thumb {
@@ -2408,8 +2448,10 @@
 	.studio_strip_control {
 		display: flex;
 		flex-direction: column;
-		flex: 0 0 47px;
-		width: 47px;
+		/* the fader and its meter give up a little width so the mute/solo row
+		   below can carry larger buttons */
+		flex: 0 0 42px;
+		width: 42px;
 		height: 100%;
 	}
 	.studio_strip_fader_group {
@@ -2426,15 +2468,15 @@
 	}
 	.channel_fader {
 		position: relative;
-		width: 34px;
+		width: 30px;
 		height: 100%;
-		flex: 0 0 34px;
+		flex: 0 0 30px;
 	}
 	.channel_fader .channel_volume {
 		position: absolute;
 		top: 0;
 		left: 0;
-		width: 34px;
+		width: 30px;
 		height: 100%;
 		border: 1px solid var(--line);
 		border-radius: 4px;
@@ -2482,8 +2524,8 @@
 		transform: translateY(-100%);
 	}
 	.studio_strip_meter {
-		flex: 0 0 10px;
-		width: 10px;
+		flex: 0 0 8px;
+		width: 8px;
 		height: 100%;
 		display: flex;
 		flex-direction: column-reverse;
@@ -2517,24 +2559,26 @@
 		position: static;
 		left: auto;
 		right: auto;
-		flex: 0 0 22px;
-		height: 22px;
+		flex: 0 0 30px;
+		height: 30px;
 		width: 100%;
 		box-sizing: border-box;
 		display: flex;
-		gap: 2px;
+		gap: 3px;
 		justify-content: center;
 		align-items: center;
 	}
+	/* M and S share the whole strip's width, so a finger can hit them */
 	.studio_strip_mute,
 	.studio_strip_solo {
-		width: 22px;
-		min-width: 22px;
-		height: 20px;
+		flex: 1 1 0;
+		width: auto;
+		min-width: 0;
+		height: 26px;
 		padding: 0;
-		font-size: 10px;
+		font-size: 13px;
 		font-weight: bold;
-		line-height: 18px;
+		line-height: 24px;
 		border-radius: 4px;
 	}
 	.studio_strip_mute[aria-pressed="true"] {

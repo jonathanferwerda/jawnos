@@ -317,7 +317,7 @@ function studioTransportTick() {
 	if (mixer['time']['status'] == 'record') {
 		if (mixer['time']['position'] > end) {
 			mixer['time']['duration'] = mixer['time']['position'];
-			$('#studio_time_duration').html(numeral(mixer['time']['duration']).format('00.000'));
+			$('#studio_time_duration').html(studioClockLabel(mixer['time']['duration']));
 		}
 		// A take grows under the playhead while it records, so its clip is drawn
 		// on the lane as it is made instead of only appearing on stop.
@@ -339,27 +339,42 @@ function studioTransportTick() {
 	studioDrawTracks();
 }
 
+// The transport's clock: minutes, seconds and ten-thousandths, so a position
+// reads the same in the transport and in the duration beside it.
+function studioClockLabel(seconds) {
+	var value = Number(seconds);
+	if (!isFinite(value) || value < 0) { value = 0; }
+	var minutes = Math.floor(value / 60);
+	var rest = value - (minutes * 60);
+	var whole = Math.floor(rest);
+	var fraction = Math.round((rest - whole) * 10000);
+	if (fraction >= 10000) { fraction = 0; whole += 1; }
+	if (whole >= 60) { whole -= 60; minutes += 1; }
+	return minutes + ':' + (whole < 10 ? '0' : '') + whole + '.' + ('0000' + fraction).slice(-4);
+}
+
 function studioTimeDisplay() {
 	var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
-	var asdf = bpm / 60;
 	var time = mixer['time']['position'];
-	var tick = Math.floor(time * asdf);
+	var tick = time * (bpm / 60);
 	if (!mixer['time']['sig']) {
 		mixer['time']['sig'] = $('#studio_signature').val() || '4/4';
 	}
 	var tsig = String(mixer['time']['sig']).split('/');
 	var beats = studioKnobNumber(tsig[0], 4) || 4;
-	mixer['time']['beat'] = tick;
+	mixer['time']['beat'] = Math.floor(tick);
 	mixer['time']['bar'] = Math.floor(tick / beats);
-	var beat = mixer['time']['beat'] - (mixer['time']['bar'] * beats) + 1;
+	// The beats line is the bar and the beat, with a hundredth of a beat after
+	// it: 0:0.00 at the song's start. The clock above says the same moment in
+	// minutes and seconds, so neither one has to switch to the other.
+	var inBar = tick - (mixer['time']['bar'] * beats);
+	if (inBar < 0) { inBar = 0; }
+	var beatFraction = (Math.floor((inBar * 100) + 1e-6) / 100).toFixed(2);
 
-	if (mixer['time']['display'] == 'beats') {
-		$('#studio_time_display').html(numeral(mixer['time']['position']).format('00.000'));
-	} else {
-		$('#studio_time_display').html(mixer['time']['bar'] + ':' + beat);
-	}
+	$('#studio_time_display').html(studioClockLabel(time));
+	$('#studio_time_beats').html(mixer['time']['bar'] + ':' + beatFraction);
 	return {
-		beat: tick,
+		beat: mixer['time']['beat'],
 		bar: mixer['time']['bar'],
 		signature: tsig
 	};

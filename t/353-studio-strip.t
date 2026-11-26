@@ -41,8 +41,8 @@ like($markup, qr/<button class="studio_strip_solo hover" channel="<%=\s*\$ch\s*%
 	'S is a native button that starts unpressed and says what it does');
 
 # --- the stylesheet paints the two states and the solo dimming -------------
-like($style, qr/\.studio_strip_mute_solo\s*\{[^}]*flex:\s*0 0 22px/s,
-	'the block sits under the strip body');
+like($style, qr/\.studio_strip_mute_solo\s*\{[^}]*flex:\s*0 0 30px/s,
+	'the block sits under the strip body, tall enough for a finger');
 like($style, qr/\.studio_strip_mute_solo\s*\{[^}]*width:\s*100%/s,
 	'the block spans the whole channel strip');
 like($style, qr/\.studio_strip_mute_solo\s*\{[^}]*justify-content:\s*center/s,
@@ -163,7 +163,7 @@ like($markup, qr/class="studio_strip_scale"[\s\S]*?0\.0[\s\S]*?-6[\s\S]*?-12[\s\
 	'the fader carries a dB scale with 0.0 at the top');
 like($markup, qr/class="studio_strip_control"[\s\S]*?studio_strip_meter[\s\S]*?<\/span>\s*<\/span>\s*<\/span>\s*<span class="studio_strip_mute_solo">/,
 	'mute and solo sit under the whole strip, not inside the fader column');
-like($style, qr/\.studio_strip_control\s*\{[^}]*flex:\s*0 0 47px/s,
+like($style, qr/\.studio_strip_control\s*\{[^}]*flex:\s*0 0 42px/s,
 	'the fader and meter share one control column');
 like($style, qr/\.studio_strip_led\.led_yellow\.lit\s*\{[^}]*background:/s,
 	'the yellow LEDs have their own lit colour');

@@ -31,8 +31,8 @@ like($js, qr/#studio_board_presets/, 'the saved-board dropdown is rebuilt and ha
 like($js, qr/function studioBoardPresetsRefresh\(\)/, 'the dropdown has its own refresh');
 like($js, qr/studioLayoutText\('Saved pedalboards'\)/, 'the blank option says what the list is');
 like($js, qr/setTimeout\(studioBoardPresetsRefresh, 0\)/, 'a press that opens the board refreshes the list');
-like($js, qr/'#studio_pedals, #pedalboard_hamburger, \.studio_track_fx'/,
-	'the refresh follows the three ways into the board');
+like($js, qr/click', '\.studio_track_fx'/,
+	'the refresh follows an FX press into the board');
 like($js, qr/\$\(function \(\) \{ studioBoardPresetsRefresh\(\); \}\);/, 'document ready rebuilds the list');
 
 # --- what an entry keeps ----------------------------------------------------

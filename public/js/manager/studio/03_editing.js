@@ -1025,10 +1025,9 @@ function studioPedalboardFollow() {
 	return true;
 }
 
-// One path for the Pedals button, the transport's old burger, the FX button and
-// a channel badge: the board's visibility and its button stay in step. The
-// board carries the selected track's chain, so it is drawn as it opens, and it
-// is placed under that track's row in the Tracks panel.
+// One path for the FX button and a channel badge: the board carries the selected
+// track's chain, so it is drawn as it opens, and it is placed under that track's
+// row in the Tracks panel.
 function studioPedalboardOpen(show) {
 	var board = $('#pedalboard');
 	if (show === undefined) { show = !board.is(':visible'); }
@@ -1038,14 +1037,9 @@ function studioPedalboardOpen(show) {
 		studioPedalboardPlace();
 	}
 	else { board.hide(); }
-	$('#studio_pedals').attr('aria-pressed', show ? 'true' : 'false');
 	if (show && typeof studioRackRender === 'function') { studioRackRender(studioPaletteChannel()); }
 	return show;
 }
-
-$(document).on('click', '#studio_pedals, #pedalboard_hamburger', function () {
-	studioPedalboardOpen();
-});
 
 $(document).on('click', '#studio_toggle', function() {
 	studioInit();

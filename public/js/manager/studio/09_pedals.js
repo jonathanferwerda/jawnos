@@ -18,6 +18,77 @@
 // The chain a tile is being dragged from, held only for the duration of a drop.
 var studioRackDragChain = null;
 
+// A finger has to hold a tile before a reorder starts, so a quick swipe can
+// travel along the board instead of picking up a pedal. A mouse is unaffected:
+// a trusted press puts the drag back to instant. Touch Punch turns the touch
+// into a mouse drag and cancels the browser's own scroll, so the swipe below
+// moves the board by hand until a press becomes a reorder.
+function studioBoardPressMode(touch) {
+	var rack = $('#studio_pedalboard_rack');
+	if (!rack.length || typeof rack.sortable !== 'function' || !rack.hasClass('ui-sortable')) { return; }
+	rack.sortable('option', { delay: touch ? 250 : 0, distance: touch ? 8 : 0 });
+}
+
+document.addEventListener('touchstart', function (event) {
+	if (event.target && event.target.closest && event.target.closest('#studio_pedalboard_rack')) {
+		studioBoardPressMode(true);
+	}
+}, { capture: true, passive: true });
+
+document.addEventListener('mousedown', function (event) {
+	// Touch Punch's own mousedown is untrusted; only a real mouse resets it.
+	if (event.isTrusted === false) { return; }
+	if (event.target && event.target.closest && event.target.closest('#studio_pedalboard_rack')) {
+		studioBoardPressMode(false);
+	}
+}, { capture: true });
+
+var studioBoardSwipe = null;
+
+document.addEventListener('touchstart', function (event) {
+	studioBoardSwipe = null;
+	if (!event.target || !event.target.closest || event.touches.length !== 1) { return; }
+	var rack = event.target.closest('#studio_pedalboard_rack');
+	if (!rack) { return; }
+	// A touch on a knob, a list or the footswitch belongs to that control. The
+	// browser may adjust a touch's target to a nearby control, so the test uses
+	// the point itself: the artwork under the finger is the board's.
+	var under = document.elementFromPoint
+		? document.elementFromPoint(event.touches[0].clientX, event.touches[0].clientY)
+		: event.target;
+	if (under && under.closest && under.closest('.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, .studio_board_tools, select, option, input, button')) { return; }
+	studioBoardSwipe = {
+		rack: rack,
+		x: event.touches[0].clientX,
+		y: event.touches[0].clientY,
+		left: rack.scrollLeft,
+		moved: false
+	};
+}, { capture: true, passive: true });
+
+document.addEventListener('touchmove', function (event) {
+	var swipe = studioBoardSwipe;
+	if (!swipe || !event.touches.length) { return; }
+	// A held press has become a reorder: the tile follows the finger, not the board.
+	var sortable = $(swipe.rack).data('ui-sortable');
+	if (sortable && sortable._mouseStarted) { studioBoardSwipe = null; return; }
+	var dx = event.touches[0].clientX - swipe.x;
+	var dy = event.touches[0].clientY - swipe.y;
+	if (!swipe.moved) {
+		if (Math.abs(dx) < 6) { return; }
+		if (Math.abs(dy) > Math.abs(dx)) { return; }
+		swipe.moved = true;
+		// Cancel the pending press, so a long swipe cannot turn into a drag when
+		// the hold's timer would otherwise fire.
+		$(document).trigger($.Event('mouseup'));
+	}
+	swipe.rack.scrollLeft = swipe.left - dx;
+	event.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchend', function () { studioBoardSwipe = null; }, { passive: true });
+document.addEventListener('touchcancel', function () { studioBoardSwipe = null; }, { passive: true });
+
 function studioRackFind(ch, name, chain) {
 	var c = studioAudio.channels[ch];
 	if (!c) { return null; }
@@ -822,7 +893,7 @@ $(document).on('change', '#studio_board_presets', function () {
 
 // The board's bar is drawn when the sheet opens, and the list is kept apart from
 // the tiles, so refresh it after any press that may have opened the board.
-$(document).on('click', '#studio_pedals, #pedalboard_hamburger, .studio_track_fx', function () {
+$(document).on('click', '.studio_track_fx', function () {
 	setTimeout(studioBoardPresetsRefresh, 0);
 });
 

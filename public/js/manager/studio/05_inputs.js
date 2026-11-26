@@ -337,14 +337,16 @@ function studioInputListenChannel(plug) {
 	return n > 1 ? 1 : n;
 }
 
-async function channelSelect(channel,direction) {
+async function channelSelect(channel,direction,at) {
 	var sis = $('#studio_plug_select_container');
 	if ($('#studio_plug_select[channel="' + channel + '"][direction="' + direction + '"]').is(':visible')) {
 		sis.hide();
 	} else {
 		var m = mouse_position();
-		var x = m.x;
-		var y = m.y;
+		// A context menu names the point its row was pressed at, so the picker
+		// opens there; a jack press has only the pointer's last place.
+		var x = (at && isFinite(at.x)) ? at.x : m.x;
+		var y = (at && isFinite(at.y)) ? at.y : m.y;
 
 		var constraints = await constraintMaker({ video: true, audio: true });
 		var options = { 'surfaceSwitching': 'include', 'audio': true, 'video': { 'displaySurface': 'monitor' }};

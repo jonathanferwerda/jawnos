@@ -227,11 +227,10 @@
 		   the timeline under it, and the console at the foot. On a narrow window
 		   every panel stacks instead. %>
 		<button id="studio_arrange" class="hover" hint="<%= &subs::ui('Arrange the panels') %>"><%= &subs::ui('Arrange') %></button>
-		<%# Always in reach, whatever the transport's height: it opens the bottom
-		   sheet, and Loop lives here so a short transport does not hide it.
-		   The transport keeps its burger for the old layout. %>
-		<button id="studio_pedals" class="hover" aria-pressed="false" hint="<%= &subs::ui('Open or close the pedalboard') %>"><%= &subs::ui('Pedals') %></button>
-		<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Loop" class="little_thumb hover" id="studio_loop">
+		<%# Where the sound is actually going: the engine or this browser. It
+		   sits on the layout bar, beside the panel taskbar, so the transport row
+		   keeps its room for the clock and the knobs. %>
+		<span class="studio_audio_path" id="studio_audio_path" aria-live="polite" hint="<%= &subs::ui('Which side is recording and playing: the engine or this browser') %>"><%= &subs::ui('Browser') %></span>
 		<%# The top bar is the panels' own taskbar: one entry per interior window,
 		   so a minimized panel is still one press away. The panel's own title bar
 		   carries Minimize and Maximize. %>
@@ -299,7 +298,7 @@
 		<div id="studio_viewer" channel_count="<%= $channel_count %>" data-max-tracks="<%= $max_tracks %>">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
 				<div class="studio_track" data-channel="<%= $ch %>" id="studio_track_row_<%= $ch %>">
-					<div class="studio_track_panel" channel="<%= $ch %>" hint="<%= &subs::ui('This track') %>">
+					<div class="studio_track_panel" channel="<%= $ch %>" hint="<%= &subs::ui('Tap to select; press and hold for channel in, out and delete') %>">
 						<div class="studio_track_line">
 							<button class="armed studio_track_arm" channel="<%= $ch %>" control="armed" state="off" hint="<%= &subs::ui('Off, record, play or loop') %>">O</button>
 							<input class="studio_track_name" channel="<%= $ch %>" value="<%= &subs::ui('Track') %> <%= $ch %>" hint="<%= &subs::ui('Rename this track') %>">
@@ -509,7 +508,6 @@
 				<img class="little_thumb mark hover" hint="Drop a mark" id="studio_mark" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
 				<img class="little_thumb metronome hover" hint="Metronome" id="studio_metronome" src="<%= &subs::icon_for('/images/studio/metronome.png') %>">
 				<span class="studio_monitor_note" id="studio_monitor_note" aria-live="polite"></span>
-				<span class="studio_audio_path" id="studio_audio_path" aria-live="polite" hint="<%= &subs::ui('Which side is recording and playing: the engine or this browser') %>"><%= &subs::ui('Browser') %></span>
 				<input class="studio_transport_field" id="studio_bpm" value="120" hint="<%= &subs::ui('Tempo in beats per minute') %>">
 				<input class="studio_transport_field" id="studio_signature" value="4/4" hint="<%= &subs::ui('Time signature') %>">
 				<% foreach my $k ( grep { $_->{'placement'} eq 'metronome' } @{$gb::studio->{'knobs'}}) { %>
@@ -517,12 +515,11 @@
 					<img class="knob studio_transport_knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="metronome" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
 				<% } %>
 				<span class="studio_transport_time">
-					<span id="studio_time_display">0:00</span>
-					<span class="studio_transport_sep">/</span>
-					<span id="studio_time_duration">0:00</span>
+					<span class="studio_transport_clock"><span id="studio_time_display">0:00.0000</span><span class="studio_transport_sep">/</span><span id="studio_time_duration">0:00.0000</span></span>
+					<span class="studio_transport_beats" id="studio_time_beats">0:0.00</span>
 				</span>
 				<img class="little_thumb hover video_toggle" hint="Camera" id="studio_video_toggle" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
-				<img class="little_thumb hover" hint="Pedalboard" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" id="pedalboard_hamburger">
+				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Loop" class="little_thumb hover" id="studio_loop">
 			</div>
 			<%# The video previews have no room in a one-row transport; they keep
 			   their elements here, hidden, so the monitor code still finds them. %>
