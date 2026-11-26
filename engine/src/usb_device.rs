@@ -612,6 +612,25 @@ fn hex_bytes(bytes: &[u8]) -> String {
     out
 }
 
+/// The three little-endian bytes UAC1's `SAMPLING_FREQ_CONTROL` carries
+/// (`tSamFreq[3]`). The inverse of [`decode_sample_rate`].
+fn sample_rate_bytes(hz: u32) -> [u8; 3] {
+    [hz as u8, (hz >> 8) as u8, (hz >> 16) as u8]
+}
+
+/// The rate a 16-bit stereo full-speed packet implies: `packet / 4` frames in
+/// each 1 ms USB frame. A 192-byte packet is 48 frames/ms, a 128-byte packet 32.
+fn monitor_rate_for_packet(packet: usize) -> u32 {
+    (packet / 4) as u32 * 1_000
+}
+
+/// Whether the endpoint's read rate is safe to drive with `packet`-sized
+/// frames. A zero rate means the read itself failed, which is not evidence of a
+/// mismatch — some fixed-rate cards simply implement no `GET_CUR`.
+fn monitor_rate_ok(packet: usize, hz: u32) -> bool {
+    hz == 0 || hz == monitor_rate_for_packet(packet)
+}
+
 /// Little-endian 16-bit stereo to the duplicated mono the rings carry. The left
 /// sample is the mono value, exactly as `plan::Strip` reads the ring; the two
 /// halves are never summed, so a mic that lands on one channel keeps its level.
@@ -887,6 +906,27 @@ pub struct UsbOutRate {
     pub hz: u32,
 }
 
+/// One attempt to bring the playback endpoint to the rate its packet size
+/// implies. The rate control is UAC1's `SAMPLING_FREQ_CONTROL`, which is
+/// standard class, not a Behringer constant; what varies per card is whether it
+/// exposes the control at all, on which recipient, and which rates the alternate
+/// setting can carry.
+///
+/// `verified` is true only after a `GET_CUR` readback returned `target`, so the
+/// report never claims a rate the device did not acknowledge.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UsbRateSet {
+    /// The rate the configured packet size implies at 1 ms per packet.
+    pub target: u32,
+    /// The last `SET_CUR` ioctl's return; negative is a refusal.
+    pub ret: i32,
+    pub errno: i32,
+    /// `"endpoint"`, `"interface"`, `"already"` or `"none"`.
+    pub recipient: &'static str,
+    /// True only when the readback after the attempt equals `target`.
+    pub verified: bool,
+}
+
 /// What one direct-USB take got, in the same accounting shape as `OboeReport`
 /// plus the usbfs counters a device gate needs to read.
 #[derive(Debug, Clone)]
@@ -931,6 +971,11 @@ pub struct UsbReport {
     pub out_ms: u64,
     pub out_lag_ms: i64,
     pub out_rate: UsbOutRate,
+    /// The `SET_CUR` attempt and its readback, beside the final `out_rate`.
+    pub rate_set: UsbRateSet,
+    /// Why the monitor was left off, if it was (`Some("playback rate")` when the
+    /// endpoint's read rate did not match the packet size). Capture still ran.
+    pub monitor_off: Option<&'static str>,
     pub setinterface: UsbSetInterface,
     pub sched: UsbSched,
     pub frames_captured: u64,
@@ -967,6 +1012,8 @@ pub(crate) struct UsbIoReport {
     in_depth: UsbDepth,
     out_depth: UsbDepth,
     out_rate: UsbOutRate,
+    rate_set: UsbRateSet,
+    monitor_off: Option<&'static str>,
     setinterface: UsbSetInterface,
     sched: UsbSched,
     peak: f32,
@@ -1007,7 +1054,7 @@ fn histogram_json(rows: &[(u32, u64)]) -> String {
 /// One JSON object, the same status style the Oboe backend emits.
 fn report_json(report: &UsbReport) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"rate_set\":{{\"target\":{},\"ret\":{},\"errno\":{},\"recipient\":\"{}\",\"verified\":{}}},\"monitor_off\":{},\"plan\":\"{}\",\"take\":\"{}\"}}",
         report.rate,
         histogram_json(&report.packets_in),
         report.missed_in,
@@ -1046,6 +1093,12 @@ fn report_json(report: &UsbReport) -> String {
         report.out_rate.errno,
         json_escape(&report.out_rate.raw),
         report.out_rate.hz,
+        report.rate_set.target,
+        report.rate_set.ret,
+        report.rate_set.errno,
+        json_escape(report.rate_set.recipient),
+        report.rate_set.verified,
+        optional_json_string(report.monitor_off),
         json_escape(&report.plan),
         json_escape(&report.take),
     )
@@ -1172,6 +1225,36 @@ mod sys {
         (ret, if ret < 0 { errno() } else { 0 })
     }
 
+    /// One class/vendor control OUT from `data`. usbfs takes the same
+    /// `usbdevfs_ctrltransfer` for both directions and reads `data` for an OUT,
+    /// so the const slice is passed through as the struct's `*mut`. Returns the
+    /// ioctl's ret and the errno that explains a refusal.
+    pub(super) unsafe fn control_out(
+        fd: c_int,
+        request_type: u8,
+        request: u8,
+        value: u16,
+        index: u16,
+        data: &[u8],
+        timeout_ms: u32,
+    ) -> (i32, i32) {
+        let transfer = UsbdevfsCtrlTransfer {
+            request_type,
+            request,
+            value,
+            index,
+            length: data.len() as u16,
+            timeout: timeout_ms,
+            data: data.as_ptr() as *mut c_void,
+        };
+        let ret = ioctl(
+            fd,
+            USBDEVFS_CONTROL as c_ulong,
+            &transfer as *const UsbdevfsCtrlTransfer,
+        );
+        (ret, if ret < 0 { errno() } else { 0 })
+    }
+
     pub(super) fn errno() -> i32 {
         std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
     }
@@ -1213,6 +1296,115 @@ fn wait_for_reap(fd: i32) {
     }
 }
 
+/// The playback endpoint's own class `GET_CUR` for the sampling frequency
+/// (`0xA2`, request `0x81`, `wValue 0x0100`, `wIndex` = the endpoint, 3 bytes).
+/// A refusal is a fact to report, not a take error.
+#[cfg(target_os = "android")]
+unsafe fn read_endpoint_rate(fd: i32, ep: i32) -> UsbOutRate {
+    let mut bytes = [0u8; 3];
+    let (ret, errno) = sys::control_in(fd, 0xA2, 0x81, 0x0100, ep as u16, &mut bytes, 250);
+    let read = (ret.max(0) as usize).min(bytes.len());
+    UsbOutRate {
+        ret,
+        errno,
+        raw: hex_bytes(&bytes[..read]),
+        hz: decode_sample_rate(&bytes[..read]),
+    }
+}
+
+/// Read the rate back until it matches `target` or a short bound expires. A
+/// device may apply a `SET_CUR` a few frames after acknowledging it; declaring a
+/// refusal on the first readback would then be a false negative. The bound is
+/// paid only when the readback disagrees, so a fixed-rate card costs ~10 ms at
+/// the start of a take.
+#[cfg(target_os = "android")]
+unsafe fn await_endpoint_rate(fd: i32, ep: i32, target: u32) -> UsbOutRate {
+    let mut last = read_endpoint_rate(fd, ep);
+    for _ in 0..5 {
+        if last.ret >= 0 && last.hz == target {
+            break;
+        }
+        thread::sleep(std::time::Duration::from_millis(2));
+        last = read_endpoint_rate(fd, ep);
+    }
+    last
+}
+
+/// Ask the playback endpoint to run at `target`, then require a `GET_CUR`
+/// readback before believing it.
+///
+/// UAC1's `SAMPLING_FREQ_CONTROL` is a class request to the isochronous
+/// **endpoint**: bmRequestType `0x22`, bRequest SET_CUR `0x01`, wValue `0x0100`,
+/// wIndex the endpoint address, a 3-byte `tSamFreq`. A device that implements
+/// the selector on the interface instead gets one second attempt at `0x21`; the
+/// selector is the same, only the recipient differs. This runs after
+/// `SET_INTERFACE` and before any URB is submitted, so no isochronous schedule
+/// is live for the control transfer.
+///
+/// Nothing is reported as set without the readback. A refused or unsupported
+/// control is a fact the report carries; it is not fatal to the capture.
+#[cfg(target_os = "android")]
+unsafe fn set_playback_rate(
+    fd: i32,
+    iface_out: i32,
+    ep_out: i32,
+    target: u32,
+) -> (UsbOutRate, UsbRateSet) {
+    let first = read_endpoint_rate(fd, ep_out);
+    if first.ret >= 0 && first.hz == target {
+        let ret = first.ret;
+        return (
+            first,
+            UsbRateSet {
+                target,
+                ret,
+                errno: 0,
+                recipient: "already",
+                verified: true,
+            },
+        );
+    }
+
+    let bytes = sample_rate_bytes(target);
+    let mut last_ret = -1;
+    let mut last_errno = 0;
+    let mut last_read = first;
+    for (request_type, index, recipient) in [
+        (0x22u8, ep_out as u16, "endpoint"),
+        (0x21u8, iface_out as u16, "interface"),
+    ] {
+        let (ret, errno) =
+            sys::control_out(fd, request_type, 0x01, 0x0100, index, &bytes, 250);
+        last_ret = ret;
+        last_errno = errno;
+        let readback = await_endpoint_rate(fd, ep_out, target);
+        if readback.ret >= 0 && readback.hz == target {
+            return (
+                readback,
+                UsbRateSet {
+                    target,
+                    ret,
+                    errno,
+                    recipient,
+                    verified: true,
+                },
+            );
+        }
+        last_read = readback;
+    }
+
+    (
+        last_read,
+        UsbRateSet {
+            target,
+            ret: last_ret,
+            errno: last_errno,
+            recipient: "none",
+            verified: false,
+        },
+    )
+}
+
 #[cfg(target_os = "android")]
 pub(crate) fn run_usb_plan(
     config: &UsbConfig,
@@ -1230,12 +1422,17 @@ pub(crate) fn run_usb_plan(
     }
 
     let packet_in = config.packet_in as usize;
-    let have_out = config.ep_out >= 0 && config.packet_out > 0;
+    let mut have_out = config.ep_out >= 0 && config.packet_out > 0;
     let packet_out = if have_out {
         config.packet_out as usize
     } else {
         0
     };
+    if have_out && packet_out < 4 {
+        return Err(
+            "the playback endpoint needs at least one stereo frame per packet".to_string(),
+        );
+    }
     // One read for the whole take: buffers, in-flight flags and the priming
     // threshold are all sized from this, and never resized while the kernel owns
     // a URB.
@@ -1255,38 +1452,44 @@ pub(crate) fn run_usb_plan(
         let _ = unsafe { sys::set_interface(config.fd, config.iface_out, config.alt_out) };
     }
 
-    // Ask the playback endpoint its own sampling frequency, once, before any
-    // streaming: UAC1's class GET_CUR (`0xA2`, request `0x81`, `wValue 0x0100`,
-    // `wIndex` = the endpoint, 3 bytes). The P0 probe answered 32000 on an
-    // endpoint whose alt is 192 B/ms, so this records whether that is still
-    // true. A refusal is recorded and never fatal — the alt setting, not this
-    // probe, is what the stream actually runs at.
-    let out_rate = if have_out {
-        let mut bytes = [0u8; 3];
-        let (ret, errno) = unsafe {
-            sys::control_in(
+    // Bring the playback endpoint to the rate the packet size implies, then
+    // require a GET_CUR readback before trusting it. This runs after
+    // SET_INTERFACE and before any URB is submitted, so no isochronous schedule
+    // is live for the control transfer (the PCM2902 refuses one that is).
+    let (out_rate, rate_set) = if have_out {
+        unsafe {
+            set_playback_rate(
                 config.fd,
-                0xA2,
-                0x81,
-                0x0100,
-                config.ep_out as u16,
-                &mut bytes,
-                250,
+                config.iface_out,
+                config.ep_out,
+                monitor_rate_for_packet(packet_out),
             )
-        };
-        let read = (ret.max(0) as usize).min(bytes.len());
-        UsbOutRate {
-            ret,
-            errno,
-            raw: hex_bytes(&bytes[..read]),
-            hz: decode_sample_rate(&bytes[..read]),
         }
     } else {
-        UsbOutRate {
-            ret: -1,
-            ..UsbOutRate::default()
-        }
+        (
+            UsbOutRate {
+                ret: -1,
+                ..UsbOutRate::default()
+            },
+            UsbRateSet {
+                target: 0,
+                ret: -1,
+                errno: 0,
+                recipient: "none",
+                verified: false,
+            },
+        )
     };
+    // A readback that disagrees with the packet size means the endpoint is
+    // running at another rate. Feeding it 48 kHz frames is the overrun/wrap
+    // distortion documentation records, so capture still runs but the monitor
+    // is left off until the 48 -> 32 fallback lands. A failed read (hz == 0) is
+    // not evidence of a mismatch and keeps the monitor as before.
+    let mut monitor_off = None;
+    if have_out && !monitor_rate_ok(packet_out, out_rate.hz) {
+        have_out = false;
+        monitor_off = Some("playback rate");
+    }
 
     let sched = sys::request_realtime();
 
@@ -1736,6 +1939,8 @@ pub(crate) fn run_usb_plan(
         in_depth: depth,
         out_depth: depth,
         out_rate,
+        rate_set,
+        monitor_off,
         setinterface,
         sched,
         peak,
@@ -1814,6 +2019,8 @@ fn run_usb_take(config: UsbConfig, stop: Arc<AtomicBool>) -> Result<UsbReport, S
         out_ms: io.out_ms,
         out_lag_ms: io.out_lag_ms,
         out_rate: io.out_rate,
+        rate_set: io.rate_set,
+        monitor_off: io.monitor_off,
         setinterface: io.setinterface,
         sched: io.sched,
         frames_captured: io.frames_in,
@@ -2000,6 +2207,7 @@ pub(crate) struct UsbRoundTrip {
     pub(crate) missed_in: u64,
     pub(crate) in_depth: UsbDepth,
     pub(crate) out_rate: UsbOutRate,
+    pub(crate) rate_set: UsbRateSet,
     pub(crate) sched: UsbSched,
     pub(crate) note: Option<String>,
 }
@@ -2027,7 +2235,7 @@ fn optional_json_string(value: Option<&str>) -> String {
 
 fn roundtrip_json(report: &UsbRoundTrip) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"probe\":\"roundtrip\",\"method\":\"{}\",\"click_frame\":{},\"heard_frame\":{},\"round_trip_frames\":{:.3},\"round_trip_ms\":{:.3},\"score\":{:.3},\"packets_in\":{},\"missed_in\":{},\"in_depth\":{},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"note\":{}}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"probe\":\"roundtrip\",\"method\":\"{}\",\"click_frame\":{},\"heard_frame\":{},\"round_trip_frames\":{:.3},\"round_trip_ms\":{:.3},\"score\":{:.3},\"packets_in\":{},\"missed_in\":{},\"in_depth\":{},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"rate_set\":{{\"target\":{},\"ret\":{},\"errno\":{},\"recipient\":\"{}\",\"verified\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"note\":{}}}",
         json_escape(&report.method),
         optional_u32(report.click_frame),
         optional_f64(report.heard_frame),
@@ -2041,6 +2249,11 @@ fn roundtrip_json(report: &UsbRoundTrip) -> String {
         report.out_rate.errno,
         json_escape(&report.out_rate.raw),
         report.out_rate.hz,
+        report.rate_set.target,
+        report.rate_set.ret,
+        report.rate_set.errno,
+        json_escape(report.rate_set.recipient),
+        report.rate_set.verified,
         report.sched.policy,
         report.sched.priority,
         report.sched.errno,
@@ -2157,21 +2370,15 @@ unsafe fn probe_usb_roundtrip(
     let _ = sys::set_interface(fd, iface_in, alt_in);
     let _ = sys::set_interface(fd, iface_out, alt_out);
 
-    // The same class GET_CUR the take records. On the UM2 it answers 32000 while
-    // 192-byte packets stream, so it is reported beside the measurement and
-    // never used to interpret it.
-    let out_rate = {
-        let mut bytes = [0u8; 3];
-        let (ret, errno) =
-            sys::control_in(fd, 0xA2, 0x81, 0x0100, ep_out as u16, &mut bytes, 250);
-        let read = (ret.max(0) as usize).min(bytes.len());
-        UsbOutRate {
-            ret,
-            errno,
-            raw: hex_bytes(&bytes[..read]),
-            hz: decode_sample_rate(&bytes[..read]),
-        }
-    };
+    // Bring the playback endpoint to the rate the probe's packet size implies
+    // before the chirp is played, so the measurement is not a 48 kHz chirp into
+    // a 32 kHz endpoint. The readback is reported beside the score either way.
+    let (out_rate, rate_set) = set_playback_rate(
+        fd,
+        iface_out,
+        ep_out,
+        monitor_rate_for_packet(packet_out),
+    );
     let sched = sys::request_realtime();
 
     // Every buffer is sized before the first submit, and never moves.
@@ -2510,6 +2717,7 @@ unsafe fn probe_usb_roundtrip(
         missed_in: stats.missed_in,
         in_depth: depth,
         out_rate,
+        rate_set,
         sched,
         note,
     }))
@@ -2946,6 +3154,13 @@ mod tests {
                 raw: "007d00".to_string(),
                 hz: 32_000,
             },
+            rate_set: UsbRateSet {
+                target: 48_000,
+                ret: -1,
+                errno: 22,
+                recipient: "none",
+                verified: false,
+            },
             sched: UsbSched {
                 policy: 1,
                 priority: 80,
@@ -2968,6 +3183,7 @@ mod tests {
             "\"missed_in\":0",
             "\"in_depth\":{\"urbs\":4,\"packets\":8}",
             "\"out_rate\":{\"ret\":3,\"errno\":0,\"raw\":\"007d00\",\"hz\":32000}",
+            "\"rate_set\":{\"target\":48000,\"ret\":-1,\"errno\":22,\"recipient\":\"none\",\"verified\":false}",
             "\"sched\":{\"policy\":1,\"priority\":80,\"errno\":13}",
             "\"note\":null",
         ] {
@@ -3181,6 +3397,23 @@ mod tests {
     }
 
     #[test]
+    fn the_rate_target_comes_from_the_packet_and_is_encoded_little_endian() {
+        assert_eq!(monitor_rate_for_packet(192), 48_000);
+        assert_eq!(monitor_rate_for_packet(128), 32_000);
+        assert_eq!(monitor_rate_for_packet(4), 1_000);
+        assert_eq!(sample_rate_bytes(48_000), [0x80, 0xbb, 0x00]);
+        assert_eq!(sample_rate_bytes(32_000), [0x00, 0x7d, 0x00]);
+        assert_eq!(decode_sample_rate(&sample_rate_bytes(44_100)), 44_100);
+        assert!(monitor_rate_ok(192, 48_000));
+        assert!(
+            monitor_rate_ok(192, 0),
+            "a failed read is not evidence of a mismatch"
+        );
+        assert!(!monitor_rate_ok(192, 32_000));
+        assert!(!monitor_rate_ok(128, 48_000));
+    }
+
+    #[test]
     fn the_packet_histogram_counts_each_length_and_the_overflow() {
         let packet = 196usize;
         let mut histogram = vec![0u64; packet + 2];
@@ -3226,6 +3459,14 @@ mod tests {
                 raw: "80bb00".to_string(),
                 hz: 48_000,
             },
+            rate_set: UsbRateSet {
+                target: 48_000,
+                ret: 3,
+                errno: 0,
+                recipient: "endpoint",
+                verified: true,
+            },
+            monitor_off: None,
             setinterface: UsbSetInterface { ret: 0, errno: 0 },
             sched: UsbSched {
                 policy: 1,
@@ -3264,6 +3505,8 @@ mod tests {
             "\"out_ms\":2944",
             "\"out_lag_ms\":56",
             "\"out_rate\":{\"ret\":3,\"errno\":0,\"raw\":\"80bb00\",\"hz\":48000}",
+            "\"rate_set\":{\"target\":48000,\"ret\":3,\"errno\":0,\"recipient\":\"endpoint\",\"verified\":true}",
+            "\"monitor_off\":null",
             "\"setinterface\":{\"ret\":0,\"errno\":0}",
             "\"sched\":{\"policy\":1,\"priority\":80,\"errno\":13}",
             "\"frames_written\":1920",
@@ -3275,5 +3518,10 @@ mod tests {
             text.contains("\"take\":\"/data/a\\\"b\\\\c.wav\""),
             "the take path is escaped: {text}"
         );
+
+        // A refused rate is reported with the reason the monitor stayed off.
+        let mut refused = report;
+        refused.monitor_off = Some("playback rate");
+        assert!(report_json(&refused).contains("\"monitor_off\":\"playback rate\""));
     }
 }

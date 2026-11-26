@@ -1,11 +1,13 @@
 # Studio USB audio — the direct path (UAC1, isochronous)
 
 Status (2026-11-26): built and measured on the tablet (SM-X400) with a Behringer
-UM2. Capture is lossless 48 kHz. The monitor runs through a direct usbfs output,
-but the UM2's playback endpoint is **currently set to 32 kHz** and our `SET_CUR`
-for 48 kHz was refused, so the output rate must be fixed (or resampled) before
-the monitor is trusted. That is the next defect after the pacing work, not a
-buffer tweak.
+UM2. Capture is lossless 48 kHz. The monitor runs through a direct usbfs output.
+The UM2's playback endpoint answered **32 kHz** and the probe's `SET_CUR` for
+48 kHz was refused, so the engine now runs the strict UAC1 rate sequence (Sec.
+2.1) itself, verifies it with `GET_CUR`, and **leaves the monitor off** when the
+readback disagrees with the packet size instead of feeding 48 kHz frames into a
+slower endpoint. What is still owed is the device gate: whether the UM2 accepts
+the sequence, and, if it does not, the 48 -> 32 monitor resample (Sec. 2.2).
 
 ## 1. Why a direct path
 
@@ -31,15 +33,16 @@ Behringer UM2, UAC1, full speed, 1 ms frames. It supports **32, 44.1 and 48 kHz*
 | capture | 2 / 1 | `0x84` | 196 | 48,000 (`GET_CUR` `80 bb 00`) | 192 B = 48 frames/ms |
 | playback | 1 / 1 | `0x02` | 192 | **32,000** (`GET_CUR` `00 7d 00`) | 192 B is the max; 32 kHz needs 128 B = 32 frames/ms |
 
-The playback rate is the open defect. The probe's `SET_CUR` for 48,000 Hz was
+The playback rate is the open defect. The P0 probe's `SET_CUR` for 48,000 Hz was
 refused (`-1`) on the endpoint recipient, the interface recipient, and the alt-0
-fallback. So 32 kHz is the endpoint's current setting, not the device's limit:
-either find the control and ordering the UM2 accepts, or resample the monitor
-48 -> 32 and send 32 frames/ms (128-byte packets). Feeding 48 frames/ms to an
-endpoint running at 32 kHz overruns it and distorts independently of buffer
-depth.
+fallback. The take now retries the strict endpoint request and then the
+interface form, and requires a `GET_CUR` readback before it will monitor. If the
+readback stays at 32 kHz, either find the control and ordering the UM2 accepts,
+or resample the monitor 48 -> 32 and send 32 frames/ms (128-byte packets).
+Feeding 48 frames/ms to an endpoint running at 32 kHz overruns it and distorts
+independently of buffer depth.
 
-### 2.1 The PCM2902 rate sequence (next session's checklist)
+### 2.1 The PCM2902 rate sequence (implemented; device gate pending)
 
 The part is a TI PCM2902 (08bb:2902). `GET_CUR` works and returns `00 7d 00`, so
 the control transport is fine; the stall is the chip's state machine refusing
@@ -55,9 +58,12 @@ the control transport is fine; the stall is the chip's state machine refusing
 | data | `80 bb 00` (48,000, 24-bit little-endian) |
 
 An interface recipient (`0x21`) or a zero `wValue` always stalls on this part.
-The 1363 probe already sent the endpoint form at alt 1 with no ISO in flight and
-got `-1`, so the remaining variables are the alternate setting and the exact
-order. Work through it in this order:
+The engine now tries the endpoint form first, then the interface form for cards
+that implement the selector there, and reads the rate back after each attempt
+(`set_playback_rate` in `engine/src/usb_device.rs`). Nothing is reported as set
+without that readback. The 1363 probe already sent the endpoint form at alt 1
+with no ISO in flight and got `-1`, so the remaining variables are the alternate
+setting and the exact order:
 
 1. **Pick the right alternate.** Dump interface 1's alternates and choose the one
    with `bNrChannels = 2`, `bSubframeSize = 2`, `bBitResolution = 16` and
@@ -75,7 +81,10 @@ order. Work through it in this order:
    the rate was set without that readback.
 
 If that still stalls, the chip is going to stay at its current setting; take the
-fallback below rather than burning another session on it.
+fallback below rather than burning another session on it. The engine reports the
+attempt in `rate_set` and, while the readback disagrees, captures with the
+monitor off (`monitor_off: "playback rate"`) rather than overrunning the
+endpoint.
 
 ### 2.2 Fallback: monitor at the endpoint's current rate
 
@@ -125,7 +134,9 @@ char *jawn_audio_roundtrip_usb(int fd,
 2; `monitor_ms = out_urbs × out_packets`. The take report carries `in_depth`,
 `out_depth`, `monitor_ms`, `in_delivery_ms`, `out_urbs_effective`, `out_lag_ms`,
 `monitor_fill_max_ms`, `monitor_fill_avg_ms`, `fifo_capacity_ms`,
-`high_water_ms`, `out_rate`, and the existing capture counters.
+`high_water_ms`, `out_rate`, `rate_set` (target, the `SET_CUR` return and errno,
+which recipient accepted it, and `verified`), `monitor_off`, and the existing
+capture counters.
 
 ## 4. The app
 
@@ -195,9 +206,11 @@ backend assumes full-speed 1 ms frames.
 
 ## 8. Next
 
-1. **Playback rate**: follow the strict PCM2902 sequence in Sec. 2.1; if it still
-   stalls, implement the 48 -> 32 monitor resample in Sec. 2.2, then re-run the
-   cable round trip and the sweep.
+1. **Playback rate**: run the engine's strict sequence on the UM2 and read
+   `rate_set` / `out_rate`. If the readback is `80 bb 00`, re-run the cable round
+   trip and the sweep. If it still stalls, implement the 48 -> 32 monitor
+   resample in Sec. 2.2 (the engine already leaves the monitor off rather than
+   overrunning the endpoint).
 2. The 4×2 / 8×1 output shape with an 8×2 input at the same 8 ms runway.
 3. A per-device latency preset in the Studio configuration (Safe 16 / Balanced 8
    / Low 4 / Ultra 2), storing the measured floor and the last take's health; Auto
@@ -210,6 +223,8 @@ backend assumes full-speed 1 ms frames.
 - App 1370; patch cable OUT -> IN and tap **USB probe** for `usb_roundtrip`; run
   the USB take at monitor buffer 8/4/2.
 - Pull `/sdcard/Download/jawnos-usb-take-*.json` and read `out_lag_ms`,
-  `dropped_out`, `underruns_out`, `monitor_fill_*`, `out_rate`.
+  `dropped_out`, `underruns_out`, `monitor_fill_*`, `out_rate`, `rate_set` and
+  `monitor_off`.
 - The probe's `usb_iso` and `usb_roundtrip` live in
-  `/sdcard/Download/jawnos-usb-probe-*.json`.
+  `/sdcard/Download/jawnos-usb-probe-*.json`; `usb_roundtrip` now runs the same
+  rate sequence before the chirp and reports its own `rate_set`.
