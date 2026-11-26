@@ -13,10 +13,14 @@
 
 use strict;
 use warnings;
+no warnings 'once';
 
 use Cwd qw(abs_path);
 use FindBin;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
+use File::Temp qw(tempdir);
+use File::Path qw(make_path);
+use File::Spec ();
 use Test::More;
 
 my $root = abs_path("$FindBin::Bin/..");
@@ -133,11 +137,75 @@ like($help, qr/Record button uses the engine whenever it is available/,
 like($help, qr/Engine recording or Browser recording/, 'and names the badge\'s two words');
 like($help, qr/pressing Record while Listen is on hands the capture to the take/,
 	'and says Listen hands the capture to a take');
-like($help, qr/pressing Save uploads that WAV into the song/,
+like($help, qr/pressing Save copies that WAV into the song/,
 	'and says an engine take travels with the song');
 
-my $save = body($controls, 'studioSave');
-like($controls, qr/async function studioSave/, 'Save waits for the engine take read');
-like($save, qr/take\.file_ready/, 'it awaits the read in flight');
+# --- Save adopts the engine's file on the server ---------------------------
+# The engine take is already a file on this machine, so Save copies it into the
+# song's folder itself: no browser download and upload, one copy per distinct
+# source, a uuid on each take, and the temporary file queued for removal after
+# the song is encrypted.
+like($controller, qr/sub studio_engine_take_source_path/, 'the take-file source is recognised');
+like($controller, qr/sub studio_engine_take_adopt/, 'Save has one adoption helper');
+like($controller, qr{studio-take-.d\+}, 'only an engine take name is adopted');
+like($controller, qr/push \@\{\$files\}, \{ f => \$target, uuid => \$take_uuid, type => 'recording' \}/,
+	'the copy becomes a song file');
+like($controller, qr/foreach my \$path \( \@\{ \$adopted->\{'remove'\} \|\| \[\] \} \) \{[\s\S]{0,200}unlink \$path/,
+	'the originals are removed after the song is written');
+like($controls, qr/mixer\[i\]\.media\.out\[ir\]\.src = take\.src/,
+	'the page keeps the portable URL the server returned');
+
+require "$root/lib/JawnOS/Controller/manager_misc9.pm";
+{
+	package subs;
+	our $uuid_seen = 0;
+	sub path_name { my $name = shift; $name =~ s/[^A-Za-z0-9_.-]+/_/g; return $name; }
+	sub random_string_creator { return 'take-uuid-' . ++$uuid_seen; }
+}
+
+my $rec = tempdir(CLEANUP => 1);
+my $song_dir = File::Spec->catdir($rec, 'Song');
+make_path($song_dir);
+my $engine_wav = File::Spec->catfile($rec, 'studio-take-1700000000-1.wav');
+write_file($engine_wav, "RIFF-fake-take");
+my $outside_dir = tempdir(CLEANUP => 1);
+my $outside_wav = File::Spec->catfile($outside_dir, 'studio-take-1700000000-2.wav');
+write_file($outside_wav, "RIFF-outside");
+my $not_take = File::Spec->catfile($rec, 'not-a-take.wav');
+write_file($not_take, "RIFF-other");
+
+my $take_url = sub {
+	my $path = shift;
+	$path =~ s{/}{%2F}g;
+	return '/manager/studio/take_file?file=' . $path;
+};
+my $data = {
+	1 => { mixer => { out => [ { src => $take_url->($engine_wav) }, { src => $take_url->($engine_wav) } ] } },
+	2 => { mixer => { out => [ { src => $take_url->($outside_wav) } ] } },
+	3 => { mixer => { out => [ { src => $take_url->($not_take) } ] } },
+};
+my @adopted_files;
+my $adopted;
+{
+	local *Manager::studio_take_folder = sub { $rec };
+	is(Manager::studio_engine_take_source_path($take_url->($outside_wav)), undef,
+		'a take name outside the recording folder is refused');
+	is(Manager::studio_engine_take_source_path($take_url->($not_take)), undef,
+		'a file that is not an engine take name is refused');
+	$adopted = Manager::studio_engine_take_adopt($data, $song_dir, 'Song', 'STAMP', \@adopted_files);
+}
+is($adopted->{'adopted'}, 1, 'one distinct engine source is adopted');
+is(scalar @adopted_files, 1, 'it becomes one song file');
+like($adopted_files[0]{'f'}, qr{/Song/Song_STAMP_1_0\.wav\z}, 'the copy lives in the song folder');
+ok(-f $adopted_files[0]{'f'}, 'the copy exists');
+is($data->{1}{mixer}{out}[0]{'uuid'}, $data->{1}{mixer}{out}[1]{'uuid'},
+	'both takes indexing one source share its uuid');
+like($data->{1}{mixer}{out}[0]{'src'}, qr{\A/file_open\?file=}, 'the saved source is portable');
+ok(!$data->{2}{mixer}{out}[0]{'uuid'}, 'a source outside the folder is not adopted');
+ok(!$data->{3}{mixer}{out}[0]{'uuid'}, 'a non-take file is not adopted');
+is_deeply($adopted->{'remove'}, [abs_path($engine_wav)], 'the original is queued for removal');
+unlink $_ for @{ $adopted->{'remove'} };
+ok(!-e $engine_wav, 'and is gone once the song is written');
+ok(-e $outside_wav, 'an outside file was never touched');
 
 done_testing();

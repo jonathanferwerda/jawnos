@@ -669,6 +669,82 @@ sub action_28458 {
 	$c->render(json => $answer);
 }
 
+# The engine writes a take inside the recording folder. Saving the song adopts
+# that file into the song's own folder, on this server: one copy per distinct
+# source, one uuid shared by every take that indexes the same audio, and the
+# engine's original handed back for removal once the copy is encrypted. A
+# source outside the take-file rule is left alone, so a hand-edited song cannot
+# make Save read or delete an arbitrary file.
+#
+# The path is the take-file URL's own `file` argument, not a request field. The
+# route that serves a take and this adoption therefore agree on exactly one
+# shape: a direct child of the recording folder named `studio-take-*.wav`.
+sub studio_engine_take_source_path {
+	my ($src) = @_;
+	return undef unless defined $src && !ref $src && length $src;
+	return undef unless $src =~ m{\A/manager/studio/take_file\?(?:.*&)?file=([^&]+)};
+	my $path = uri_decode($1);
+	my $folder = &studio_take_folder();
+	return undef unless defined $folder && length $folder;
+	my ($volume, $dir, $base) = File::Spec->splitpath($path);
+	return undef unless defined $dir && length $dir
+		&& $base =~ /\Astudio-take-\d+-\d+(?:-ch\d+)?\.wav\z/;
+	my $parent = Cwd::abs_path($dir);
+	my $root = Cwd::abs_path($folder);
+	return undef unless defined $parent && defined $root && $parent eq $root;
+	my $abs = Cwd::abs_path($path);
+	return (defined $abs && -f $abs && -r $abs) ? $abs : undef;
+}
+
+# Adopt every unsaved engine take in `$data` into `$location`. Returns the
+# count adopted and the original paths to remove after the song is encrypted.
+# A take that already has a uuid, or whose source is not an engine take-file,
+# is untouched.
+sub studio_engine_take_adopt {
+	my ($data, $location, $app, $server_time, $files) = @_;
+	my $answer = { adopted => 0, remove => [] };
+	return $answer unless ref $data eq 'HASH' && ref $files eq 'ARRAY';
+	return $answer unless defined $location && length $location && defined $app;
+	my $app_path = &subs::path_name($app);
+	my (%known, %originals);
+	foreach my $channel (sort { $a <=> $b } grep { /\A\d+\z/ } keys %{$data}) {
+		my $takes = $data->{$channel}->{'mixer'}->{'out'};
+		next unless ref $takes eq 'ARRAY';
+		for my $index (0 .. $#$takes) {
+			my $take = $takes->[$index];
+			next unless ref $take eq 'HASH' && !$take->{'uuid'};
+			my $source = &studio_engine_take_source_path($take->{'src'});
+			next unless defined $source;
+			if ($known{$source}) {
+				$take->{'uuid'} = $known{$source}{'uuid'};
+				$take->{'src'} = $known{$source}{'src'};
+				next;
+			}
+			require File::Path;
+			File::Path::make_path($location) unless -d $location;
+			my $stem = $app_path . '_' . $server_time . '_' . $channel . '_' . $index;
+			my $target = File::Spec->catfile($location, $stem . '.wav');
+			my $n = 1;
+			while (-e $target) {
+				$target = File::Spec->catfile($location, $stem . '-' . $n . '.wav');
+				$n++;
+			}
+			next unless copy($source, $target);
+			my $take_uuid = &subs::random_string_creator(17);
+			my $url = '/file_open?file=' . uri_encode($target)
+				. '&app=' . $app . '&timestamp=' . ($server_time // '');
+			$take->{'uuid'} = $take_uuid;
+			$take->{'src'} = $url;
+			push @{$files}, { f => $target, uuid => $take_uuid, type => 'recording' };
+			$known{$source} = { uuid => $take_uuid, src => $url };
+			$originals{$source} = 1;
+			$answer->{'adopted'}++;
+		}
+	}
+	$answer->{'remove'} = [ sort keys %originals ];
+	return $answer;
+}
+
 # POST /manager/studio/save
 sub action_28480 {
 	my $c = shift;
@@ -683,9 +759,11 @@ sub action_28480 {
 	my $notepad = $c->param('notepad');
 	my $uuid = &subs::random_string_creator(20);
 	my @files;
+	my $rec_folder = &subs::misc_machine_setting('rec_location');
+	my $rec_home = &subs::home($rec_folder);
+	my $take_location = (defined $rec_home && length $rec_home) ? $rec_home . '/' . $app_path : '';
 	foreach my $u ( @{$c->req->uploads} ) {
-		my $folder = &subs::misc_machine_setting('rec_location');
-		my $location = &subs::home($folder) . '/' . $app_path;
+		my $location = length $take_location ? $take_location : (&subs::home($rec_folder) . '/' . $app_path);
 		my $take_uuid = &subs::random_string_creator(17);
 		my @filename = split '_', (split /\./, $u->filename)[0];
 		my $channel = $filename[-2];
@@ -696,6 +774,14 @@ sub action_28480 {
 		$u->move_to($filename);
 		push @files, { f => $filename, uuid => $take_uuid, type => 'recording' };
 	}
+	my $server_time = &subs::rightNow();
+	# An engine take already lives on this server. Save adopts it in place: the
+	# WAV is copied into the song's folder, gets a uuid and a portable
+	# /file_open URL, and the engine's temporary copy is removed after the song
+	# is encrypted. No take travels through the browser twice.
+	my $adopted = length $take_location
+		? &studio_engine_take_adopt($data, $take_location, $app, $server_time, \@files)
+		: { adopted => 0, remove => [] };
 	my $jfile = encode_json \@files;
 
 	$jdata = encode_json $data;
@@ -708,7 +794,7 @@ sub action_28480 {
 		file => $jfile,
 		uuid => $uuid,
 		duration => $duration || '1000',
-		server_time => &subs::rightNow()
+		server_time => $server_time
 	};
 
 #	&appointment_writer($c,$write);
@@ -728,6 +814,12 @@ sub action_28480 {
 
 	&subs::setting_setter({ app => 'studio', setting => 'last_song', value => $uuid });
 	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
+	# The adopted copies are encrypted and the song is written; the engine's
+	# temporary WAV is now a duplicate, so it goes. A path shared by two takes
+	# was copied once and is removed once here.
+	foreach my $path ( @{ $adopted->{'remove'} || [] } ) {
+		unlink $path if defined $path && -f $path;
+	}
 	my $songs = &subs::db_select('appointments', undef, { type => 'studio' })->hashes;
 	my $song_select = $c->render_to_string(
 		template => 'studio/song_select',

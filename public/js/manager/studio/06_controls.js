@@ -682,6 +682,13 @@ async function studioSave() {
 				v.mixer.out.forEach(function(take, ir) {
 					if (take && take.uuid && mixer[i].media.out[ir]) {
 						mixer[i].media.out[ir].uuid = take.uuid;
+						// An adopted engine take now lives in the song's own folder;
+						// keep the portable URL in memory too, so a later Save does
+						// not write this machine's temporary path back to the row.
+						if (take.src && mixer[i].media.out[ir].engine) {
+							mixer[i].media.out[ir].src = take.src;
+							if (mixer[i].media.out[ir].track) { mixer[i].media.out[ir].track.src = take.src; }
+						}
 					}
 				});
 			});
