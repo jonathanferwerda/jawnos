@@ -169,7 +169,10 @@ like($music_tpl, qr/id="music_remote_fullscreen"/, 'the remote Music window has 
 like($music_css, qr/#music\.music_remote_mode #music_remote_fullscreen/, 'and shows it only in remote mode');
 like($music_css, qr/#music_remote_fullscreen \{ display: none; \}/, 'a local window does not carry it');
 like($music_css, qr/#music\.music_remote_mode #video/, 'the remote window hides the video surface');
-like($music_css, qr/#music\.music_remote_mode \[hint="Fullscreen"\]/, 'and the full-screen button');
+unlike($music_css, qr/#music\.music_remote_mode \[hint="Fullscreen"\]/, 'the player bar keeps its fullscreen button');
+like($music_css, qr/#music\.music_remote_mode \.media_controls\.music_player_bar img\[id\$="_full_screen"\]\[state="on"\]/, 'and lights it while the host is full screen');
+like($music, qr/function musicRemoteFullscreenToggle\(\)/, 'one control for the bar and the corner button');
+like($music, qr/if \(musicRemoteTarget\(\) && !force\) \{ musicRemoteFullscreenToggle\(\); return; \}/, 'the player fullscreen button sends the controlled machine');
 
 # --- settings arrive on the controlled machine ------------------------------
 like($music, qr/function musicSettingSave/, 'a setting save knows the remote mode');
@@ -182,6 +185,12 @@ like($search_routes, qr/\$now_playing = \{ file => \$player->\{'file'\}/, 'the m
 like($search_routes, qr/\$selected_artist = \$remote_view \? \(\$crate->\{'artist'\}/, 'and returns the host selected artists');
 like($search_routes, qr/\$selected_album = \$remote_view \? \(\$crate->\{'album'\}/, 'and albums');
 like($music, qr/musicRemoteApplyPlaying\(r\.key, r\.file\)/, 'the remote row is found by key or path');
+like($remote, qr/type => \(\$player->\{'type'\} \|\| ''\)/, 'the state reports whether the peer track has a picture');
+like($remote, qr/my \$title = \$player->\{'title'\} \|\| '';/, 'and carries the title the peer player wrote');
+like($music, qr/title: current_entry \? \(current_entry\.display_track \|\| current_entry\.song \|\| ''\) : ''/, 'the player cache records the track display title');
+like($music, qr/music_remote_state\.type = r\.type \|\| '';/, 'the controller keeps the peer picture type');
+like($music, qr/musicEntryByFile\(r\.file \|\| ''\)/, 'the bar finds the mirrored queue row');
+like($music, qr/\$\('#video_full_title'\)\.text\(label\);/, 'and names the track as this machine does');
 
 # --- the mirror gets the host's list even when the archive is on -------------
 require "$FindBin::Bin/../perl/Music/05_library_and_queue.pl";

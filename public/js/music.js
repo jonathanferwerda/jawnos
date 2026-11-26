@@ -2607,7 +2607,7 @@ function musicTransportStateLocal() {
 	};
 }
 
-var music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
+var music_remote_state = { playing: null, key: '', file: '', title: '', type: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
 var music_remote_poll_timer = 0;
 var music_remote_progress_timer = 0;
 var music_remote_level_timer = 0;
@@ -2639,8 +2639,10 @@ function musicRemotePaint() {
 		music_remote_poll_timer = 0;
 		clearInterval(music_remote_progress_timer);
 		music_remote_progress_timer = 0;
-		music_remote_state = { playing: null, key: '', file: '', title: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
+		music_remote_state = { playing: null, key: '', file: '', title: '', type: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
 		$('#music_remote_now').hide().text('');
+		// the borrowed fullscreen control goes back to this machine's own
+		musicRemoteFullscreenPaint();
 		// the bar goes back to this machine's own level and mute
 		$('#music_volume').val(musicVolumeLevel());
 		updateMusicMuteIcon();
@@ -2709,6 +2711,14 @@ function musicRemoteApplyState(r) {
 	music_remote_state.key = r.key || '';
 	music_remote_state.file = r.file || '';
 	music_remote_state.title = r.title || '';
+	music_remote_state.type = r.type || '';
+	// The bottom bar names the track the way this machine names it locally: the
+	// mirrored queue entry's own labels. The host writes that title beside the
+	// file too, for a track the queue on screen does not list.
+	var remote_entry = (typeof musicEntryByFile == 'function') ? musicEntryByFile(r.file || '') : null;
+	if (!remote_entry && r.key && typeof musicEntryByKey == 'function') { remote_entry = musicEntryByKey(r.key); }
+	var label = remote_entry ? (remote_entry.display_track || remote_entry.song || '') : '';
+	label = label || r.title || '';
 	var incoming = parseFloat(r.currentTime) || 0;
 	var shown = parseFloat(music_remote_state.display) || 0;
 	// The host saves its clock every few seconds; while it plays, this tick is
@@ -2724,9 +2734,9 @@ function musicRemoteApplyState(r) {
 	music_remote_state.at = Date.now();
 	$('#play_logo').attr('src', r.playing ? jawnosPauseIcon() : jawnosPlayIcon());
 	musicRemoteApplyPlaying(r.key, r.file);
-	$('#music_remote_now').text((r.title || r.file || ''));
+	$('#music_remote_now').text(label || r.file || '');
 	musicRemoteProgressPaint();
-	$('#video_full_title').text((r.title || ''));
+	$('#video_full_title').text(label);
 	if (typeof r.volume != 'undefined' && r.volume !== null) {
 		music_remote_state.volume = musicVolumeClamp(r.volume);
 	}
@@ -2736,14 +2746,37 @@ function musicRemoteApplyState(r) {
 	musicRemoteLevelPaint();
 	if ((Date.now() - (music_remote_sound.devices_at || 0)) > 30000) { musicRemoteSoundLoad(); }
 }
-// The controller's full-screen button wears the controlled machine's state, so
-// one press tells the host to fill its screen and the next one brings it back.
+// The full-screen control belongs to the machine whose face this window wears:
+// a press tells the host to fill its screen and the next one brings it back.
+// Both the player bar's own fullscreen button and the green-screen button in
+// the top corner are that one control while the window shows a peer.
+function musicRemoteFullscreenToggle() {
+	if (!musicRemoteTarget()) { return false; }
+	var on = music_remote_state.fullscreen ? 0 : 1;
+	music_remote_state.fullscreen = on;
+	musicRemoteFullscreenPaint();
+	musicRemoteSend('fullscreen', { value: on });
+	return true;
+}
 function musicRemoteFullscreenPaint() {
+	var remote = !!musicRemoteTarget();
+	var on = remote && !!music_remote_state.fullscreen;
+	var hint = remote
+		? (on ? jawnosT('Leave full screen on the controlled machine') : jawnosT('Full screen on the controlled machine'))
+		: 'Fullscreen';
 	var button = $('#music_remote_fullscreen');
-	if (!button.length) { return; }
-	var on = !!music_remote_state.fullscreen;
-	button.attr('state', on ? 'on' : 'off')
-		.attr('hint', on ? jawnosT('Leave full screen on the controlled machine') : jawnosT('Full screen on the controlled machine'));
+	if (button.length) {
+		button.attr('state', on ? 'on' : 'off').attr('hint', hint);
+	}
+	// The player bar's fullscreen button is the familiar place for this; its
+	// local hint is kept, because a controller that comes back must read as it
+	// did before it was borrowed for the peer.
+	var bar = $('#music .media_controls.music_player_bar img[id$="_full_screen"]');
+	if (bar.length) {
+		if (!bar.attr('data-local-hint')) { bar.attr('data-local-hint', bar.attr('hint') || 'Fullscreen'); }
+		bar.attr('state', on ? 'on' : 'off')
+			.attr('hint', remote ? hint : (bar.attr('data-local-hint') || 'Fullscreen'));
+	}
 }
 // Paint the peer's clock from the last answer plus the time since it arrived.
 // The poll re-anchors it, so a slow host save never freezes the bar.
@@ -3464,11 +3497,15 @@ function playerCacheSaver(type, force) {
 			at = tree.sound.start_at;
 		}
 		else { tree.sound.start_at = null; }
+		var current_entry = (typeof musicCurrentEntry == 'function') ? musicCurrentEntry() : null;
 		var playerData = { 
 			key: tree.current_track, 
 			'currentTime': at, 
 			duration: (tree.sound.duration || 0),
 			file: playerCacheFile(), 
+			// the track's own label, so a controller names it as this window does;
+			// a bare file would otherwise show its whole name
+			title: current_entry ? (current_entry.display_track || current_entry.song || '') : '',
 			volume: musicVolumeLevel(), 
 			muted: music_muted, 
 			state: tree.sound.state, 
@@ -4769,9 +4806,11 @@ function musicTrackEnrich(key, onDone) {
 
 // Re-draw the parts of the player that read the queue rather than the DOM.
 function musicRepaintCurrent() {
+	var remote = musicRemoteTarget();
+	if (remote) { $('#video_full_title').text(music_remote_state.title || ''); }
 	var entry = musicCurrentEntry();
 	if (!entry) { return; }
-	$('#video_full_title').text(entry.display_track || entry.song || '');
+	if (!remote) { $('#video_full_title').text(entry.display_track || entry.song || ''); }
 	if (typeof vidControls != 'undefined') {
 		vidControls['video'] = [];
 		$.each(entry.chapters || [], function (i, ch) { vidControls['video'].push(ch.start_time); });
@@ -6387,11 +6426,7 @@ $(document).on('change', '#music_remote_panel [data-music-remote-device]', funct
 $(document).on('click', '#music_remote_fullscreen', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
-	if (!musicRemoteTarget()) { return; }
-	var on = music_remote_state.fullscreen ? 0 : 1;
-	music_remote_state.fullscreen = on;
-	musicRemoteFullscreenPaint();
-	musicRemoteSend('fullscreen', { value: on });
+	musicRemoteFullscreenToggle();
 });
 
 $(document).on('click', '#music_remote_toggle', function() {
@@ -7347,6 +7382,9 @@ function musicFullscreenGestureAsk() {
 			e.preventDefault();
 			e.stopPropagation();
 			musicFullscreenGestureRemove();
+			// The press is real: a request left pending by the restore's own
+			// attempt must not swallow it.
+			musicFullscreenAsking = false;
 			if (musicPseudoFullscreen() && !musicFullscreenElement()) { musicPlayerFullscreen(1); }
 		});
 	$('#music').append(target);
@@ -7409,7 +7447,7 @@ function musicFullscreenRestoreDisarm() {
 // keyboard handler, which leaves the dress instead of asking for the screen.
 function musicFullscreenRestoreArm() {
 	$('#music').off('pointerdown.music_fs_restore').one('pointerdown.music_fs_restore', function() {
-		if (musicPseudoFullscreen() && !musicFullscreenElement()) { musicPlayerFullscreen(); }
+		if (musicPseudoFullscreen() && !musicFullscreenElement()) { musicFullscreenAsking = false; musicPlayerFullscreen(); }
 	});
 }
 function musicFullscreenRestoreApply() {
@@ -7447,6 +7485,11 @@ function musicFullscreenSet(on) {
 		musicFullscreenIntent = true;
 		clearTimeout(musicFullscreenExitTimer);
 		musicFullscreenOn(1);
+		// The controller's press is the same as this machine's own fullscreen
+		// button: ask for the real top layer too, and leave the first press after
+		// this to promote a browser that refuses without one.
+		musicFullscreenRestoreArm();
+		if (!musicFullscreenElement()) { musicPlayerFullscreen(1); }
 		try { playerCacheSaver(undefined, true); } catch (e) {}
 		musicFullscreenGestureAsk();
 		return;
@@ -7468,7 +7511,7 @@ function musicFullscreenSet(on) {
 // does in the theatre. The sound's picture, the visualiser's video, rides along
 // the same way.
 function musicPlayerFullscreen(force) {
-	if (musicRemoteTarget() && !force) { return; }
+	if (musicRemoteTarget() && !force) { musicRemoteFullscreenToggle(); return; }
 	var v = document.getElementById('video');
 	if (!v) { return; }
 	// the button (and F) is a toggle: a second press leaves fullscreen

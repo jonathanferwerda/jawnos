@@ -35,4 +35,16 @@ like($hover, qr/else \{[\s\S]*?numeral\(\$\(this\)\.closest\('\.wind'\)\.css\('l
 like($hover, qr/if \(!fullscreen\) \{ fullscreen = \$\('#<%= \$id %>'\)\.closest\('\.music_fullscreen'\)\[0\] \|\| null; \}/,
 	'a restored full screen is the same box as the top-layer one');
 
+# A remote Music window has no element of its own for the peer's track. Its
+# seek preview asks the host for that file's frame over the relay, at the
+# hovered second, and uses the peer's duration rather than the local element's.
+like($hover, qr/typeof musicRemoteTarget === 'function'/, 'the hover knows a remote Music window');
+like($hover, qr/music_remote_state\.file/, 'and reads the controlled track\'s file');
+like($hover, qr/music_remote_state\.type/, 'and whether that track has a picture');
+like($hover, qr/remote_target \? remote_duration : v\.duration/, 'the clock uses the controlled track\'s duration');
+like($hover, qr/'\/file_open\?file=' \+\s*encodeURIComponent\(remote_file\)/, 'the preview is a file_open thumbnail');
+like($hover, qr/remote_uuid=' \+ encodeURIComponent\(remote_target\)/, 'asked of the machine that holds the file');
+like($hover, qr/remote_bucket = Math\.max\(0, Math\.round\(time\)\);/, 'at the hovered second');
+unlike($hover, qr/v\.lastPositionPreviewKey = remote_preview_key/, 'the remote preview keeps its own cache key');
+
 done_testing();

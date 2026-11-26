@@ -100,6 +100,7 @@ like($gesture // '', qr/action: 'resume_fullscreen'/, 'for the trusted click');
 like($gesture // '', qr/rect\.left \+ rect\.width \/ 2/, 'targeting the corner target\'s own middle');
 like($gesture // '', qr/id="music_fullscreen_gesture"/, 'a corner target catches that click');
 like($gesture // '', qr/musicPlayerFullscreen\(1\)/, 'and turns it into the real request');
+like($gesture // '', qr/musicFullscreenAsking = false;/, 'a trusted click clears a request left pending');
 like($gesture // '', qr/setTimeout\(musicFullscreenGestureRemove, 1200\)/,
 	'the target does not linger if no click comes');
 like($apply // '', qr/musicFullscreenGestureAsk\(\);/, 'the restore asks for the desktop gesture');
@@ -164,5 +165,12 @@ like($store, qr/child\.id == 'music_fullscreen_gesture'/, 'and the desktop gestu
 like($video, qr/closest\('\.music_fullscreen'\)\.length/, 'the bars hide in a restored full screen');
 like($video, qr/closest\('\.music_fullscreen'\)\[0\]/, 'the seek preview follows it, not the window frame');
 like($keys, qr/musicFullscreenLeave\(\)/, 'Escape leaves the restored dress');
+
+# --- a controller's full-screen press takes the same trip ------------------
+my ($set) = $music =~ /(function musicFullscreenSet\(on\)\s*\{.*?\n\})/s;
+ok(defined $set, 'musicFullscreenSet is found');
+like($set // '', qr/musicFullscreenRestoreArm\(\);/, 'a controller\'s full screen arms the first press');
+like($set // '', qr/if \(!musicFullscreenElement\(\)\) \{ musicPlayerFullscreen\(1\); \}/, 'and asks for the real top layer');
+like($set // '', qr/musicFullscreenGestureAsk\(\);/, 'asking its shell for the trusted click');
 
 done_testing();

@@ -684,8 +684,8 @@
 			// same local stream and is seeked to the hovered second, then its frame is
 			// drawn into a canvas. The server's ffmpeg frame is the fallback while this
 			// one warms up; once it is ready a hover no longer waits for a round trip.
-			// A remote track is left to the server preview - pulling the tunnel a second
-			// time to preview it would cost more than the wait.
+			// A remote track has no element of its own on this screen: its preview
+			// is the host's own frame of that file, asked for over the relay.
 			var <%= $miss %>SeekPreview = { video: null, src: '', want: 0, ready: false, drawn: false, visible: false, raf: 0, timer: 0, lastSeekAt: 0, hideTimer: 0, canvas: null, failed: false };
 			function <%= $miss %>SeekPreviewDraw() {
 				var p = <%= $miss %>SeekPreview;
@@ -829,9 +829,42 @@
 				clearTimeout(v.positionPreviewTimeout);
 				$('#<%= $miss %>_position_preview').css({ 'position': 'fixed', 'left': left, 'top': top, opacity: 3 });
 				$('#<%= $miss %>_position_preview_info').css({ 'position': 'fixed', 'height': '23px', 'background-color':'black', 'color': 'yellow', 'left': left, 'top': (top - 20), opacity: 3 });
-				if (vid.attr('type') == 'video') {
-					var time = (v.duration * (x / width));
+				// A remote window shows a peer's player, not this element's: the state
+				// poll carries that track's file, type and duration.
+				var remote_target = (typeof musicRemoteTarget === 'function') ? musicRemoteTarget() : '';
+				var remote_file = (remote_target && typeof music_remote_state === 'object' && music_remote_state.file) ? music_remote_state.file : '';
+				var remote_entry = (remote_target && remote_file && typeof musicEntryByFile === 'function') ? musicEntryByFile(remote_file) : null;
+				var remote_type = remote_target ? ((typeof music_remote_state === 'object' && music_remote_state.type) || (remote_entry && remote_entry.type) || '') : '';
+				var remote_duration = (remote_target && typeof music_remote_state === 'object' && parseFloat(music_remote_state.duration)) || 0;
+				var is_video = remote_target ? (remote_type === 'video') : (vid.attr('type') == 'video');
+				if (is_video) {
+					var time = ((remote_target ? remote_duration : v.duration) * (x / width));
 					$('#<%= $miss %>_position_preview_info').text(numeral(time).format('00:00:00')).show();
+					if (remote_target) {
+						var remote_bucket = Math.max(0, Math.round(time));
+						if (!remote_file || !isFinite(remote_bucket)) { return; }
+						var remote_preview_key = remote_file + '#' + remote_bucket + '@' + remote_target;
+						var paint_remote = function() {
+							if (v.lastRemotePreviewKey !== remote_preview_key) {
+								v.lastRemotePreviewKey = remote_preview_key;
+								$('#<%= $miss %>_position_preview').attr('src',
+									'/file_open?file=' + encodeURIComponent(remote_file) +
+									'&thumb=ya&position=' + remote_bucket +
+									'&remote_uuid=' + encodeURIComponent(remote_target));
+							}
+							$('#<%= $miss %>_position_preview').show();
+						};
+						var remote_now = Date.now();
+						if (v.lastRemotePreviewKey === remote_preview_key) {
+							paint_remote();
+						}
+						else if (remote_now - (v.lastRemotePreview || 0) >= 120) {
+							v.lastRemotePreview = remote_now;
+							paint_remote();
+						}
+						v.positionPreviewTimeout = setTimeout(paint_remote, 120);
+						return;
+					}
 					var instant = false;
 <% if ($source eq 'music') { %>
 					instant = <%= $miss %>SeekPreviewShow(time);

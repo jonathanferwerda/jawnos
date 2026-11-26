@@ -74,9 +74,15 @@ sub music_remote_picker {
 sub music_transport_state {
 	my $player = &subs::cache_get({ app => 'music', context => 'player' }) || {};
 	my $file = $player->{'file'} || '';
-	my $title = $file ? basename($file) : '';
-	$title =~ s/\.[^.\/]+$// if length $title;
-	$title = &subs::format_name($title) if length $title;
+	# The browser that plays writes the track's display title beside the file,
+	# so a controller names the track the same way this machine does. An older
+	# cache has only the file, which is read back as before.
+	my $title = $player->{'title'} || '';
+	if (!length $title) {
+		$title = $file ? basename($file) : '';
+		$title =~ s/\.[^.\/]+$// if length $title;
+		$title = &subs::format_name($title) if length $title;
+	}
 	my $duration = $player->{'duration'};
 	$duration = 0 unless defined $duration && $duration =~ /^\d+(?:\.\d+)?$/;
 	# A level the peer never wrote is not a level: null lets a controller show
@@ -89,6 +95,9 @@ sub music_transport_state {
 		file => $file,
 		key => ($player->{'key'} || ''),
 		title => $title,
+		# whether the peer's player has a picture, so a controller can offer a
+		# seek preview without holding the file itself
+		type => ($player->{'type'} || ''),
 		currentTime => ($player->{'currentTime'} || 0),
 		duration => ($duration + 0),
 		volume => (defined $volume ? $volume + 0 : undef),
