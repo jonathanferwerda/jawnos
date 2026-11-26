@@ -1,4 +1,4 @@
-# tests-for: scripts/help_audit.pl
+# tests-for: scripts/help_audit.pl perl/help.pl
 # covers:    the help auditor CLI - exit 0 on the real registry, the OK line,
 #           --all listing the orphan app templates, --quiet filtering, and exit
 #           1 only for hard errors
@@ -74,6 +74,20 @@ chdir $cwd or die "cannot return to $cwd: $!";
 my %bucket;
 push @{ $bucket{ $_->[0] } }, $_ for @findings;
 my $info = $bucket{'info'} || [];
+
+# A control can be a visible label or a hint, and both quote styles are in the
+# tree. The marker save button is the pair that exposed a parser that read only
+# single-quoted hints.
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $file = "$dir/controls.html.ep";
+	open my $fh, '>', $file or die "$file: $!";
+	print {$fh} qq{<button hint="<%= &subs::ui("Save this drawing as an app's icon") %>"><%= &subs::ui('Save as app icon') %></button>\n};
+	close $fh;
+	my %labels = map { $_ => 1 } help::fixed_labels($file);
+	ok($labels{'Save as app icon'}, 'a visible translation-helper label is a control');
+	ok($labels{"Save this drawing as an app's icon"}, 'a double-quoted hint is a control');
+}
 
 {
 	my ($code, $out, $err) = run_audit($script, '--quiet');

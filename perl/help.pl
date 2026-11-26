@@ -538,8 +538,16 @@ sub fixed_labels {
 			next if $v =~ /^'|'$/ || $v =~ / \+ /;
 			$h{$v} = 1;
 		}
-		while ($body =~ /hint="<%= &subs::ui\('((?:[^'\\]|\\.)+)'\) %>"/g) {
+		# A fixed string in a translation helper is a control too, whether it
+		# sits in a hint or is the visible label itself. Both quote styles are
+		# in the tree, so both are read; the escaped quote is put back so the
+		# registry's spelling is the one a person sees.
+		while ($body =~ /&subs::ui\('((?:[^'\\]|\\.)*)'\)/g) {
 			(my $v = $1) =~ s/\\'/'/g;
+			$h{$v} = 1;
+		}
+		while ($body =~ /&subs::ui\("((?:[^"\\]|\\.)*)"\)/g) {
+			(my $v = $1) =~ s/\\"/"/g;
 			$h{$v} = 1;
 		}
 	}
