@@ -191,6 +191,7 @@
 				<button class="button save_marker hover" hint="Save this drawing into the portfolio">Save</button>
 				<button class="button marker_session_save hover" hint="Save this drawing as a session">Save session</button>
 				<button class="button marker_save_appointment hover" hint="Save this drawing onto an appointment">Save to appointment</button>
+				<button class="button marker_save_app_icon hover" hint="<%= &subs::ui("Save this drawing as an app's icon") %>"><%= &subs::ui('Save as app icon') %></button>
 				<img src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="little_thumb hover" id="marker_gallery">
 			</div>
 		</section>
@@ -238,6 +239,17 @@
 	<div class="marker_modal_card">
 		<div class="marker_modal_title">Save to an appointment</div>
 		<div id="marker_attach_list" class="marker_attach_list"><i>Loading&hellip;</i></div>
+		<div class="marker_modal_row">
+			<button class="button marker_modal_cancel">Cancel</button>
+		</div>
+	</div>
+</div>
+
+<%# ---- the app picker: Save as app icon asks which app gets the picture %>
+<div id="marker_app_icon_dialog" class="marker_modal" style="display:none;">
+	<div class="marker_modal_card">
+		<div class="marker_modal_title"><%= &subs::ui('Save as an app\'s icon') %></div>
+		<div id="marker_app_icon_list" class="marker_attach_list"><i>Loading&hellip;</i></div>
 		<div class="marker_modal_row">
 			<button class="button marker_modal_cancel">Cancel</button>
 		</div>

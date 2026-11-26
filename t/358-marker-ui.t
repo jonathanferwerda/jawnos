@@ -166,6 +166,15 @@ like($misc13, qr/my \$attach_uuid = \$c->param\('attach_uuid'\);/, 'a save can n
 like($misc13, qr/&subs::db_update\('appointments', \{ file => encode_json\(\$files\) \}, \{ uuid => \$attach_uuid \}\)/,
 	'an attached drawing joins that record\'s own file list');
 
+# --- Save as an app icon -----------------------------------------------------
+like($marker_page, qr/class="button marker_save_app_icon hover"/, 'the save row offers an app icon');
+like($marker_page, qr/id="marker_app_icon_dialog"/, 'the app picker has its own dialog');
+like($marker_page, qr/id="marker_app_icon_list"/, 'and a list to fill');
+like($marker_stage, qr/function markerAppIconOpen\(\)/, 'opening it reads the apps Marker can see');
+like($marker_stage, qr/url: '\/manager\/setting_setter'/, 'the save writes a setting');
+like($marker_stage, qr/setting: 'main_image'/, 'the app\'s main image, which every surface draws first');
+like($marker_stage, qr/function markerAppIconImage\(\)/, 'the drawing is fitted into a small square first');
+
 # --- the controls are wired ---------------------------------------------------
 # A button that no handler answers is a button that does nothing: the shell was
 # rewritten, so every control the rail shows is checked against the scripts that
@@ -173,6 +182,7 @@ like($misc13, qr/&subs::db_update\('appointments', \{ file => encode_json\(\$fil
 my $all_js = join "\n", $marker_index, $marker_paint, $marker_panel, $marker_select, $marker_stage;
 for my $name (qw(
 	marker_init marker_size_choice marker_modal_cancel marker_save_appointment marker_attach_row
+	marker_save_app_icon marker_app_icon_row
 	marker_selection_action marker_selection_effect marker_group_head
 	save_marker marker_session_save marker_tool marker_erase_toggle marker_transform marker_paper
 	marker_delete flipbook play_marker record_marker marker_layer_add marker_layer_delete

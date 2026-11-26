@@ -622,6 +622,12 @@ sub main_icon_source {
 		return &icon_for($gb::known_appts->{$unformatted_name}->{'icon'});
 	}
 	return &icon_for('/icons/pos/' . $settings->{'pos'} . '.png') if $settings->{'pos'} && -e 'public/icons/pos/' . $settings->{'pos'} . '.png';
+	# A caller may name the picture to wear when the app has none: the Notices
+	# rows ask for the bell, so an app that has never been drawn still reads as a
+	# notice. The gear stays the default for every other surface.
+	if (defined $data->{'fallback'} && length $data->{'fallback'}) {
+		return &icon_for($data->{'fallback'});
+	}
 	# A custom app has no entry in known_appts and may have no picture yet; the
 	# same gear the start menu and search index draw keeps its window and
 	# taskbar button from losing the icon entirely.
@@ -649,7 +655,7 @@ sub main_icon_maker {
 	# a caller may want the icon to read as a control (the title bar's icon opens
 	# the window's quiet controls), so it can add a class of its own
 	my $extra_class = (defined $data->{'class'} && length $data->{'class'}) ? ' ' . $data->{'class'} : '';
-	my $src = &subs::main_icon_source({ app => $unformatted_name, settings => $settings });
+	my $src = &subs::main_icon_source({ app => $unformatted_name, settings => $settings, fallback => $data->{'fallback'} });
 	my $name_attr = &subs::html_text($unformatted_name);
 	my $hint_attr = &subs::html_text($hint);
 	my $class_attr = &subs::html_text($extra_class);

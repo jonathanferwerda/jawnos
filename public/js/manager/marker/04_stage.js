@@ -539,6 +539,82 @@ $(document).on('click', '.marker_attach_row', function() {
 	markerAttachSave(uuid);
 });
 
+// ---- Save as an app icon -------------------------------------------------
+// The picker lists the apps Marker can see (recent appointments, one row per
+// app), and the save writes this drawing as that app's main image. Every
+// surface already prefers a main image over the icon set's picture - the title
+// bar, the taskbar, the start menu and a notice row - so one drawing dresses
+// the app everywhere. A notice row that finds no picture wears the bell.
+
+function markerAppIconOpen() {
+	markerDialogOpen('marker_app_icon_dialog');
+	var list = $('#marker_app_icon_list');
+	list.html('<i>Loading\u2026</i>');
+	$.ajax({
+		url: '/manager/marker/appointments',
+		type: 'GET',
+		data: { app: markerApp() },
+		success: function(response) {
+			var rows = (response && response.appointments) || [];
+			var seen = {};
+			list.html('');
+			$.each(rows, function(i, row) {
+				var key = row.app || '';
+				if (!key || seen[key]) { return; }
+				seen[key] = 1;
+				var item = $('<button class="button marker_app_icon_row hover"></button>').attr('data-app', key);
+				item.append($('<b></b>').text(row.name || key));
+				list.append(item);
+			});
+			if (!list.children().length) { list.html('<i>No apps to design.</i>'); }
+		},
+		error: function() { list.html('<i>Could not read the apps.</i>'); }
+	});
+}
+
+// An icon is drawn at a few dozen pixels, and the setting syncs to every
+// machine, so the sheet is fitted into a small square instead of stored whole.
+function markerAppIconImage() {
+	var source = markerFlatten();
+	var sw = source.width || 1;
+	var sh = source.height || 1;
+	var size = 128;
+	var canvas = document.createElement('canvas');
+	canvas.width = size;
+	canvas.height = size;
+	var ctx = canvas.getContext('2d');
+	var scale = Math.min(size / sw, size / sh);
+	var w = Math.max(1, Math.round(sw * scale));
+	var h = Math.max(1, Math.round(sh * scale));
+	ctx.drawImage(source, 0, 0, sw, sh, Math.round((size - w) / 2), Math.round((size - h) / 2), w, h);
+	return canvas.toDataURL('image/png');
+}
+
+function markerAppIconSave(app) {
+	if (!app) { return; }
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: {
+			timestamp: Date.now(),
+			app: app,
+			setting: 'main_image',
+			value: markerAppIconImage(),
+			browser_tab_id: (typeof bti !== 'undefined') ? bti : ''
+		},
+		success: function() { say_it('saved the app icon!'); },
+		error: function() { jawnosAlertText('That app could not take the drawing.'); }
+	});
+}
+
+$(document).on('click', '.marker_save_app_icon', function() { markerAppIconOpen(); });
+
+$(document).on('click', '.marker_app_icon_row', function() {
+	var app = $(this).attr('data-app') || '';
+	markerDialogClose();
+	markerAppIconSave(app);
+});
+
 // ---- the cursor's own numbers ------------------------------------------
 // Marker's pointer handlers call this on every move; it is deliberately cheap
 // because a stylus reports at the screen's refresh rate.

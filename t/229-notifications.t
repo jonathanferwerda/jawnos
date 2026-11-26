@@ -1,4 +1,4 @@
-# tests-for: templates/apps/notifications.html.ep templates/configure/app_notification.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
+# tests-for: templates/apps/notifications.html.ep templates/notification.html.ep public/icons/sets/build.js templates/configure/app_notification.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
 # covers:    The Notifications app (search, app filter, remove all), the in-program
 #            notice cards that replaced the browser's Notification, and the
 #            taskbar bell that counts what arrived since the list was opened.
@@ -78,6 +78,7 @@ like($row, qr/role="button"/, 'the row is a press');
 like($row, qr/tabindex="0"/, 'and can be reached from the keyboard');
 unlike($row, qr/onclick=/, 'it carries no click script of its own');
 like($row, qr/<span class="hover"[^>]*>.*<span class="notification_text">/s, 'the picture comes first, with the text beside it');
+like($row, qr/fallback => '\/images\/decipherable\/bell\.png'/, 'a notice with no app picture falls back to the bell');
 like($template, qr/#notifications_app \.notification \{[^}]*cursor: var\(--jawnos-cursor-pointer/,
 	'the row looks pressable');
 
@@ -166,6 +167,12 @@ like($widget, qr/attr\('data-timestamp', notice\.timestamp/, 'and the time its w
 like($widget, qr/jawnosNotificationOpener\(\$\(this\)\.attr\('data-app'\)/, 'a row press opens the appointment window');
 like($widget, qr/Open Notifications/, 'and says so');
 ok(-e "$root/public/icons/notifications.svg", 'the bell icon exists');
+my $sets = read_file("$root/public/icons/sets/build.js");
+like($sets, qr/\n\tbell:/, 'the icon-set generator draws the bell');
+my @set_dirs = glob("$root/public/icons/sets/*/");
+my @no_bell = grep { !-e "$_/bell.svg" } @set_dirs;
+is(scalar @no_bell, 0, 'every icon set carries the bell its notices fall back to')
+	or diag('missing bell.svg in: ' . join ', ', @no_bell);
 
 my $back = source('public/js/manager/manager/09_app_back.js');
 like($back, qr/params\.get\('app'\)/, 'a manager link can name the app to deal');

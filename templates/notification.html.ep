@@ -1,7 +1,7 @@
 <div id="notification_<%= $n->{'timestamp'} %>" tag="<%= $n->{'tag'} %>" app="<%= $n->{'app'} %>" timestamp="<%= $n->{'timestamp'} %>" uuid="<%= $n->{'uuid'} %>" server_time="<%= $n->{'server_time'} %>" class="notification" role="button" tabindex="0">
 	<span class="hover" style="border:solid;border-radius:2px;border-width:3px;">
 		<% if ($n->{'image'}) { %><img class="little_thumb" src="<%= $n->{'image'} %>">
-		<% } else { %><%== &subs::main_icon_maker({ app => &subs::unformat_name($n->{'app'} || $n->{'title'}), timestamp => &subs::rightNow(), size => 'medium' }) %>
+		<% } else { %><%== &subs::main_icon_maker({ app => &subs::unformat_name($n->{'app'} || $n->{'title'}), timestamp => &subs::rightNow(), size => 'medium', fallback => '/images/decipherable/bell.png' }) %>
 		<% } %>
 	</span>
 	<span class="notification_text">

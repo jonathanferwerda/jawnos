@@ -79,6 +79,15 @@ my $fallback = subs::main_icon_maker({ app => 'zz_no_such_custom_app', timestamp
 like( $fallback, qr{<img }, 'so its title bar wears an image, not nothing' );
 like( $fallback, qr/gear/, 'the same gear the start menu draws' );
 
+# --- a caller can ask for the bell when the app has no picture --------------
+my $bell_src = subs::main_icon_source({ app => 'zz_no_such_custom_app', settings => {},
+	fallback => '/images/decipherable/bell.png' });
+like( $bell_src, qr/bell/, 'a caller-chosen fallback is the picture when the app has none' );
+unlike( $bell_src, qr/gear/, 'and the gear is not used' );
+my $bell_icon = subs::main_icon_maker({ app => 'zz_no_such_custom_app', timestamp => 1, settings => {},
+	fallback => '/images/decipherable/bell.png' });
+like( $bell_icon, qr/bell/, 'the icon maker passes the fallback through' );
+
 # --- a path another machine wrote is mapped onto this one -------------------
 my $phone = '/sdcard/DCIM/programming/pic.jpg';
 like( subs::main_image_src($phone, 'programming'), qr{pic\.jpg},
