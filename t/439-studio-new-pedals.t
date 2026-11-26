@@ -22,6 +22,7 @@ my $plan   = read_file("$root/lib/JawnOS/Audio/Plan.pm");
 my $studio = read_file("$root/perl/gb/05_abilities_and_studio.pl");
 my $take   = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
 my $js     = read_file("$root/public/js/manager/studio/08_effects.js");
+my $pitch  = read_file("$root/engine/src/effect/pitch_shift.rs");
 my $help   = read_file("$root/perl/help/topics_apps.pl");
 my $doc    = read_file("$root/docs/studio-effects.md");
 my $audit  = read_file("$root/docs/pedal-audit.md");
@@ -182,6 +183,19 @@ like($js, qr/^function studioEffectGrain\(ctx, input, wet, settings\)/m,
 like($js, qr/^function studioHarmonizerTarget\(hz, key, scale, degree\)/m,
 	'the harmonizer moves the detected note by scale steps');
 like($js, qr/A fixed ratio \(pitch_shift\)/, 'the grain block documents the fixed ratio');
+
+# The pitch shifter is exact from -24 to +24 on both sides: a stream of grains
+# reads at the ratio, with only the seam crossfaded. Two always-audible taps
+# cancel the shifted carrier at the extremes and leave the interval flat.
+like($pitch, qr/MIN_SEMITONES: f32 = -24\.0/, 'the engine floor is -24 semitones');
+like($pitch, qr/MAX_SEMITONES: f32 = 24\.0/, 'the engine ceiling is +24 semitones');
+like($pitch, qr/struct Grain\b/, 'the engine schedules resampled grains');
+like($pitch, qr/let delay = grain\.base \+ p \* \(1\.0 - grain\.ratio\);/,
+	'each engine grain reads at the ratio');
+like($js, qr/function studioPitchShiftBlock\(state, event, settings\)/,
+	'the browser has a fixed-ratio block of its own');
+like($js, qr/var delay = grain\.base \+ p \* \(1 - grain\.ratio\);/, 'each browser grain reads at the ratio');
+like($js, qr/var STUDIO_PITCH_BASE_SECONDS = 0\.04;/, 'the browser bases its look-back on the dry delay');
 
 # --- the browser: natural units --------------------------------------------
 like($js, qr/'harmonizer\.key': 11,\s*\n\s*'harmonizer\.scale': 3,\s*\n\s*'harmonizer\.degree': 6/,

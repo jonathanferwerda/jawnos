@@ -54,11 +54,12 @@ the real circuit, the control mapping and the honest approximation — is in
 `docs/pedal-audit.md`. Read it before changing a pedal's sound: the two sides
 share the control names, not a claim of a sample-identical circuit.
 
-`harmonizer` and `pitch_shift` are **monophonic** and add latency. Both detect or
-shift one note at a time through crossfaded grains, so the shifted copy arrives
-about one grain behind the dry signal; a chord confuses them. `harmonizer` moves
-the one detected note a scale step in the chosen key and scale, while
-`pitch_shift` moves the whole signal by a fixed interval.
+`harmonizer` and `pitch_shift` add latency and suit one note at a time. The
+harmonizer detects the played note and moves it a scale step through crossfaded
+grains, so a chord confuses its detector. `pitch_shift` does not detect: it
+reads the whole signal through a stream of resampled grains at a fixed ratio
+from -24 to +24 semitones, so a chord shifts too (with the usual granular warble
+at the extremes).
 
 `stereowidener` is a **browser-only** insert. A mid/side matrix needs an L/R
 pair, and the engine's insert chain is mono, so `InsertKind::parse` answers

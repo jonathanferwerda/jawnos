@@ -142,11 +142,27 @@ function studioKnobInput(knob) {
 	return $('.knob_control[control="' + knob.attr('control') + '"][channel="' + knob.attr('channel') + '"]');
 }
 
+// A knob's natural unit, for a control whose 0..100 slider has a musical name.
+// Pitch Shift's Semitones is the one today: the hidden slider still stores
+// 0..100, but the number above the knob and the drag readout name the interval
+// (-24..+24), so the pedal can be set by the interval a person wants.
+function studioKnobDisplay(knob, value) {
+	var control = knob.attr('control');
+	if (control === 'semitones'
+		&& typeof studioEffectNatural === 'function'
+		&& typeof studioEffectKind === 'function'
+		&& studioEffectKind(knob.attr('channel')) === 'pitch_shift') {
+		var semitones = studioEffectNatural('pitch_shift', 'semitones', value);
+		return (semitones > 0 ? '+' : '') + semitones;
+	}
+	return String(Math.round(value));
+}
+
 function studioKnobReadout(knob, value) {
 	var el = $('#studio_knob_readout');
 	if (!el.length) { el = $('<div id="studio_knob_readout"></div>').appendTo('body'); }
 	var at = knob.offset() || { left: 0, top: 0 };
-	el.text(Math.round(value)).css({ display: 'block', left: at.left + 'px', top: (at.top - 24) + 'px' });
+	el.text(studioKnobDisplay(knob, value)).css({ display: 'block', left: at.left + 'px', top: (at.top - 24) + 'px' });
 	clearTimeout(studioKnobReadout.timer);
 	studioKnobReadout.timer = setTimeout(function () { el.hide(); }, 1000);
 }
@@ -185,7 +201,7 @@ function studioKnobValue(knob, value) {
 			label.insertAfter(knob);
 		}
 	}
-	label.text(Math.round(value));
+	label.text(studioKnobDisplay(knob, value));
 }
 
 // Paint one knob from its input: the picture's angle and, on a pedal, the value

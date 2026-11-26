@@ -972,7 +972,10 @@ function studioUpdateKnobHints() {
 		if (value === null || value === undefined || isNaN(value)) { value = input.val(); }
 		else if (Math.abs(value - Math.round(value)) < 0.05) { value = Math.round(value); }
 		else { value = numeral(value).format('0.0'); }
-		knob.attr('hint', String(control).replace(/_/g, ' ') + ': ' + value);
+		var shown = (control === 'semitones' && typeof studioKnobDisplay === 'function')
+			? studioKnobDisplay(knob, input.val())
+			: value;
+		knob.attr('hint', String(control).replace(/_/g, ' ') + ': ' + shown);
 	});
 }
 

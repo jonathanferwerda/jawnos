@@ -504,4 +504,15 @@ like($style, qr/\.pedal_knob \.knob_value\s*\{[^}]*position:\s*static/s,
 unlike($rack, qr/axis:\s*'x'/,
 	'the rack sort is not axis-locked: a locked axis leaves the clone\'s top unwritten');
 
+# A control with a musical unit prints that unit, not the raw 0..100 slider:
+# Pitch Shift's Semitones reads -24..+24 above the knob and in the drag readout.
+like($knobs, qr/function studioKnobDisplay\(knob, value\)/,
+	'one display helper names a knob\'s natural unit');
+like($knobs, qr/studioEffectKind\(knob\.attr\('channel'\)\) === 'pitch_shift'/,
+	'Pitch Shift\'s Semitones is the measured control');
+like($knobs, qr/studioEffectNatural\('pitch_shift', 'semitones', value\)/,
+	'the semitone display is the same -24..+24 mapping the engine gets');
+like($canvas, qr/studioKnobDisplay\(knob, input\.val\(\)\)/,
+	'the artwork hint speaks in semitones too');
+
 done_testing();

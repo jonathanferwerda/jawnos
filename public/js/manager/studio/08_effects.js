@@ -1791,6 +1791,9 @@ function studioAutotuneState(rate) {
 		base: Math.max(512, Math.round(rate * 0.08)),
 		period: 0,
 		target: 0,
+		shiftGrains: [],
+		shiftNext: 0,
+		shiftSample: 0,
 		analysis: 0,
 		mark: 0,
 		nextGrain: 0,
@@ -1828,7 +1831,109 @@ function studioAutotuneWindow(state) {
 	return dec;
 }
 
+// A fixed ratio (pitch_shift) is a stream of resampled grains, not the
+// corrector's detected splice. Every grain reads at 2^(semitones/12), so the
+// interval is exact; grains sit end to end with a short raised-cosine seam, so
+// only the seam crossfades two copies. A triangular two-tap crossfade keeps
+// both copies audible all the time and, at the larger intervals, cancels the
+// shifted carrier (an octave would come out almost a semitone flat). This is
+// the model engine/src/effect/pitch_shift.rs uses, so -24..+24 semitones are
+// the same interval on both sides. The builder delays the dry leg by BASE so a
+// partial mix cannot comb.
+var STUDIO_PITCH_BASE_SECONDS = 0.04;
+var STUDIO_PITCH_MAX_GRAIN_SECONDS = 0.12;
+var STUDIO_PITCH_FADE = 0.1;
+function studioPitchShiftBlock(state, event, settings) {
+	var input = event.inputBuffer;
+	var output = event.outputBuffer;
+	var channels = Math.min(input.numberOfChannels, output.numberOfChannels);
+	if (!channels) { return; }
+	var n = input.length, rate = state.rate, size = state.ringSize;
+	if (state.rings.length !== channels) {
+		state.rings = [];
+		state.write = 0;
+		state.shiftSample = 0;
+		state.shiftNext = 0;
+		state.shiftGrains = [];
+	}
+	var ratio = (settings.ratio > 0) ? settings.ratio : 1;
+	var base = Math.max(64, Math.round(rate * STUDIO_PITCH_BASE_SECONDS));
+	var maxLength = Math.max(64, Math.min(size / 4, Math.round(rate * STUDIO_PITCH_MAX_GRAIN_SECONDS)));
+	var span = Math.abs(1 - ratio);
+	var length = (span < 1e-4)
+		? maxLength
+		: Math.max(64, Math.min(maxLength, Math.round(base / span)));
+	var fade = Math.max(16, Math.min(length / 2, Math.round(length * STUDIO_PITCH_FADE)));
+	var hop = Math.max(1, length - fade);
+	var ins = [], outs = [], rings = [];
+	for (var c = 0; c < channels; c++) {
+		rings[c] = state.rings[c] || (state.rings[c] = new Float32Array(size));
+		ins[c] = input.getChannelData(c);
+		outs[c] = output.getChannelData(c);
+	}
+	// capture the whole block first: grains read history, never the future
+	for (var i = 0; i < n; i++) {
+		for (var w = 0; w < channels; w++) { rings[w][state.write] = ins[w][i]; }
+		state.write = (state.write + 1) % size;
+	}
+	// Schedule from the ratio this block starts with; a knob move lands on the
+	// next grain, one seam away.
+	var blockStart = state.shiftSample, blockEnd = blockStart + n;
+	if (state.shiftNext < blockStart) { state.shiftNext = blockStart; }
+	var guard = 0;
+	while (state.shiftNext < blockEnd && guard++ < 4096) {
+		state.shiftGrains.push({
+			start: state.shiftNext, length: length, fade: fade, base: base, ratio: ratio
+		});
+		state.shiftNext += hop;
+	}
+	state.shiftGrains = state.shiftGrains.filter(function (grain) {
+		return grain.start + grain.length > blockStart;
+	});
+	var weights = state.shiftWeights;
+	if (!weights || weights.length < n) { weights = state.shiftWeights = new Float64Array(Math.max(1024, n)); }
+	var s, c2;
+	for (s = 0; s < n; s++) {
+		weights[s] = 0;
+		for (c2 = 0; c2 < channels; c2++) { outs[c2][s] = 0; }
+	}
+	for (var gi = 0; gi < state.shiftGrains.length; gi++) {
+		var grain = state.shiftGrains[gi];
+		var from = Math.max(0, Math.ceil(grain.start - blockStart));
+		var to = Math.min(n, Math.ceil(grain.start + grain.length - blockStart));
+		for (s = from; s < to; s++) {
+			var p = blockStart + s - grain.start;
+			if (p < 0 || p >= grain.length) { continue; }
+			var gain = 1;
+			if (p < grain.fade) {
+				gain = 0.5 - 0.5 * Math.cos(Math.PI * p / grain.fade);
+			}
+			else if (p > grain.length - grain.fade) {
+				gain = 0.5 - 0.5 * Math.cos(Math.PI * (grain.length - p) / grain.fade);
+			}
+			var delay = grain.base + p * (1 - grain.ratio);
+			if (delay < 0) { continue; }
+			weights[s] += gain;
+			// the write index of this sample is the captured block's end minus
+			// the samples still ahead of it
+			var at = state.write - n + s;
+			for (c2 = 0; c2 < channels; c2++) {
+				outs[c2][s] += studioAutotuneRead(rings[c2], size, at - delay) * gain;
+			}
+		}
+	}
+	for (s = 0; s < n; s++) {
+		if (weights[s] > 1e-6) {
+			for (c2 = 0; c2 < channels; c2++) { outs[c2][s] /= weights[s]; }
+		}
+	}
+	state.shiftSample = blockEnd;
+}
+
 function studioAutotuneBlock(state, event, settings) {
+	// The pitch shifter has its own fixed-ratio path; the detected correction
+	// below is only for autotune and the harmonizer.
+	if (settings.ratio > 0) { studioPitchShiftBlock(state, event, settings); return; }
 	var input = event.inputBuffer;
 	var output = event.outputBuffer;
 	var channels = Math.min(input.numberOfChannels, output.numberOfChannels);
@@ -1852,7 +1957,7 @@ function studioAutotuneBlock(state, event, settings) {
 
 	// one pitch decision per block, from channel one's history
 	var hz = 0;
-	if (settings.amount > 0 && !(settings.ratio > 0)) {
+	if (settings.amount > 0) {
 		var window = studioAutotuneWindow(state);
 		if (window) { hz = studioAutotunePitch(window, rate / 2, state.corr); }
 	}
@@ -1884,18 +1989,9 @@ function studioAutotuneBlock(state, event, settings) {
 	var synth = state.target > 0 ? state.target : period;
 	synth = Math.max(16, Math.min(rate / 40, synth));
 
-	// A fixed ratio (pitch_shift) is a granular shifter rather than a corrector:
-	// the read head advances one analysis period per grain while the grain is
-	// laid an output hop later, so the ratio is period/hop. A downward shift
-	// needs a longer grain to keep the overlap-add grains crossing, and the
-	// analysis step stays at `period` so the read position follows it exactly.
+	// The corrector lays one grain per estimated period and the harmonizer moves
+	// the detected note; the shifter's fixed ratio never reaches here.
 	var step = synth, hop = synth, grainFactor = 2;
-	if (settings.ratio > 0) {
-		period = Math.max(32, Math.min(rate / 40, Math.round(rate * 0.008)));
-		hop = Math.max(16, Math.min(rate / 40, period / settings.ratio));
-		step = period;
-		grainFactor = Math.max(2, 2 / settings.ratio);
-	}
 
 	var blockStart = state.sample, blockEnd = state.sample + n;
 	// Lay a grain every target period. The tracking position advances with real
@@ -1937,7 +2033,8 @@ function studioAutotuneBlock(state, event, settings) {
 				weights[si] += w;
 			}
 		}
-		// the Hann windows may not sum to one when the ratio bends; normalise
+		// the Hann windows may not sum to one when overlapping grains differ;
+		// normalise so a partial amount cannot change the level
 		for (s = 0; s < n; s++) {
 			if (weights[s] > 1e-6) { out[s] = out[s] / weights[s]; }
 		}
@@ -2117,18 +2214,21 @@ function studioEffectHarmonizer(ctx, name) {
 	return fx;
 }
 
-// Pitch shift: a fixed-interval granular shifter, ratio 2^(semitones/12). It
-// does not detect pitch; it re-synthesises the input at the ratio with two
-// crossfaded grains, so any material shifts (a chord included). The latency is
-// the grain look-back (about 80 ms) plus one 1024-sample block.
+// Pitch shift: a fixed-interval shifter, ratio 2^(semitones/12). It does not
+// detect pitch; it reads the input as a stream of grains at the ratio, so any
+// material shifts (a chord included) by exactly the chosen interval from -24
+// to +24 semitones. The wet leg sits a base-look-back behind, so the dry leg is
+// delayed by the same amount before the two are mixed.
 function studioEffectPitchShift(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'pitch_shift');
 	var wet = ctx.createGain();
 	var dry = ctx.createGain();
+	var dryDelay = ctx.createDelay(0.1);
+	dryDelay.delayTime.value = STUDIO_PITCH_BASE_SECONDS;
 	var settings = {
 		amount: 0, speed: 0.5, key: 0, scale: 0,
 		ratio: Math.pow(2, 7 / 12),
-		base: 0.16, grain: 0.04
+		base: STUDIO_PITCH_BASE_SECONDS, grain: 0.04
 	};
 	var mix = 1;
 	var applyMix = function () {
@@ -2141,7 +2241,7 @@ function studioEffectPitchShift(ctx, name) {
 	};
 	fx.setters['mix'] = function (v) { mix = studioEffectNatural(fx.name, 'mix', v); applyMix(); };
 	wet.connect(fx.wet);
-	fx.input.connect(dry).connect(fx.wet);
+	fx.input.connect(dryDelay).connect(dry).connect(fx.wet);
 	fx.destroy = studioEffectGrain(ctx, fx.input, wet, settings);
 	fx.set('semitones', 64.583);
 	fx.set('mix', 100);
