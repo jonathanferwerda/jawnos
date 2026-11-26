@@ -241,6 +241,11 @@ my @tools = (
 	{ cmd => 'cpanm',     apt => 'cpanminus',        pacman => 'cpanminus',      termux => 'perl',             label => 'cpanminus', cpanm => 'App::cpanminus' },
 	{ cmd => 'git',       apt => 'git',              pacman => 'git',            termux => 'git',              label => 'git' },
 	{ cmd => 'node',      apt => 'nodejs',           pacman => 'nodejs',         termux => 'nodejs',           label => 'Node.js', alt => 'nodejs' },
+	# The archive drive's own filesystem watch prefers inotifywait. Without it
+	# the hourly digest check still notices every change, so this is optional and
+	# only applies where inotify exists (a Linux box or a phone, not macOS or
+	# Windows).
+	{ cmd => 'inotifywait', apt => 'inotify-tools',  pacman => 'inotify-tools',  termux => 'inotify-tools',    label => 'inotify-tools (archive watch)', optional => 1, required_on => sub { $^O eq 'linux' } },
 	# Only a person building the house's own OpenStreetMap basemap runs
 	# scripts/osm_basemap.pl; the house itself runs without these, so they are
 	# reported and installed but never make a check fail. The pmtiles CLI is not
@@ -1538,16 +1543,15 @@ else {
 		printf "  - %-16s (%s)\n", $t->{'label'}, pkg_for($t);
 	}
 }
-# Optional build tools are named even when only one is missing: they are what a
-# basemap build needs, not what running the house needs.
+# Optional tools are named even when only one is missing: they enable extras
+# (a basemap build, the archive watch), not what running the house needs.
 my @optional_checked = grep { $_->{'optional'} && tool_required($_) } @tools;
 if (@optional_checked) {
 	if (!@missing_optional) {
-		print "optional build tools: all present\n";
+		print "optional tools: all present\n";
 	}
 	else {
-		print "optional build tools missing (only needed to build an OSM basemap with\n";
-		print "scripts/osm_basemap.pl; the house runs without them):\n";
+		print "optional tools missing (extras only; the house runs without them):\n";
 		foreach my $t (@missing_optional) {
 			printf "  - %-16s (%s)\n", $t->{'label'}, optional_pkg($t);
 		}
@@ -1603,8 +1607,8 @@ if ($report_only) {
 	# without them, exactly as it does without the desktop extras.
 	exit($core_missing ? 1 : 0);
 }
-# Only the optional basemap tools are missing: running the house needs nothing
-# more, and a plain report is done. --install/--yes is the request to fetch them.
+# Only optional extras are missing: running the house needs nothing more, and
+# a plain report is done. --install/--yes is the request to fetch them.
 if (!$core_missing && !$desktop_missing && !$install) {
 	print "\nEverything required is installed. You're good to go.\n";
 	exit 0;

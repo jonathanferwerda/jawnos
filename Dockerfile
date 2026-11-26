@@ -88,7 +88,7 @@ RUN apt-get update \
       ca-certificates tzdata procps util-linux \
       openssl sqlite3 argon2 curl \
       openssh-client sshpass autossh rsync \
-      net-tools iproute2 \
+      net-tools iproute2 inotify-tools \
       ffmpeg imagemagick tesseract-ocr qrencode zbar-tools \
       espeak sox zip unzip tmux \
       git \

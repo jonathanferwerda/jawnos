@@ -465,6 +465,84 @@ sub job_cloud_sync_sweep {
 	Mojo::IOLoop->start;
 }
 
+# The archive drive's own filesystem watch. It runs only on the machine holding
+# the drive: a change there is turned into the same drift check the hourly poll
+# uses, so the manifest is rebuilt within seconds rather than at the next hour.
+# A push is writing the drive through the receive route, which notes its
+# activity; the watch waits for the batch to finish before it checks. Without
+# inotifywait the job idles and the hourly check is the only path.
+sub job_archive_watch {
+	my ($args) = @_;
+	my $logged_missing = 0;
+	while (1) {
+		&subs::subprocessor_heartbeat();
+		my $root = eval { &subs::archive_root() };
+		unless (defined $root && length $root && -d $root) { sleep 60; next; }
+		my $ran = time;
+		my $started = &_archive_watch_run($root);
+		unless ($started) {
+			if (!$logged_missing) {
+				eval { &subs::log_writer('archive watch: inotifywait is not installed; the hourly check is the fallback') };
+				$logged_missing = 1;
+			}
+			for (1 .. 10) { &subs::subprocessor_heartbeat(); sleep 60; }
+			next;
+		}
+		$logged_missing = 0;
+		# a watcher that died at once (a watch limit, a vanishing mount) must not
+		# respawn in a tight loop; a normal half-hour restart waits only a little
+		sleep( (time - $ran) < 60 ? 300 : 30 );
+	}
+}
+
+sub _archive_watch_run {
+	my ($root) = @_;
+	my $pid = open(my $fh, '-|', 'inotifywait', '-m', '-r', '-q', '--format', '%e|%w%f',
+		'-e', 'close_write,create,delete,attrib,moved_to,moved_from', $root);
+	return 0 unless $pid;
+	my $stop = 0;
+	local $SIG{TERM} = sub { $stop = 1; kill 'TERM', $pid; };
+	local $SIG{INT}  = sub { $stop = 1; kill 'TERM', $pid; };
+	my (%pending, $last, $started);
+	my $buffer = '';
+	$last = $started = time;
+	while (!$stop) {
+		&subs::subprocessor_heartbeat();
+		my $rin = '';
+		vec($rin, fileno($fh), 1) = 1;
+		my $n = select(my $rout = $rin, undef, undef, 2);
+		if ($n > 0) {
+			my $got = sysread($fh, my $chunk, 65536);
+			last unless defined $got && $got > 0;
+			$buffer .= $chunk;
+			my $saw = 0;
+			while ($buffer =~ s/^([^\n]*)\n//) {
+				my ($events, $path) = split /\|/, $1, 2;
+				next unless (defined $path && length $path);
+				my $location = &subs::archive_watch_event({ root => $root, path => $path });
+				next unless $location;
+				$pending{$location} = 1;
+				$saw = 1;
+			}
+			$last = time if $saw;
+		}
+		# a restart re-adds recursive watches for subdirectories made since the
+		# last start; an idle half hour is the right moment to pay for it
+		if (time - $started >= 1800 && !%pending) { last }
+		next unless (%pending && time - $last >= 10);
+		my $deferred = 0;
+		foreach my $location ( sort keys %pending ) {
+			if (&subs::archive_watch_busy({ location => $location })) { $deferred = 1; next; }
+			&subs::archive_watch_check({ location => $location, root => $root });
+			delete $pending{$location};
+		}
+		$last = time if $deferred;
+	}
+	kill 'TERM', $pid;
+	close $fh;
+	return 1;
+}
+
 # The evaluation schedules live in this machine's queue, but the cadence that
 # asks for them is a shared setting. Re-read the wishes every few minutes so a
 # machine that stays up learns of a cadence changed on a peer.
@@ -564,6 +642,7 @@ sub job_audio_supervisor {
 	'whisper server' => \&job_whisper_server,
 	'Minion Worker' => \&job_minion_worker,
 	'cloud sync sweep' => \&job_cloud_sync_sweep,
+	'archive watch' => \&job_archive_watch,
 	'evaluation schedules' => \&job_evaluation_schedules,
 	'evaluation dispatch' => \&job_evaluation_dispatch,
 );

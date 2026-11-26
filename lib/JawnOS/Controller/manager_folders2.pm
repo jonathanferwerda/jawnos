@@ -175,6 +175,9 @@ sub action_30436 {
 		$c->render(json => { status => 'error', error => $appended->{'error'} });
 		return;
 	}
+	# the batch has a moment more of work (the listing line just landed), and
+	# the watch must not mistake the files it wrote for an external change
+	&subs::archive_receive_note({ location => $location });
 	$log->info('archive: manifest for ' . ($location || '(nothing)') . ' +' . ($appended->{'rows'} || 0) . ' row(s)' . ($appended->{'compacted'} ? ', compacted' : ''));
 	$c->render(json => { status => 'ok', rows => $appended->{'rows'} || 0, compacted => $appended->{'compacted'} ? 1 : 0 });
 }
@@ -306,6 +309,9 @@ sub action_30562 {
 		$c->render(json => { status => 'error', error => $dest->{'error'} });
 		return;
 	}
+	# a push is writing this location; the filesystem watch waits for the batch
+	# to finish and the listing line to land before it checks the drive
+	&subs::archive_receive_note({ location => $c->param('location') });
 	Mojo::File->new($dest->{'parent'})->make_path;
 	my $mtime = $c->param('mtime');
 	my $offset = $c->param('offset');

@@ -51,6 +51,13 @@ our %archive_manifest_refresh_memo;
 # is the expensive half, and a drive change is noticed on the next check; the
 # archive machine then rescans itself, so an hour is plenty.
 our $archive_manifest_check_ms = 60 * 60 * 1000;
+# A rescan is asked for only when the drive and its listing actually disagree,
+# so the throttle is short: it is there to dedupe a burst of checks, not to make
+# a second real change wait an hour.
+our $archive_manifest_rescan_ms = 60 * 1000;
+# The receive route's own last note per location, so a batch is one small cache
+# write every ten seconds rather than one per file.
+our %archive_receive_note_memo;
 our $device;
 our %m;
 # The queue for work that has to outlive the request that asked for it: its own
@@ -1095,7 +1102,7 @@ sub archive_manifest_rescan_start {
 		app => 'archive', context => 'rescan', subcontext => sha256_hex($key)
 	}) };
 	my $at = (ref $last eq 'HASH') ? ($last->{'at'} || 0) : 0;
-	return 0 if ($at && $now - $at < $archive_manifest_check_ms);
+	return 0 if ($at && $now - $at < $archive_manifest_rescan_ms);
 	eval { &subs::cache_set({
 		app => 'archive', context => 'rescan', subcontext => sha256_hex($key), warranty => '100y'
 	}, { at => $now, location => $location }) };
@@ -1152,6 +1159,108 @@ sub archive_manifest_poll {
 		manifest_digest => $manifest_digest,
 		($queued ? (rescan => 1) : ())
 	};
+}
+
+# A push writes its files first and appends the listing at the end, so a file
+# appearing on the drive is not by itself an external change. The receive route
+# notes its activity here (one small write per ten seconds per process) and the
+# filesystem watch waits until the location has been quiet long enough.
+sub archive_receive_note {
+	my $data = shift || {};
+	my $location = $data->{'location'};
+	return 0 unless (defined $location && length $location);
+	my $now = &rightNow();
+	return 0 if ($archive_receive_note_memo{$location}
+		&& $now - $archive_receive_note_memo{$location} < 10000);
+	$archive_receive_note_memo{$location} = $now;
+	eval { &subs::cache_set({
+		app => 'archive', context => 'receive', subcontext => sha256_hex('receive|' . $location), warranty => '100y'
+	}, { at => $now, location => $location }) };
+	return 1;
+}
+
+sub archive_receive_recent {
+	my $data = shift || {};
+	my $location = $data->{'location'};
+	return 0 unless (defined $location && length $location);
+	my $within = $data->{'within'} || (15 * 60 * 1000);
+	my $row = eval { &subs::cache_get({
+		app => 'archive', context => 'receive', subcontext => sha256_hex('receive|' . $location)
+	}) };
+	my $at = (ref $row eq 'HASH') ? ($row->{'at'} || 0) : 0;
+	return ($at && (&rightNow() - $at) < $within) ? 1 : 0;
+}
+
+# Which location a watched path belongs to. The longest matching folder wins, so
+# a location whose name starts another's ('Music' and 'Music Videos') cannot
+# swallow its neighbour.
+sub archive_watch_location {
+	my $data = shift || {};
+	my $root = $data->{'root'};
+	my $path = $data->{'path'};
+	return undef unless (defined $root && length $root && defined $path && length $path);
+	my ($found, $found_len);
+	foreach my $location ( &location_types() ) {
+		my $folder = &archive_location_folder($root, $location);
+		next unless (defined $folder && length $folder);
+		next unless ($path eq $folder || index($path, $folder . '/') == 0);
+		if (!defined $found_len || length($folder) > $found_len) {
+			($found, $found_len) = ($location, length $folder);
+		}
+	}
+	return $found;
+}
+
+# A watched event that is not part of the listing machinery, as a location.
+sub archive_watch_event {
+	my $data = shift || {};
+	my $root = $data->{'root'};
+	my $path = $data->{'path'};
+	return undef unless (defined $root && length $root && defined $path && length $path);
+	my $relative = ($path eq $root) ? '' : substr($path, length($root) + 1);
+	return undef unless length $relative;
+	return undef if $relative =~ m{(?:^|/)manifest\.jsonl?(?:\.tmp)?$};
+	return undef if $relative =~ m{\.part(?:\.json)?$};
+	return &archive_watch_location({ root => $root, path => $path });
+}
+
+# Is a location being written right now? A push on this machine is a queue job;
+# a push from a peer is the receive note. Either way the watch waits, because
+# the sender appends the listing only when the batch is done.
+sub archive_watch_busy {
+	my $data = shift || {};
+	my $location = $data->{'location'};
+	return 0 unless (defined $location && length $location);
+	return 1 if &archive_receive_recent({ location => $location });
+	my $jobs = eval {
+		&minion_grabber()->backend->list_jobs(0, 200, {
+			tasks => [ 'archive_transfer', 'archive_manifest_rescan' ]
+		})->{'jobs'}
+	} || [];
+	foreach my $job ( @{$jobs} ) {
+		next unless ref $job eq 'HASH';
+		next unless (($job->{'state'} || '') =~ /^(?:active|inactive)$/);
+		my $item = ($job->{'args'} || [])->[0] || {};
+		return 1 if (($item->{'location'} || '') eq $location);
+	}
+	return 0;
+}
+
+# The watch's turn: the same drift question the poll asks, with no client to
+# answer. A drift queues a rescan; a listing that matches is left alone.
+sub archive_watch_check {
+	my $data = shift || {};
+	my $location = $data->{'location'};
+	my $root = $data->{'root'} || &archive_root();
+	return 0 unless (defined $location && length $location
+		&& defined $root && length $root && -d $root);
+	my $folder = &archive_location_folder($root, $location);
+	return 0 unless (defined $folder && -d $folder);
+	# this is the authoritative look: do not answer from a sweep another caller
+	# made a moment before the event arrived
+	delete $archive_manifest_media_memo{$folder};
+	&archive_manifest_poll({ location => $location, folder => $folder });
+	return 1;
 }
 
 # Write the listing a reader sees. Rewriting the whole thing is the one

@@ -140,11 +140,11 @@ my %BASELINE = (
 	'exempt' => 0,
 	'logical' => 0,
 	'commands' => 0,
-	'tools' => 19,
+	'tools' => 20,
 	'modules' => 38,
 	'pty' => 7,
 	'command_list' => '',
-	'tool_list' => 'argon2 convert cpanm curl espeak ffmpeg git node openssl osmium perl qrencode rsync sox sqlite3 ssh tesseract tilemaker zip',
+	'tool_list' => 'argon2 convert cpanm curl espeak ffmpeg git inotifywait node openssl osmium perl qrencode rsync sox sqlite3 ssh tesseract tilemaker zip',
 	'module_list' => 'Authen::SASL Crypt::AuthEnc::GCM Crypt::KeyDerivation Crypt::PK::Ed25519 Crypt::PK::X25519 Crypt::PRNG Crypt::Simple CryptX DBD::SQLite Data::UUID Date::Parse Digest::SHA Email::Stuffer Encode File::Slurp File::Type HTML::Strip Hash::Merge LWP::Protocol::https LWP::UserAgent MIME::Parser Math::BigInt Minion Minion::Backend::SQLite Mojo::IOLoop::ReadWriteFork Mojo::SQLite Mojolicious::Lite Mojolicious::Plugin::RenderFile Net::IMAP::Client Net::SSLeay Number::Format SQL::Abstract Sereal::Decoder Sereal::Encoder Time::Duration Time::Piece URI::Encode URI::Escape',
 );
 

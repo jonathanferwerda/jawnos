@@ -74,6 +74,7 @@ our %WARRANTY = (
 	'utility functions'              => 'forever',
 	'Minion Worker'                  => 'forever',
 	'cloud sync sweep'               => 'forever',
+	'archive watch'                  => 'forever',
 	'whisper server'                 => 'forever',
 	'ollama serve'                   => 'forever',
 	'slow loops'                     => 'forever',
@@ -205,6 +206,7 @@ our %HEARTBEAT = (
 	'utility functions'     => '5m',
 	'whisper server'        => '10m',
 	'sshd watcher'          => '5m',
+	'archive watch'         => '15m',
 );
 
 # How a run_p job that did not report is worded. The child writes its result

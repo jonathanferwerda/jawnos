@@ -61,8 +61,8 @@ for my $line (split /\n/, (defined $tools_block ? $tools_block : '')) {
 	my ($command) = $line =~ /cmd\s*=>\s*'([^']+)'/ or next;
 	$optional{$command} = 1 if $line =~ /optional\s*=>\s*1/;
 }
-is_deeply([ sort keys %optional ], [ 'osmium', 'tilemaker' ],
-	'the OSM basemap tools are the optional rows');
+is_deeply([ sort keys %optional ], [ 'inotifywait', 'osmium', 'tilemaker' ],
+	'the optional rows are the basemap tools and the archive watch');
 for my $command (sort keys %optional) {
 	ok(!$deps->{'tools'}{$command}, "$command is optional, so packaging does not depend on it");
 }

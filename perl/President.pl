@@ -978,6 +978,10 @@ sub manager_starter() {
 		# reset would drop a timer armed in it, and a folder changed while no
 		# Folders window is open has to reach the other machines on its own.
 		&subs::subprocessor(\&jobs::job_cloud_sync_sweep, { name => 'cloud sync sweep' });
+		# The archive drive's filesystem watch. It idles on a machine without
+		# the drive (or without inotifywait), so the hourly digest check stays
+		# the fallback everywhere else.
+		&subs::subprocessor(\&jobs::job_archive_watch, { name => 'archive watch', fork => 1 });
 	}
 
 	# The evaluation schedules live in this machine's queue, but the cadence that
