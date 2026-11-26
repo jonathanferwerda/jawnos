@@ -51,4 +51,5 @@ is(subs::say_piper_dir('/usr/local/bin/piper'), '/usr/local/bin', 'a Unix path s
 is(subs::say_piper_dir('piper'), '', 'a bare name has no directory');
 is(subs::say_piper_dir(''), '', 'and an empty name answers empty');
 
+like($build, qr/curl\.exe/, q{the fetch uses Windows curl, so a mirror cannot change the bytes});
 done_testing();

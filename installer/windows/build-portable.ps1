@@ -196,7 +196,16 @@ try {
                 Copy-Item -LiteralPath $local -Destination $dest -Force
             } else {
                 Write-Host "Downloading $Name ..."
-                Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $dest
+                # curl.exe is the fetch Windows ships. Invoke-WebRequest can be
+                # handed a different body by a mirror interstitial, which then
+                # fails the checksum; curl gets the same bytes every time.
+                $curl = Get-Command curl.exe -ErrorAction SilentlyContinue;
+                if ($curl) {
+                    & $curl.Source -sSL --fail --retry 2 -o $dest $Url;
+                    if ($LASTEXITCODE -ne 0) { throw "curl failed for $Url (exit $LASTEXITCODE)" }
+                } else {
+                    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $dest
+                }
             }
             $hash = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLower()
             if ($Sha256 -and $hash -ne $Sha256) {
