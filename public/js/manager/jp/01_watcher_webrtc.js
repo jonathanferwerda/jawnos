@@ -1,45 +1,85 @@
+// What this machine advertises to the house watcher (jp_data, sent on the
+// server heartbeat while Me's advertise_watching is on). A beat is every ten
+// seconds, but re-encoding a picture that did not change is wasted work: a
+// paused video, an idle whiteboard, a still camera. So each source keeps one
+// canvas and its last encoded frame, and the frame is redrawn only when the
+// source's own clock moves. JPEG keeps both the encode and the carried bytes
+// small; a two-hundred-pixel preview does not need a lossless PNG.
+var jp_watch = {};
+var JP_WATCH_WIDTH = 480;
+var JP_WATCH_QUALITY = 0.7;
+
+// One source's advertisement, drawn into its cached canvas. `at` is the part
+// of the source that says the picture changed: a video's own clock while it
+// plays, and a constant while it is paused or has no frame yet. `fill` covers
+// a source whose own paint is transparent (the whiteboard), so the JPEG has a
+// background instead of black. `live` is a source with no clock of its own (the
+// whiteboard canvas): it is redrawn every beat while it is on screen.
+function jpWatchFrame(source, id, fill, live) {
+	if (!source) { return null; }
+	var sw = source.videoWidth || source.width || 0;
+	var sh = source.videoHeight || source.height || 0;
+	if (!sw || !sh) { return null; }
+	var cache = jp_watch[id] || (jp_watch[id] = { canvas: document.createElement('canvas'), ctx: null, image: '', key: '', ratio: 0, width: 0, height: 0 });
+	var still = !live && ((source.paused === true) || (source.ended === true)
+		|| (source.readyState !== undefined && source.readyState < 2));
+	// a video with no decoded frame yet has nothing to draw; do not cache a
+	// black first picture that would then look unchanged
+	if (still && !cache.image && source.readyState !== undefined && source.readyState < 2) { return null; }
+	var at = still ? 'still' : (live ? Date.now() : (Math.floor((source.currentTime || 0) * 100) / 100));
+	var ratio = sw / sh;
+	var cw = Math.min(JP_WATCH_WIDTH, sw);
+	var ch = Math.max(1, Math.round(cw / ratio));
+	var key = cw + 'x' + ch + '@' + at;
+	if (cache.image && cache.key === key) { return cache; }
+	var canvas = cache.canvas;
+	// assigning width or height clears the canvas and its context state, so
+	// only touch them when the shape actually moved
+	if (canvas.width !== cw || canvas.height !== ch) {
+		canvas.width = cw;
+		canvas.height = ch;
+		cache.ctx = null;
+	}
+	var ctx = cache.ctx || (cache.ctx = canvas.getContext('2d'));
+	if (fill) {
+		ctx.fillStyle = fill;
+		ctx.fillRect(0, 0, cw, ch);
+	}
+	ctx.drawImage(source, 0, 0, cw, ch);
+	try {
+		cache.image = canvas.toDataURL('image/jpeg', JP_WATCH_QUALITY);
+	}
+	catch (e) {
+		cache.image = '';
+	}
+	cache.key = key;
+	cache.ratio = cw / ch;
+	cache.width = cw;
+	cache.height = ch;
+	return cache;
+}
+
 function jpWatcher() {
 	var returner = {};
-
-	$.each(me['out'], function(i,v) {
-
-		var id = $(v).attr('id');
-		var video = document.getElementById(id);
-		if ($(video).is('video')) {
-			var canvas = document.createElement('canvas');
-			var ratio = video.videoWidth / video.videoHeight;
-			canvas.width = 640 || 0;
-			canvas.height = ratio * canvas.width || 0;
-			canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-
-			var image = canvas.toDataURL('image/png');
-			returner[i] = { 'image': image, 'ratio': ratio, 'width': canvas.width, 'height': canvas.height };
-		}
-	});
-	$.each(us['out'], function(i,v) {
-		var id = $(v).attr('id');
-		var video = document.getElementById(id);
-		if ($(video).is('video')) {
-			var canvas = document.createElement('canvas');
-
-			var ratio = video.videoWidth / video.videoHeight;
-			canvas.width = 640 || 0;
-			canvas.height = ratio * canvas.width || 0;
-			canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-
-			var image = canvas.toDataURL('image/png');
-			returner[i] = { 'image': image, 'ratio': ratio, 'width': canvas.width, 'height': canvas.height };
-		}
-	});
+	var add = function(list) {
+		$.each(list || [], function(i, v) {
+			var id = $(v).attr('id');
+			var source = document.getElementById(id);
+			if (!source || !$(source).is('video')) { return; }
+			var frame = jpWatchFrame(source, id);
+			if (frame) {
+				returner[i] = { 'image': frame.image, 'ratio': frame.ratio, 'width': frame.width, 'height': frame.height };
+			}
+		});
+	};
+	add(me['out']);
+	add(us['out']);
 	if ($('#whiteboard').is(':visible')) {
-		var canvas = document.getElementById('whiteboard');
-		var vcanvas = document.createElement('canvas');
-		var ratio = canvas.width / canvas.height;
-		vcanvas.width = 640 || 0;
-		vcanvas.height = ratio * vcanvas.width;
-		vcanvas.getContext('2d').drawImage(canvas, 0, 0, vcanvas.width, vcanvas.height);
-		var image = vcanvas.toDataURL('image/png');
-		returner['we'] = { 'image': image, 'ratio': ratio, 'width': canvas.width, 'height': canvas.height };
+		var whiteboard = document.getElementById('whiteboard');
+		var frame = jpWatchFrame(whiteboard, 'whiteboard', '#ffffff', true);
+		if (frame) {
+			returner['we'] = { 'image': frame.image, 'ratio': frame.ratio, 'width': frame.width, 'height': frame.height };
+		}
 	}
 	if (typeof advertise_watching !== 'undefined' && advertise_watching == 'on'
 		&& typeof music_remote_watch === 'object' && music_remote_watch && music_remote_watch.image) {

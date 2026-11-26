@@ -2614,6 +2614,10 @@ var music_remote_state = { playing: null, key: '', file: '', title: '', type: ''
 var music_remote_watch = null;
 var music_remote_watch_key = '';
 var music_remote_watch_at = 0;
+// one shared canvas and one in-flight fetch, so a beat does not reallocate and a
+// slow peer cannot stack frames behind it
+var music_remote_watch_canvas = null;
+var music_remote_watch_busy = false;
 // the target|library pair whose remoted list this window has already restored
 var music_remote_library_applied = '';
 var music_remote_poll_timer = 0;
@@ -2795,7 +2799,8 @@ function musicRemoteApplyState(r) {
 // advertise_watching is on. The frame is the remoted file's own frame at the
 // current second, fetched from the peer that holds the file. The house's
 // watcher wants a data URL, so the image is drawn once and cached until the
-// second moves.
+// second moves. The encode is a bounded JPEG into one reused canvas: a small
+// preview, and a picture that changes every second, do not need a lossless PNG.
 function musicRemoteWatchPaint() {
 	if (typeof advertise_watching === 'undefined' || advertise_watching != 'on'
 		|| !musicRemoteTarget() || !music_remote_state.playing
@@ -2806,6 +2811,9 @@ function musicRemoteWatchPaint() {
 		return;
 	}
 	var at = Math.max(0, Math.floor(parseFloat(music_remote_state.display) || parseFloat(music_remote_state.currentTime) || 0));
+	// A hidden window is not sending a beat, so a fetched frame would be thrown
+	// away. Keep the last one and pick up again when the window is shown.
+	if (document.hidden) { return; }
 	var origin = music_remote_state.remote_uuid || musicRemoteTarget();
 	var key = music_remote_state.file + '#' + at + '@' + origin;
 	if (key === music_remote_watch_key) { return; }
@@ -2813,29 +2821,41 @@ function musicRemoteWatchPaint() {
 	// only when the second itself moved. The remote's ffmpeg makes each frame.
 	var now = Date.now();
 	if (now - music_remote_watch_at < 900) { return; }
+	// A slow peer: keep one frame in flight, so a late answer cannot pile ffmpeg
+	// runs behind it.
+	if (music_remote_watch_busy) { return; }
 	music_remote_watch_at = now;
 	music_remote_watch_key = key;
+	music_remote_watch_busy = true;
 	var url = '/file_open?file=' + encodeURIComponent(music_remote_state.file) +
 		'&thumb=ya&position=' + at + '&remote_uuid=' + encodeURIComponent(origin);
 	var img = new Image();
 	img.onload = function () {
+		music_remote_watch_busy = false;
 		if (music_remote_watch_key !== key) { return; }
-		var c = document.createElement('canvas');
-		c.width = img.naturalWidth || img.width || 0;
-		c.height = img.naturalHeight || img.height || 0;
-		if (!c.width || !c.height) { return; }
-		c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+		var canvas = music_remote_watch_canvas || (music_remote_watch_canvas = document.createElement('canvas'));
+		var w = img.naturalWidth || img.width || 0;
+		var h = img.naturalHeight || img.height || 0;
+		if (!w || !h) { return; }
+		var cw = Math.min(w, 480);
+		var ch = Math.max(1, Math.round(cw * h / w));
+		if (canvas.width !== cw || canvas.height !== ch) {
+			canvas.width = cw;
+			canvas.height = ch;
+		}
+		canvas.getContext('2d').drawImage(img, 0, 0, cw, ch);
 		try {
 			music_remote_watch = {
-				image: c.toDataURL('image/png'),
-				ratio: c.width / c.height,
-				width: c.width,
-				height: c.height
+				image: canvas.toDataURL('image/jpeg', 0.7),
+				ratio: cw / ch,
+				width: cw,
+				height: ch
 			};
 		}
 		catch (e) { music_remote_watch = null; }
 	};
 	img.onerror = function () {
+		music_remote_watch_busy = false;
 		if (music_remote_watch_key === key) { music_remote_watch = null; }
 	};
 	img.src = url;

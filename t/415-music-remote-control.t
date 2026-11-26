@@ -298,6 +298,26 @@ my ($progress_hunk) = $music =~ /function musicRemoteProgressPaint\(\) \{(.*?)\n
 ok(defined $progress_hunk && length $progress_hunk, 'the progress tick is readable as a hunk');
 like($progress_hunk || '', qr/musicRemoteWatchPaint\(\);/, 'so the advertised frame follows the peer clock, not just the four-second poll');
 like($music, qr/music_remote_watch_at = 0;/, 'leaving remote mode arms the throttle again');
+like($watch_hunk || '', qr/if \(music_remote_watch_busy\) \{ return; \}/, 'one remote frame is in flight at a time');
+like($watch_hunk || '', qr/canvas\.toDataURL\('image\/jpeg', 0\.7\)/, 'the remote frame is encoded as a small JPEG');
+like($watch_hunk || '', qr/music_remote_watch_canvas \|\| \(music_remote_watch_canvas = document\.createElement\('canvas'\)\)/, 'into one reused canvas');
+like($watch_hunk || '', qr/Math\.min\(w, 480\)/, 'bounded to a preview width');
+like($watch_hunk || '', qr/if \(document\.hidden\) \{ return; \}/, 'a hidden window does not fetch frames it cannot send');
+
+# --- advertise_watching is drawn with the least work ------------------------
+like($jp, qr/function jpWatchFrame\(source, id, fill, live\)/, 'one helper draws and encodes a source');
+like($jp, qr/var jp_watch = \{\};/, 'sources keep their canvases between beats');
+like($jp, qr/jp_watch\[id\] = \{ canvas: document\.createElement\('canvas'\)/, 'one canvas per source');
+like($jp, qr/if \(cache\.image && cache\.key === key\) \{ return cache; \}/, 'a picture that did not change is not drawn again');
+like($jp, qr/var at = still \? 'still'/, 'a paused source keeps one encoded frame');
+like($jp, qr/if \(still && !cache\.image && source\.readyState !== undefined && source\.readyState < 2\) \{ return null; \}/, 'a video with no decoded frame yet is not cached black');
+like($jp, qr/canvas\.width !== cw \|\| canvas\.height !== ch/, 'the canvas is only resized when its shape moves');
+like($jp, qr/canvas\.toDataURL\('image\/jpeg', JP_WATCH_QUALITY\)/, 'and encoded as JPEG, not lossless PNG');
+like($jp, qr/var ratio = sw \/ sh;/, 'the aspect is the source width over its height');
+like($jp, qr/Math\.round\(cw \/ ratio\)/, 'so the preview is not stretched and is no taller than it needs');
+like($jp, qr/jpWatchFrame\(whiteboard, 'whiteboard', '#ffffff', true\)/, 'the whiteboard is drawn on white and redrawn each beat');
+like($jp, qr/add\(me\['out'\]\);/, 'every local output is advertised');
+like($jp, qr/add\(us\['out'\]\);/, 'and every borrowed output');
 like($music, qr/setting == 'normalize'/, 'normalization is applied in the peer player');
 like($music, qr/setting == 'video'/, 'video enhancement is applied in the peer player');
 
