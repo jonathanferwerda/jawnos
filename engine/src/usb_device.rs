@@ -683,6 +683,7 @@ fn decode_packet(
     monitor: Option<&mut OutFifo>,
     stats: &mut InStats,
     peak: &mut f32,
+    monitor_peak: &mut f32,
 ) {
     let frames = (packet.len() / 4)
         .min(raw.len() / 2)
@@ -719,6 +720,14 @@ fn decode_packet(
                 },
                 None => &mono[..frames * 2],
             };
+            // What the strip and the rack produced, before the device's rate: a
+            // hot monitor is otherwise only a sound to argue about.
+            for sample in block {
+                let magnitude = sample.abs();
+                if magnitude > *monitor_peak {
+                    *monitor_peak = magnitude;
+                }
+            }
             fifo.push(block);
         }
     }
@@ -755,6 +764,7 @@ unsafe fn absorb_in(
     mono: &mut [f32],
     stripped: &mut [f32],
     peak: &mut f32,
+    monitor_peak: &mut f32,
 ) {
     let header = &*done;
     let base = header.buffer as *const u8;
@@ -781,6 +791,7 @@ unsafe fn absorb_in(
                 monitor.as_deref_mut(),
                 stats,
                 peak,
+                monitor_peak,
             );
         }
     }
@@ -1018,6 +1029,10 @@ struct OutStats {
     fill_samples: u64,
     fill_frames_sum: u64,
     fill_frames_max: usize,
+    /// The largest sample actually handed to the device, as a fraction of full
+    /// scale. This is the monitor's own output peak: 1.0 means the conversion
+    /// clamped, below it the card is being sent a clean level.
+    out_peak: f32,
 }
 
 /// Write every packet of one OUT URB from the loop's own `fifo`, with no rate
@@ -1071,6 +1086,14 @@ unsafe fn fill_out_urb_with(
         }
         stats.packets += 1;
         stats.bytes += packet as u64;
+        // What the endpoint will actually play, after the resample and the
+        // conversion: the one number that says whether the signal itself clips.
+        for sample in out.chunks_exact(2) {
+            let value = f32::from(i16::from_le_bytes([sample[0], sample[1]])).abs() / 32768.0;
+            if value > stats.out_peak {
+                stats.out_peak = value;
+            }
+        }
     }
 }
 
@@ -1180,6 +1203,11 @@ pub struct UsbReport {
     pub dropped_ring: u64,
     pub dropped_disk: u64,
     pub peak: f32,
+    /// What the monitor's strip and rack produced, before the device's rate.
+    pub monitor_peak: f32,
+    /// What the endpoint was actually sent, after the resample and the i16
+    /// conversion: 1.0 means the signal itself clamps, below it it does not.
+    pub out_peak: f32,
     /// The input channel the take and the monitor read: 0 is the left/mic
     /// channel, 1 the right/instrument one (the plan's `channel`).
     pub monitor_channel: usize,
@@ -1220,6 +1248,8 @@ pub(crate) struct UsbIoReport {
     setinterface: UsbSetInterface,
     sched: UsbSched,
     peak: f32,
+    monitor_peak: f32,
+    out_peak: f32,
     monitor_channel: usize,
     monitor_master: String,
 }
@@ -1259,7 +1289,7 @@ fn histogram_json(rows: &[(u32, u64)]) -> String {
 /// One JSON object, the same status style the Oboe backend emits.
 fn report_json(report: &UsbReport) -> String {
     format!(
-        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"rate_set\":{{\"target\":{},\"ret\":{},\"errno\":{},\"recipient\":\"{}\",\"verified\":{}}},\"monitor_off\":{},\"monitor_channel\":{},\"monitor_master\":\"{}\",\"plan\":\"{}\",\"take\":\"{}\"}}",
+        "{{\"ok\":true,\"backend\":\"usb\",\"rate\":{},\"packets_in\":{},\"missed_in\":{},\"bytes_in\":{},\"frames_in\":{},\"underruns_out\":{},\"underruns_out_start\":{},\"dropped_out\":{},\"out_packets\":{},\"out_bytes\":{},\"monitor_ms\":{},\"in_depth\":{{\"urbs\":{},\"packets\":{}}},\"out_depth\":{{\"urbs\":{},\"packets\":{}}},\"in_delivery_ms\":{},\"monitor_fill_max_ms\":{},\"monitor_fill_avg_ms\":{},\"fifo_capacity_ms\":{},\"high_water_ms\":{},\"out_frames\":{},\"capture_ms\":{},\"out_ms\":{},\"out_lag_ms\":{},\"setinterface\":{{\"ret\":{},\"errno\":{}}},\"sched\":{{\"policy\":{},\"priority\":{},\"errno\":{}}},\"frames_captured\":{},\"frames_written\":{},\"dropped_ring\":{},\"dropped_disk\":{},\"peak\":{:.6},\"monitor_peak\":{:.6},\"out_peak\":{:.6},\"out_rate\":{{\"ret\":{},\"errno\":{},\"raw\":\"{}\",\"hz\":{}}},\"rate_set\":{{\"target\":{},\"ret\":{},\"errno\":{},\"recipient\":\"{}\",\"verified\":{}}},\"monitor_off\":{},\"monitor_channel\":{},\"monitor_master\":\"{}\",\"plan\":\"{}\",\"take\":\"{}\"}}",
         report.rate,
         histogram_json(&report.packets_in),
         report.missed_in,
@@ -1293,8 +1323,10 @@ fn report_json(report: &UsbReport) -> String {
         report.frames_written,
         report.dropped_ring,
         report.dropped_disk,
-        report.peak,
-        report.out_rate.ret,
+        		report.peak,
+        		report.monitor_peak,
+        		report.out_peak,
+        		report.out_rate.ret,
         report.out_rate.errno,
         json_escape(&report.out_rate.raw),
         report.out_rate.hz,
@@ -1820,6 +1852,7 @@ pub(crate) fn run_usb_plan(
     let mut histogram = vec![0u64; packet_in + 2];
     let mut stats = InStats::default();
     let mut peak = 0.0f32;
+    let mut monitor_peak = 0.0f32;
     let mut out_stats = OutStats::default();
 
     let mut in_flight = vec![false; depth.in_urbs];
@@ -1892,6 +1925,7 @@ pub(crate) fn run_usb_plan(
                     &mut packet_stereo,
                     &mut stripped_block,
                     &mut peak,
+                    &mut monitor_peak,
                 );
                 clear_urb(done);
             }
@@ -1987,6 +2021,7 @@ pub(crate) fn run_usb_plan(
                     &mut packet_stereo,
                     &mut stripped_block,
                     &mut peak,
+                    &mut monitor_peak,
                 );
                 clear_urb(done);
             }
@@ -2043,6 +2078,7 @@ pub(crate) fn run_usb_plan(
                             &mut packet_stereo,
                             &mut stripped_block,
                             &mut peak,
+                            &mut monitor_peak,
                         );
                         clear_urb(extra);
                     }
@@ -2212,6 +2248,8 @@ pub(crate) fn run_usb_plan(
         setinterface,
         sched,
         peak,
+        monitor_peak,
+        out_peak: out_stats.out_peak,
         monitor_channel: input,
         monitor_master: config
             .plan
@@ -2302,6 +2340,8 @@ fn run_usb_take(config: UsbConfig, stop: Arc<AtomicBool>) -> Result<UsbReport, S
         dropped_ring: io.dropped_ring,
         dropped_disk: drained.dropped,
         peak: io.peak,
+        monitor_peak: io.monitor_peak,
+        out_peak: io.out_peak,
         monitor_channel: io.monitor_channel,
         monitor_master: io.monitor_master,
         plan: plan_label,
@@ -3819,6 +3859,8 @@ mod tests {
             dropped_ring: 0,
             dropped_disk: 0,
             peak: 0.31,
+            monitor_peak: 0.22,
+            out_peak: 0.20,
             monitor_channel: 1,
             monitor_master: "master_limiter".to_string(),
             plan: "tone+delay".to_string(),
@@ -3835,7 +3877,9 @@ mod tests {
             "\"underruns_out_start\":0",
             "\"out_packets\":0",
             "\"out_bytes\":0",
-            "\"monitor_ms\":8",
+            			"\"monitor_ms\":8",
+            			"\"monitor_peak\":0.220000",
+            			"\"out_peak\":0.200000",
             "\"in_depth\":{\"urbs\":4,\"packets\":8}",
             "\"out_depth\":{\"urbs\":2,\"packets\":4}",
             "\"in_delivery_ms\":8",

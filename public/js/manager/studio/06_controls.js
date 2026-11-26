@@ -1383,6 +1383,11 @@ function studioAutoBufferBegin() {
 function studioAutoBufferTick(data) {
 	if (!studioUsbAuto) { return; }
 	if (!(Number(data.frames_in || 0) > 0)) { return; }
+	// A clean window needs evidence the monitor actually played: a take that is
+	// still opening, or one whose monitor never started, reports zero packets
+	// and zero faults, which must not be read as "this buffer is clean".
+	if (!(Number(data.out_packets || 0) > 0)) { return; }
+	if (data.monitor_off) { return; }
 	var dropped = Number(data.dropped_out || 0);
 	var underruns = Number(data.underruns_out || 0);
 	if (!studioUsbAuto.base) {
@@ -1505,9 +1510,18 @@ function studioMonitorProbeStop() {
 // the row says what it is waiting for instead.
 function studioMonitorBackendNote() {
 	var device = studioUsbAudioDevice();
-	if (device) { return studioUsbDeviceLabel(device.device); }
-	if (studioUsbAudioBridge()) { return studioListenText('no USB audio interface is attached'); }
-	return '';
+	var label = device ? studioUsbDeviceLabel(device.device)
+		: (studioUsbAudioBridge() ? studioListenText('no USB audio interface is attached') : '');
+	// The buffer Auto settled on is the number a person looks for after a sweep,
+	// so it belongs beside the picker, not only in the Listen row.
+	if (studioMonitorSetting() === 'auto') {
+		var settled = studioMonitorAutoSettled();
+		var auto = settled
+			? ('Auto \u2192 ' + settled + ' ms')
+			: ('Auto \u00b7 ' + studioMonitorBuffer() + ' ms');
+		return label ? (label + ' \u00b7 ' + auto) : auto;
+	}
+	return label;
 }
 
 // The one line that names the interface the direct path would claim, e.g.
