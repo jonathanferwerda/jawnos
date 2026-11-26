@@ -26,6 +26,10 @@ like($edit, qr/power: \{ hint: 'Power'/, 'Power is a widget');
 like($edit, qr/network: \{ hint: 'Network'/, 'Network is a widget');
 like($edit, qr/notifications: \{ hint: 'Notifications'/, 'Notifications is a widget');
 like($edit, qr/w == 'notifications'/, 'the notifications widget builds its bell');
+like($edit, qr/jawnosIconSetPath\('notifications', '\/icons\/notifications\.svg'\)/,
+	'the bell follows the desk\'s icon set');
+like($edit, qr/jawnosIconSetPath\(w, spec\.icon\)/,
+	'every widget in the add-items list wears the set\'s tile');
 like($edit, qr/jawnosTaskbarWidgetItem\('notifications', 'full'\)/, 'and rides the default bar');
 like($edit, qr/desktop: \{ hint: 'Desktop'/, 'Desktop is a widget');
 like($edit, qr/w == 'desktop'/, 'the desktop widget builds its screen glyph');

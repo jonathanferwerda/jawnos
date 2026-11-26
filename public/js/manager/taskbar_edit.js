@@ -521,7 +521,8 @@ function jawnosTaskbarWidgetMake(item) {
 		setTimeout(function () { if (typeof jawnosSoundTaskbarLoad === 'function') { jawnosSoundTaskbarLoad(); } }, 0);
 	}
 	else if (w == 'notifications') {
-		el.append('<span class="taskbar_notifications_glyph"><img src="/icons/notifications.svg" alt=""></span>');
+		var bell = (typeof jawnosIconSetPath === 'function') ? jawnosIconSetPath('notifications', '/icons/notifications.svg') : '/icons/notifications.svg';
+		el.append('<span class="taskbar_notifications_glyph"><img src="' + bell + '" alt=""></span>');
 		el.append('<span class="taskbar_notifications_badge">0</span>');
 		el.append('<span class="taskbar_notifications_text taskbar_widget_text"></span>');
 		setTimeout(function () { if (typeof jawnosNotificationsTaskbarLoad === 'function') { jawnosNotificationsTaskbarLoad(); } }, 0);
@@ -722,7 +723,7 @@ function jawnosTaskbarContextBuild(bar) {
 			var spec = jawnosTaskbarWidgets[w];
 			var row = $('<div class="taskbar_context_app"></div>');
 			row.attr('pin_widget', w);
-			row.append($('<img>').attr('src', spec.icon));
+			row.append($('<img>').attr('src', (typeof jawnosIconSetPath === 'function') ? jawnosIconSetPath(w, spec.icon) : spec.icon));
 			row.append($('<span></span>').text(jawnosT(spec.hint)));
 			row.append('<span class="taskbar_context_check">' + selected(jawnosTaskbarWidgetOn(w)) + '</span>');
 			list.append(row);

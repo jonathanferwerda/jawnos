@@ -45,6 +45,17 @@ like($beat, qr/function stayingAliveOne\(data\)/, 'the old per-app handler still
 like($beat, qr/if \(data\.beats\) \{/, 'a combined reply is split into beats');
 like($beat, qr/Object\.keys\(data\.beats\)\.forEach/, 'each beat is applied by its app');
 
+# --- the remote-media transport follows the desk's icon set ------------------
+like($beat, qr/var setPath = function \(name, fallback\)/,
+	'the peer transport resolves its glyphs through the icon set');
+like($beat, qr/typeof jawnosIconSetPath === 'function' \? jawnosIconSetPath\(name, fallback\)/,
+	'asking the shared helper the bundle defines');
+like($beat, qr/setPath\('prev', '\/icons\/prev\.jpg'\)/, 'Previous asks the set first');
+like($beat, qr/setPath\('play', '\/icons\/play\.jpg'\)/, 'Play asks the set first');
+like($beat, qr/setPath\('next', '\/icons\/next\.jpg'\)/, 'Next asks the set first');
+unlike($beat, qr{src="/icons/(?:prev|play|next)\.jpg"},
+	'no peer transport control hard-codes the hand-drawn jpg');
+
 # --- the debrief endpoint -----------------------------------------------------
 like($misc, qr/sub action_9001 \{/, 'the debrief getter action exists');
 like($misc, qr/sub action_9002 \{/, 'the debrief setter action exists');

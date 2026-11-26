@@ -112,6 +112,23 @@ like($taskbar, qr{url: '/music/remote_target'}, 'the picker remembers its machin
 like($taskbar, qr/musicTransportLocal/, 'the local press uses the page player, not a round trip');
 like($manager_css, qr/\.taskbar_music_transport/, 'the taskbar styles the transport row');
 
+# --- the transport glyphs follow the icon set -------------------------------
+like($taskbar, qr/function jawnosIconSetPath\(name, fallback\)/, 'the widget has one icon-set path helper');
+like($taskbar, qr/getAttribute\('data-icon-set'\)/, 'it reads the set the body is wearing');
+like($taskbar, qr{return '/icons/sets/' \+ encodeURIComponent\(set\) \+ '/' \+ name \+ '\.svg';},
+	'a generated set answers with its svg');
+like($taskbar, qr/set !== 'handdrawn'/, 'the hand-drawn set keeps its jpg');
+like($taskbar,
+	qr/jawnosIconSetPath\('pause', '\/icons\/pause\.jpg'\) : jawnosIconSetPath\('play', '\/icons\/play\.jpg'\)/,
+	'play/pause ask the set before the shipped pair');
+unlike($taskbar, qr/return playing \? '\/icons\/pause\.jpg'/, 'no raw jpg pair is returned without asking the set');
+like($taskbar, qr/jawnosIconSetPath\('prev', '\/icons\/prev\.jpg'\)/, 'Previous asks the set before its jpg');
+like($taskbar, qr/jawnosIconSetPath\('next', '\/icons\/next\.jpg'\)/, 'and so does Next');
+like($music, qr/typeof jawnosIconSetPath === 'function' \? jawnosIconSetPath\('play', '\/icons\/play\.jpg'\)/,
+	'the player icon asks the set too');
+like($music, qr/typeof jawnosIconSetPath === 'function' \? jawnosIconSetPath\('pause', '\/icons\/pause\.jpg'\)/,
+	'and so does pause');
+
 # --- the Music window -------------------------------------------------------
 like($music_tpl, qr/id="music_remote_toggle"/, 'the interface carries the remote button');
 like($music_tpl, qr/id="music_remote_panel"/, 'and the remote drawer');

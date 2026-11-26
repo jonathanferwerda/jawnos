@@ -517,6 +517,24 @@ const ICONS = {
 	'reset': 'reset',
 	'software': 'apps',
 	'info': 'info',
+	// --- the taskbar widgets and the last hand-drawn pictures that had no
+	// tile. Each is reached by its source basename (icon_for/icon_path, or a
+	// widget's own img), so the chosen set can now dress it. The network
+	// widget's hand-drawn signal arcs are the beacon; the workspaces stack and
+	// the Clock's sessions borrow the layered system and the app grid; a face
+	// is the person; a fingerprint stands for the biometric key.
+	'desktop': 'monitor',
+	'network': 'beacon',
+	'notifications': 'bell',
+	'power': 'power',
+	'sound': 'speaker',
+	'workspaces': 'system',
+	'star': 'president',
+	'face': 'person',
+	'fingerprint': 'key',
+	'wallet': 'wallet',
+	'routing': 'detour',
+	'sessions': 'apps',
 };
 
 // --- styles --------------------------------------------------------------------

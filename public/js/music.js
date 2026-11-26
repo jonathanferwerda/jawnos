@@ -2,9 +2,20 @@ var mao = {};
 var misses = {};
 var music_muted = false;
 // Play/pause glyphs follow the selected icon set; the music window stashes the
-// resolved paths on #play_logo (see apps/music/music.html.ep).
-function jawnosPlayIcon() { var s = $('#play_logo').attr('play_icon'); return s || '/icons/play.jpg'; }
-function jawnosPauseIcon() { var s = $('#play_logo').attr('pause_icon'); return s || '/icons/pause.jpg'; }
+// resolved paths on #play_logo (see apps/music/music.html.ep). With neither - a
+// page that mounts no player logo - the body's data-icon-set answers. This file
+// is also served alone on the store page, where taskbar_sound.js (which owns the
+// helper) is absent, so the call is guarded and the jpg is the last word.
+function jawnosPlayIcon() {
+	var s = $('#play_logo').attr('play_icon');
+	if (s) { return s; }
+	return typeof jawnosIconSetPath === 'function' ? jawnosIconSetPath('play', '/icons/play.jpg') : '/icons/play.jpg';
+}
+function jawnosPauseIcon() {
+	var s = $('#play_logo').attr('pause_icon');
+	if (s) { return s; }
+	return typeof jawnosIconSetPath === 'function' ? jawnosIconSetPath('pause', '/icons/pause.jpg') : '/icons/pause.jpg';
+}
 // Play, and tell the truth if the browser refuses it (an unmuted autoplay with no
 // gesture): leave the button on play rather than showing a track that is not
 // running. WebKit in particular refuses unmuted autoplay without a gesture.

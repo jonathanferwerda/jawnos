@@ -298,14 +298,26 @@ function jawnosSoundTaskbarMusicStateLoad() {
 		}
 	});
 }
+// A transport glyph's path in the set the body is wearing. The layout stamps
+// the active (already dark-adjusted) set onto <body data-icon-set>, and every
+// generated set ships play/pause/prev/next svgs. The hand-drawn set, and a page
+// with no set at all (the public store), keep the jpg it was given. A generated
+// set that lacks the glyph would 404 here: the server-side icon_path() tests
+// for the file, the browser cannot.
+function jawnosIconSetPath(name, fallback) {
+	var set = '';
+	try { set = (document.body && document.body.getAttribute('data-icon-set')) || ''; } catch (e) { set = ''; }
+	if (set && set !== 'handdrawn') { return '/icons/sets/' + encodeURIComponent(set) + '/' + name + '.svg'; }
+	return fallback;
+}
 // The player's icons follow the selected icon set; the window's own logo
-// carries both glyphs, so use them when it is open and the shipped pair when it
+// carries both glyphs, so use them when it is open and the set's pair when it
 // is not.
 function jawnosSoundTaskbarMusicIcon(playing) {
 	var logo = $('#play_logo');
 	var src = playing ? logo.attr('pause_icon') : logo.attr('play_icon');
 	if (src) { return src; }
-	return playing ? '/icons/pause.jpg' : '/icons/play.jpg';
+	return playing ? jawnosIconSetPath('pause', '/icons/pause.jpg') : jawnosIconSetPath('play', '/icons/play.jpg');
 }
 // The same controls live in the taskbar panel and in Sound's Remote pill, so
 // one repaint serves every mounted copy.
@@ -579,8 +591,8 @@ function jawnosSoundTaskbarMusicBuild(section) {
 			.attr('aria-label', jawnosT(label))
 			.append($('<img alt="">').attr('src', icon).attr('hint', jawnosT(label)));
 	};
-	var prev_icon = $('#prev_logo').attr('src') || '/icons/prev.jpg';
-	var next_icon = $('#next_logo').attr('src') || '/icons/next.jpg';
+	var prev_icon = $('#prev_logo').attr('src') || jawnosIconSetPath('prev', '/icons/prev.jpg');
+	var next_icon = $('#next_logo').attr('src') || jawnosIconSetPath('next', '/icons/next.jpg');
 	transport.append(maker('prev', prev_icon, 'Previous'));
 	transport.append(maker('toggle', jawnosSoundTaskbarMusicIcon(false), 'Play'));
 	transport.append(maker('next', next_icon, 'Next'));

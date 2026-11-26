@@ -117,11 +117,17 @@ function stayingAliveOne(data) {
 						if (md.interface) {
 							volume = $(md.interface).find('#music_volume').val();
 						}
+						// the transport glyphs follow the desk's icon set; the helper lives
+						// in taskbar_sound.js, earlier in this same bundle, but a page that
+						// somehow lacks it keeps the hand-drawn jpg
+						var setPath = function (name, fallback) {
+							return typeof jawnosIconSetPath === 'function' ? jawnosIconSetPath(name, fallback) : fallback;
+						};
 						neighbours.append('<span style="" class="neighbour" browser_tab_id="' + hbEscape(n.browser_tab_id) + '">' +
 						'<br><span class="media_controls">' + 
-						'<img class="little_thumb remote_media_control" control="prev" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="/icons/prev.jpg">' +
-						'<img class="little_thumb remote_media_control" control="play" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="/icons/play.jpg">' +
-						'<img class="little_thumb remote_media_control" control="next" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="/icons/next.jpg"><br>' + vidya + '<br>' +
+						'<img class="little_thumb remote_media_control" control="prev" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="' + hbEscape(setPath('prev', '/icons/prev.jpg')) + '">' +
+						'<img class="little_thumb remote_media_control" control="play" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="' + hbEscape(setPath('play', '/icons/play.jpg')) + '">' +
+						'<img class="little_thumb remote_media_control" control="next" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="' + hbEscape(setPath('next', '/icons/next.jpg')) + '"><br>' + vidya + '<br>' +
 							'<progress style="width:100%;height:30px;" value="' + hbEscape(md.currentTime) + '" control="progress_bar" class="remote_media_control" data-label="Progress" max="' + hbEscape(md.total_time) + '"></progress><br>' +
 							'<progress style="width:100%;height:30px;" class="remote_media_control" control="volume_control" value="' + hbEscape(volume) + '" data-label="Volume"></progress>' +
 							'</span><br>' +

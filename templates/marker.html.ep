@@ -191,7 +191,7 @@
 				<button class="button save_marker hover" hint="Save this drawing into the portfolio">Save</button>
 				<button class="button marker_session_save hover" hint="Save this drawing as a session">Save session</button>
 				<button class="button marker_save_appointment hover" hint="Save this drawing onto an appointment">Save to appointment</button>
-				<button class="button marker_save_app_icon hover" hint="<%= &subs::ui("Save this drawing as an app's icon") %>"><%= &subs::ui('Save as app icon') %></button>
+				<button class="button marker_save_app_icon hover" hint="<%= &subs::ui('Save this drawing as an app\'s icon') %>"><%= &subs::ui('Save as app icon') %></button>
 				<img src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="little_thumb hover" id="marker_gallery">
 			</div>
 		</section>

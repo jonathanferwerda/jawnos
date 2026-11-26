@@ -227,7 +227,7 @@ sub notification_sender($m,$db) {
 					app => $m->{'app'},
 					title => $m->{'title'},
 					message => $m->{'message'},
-					icon => $m->{'image'},
+					icon => &subs::icon_for($m->{'image'}),
 					timestamp => $m->{'timestamp'},
 					html => $content
 				});
@@ -240,7 +240,7 @@ sub notification_sender($m,$db) {
 					title => $m->{'title'},
 					role => $m->{'role'} || 'guest',
 					message => $m->{'message'},
-					icon => $m->{'image'},
+					icon => &subs::icon_for($m->{'image'}),
 					timestamp => $m->{'timestamp'},
 					html => $content
 				});
