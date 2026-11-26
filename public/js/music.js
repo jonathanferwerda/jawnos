@@ -2736,7 +2736,7 @@ function musicRemoteApplyState(r) {
 	musicRemoteApplyPlaying(r.key, r.file);
 	$('#music_remote_now').text(label || r.file || '');
 	musicRemoteProgressPaint();
-	$('#video_full_title').text(label);
+	musicTitleSet(label);
 	if (typeof r.volume != 'undefined' && r.volume !== null) {
 		music_remote_state.volume = musicVolumeClamp(r.volume);
 	}
@@ -2764,13 +2764,9 @@ function musicRemoteFullscreenPaint() {
 	var hint = remote
 		? (on ? jawnosT('Leave full screen on the controlled machine') : jawnosT('Full screen on the controlled machine'))
 		: 'Fullscreen';
-	var button = $('#music_remote_fullscreen');
-	if (button.length) {
-		button.attr('state', on ? 'on' : 'off').attr('hint', hint);
-	}
-	// The player bar's fullscreen button is the familiar place for this; its
-	// local hint is kept, because a controller that comes back must read as it
-	// did before it was borrowed for the peer.
+	// The player bar's fullscreen button is the one control; its local hint is
+	// kept, because a controller that comes back must read as it did before it
+	// was borrowed for the peer.
 	var bar = $('#music .media_controls.music_player_bar img[id$="_full_screen"]');
 	if (bar.length) {
 		if (!bar.attr('data-local-hint')) { bar.attr('data-local-hint', bar.attr('hint') || 'Fullscreen'); }
@@ -2897,7 +2893,7 @@ function musicRemoteDeviceTarget() {
 	var uuid = entry.uuid || '';
 	var own = '';
 	try { own = (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : (localStorage.getItem('device_uuid') || ''); } catch (e) { own = ''; }
-	if (uuid && own && uuid === own) { uuid = ''; }
+	if (uuid && own && uuid === own) { return 'local'; }
 	return uuid || null;
 }
 function musicRemoteSoundPaint() {
@@ -3348,7 +3344,7 @@ async function musicInit(method) {
 			if (saved_entry) {
 				tree.current_track = musicSongKey(saved_entry);
 				thisTrack(saved_entry);
-				$('#video_full_title').text(saved_entry.display_track || saved_entry.song || '');
+				musicTitleSet(saved_entry.display_track || saved_entry.song || '');
 			}
 			else {
 				tree.current_track = pd.key || '';
@@ -4830,10 +4826,10 @@ function musicTrackEnrich(key, onDone) {
 // Re-draw the parts of the player that read the queue rather than the DOM.
 function musicRepaintCurrent() {
 	var remote = musicRemoteTarget();
-	if (remote) { $('#video_full_title').text(music_remote_state.title || ''); }
+	if (remote) { musicTitleSet(music_remote_state.title || ''); }
 	var entry = musicCurrentEntry();
 	if (!entry) { return; }
-	if (!remote) { $('#video_full_title').text(entry.display_track || entry.song || ''); }
+	if (!remote) { musicTitleSet(entry.display_track || entry.song || ''); }
 	if (typeof vidControls != 'undefined') {
 		vidControls['video'] = [];
 		$.each(entry.chapters || [], function (i, ch) { vidControls['video'].push(ch.start_time); });
@@ -4845,6 +4841,38 @@ function musicRepaintCurrent() {
 	// theatre or a fullscreen is waiting for them
 	musicChaptersRefresh();
 }
+
+// The player bar's title takes the row's slack. When it is too long for the
+// space the fullscreen button leaves, shrink it instead of wrapping it into the
+// button or clipping it. The CSS size is the ceiling, so a new track or a
+// resize starts from the default again.
+var musicTitleFitFrame = 0;
+function musicTitleFit() {
+	if (musicTitleFitFrame) { cancelAnimationFrame(musicTitleFitFrame); }
+	musicTitleFitFrame = requestAnimationFrame(function() {
+		musicTitleFitFrame = 0;
+		$('#music .media_controls.music_player_bar [id$="_full_title"]').each(function() {
+			var node = this;
+			node.style.fontSize = '';
+			var size = parseFloat(window.getComputedStyle(node).fontSize) || 15;
+			var min = 9;
+			var guard = 0;
+			while (size > min && node.scrollWidth > node.clientWidth + 1 && guard++ < 60) {
+				size = Math.max(min, size - 0.5);
+				node.style.fontSize = size + 'px';
+			}
+		});
+	});
+}
+function musicTitleSet(text) {
+	var el = $('#video_full_title');
+	if (!el.length) { return; }
+	var value = text || '';
+	if (el.text() === value) { return; }
+	el.text(value);
+	musicTitleFit();
+}
+$(window).on('resize.music_title', musicTitleFit);
 
 function musicTitleMaker(object) {
 	// the labels live in the queue, so the title still reads correctly while
@@ -5094,6 +5122,7 @@ $(document).on('fullscreenchange webkitfullscreenchange', function() {
 	musicVisualSelectSize();
 	// a fullscreen is the other time the picture is big enough for chapters
 	musicChaptersRefresh();
+	musicTitleFit();
 	musicChromeArm();
 });
 
@@ -6037,6 +6066,12 @@ function searchMusic(data) {
 			// a full render replaces the window contents, so the controller's target
 			// is put back after either branch, not only before them
 			if (remoteTargetAtSearch) { $('#music').attr('remote_target', remoteTargetAtSearch); }
+			// a remote render brings the host's configuration panel; keep the
+			// controller's own library choice in its select
+			if (library !== undefined && $('#music_library_select').length) {
+				$('#music_library_select').val(library || 'local');
+			}
+			musicTitleFit();
 			$.each(response.artist, function(i,v) {
 				$('.music_artist[artist="' + v.artist + '"][path="' + v.path + '"]').attr('active', 'yes');
 			});
@@ -6238,23 +6273,27 @@ $(document).on('click', '#music_layout_select', function() {
 
 
 $(document).on('change', '#music_library_select', function() {
-	var library = $(this).val();
+	var library = $(this).val() || '';
 	// clear the artist/album picks: they were folds of the old library, and
 	// their stored paths would be scanned (and found empty) at the new one
 	$('.music_album').attr('active', 'no');
 	$('.music_artist').attr('active', 'no');
-	// Picking a different library ends the remote-control session: this window
-	// is no longer showing the machine it was controlling. Picking the same one
-	// leaves it in place.
+	// A remote library is that machine's Music app: choosing another remote
+	// switches the window's control to it, rather than dropping the session
+	// and showing a list nothing is driving. Local and None leave remote mode.
 	var target = musicRemoteTarget();
-	if (target && library != target) {
+	if (library && library !== 'local' && library !== 'none') {
+		if (library !== target) { musicRemoteChoose(library); return; }
+		searchMusic({ library: library, remote_view: 1 });
+		return;
+	}
+	if (target) {
 		$('#music').attr('remote_target', '');
 		$.post('/music/remote_target', { target: '', scope: 'window' });
 		musicRemoteSnapshotRestore();
 		musicRemotePaint();
 	}
-	// the choice goes with the search, in one request - written separately it
-	// raced the search, and the search could relay to the old machine again
+	if (library === 'local') { musicRemoteLocalViewRestore(); return; }
 	searchMusic({ library: library });
 });
 
@@ -6448,12 +6487,6 @@ $(document).on('change', '#music_remote_panel [data-music-remote-device]', funct
 			musicRemoteSoundLoad(1);
 		}
 	});
-});
-
-$(document).on('click', '#music_remote_fullscreen', function(e) {
-	e.preventDefault();
-	e.stopPropagation();
-	musicRemoteFullscreenToggle();
 });
 
 $(document).on('click', '#music_remote_toggle', function() {
@@ -7442,6 +7475,7 @@ function musicFullscreenOn(force) {
 	musicPicturePlace();
 	musicVisualSelectSize();
 	musicChaptersRefresh();
+	musicTitleFit();
 	musicChromeShow($('#interface'));
 	musicChromeShow($('#music .media_controls.music_player_bar'));
 	musicChromeArm();
@@ -7457,6 +7491,7 @@ function musicFullscreenOff() {
 	// the bars off the edges, so give both back
 	musicChromeShow($('#interface'));
 	musicChromeShow($('#music .media_controls.music_player_bar'));
+	musicTitleFit();
 	musicPicturePlace();
 	musicVisualSelectSize();
 	musicChaptersRefresh();

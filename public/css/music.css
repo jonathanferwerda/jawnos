@@ -214,7 +214,7 @@ html, body {
 #music:fullscreen #music_library,
 #music:-webkit-full-screen #music_library,
 #music.music_fullscreen #music_library {
-	display: none;
+	display: none !important;
 }
 body.dark_theme #music,
 body.dark_theme .music_cfg_drawer {
@@ -1553,11 +1553,9 @@ body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="rou
 #music.music_remote_mode .media_visualization_label,
 #music.music_remote_mode #music_list_view,
 #music.music_remote_mode [hint="Theatre mode"] { display: none !important; }
-/* The controller's own full-screen button: absent here, because it acts on
-   the machine whose face this window wears, and shown only in that mode. */
-#music_remote_fullscreen { display: none; }
-#music.music_remote_mode #music_remote_fullscreen { display: inline-block; }
-#music.music_remote_mode #music_remote_fullscreen[state="on"],
+/* The player bar's full-screen button is the one full-screen control. It acts
+   on the machine whose face this window wears, and it lights while the host is
+   full screen. */
 #music.music_remote_mode .media_controls.music_player_bar img[id$="_full_screen"][state="on"] {
 	outline: 2px solid #ffc800;
 	border-radius: 6px;

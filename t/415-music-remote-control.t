@@ -81,6 +81,7 @@ like($music, qr/\$\('#music_volume'\)\.val\(musicVolumeLevel\(\)\);\s*\n\t\tupda
 	'leaving the peer puts this machine\'s own bar back');
 like($remote, qr/volume => \(defined \$volume \? \$volume \+ 0 : undef\)/, 'a peer that never saved a level answers null');
 like($help, qr/its volume and its mute/, 'the Music help says the bar is the controlled machine\'s');
+like($help, qr/the machine you are holding is named that way/, 'and names the controller in the Output list');
 like($music, qr/function musicBarLevel\(\)/, 'a finger starts from the bar that is shown');
 like($music, qr/if \(remote \? !!music_remote_state\.muted : music_muted\) \{ return 0; \}/,
 	'and a muted bar starts the drag at zero');
@@ -165,13 +166,12 @@ like($remote, qr/console_command\('musicFullscreenSet'/, 'the full-screen press 
 like($remote, qr/\$action eq 'fullscreen'/, 'the transport has a full-screen action');
 like($remote, qr/fullscreen => \(\$player->\{'fullscreen'\} \? 1 : 0\)/, 'the state reports the host full screen');
 like($music, qr/musicRemoteSend\('fullscreen', \{ value: on \}\)/, 'the controller sends its press');
-like($music_tpl, qr/id="music_remote_fullscreen"/, 'the remote Music window has its own full-screen button');
-like($music_css, qr/#music\.music_remote_mode #music_remote_fullscreen/, 'and shows it only in remote mode');
-like($music_css, qr/#music_remote_fullscreen \{ display: none; \}/, 'a local window does not carry it');
+unlike($music_tpl, qr/id="music_remote_fullscreen"/, 'the top bar has no second full-screen button');
+unlike($music_css, qr/#music_remote_fullscreen/, 'and no rule for one');
 like($music_css, qr/#music\.music_remote_mode #video/, 'the remote window hides the video surface');
 unlike($music_css, qr/#music\.music_remote_mode \[hint="Fullscreen"\]/, 'the player bar keeps its fullscreen button');
 like($music_css, qr/#music\.music_remote_mode \.media_controls\.music_player_bar img\[id\$="_full_screen"\]\[state="on"\]/, 'and lights it while the host is full screen');
-like($music, qr/function musicRemoteFullscreenToggle\(\)/, 'one control for the bar and the corner button');
+like($music, qr/function musicRemoteFullscreenToggle\(\)/, 'the player bar is the one full-screen control');
 like($music, qr/if \(musicRemoteTarget\(\) && !force\) \{ musicRemoteFullscreenToggle\(\); return; \}/, 'the player fullscreen button sends the controlled machine');
 
 # --- settings arrive on the controlled machine ------------------------------
@@ -190,7 +190,7 @@ like($remote, qr/my \$title = \$player->\{'title'\} \|\| '';/, 'and carries the 
 like($music, qr/title: current_entry \? \(current_entry\.display_track \|\| current_entry\.song \|\| ''\) : ''/, 'the player cache records the track display title');
 like($music, qr/music_remote_state\.type = r\.type \|\| '';/, 'the controller keeps the peer picture type');
 like($music, qr/musicEntryByFile\(r\.file \|\| ''\)/, 'the bar finds the mirrored queue row');
-like($music, qr/\$\('#video_full_title'\)\.text\(label\);/, 'and names the track as this machine does');
+like($music, qr/musicTitleSet\(label\);/, 'and names the track as this machine does');
 
 # --- the mirror gets the host's list even when the archive is on -------------
 require "$FindBin::Bin/../perl/Music/05_library_and_queue.pl";
@@ -252,8 +252,19 @@ like($boot, qr/!\$handed_list/, 'and the old now-playing is not pushed ahead of 
 like($taskbar, qr{/music/remote_queue}, 'the Sound remote reads that queue');
 like($taskbar, qr/data-remote-track/, 'and lists its tracks');
 like($taskbar, qr/action: 'play_track', file: file/, 'a track press names the row, not a list');
-like($music, qr/#music_library_select[\s\S]{0,1600}musicRemoteSnapshotRestore/,
-	'choosing another library leaves the remote-control session');
+my ($lib_change) = $music =~ /(\$\(document\)\.on\('change', '#music_library_select'.*?\n\}\);)/s;
+ok(defined $lib_change, 'the library selector is readable as a hunk');
+like($lib_change || '', qr/if \(library !== target\) \{ musicRemoteChoose\(library\); return; \}/,
+	'choosing a remote library switches the controlled machine');
+like($lib_change || '', qr/searchMusic\(\{ library: library, remote_view: 1 \}\)/,
+	'and asks for that machine\'s own view');
+like($lib_change || '', qr/musicRemoteLocalViewRestore\(\)/,
+	'Local returns to this machine\'s saved view');
+like($lib_change || '', qr/library !== 'none'/,
+	'None leaves remote mode');
+like($music, qr/\$\('#music_library_select'\)\.val\(library \|\| 'local'\)/,
+	'a remote render keeps the chosen library in the select');
+like($music, qr/function musicTitleFit\(\)/, 'the player bar title shrinks to fit');
 like($music, qr/setting == 'normalize'/, 'normalization is applied in the peer player');
 like($music, qr/setting == 'video'/, 'video enhancement is applied in the peer player');
 
@@ -261,6 +272,14 @@ like($music, qr/setting == 'video'/, 'video enhancement is applied in the peer p
 like($remote, qr{/music/remote_outputs}, 'the controlled machine offers its outputs');
 like($remote, qr{/music/remote_output}, 'and takes a chosen output');
 like($remote, qr/sub music_output_catalogue/, 'the catalogue is the host\'s own mao map');
+like($remote, qr/sub music_output_catalogue\(\$source_signatorial = ''\)/,
+	'the catalogue knows which machine is asking');
+like($remote, qr/music_output_catalogue\(\$c->param\('source_signatorial'\)/,
+	'the route hands it the asking machine');
+like($remote, qr/\$label = &subs::ui\('This machine'\) \. ' \(' \. \$label \. '\)';/,
+	'and names the machine you are holding This machine');
+like($remote, qr/remote_machines where signatorial=\?/,
+	'a source row the lister dropped is read back');
 like($remote, qr/sub music_output_pick/, 'a choice is written on the host');
 like($remote, qr/\$mao->\{\$other\} = 'off'/, 'the other outputs go off: it is a choice, not an addition');
 like($remote, qr/\$mao->\{\$key\} = 'on'/, 'and the picked one plays');

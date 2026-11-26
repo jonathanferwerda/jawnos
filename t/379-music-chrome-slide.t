@@ -131,4 +131,19 @@ ok(defined $change, 'the fullscreenchange handler is found');
 like($change || '', qr/else if \(musicWasFullscreen\)[\s\S]*?musicChromeShow\(\$\('#interface'\)\);/, 'a real leave shows the interface');
 like($change || '', qr/else if \(musicWasFullscreen\)[\s\S]*?musicChromeShow\(\$\('#music \.media_controls\.music_player_bar'\)\);/, 'and the player bar');
 
+# The library is hidden in full screen even though a track play can leave an
+# inline display:block on it; the inline style would otherwise win.
+like($css, qr/#music\.music_fullscreen #music_library \{\s*display: none !important;/s,
+	'the library leaves the screen even over an inline display');
+like($css, qr/#music:fullscreen #music_library,\s*\n#music:-webkit-full-screen #music_library,\s*\n#music\.music_fullscreen #music_library/s,
+	'the three full-screen dresses agree');
+
+# A long title shrinks to fit and ellipsizes at the floor, rather than wrapping
+# into the fullscreen button.
+like($style, qr/\.music_player_bar #<%= \$id %>_full_title \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis;/s,
+	'the bar title stays on one line');
+like($js, qr/function musicTitleFit\(\)/, 'the bar shrinks a long title to fit');
+like($js, qr/node\.scrollWidth > node\.clientWidth/, 'by measuring the text against its room');
+like($video, qr/musicTitleSet\(played_title\)/, 'the bar tick uses the fitting setter');
+
 done_testing();

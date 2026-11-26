@@ -289,23 +289,22 @@
 		.music_player_bar .little_thumb { height: 34px; border: none; background: transparent; }
 		.music_player_bar .music_shuffle,
 		.music_player_bar .music_repeat { flex: 0 0 auto; }
-		/* the title sits where the seek used to, taking the row's slack and
-		   wrapping to at most two lines. The id is needed for specificity: the
-		   #<%= $id %>_full_title rule above styles the video overlay and would
-		   otherwise win. */
+		/* the title sits where the seek used to, taking the row's slack. A long
+		   name shrinks (music.js musicTitleFit) rather than pushing the fullscreen
+		   button off the row; an ellipsis is the last resort at the minimum size.
+		   The id is needed for specificity: the #<%= $id %>_full_title rule above
+		   styles the video overlay and would otherwise win. */
 		.music_player_bar #<%= $id %>_full_title {
 			flex: 1 1 0;
 			min-width: 0;
 			overflow: hidden;
-			overflow-wrap: anywhere;
+			white-space: nowrap;
+			text-overflow: ellipsis;
 			text-align: center;
 			color: yellow;
 			font-size: 15px;
 			line-height: 1.15;
-			display: -webkit-box;
-			-webkit-line-clamp: 2;
-			-webkit-box-orient: vertical;
-			white-space: normal;
+			display: block;
 		}
 		/* the seek spans its own full-width row above the buttons. box-sizing is
 		   needed because the range input's UA padding would otherwise be added on

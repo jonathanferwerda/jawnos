@@ -309,14 +309,24 @@ sub music_output_on($state) {
 	return ($state // '') =~ /^(?:on|stereo|left|right)$/ ? 1 : 0;
 }
 
-sub music_output_catalogue {
+sub music_output_catalogue($source_signatorial = '') {
 	my $settings = &subs::settings_grabber({ app => 'music' }) || {};
 	my $mao = eval { decode_json($settings->{'mao'} // '') } || {};
 	my $self = &subs::signatorial_designer();
 	my $rows = &subs::remote_machine_lister() || [];
+	# The controller asking for this list is a peer of the machine it is
+	# controlling. Name it as This machine so the person can send the room's
+	# sound back to the laptop they are holding, not guess at its hostname.
+	# A lister that has dropped the source row keeps it here; the choice is
+	# still the host's own, and an unreachable key simply never plays.
+	my @rows = @{$rows};
+	if (length $source_signatorial && !grep { ($_->{'signatorial'} || '') eq $source_signatorial } @rows) {
+		my $source_row = &subs::db_query('select * from remote_machines where signatorial=?', $source_signatorial)->hashes->[0];
+		push @rows, $source_row if $source_row;
+	}
 	# The server row owns the `srv` player's hardware; the controller resolves
 	# a key to the machine it names so the Device picker can follow the Output.
-	my ($server) = grep { ($_->{'device'} || '') eq 'server' && ($_->{'connection'} || '') eq 'active' } @{$rows};
+	my ($server) = grep { ($_->{'device'} || '') eq 'server' && ($_->{'connection'} || '') eq 'active' } @rows;
 	my (@outputs, %seen);
 	my $add = sub {
 		my ($key, $label, $uuid) = @_;
@@ -333,7 +343,7 @@ sub music_output_catalogue {
 	};
 	$add->('me', (&subs::machine_name() || &subs::ui('This machine')) . ' (' . &subs::ui('internal speaker') . ')');
 	$add->('srv', &subs::ui('Server'), ($server ? $server->{'uuid'} : ''));
-	foreach my $rm ( @{$rows} ) {
+	foreach my $rm ( @rows ) {
 		next if (($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1');
 		next if $self && (($rm->{'signatorial'} || '') eq $self);
 		my $key = $rm->{'fqdn'} || $rm->{'ip'} || '';
@@ -342,6 +352,9 @@ sub music_output_catalogue {
 		# peer row left with 127.0.0.1 is a stale address, not an output.
 		next if $key =~ /^(?:127\.|localhost$|\[?::1\]?$)/i;
 		my $label = &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key;
+		if (length $source_signatorial && (($rm->{'signatorial'} || '') eq $source_signatorial)) {
+			$label = &subs::ui('This machine') . ' (' . $label . ')';
+		}
 		$add->($key, $label, $rm->{'uuid'});
 	}
 	my $current = 'me';
@@ -415,7 +428,7 @@ Manager::app->routes->get('/music/remote_outputs' => sub ($c) {
 		$c->render(json => &music_remote_relay($c));
 		return;
 	}
-	$c->render(json => &music_output_catalogue());
+	$c->render(json => &music_output_catalogue($c->param('source_signatorial') || ''));
 });
 
 # The controlled machine's physical outputs, for the Sound window's Remote

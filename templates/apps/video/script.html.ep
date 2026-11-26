@@ -144,7 +144,8 @@
 						var played_entry = musicCurrentEntry();
 						if (played_entry) { played_title = played_entry.display_track || played_entry.song || ''; }
 					}
-					$('#<%= $id %>_full_title').text(played_title);
+					if (typeof musicTitleSet === 'function') { musicTitleSet(played_title); }
+					else { $('#<%= $id %>_full_title').text(played_title); }
 					<% } %>
 					}
 				}, 1000);
