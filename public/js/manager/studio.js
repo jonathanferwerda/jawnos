@@ -1776,6 +1776,36 @@ function studioEngineTakeStart(takes, punch, done) {
 	return true;
 }
 
+// Read the engine's closed WAV into the take. `data` is what Save uploads into
+// the song's folder, so an engine take travels with the song; the decoder reads
+// the same bytes for the waveform and playback. The take-file URL stays as the
+// element's source and as the fallback. A read that fails leaves the take
+// playable here and says why, rather than inventing an upload.
+function studioEngineTakeReadFile(take, src) {
+	if (!take) { return; }
+	if (!take.data && src && typeof fetch === 'function') {
+		var read = fetch(src).then(function (response) {
+			if (!response.ok) { throw new Error('HTTP ' + response.status); }
+			return response.blob();
+		}).then(function (blob) {
+			if (blob && blob.size) {
+				take.data = blob;
+				if (!take.encoding) { take.encoding = blob.type || 'audio/wav'; }
+			}
+			if (typeof studioTakeRequestBuffer === 'function') { studioTakeRequestBuffer(take); }
+		}).catch(function (error) {
+			console.log('studio: engine take could not be read for saving', error);
+			if (typeof studioTakeRequestBuffer === 'function') { studioTakeRequestBuffer(take); }
+		});
+		// Save waits for this read: a take stopped and saved at once must still
+		// upload its WAV, not only its local take-file URL.
+		take.file_ready = read;
+		read.then(function () { if (take.file_ready === read) { delete take.file_ready; } });
+		return;
+	}
+	if (typeof studioTakeRequestBuffer === 'function') { studioTakeRequestBuffer(take); }
+}
+
 // The engine closed the take: its WAV is now a normal Studio take on each of
 // the channels that armed it. `tracks` carries one path per track when the take
 // recorded more than one; the single-track line keeps its historical fields.
@@ -1817,7 +1847,11 @@ function studioEngineTakeFinish(data) {
 			loop: false, encoding: 'audio/wav', src: src, engine: true
 		};
 		mixer[ch].media.out[ir] = take;
-		if (typeof studioTakeRequestBuffer === 'function') { studioTakeRequestBuffer(take); }
+		// The engine wrote the WAV locally; the song has to carry it the way a
+		// browser take carries its blob. Read the file once here, so Save uploads
+		// it into the song's own folder and the take travels to another machine.
+		// The same bytes then decode for the waveform and playback.
+		studioEngineTakeReadFile(take, src);
 		mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
 		imported++;
 	});

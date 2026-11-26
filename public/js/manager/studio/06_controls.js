@@ -613,7 +613,7 @@ $(document).on('pointerdown', function(e) {
 
 
 
-function studioSave() {
+async function studioSave() {
 	var app = 'studio';
 	var now = Date.now();
 	var name = $('#studio').attr('name');
@@ -621,6 +621,22 @@ function studioSave() {
 	if (!name) {
 		$('#studio_name').attr('type','text').focus();
 		return;
+	}
+
+	// An engine take reads its WAV from the local take-file route; a Save pressed
+	// in that moment waits for the read so the blob goes with the song instead
+	// of a path that exists only on this machine.
+	var reads = [];
+	$.each(mixer, function(i, v) {
+		if (!/^[0-9]+$/.test(i) || !v.media || !v.media.out) { return; }
+		v.media.out.forEach(function (take) {
+			if (take && take.file_ready && take.file_ready.then) { reads.push(take.file_ready); }
+		});
+	});
+	if (reads.length) {
+		await Promise.all(reads.map(function (read) {
+			return read.catch(function () { return null; });
+		}));
 	}
 
 	var song = studioSaver();

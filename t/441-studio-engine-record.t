@@ -93,7 +93,12 @@ ok(length $finish, 'closing the take has one finish path');
 like($finish, qr/manager\/studio\/take_file\?file=/, 'the closed WAV is served back to the page');
 like($finish, qr/frames \/ rate/, 'its frame count becomes the take\'s duration');
 like($finish, qr/mixer\[ch\]\.media\.out\[ir\] = take/, 'the WAV becomes a normal take on its channel');
-like($finish, qr/studioTakeRequestBuffer\(take\)/, 'the ordinary waveform path decodes it');
+like($finish, qr/studioEngineTakeReadFile\(take, src\)/, 'the take reads its WAV for saving and decoding');
+my $read = body($studio, 'studioEngineTakeReadFile');
+ok(length $read, 'the read has one function');
+like($read, qr/fetch\(src\)/, 'it fetches the engine\'s closed file');
+like($read, qr/take\.data = blob/, 'and keeps the bytes the save uploads');
+like($read, qr/take\.file_ready = read/, 'a Save can wait for the read');
 
 like($studio, qr/var wasRecording = studioEngineRecording;[\s\S]{0,1200}studioEngineTakeFinish\(data\)/,
 	'a take that ends on its own is imported too');
@@ -128,5 +133,11 @@ like($help, qr/Record button uses the engine whenever it is available/,
 like($help, qr/Engine recording or Browser recording/, 'and names the badge\'s two words');
 like($help, qr/pressing Record while Listen is on hands the capture to the take/,
 	'and says Listen hands the capture to a take');
+like($help, qr/pressing Save uploads that WAV into the song/,
+	'and says an engine take travels with the song');
+
+my $save = body($controls, 'studioSave');
+like($controls, qr/async function studioSave/, 'Save waits for the engine take read');
+like($save, qr/take\.file_ready/, 'it awaits the read in flight');
 
 done_testing();
