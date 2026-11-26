@@ -37,7 +37,7 @@
 #notifications_app .notifications_app_filter { flex: 0 1 200px; padding: 7px 8px; font: inherit; font-size: 14px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .45); }
 #notifications_app .notifications_app_clear { flex: 0 0 auto; }
 #notifications_app .notifications_app_list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding-right: 4px; }
-#notifications_app .notification { --notification_icon: 32px; position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); background-color: var(--panel-2, rgba(127,127,127,.06)); overflow: hidden; line-height: 1.4; cursor: var(--jawnos-cursor-pointer, pointer); flex: 0 0 auto; overflow-wrap: anywhere; }
+#notifications_app .notification { --notification_icon: 36px; position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); background-color: var(--panel-2, rgba(127,127,127,.06)); overflow: hidden; line-height: 1.4; cursor: var(--jawnos-cursor-pointer, pointer); flex: 0 0 auto; overflow-wrap: anywhere; }
 #notifications_app .notification:hover { border-color: var(--accent-line, var(--line)); }
 #notifications_app .notification:focus-visible { outline: 2px solid var(--accent, #3b7ddd); outline-offset: 2px; }
 /* The picture is its own column, centred against the text block that runs to

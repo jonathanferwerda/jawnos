@@ -62,7 +62,7 @@ like($panel, qr/app_notification_sound_upload/, 'and the custom sound upload');
 # right. It is a little larger than the old 22px line-share, so a row reads at
 # a glance without squeezing the message beside it.
 my ($icon_size) = $template =~ /--notification_icon:\s*(\d+)px/;
-is($icon_size, 32, 'the row picture is larger than the old window-icon size');
+is($icon_size, 36, 'the row picture is larger than the old window-icon size');
 like($template, qr/#notifications_app \.notification \{[^}]*display:\s*flex;[^}]*align-items:\s*center/s,
 	'the picture and the text sit on one centred row');
 like($template, qr/#notifications_app \.notification \.notification_text \{[^}]*flex:\s*1 1 auto/s,
