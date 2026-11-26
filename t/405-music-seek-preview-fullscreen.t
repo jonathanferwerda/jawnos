@@ -43,7 +43,7 @@ like($hover, qr/music_remote_state\.file/, 'and reads the controlled track\'s fi
 like($hover, qr/music_remote_state\.type/, 'and whether that track has a picture');
 like($hover, qr/remote_target \? remote_duration : v\.duration/, 'the clock uses the controlled track\'s duration');
 like($hover, qr/'\/file_open\?file=' \+\s*encodeURIComponent\(remote_file\)/, 'the preview is a file_open thumbnail');
-like($hover, qr/remote_uuid=' \+ encodeURIComponent\(remote_target\)/, 'asked of the machine that holds the file');
+like($hover, qr/remote_uuid=' \+ encodeURIComponent\(remote_origin\)/, 'asked of the machine that holds the file');
 like($hover, qr/remote_bucket = Math\.max\(0, Math\.round\(time\)\);/, 'at the hovered second');
 unlike($hover, qr/v\.lastPositionPreviewKey = remote_preview_key/, 'the remote preview keeps its own cache key');
 

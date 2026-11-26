@@ -1,9 +1,10 @@
-# tests-for: perl/Music/09_remote_control.pl perl/Music.pl perl/Music/05_library_and_queue.pl perl/Music/08_music_routes.pl public/js/music.js public/js/manager/taskbar_sound.js public/js/manager/websocket/00_console_router.js templates/apps/music/music.html.ep templates/apps/music/remote.html.ep templates/apps/sound.html.ep templates/apps/video/script.html.ep public/css/music.css public/css/manager.css perl/help/topics_apps.pl
+# tests-for: perl/Music/09_remote_control.pl perl/Music.pl perl/Music/05_library_and_queue.pl perl/Music/08_music_routes.pl public/js/music.js public/js/manager/jp/01_watcher_webrtc.js public/js/manager/taskbar_sound.js public/js/manager/websocket/00_console_router.js templates/apps/music/music.html.ep templates/apps/music/remote.html.ep templates/apps/sound.html.ep templates/apps/video/script.html.ep public/css/music.css public/css/manager.css perl/help/topics_apps.pl
 # covers:    A Music window can become another machine's Music app, and the Sound
 #            taskbar widget can start and drive Music (locally or on a peer).
 #            The command crosses as a named console instruction, never as source;
 #            the local player is not stopped or re-tuned by choosing a remote;
-#            only playback settings travel to the controlled machine.
+#            only playback settings and the controlled machine's library choice
+#            travel to it.
 
 use strict;
 use warnings;
@@ -18,6 +19,7 @@ my $remote = read_file("$root/perl/Music/09_remote_control.pl");
 my $search_routes = read_file("$root/perl/Music/08_music_routes.pl");
 my $queue_src = read_file("$root/perl/Music/05_library_and_queue.pl");
 my $music = read_file("$root/public/js/music.js");
+my $jp = read_file("$root/public/js/manager/jp/01_watcher_webrtc.js");
 my $taskbar = read_file("$root/public/js/manager/taskbar_sound.js");
 my $router = read_file("$root/public/js/manager/websocket/00_console_router.js");
 my $music_tpl = read_file("$root/templates/apps/music/music.html.ep");
@@ -82,6 +84,8 @@ like($music, qr/\$\('#music_volume'\)\.val\(musicVolumeLevel\(\)\);\s*\n\t\tupda
 like($remote, qr/volume => \(defined \$volume \? \$volume \+ 0 : undef\)/, 'a peer that never saved a level answers null');
 like($help, qr/its volume and its mute/, 'the Music help says the bar is the controlled machine\'s');
 like($help, qr/the machine you are holding is named that way/, 'and names the controller in the Output list');
+like($help, qr/The Playback panel\\'s Library choice is the controlled machine\\'s own library/,
+	'and says the Library selector moves the controlled machine');
 like($music, qr/function musicBarLevel\(\)/, 'a finger starts from the bar that is shown');
 like($music, qr/if \(remote \? !!music_remote_state\.muted : music_muted\) \{ return 0; \}/,
 	'and a muted bar starts the drag at zero');
@@ -89,9 +93,10 @@ like($video_tpl, qr/typeof musicBarLevel == 'function'\) \{ return musicBarLevel
 	'the player gesture asks the bar, not this machine');
 
 # --- only playback settings travel -----------------------------------------
-like($remote, qr/my %music_remote_setting = map \{ \$_ => 1 \} qw\(normalize video equalizer subtitles\);/,
-	'the remote-setting whitelist is exactly the playback settings');
-unlike($remote, qr/%music_remote_setting.*\blibrary\b/, 'a controller cannot move the host library');
+like($remote, qr/my %music_remote_setting = map \{ \$_ => 1 \} qw\(normalize video equalizer subtitles library\);/,
+	'the remote-setting whitelist is the playback settings and the library');
+like($remote, qr/return 0 unless \$clean =~ \/\^\(\?:local\|none\)\$\//,
+	'the library must be this machine or a reachable peer');
 unlike($remote, qr/%music_remote_setting.*\bremote_target\b/, 'a controller cannot nest another controller');
 
 # --- the two pickers keep their own memories --------------------------------
@@ -220,11 +225,12 @@ ok(defined $play_item && length $play_item, 'musicRemotePlayItem is readable as 
 unlike($play_item || '', qr/tree\.current_track\s*=/, 'a remote play does not move the local queue cursor');
 like($play_item || '', qr/musicRemoteSend\('play_track', data\)/, 'a remote click names the row and hands its queue');
 like($play_item || '', qr/data\.files = JSON\.stringify\(files\)/, 'the mirrored queue rides along');
-like($music, qr/function musicPlayTrack\(file, files, same_order\)/, 'the host takes the row, its queue and the order');
+like($play_item || '', qr/data\.remote_uuid = origin/, 'and names the queue\'s own peer');
+like($music, qr/function musicPlayTrack\(file, files, same_order, remote_uuid\)/, 'the host takes the row, its queue, the order and the file origin');
 like($music, qr/music_play_track_queue/, 'and remembers the queue while a window opens');
-like($music, qr/musicToggle\(files, order, file\)/, 'opening on that queue at the row when its own lacks it');
+like($music, qr/musicToggle\(files, order, file, origin\)/, 'opening on that queue at the row when its own lacks it');
 like($remote, qr/console_command\(\s*'musicPlayTrack',\s*\$file,\s*\$files/s, 'the queue crosses as data');
-like($router, qr/musicPlayTrack\(String\(a\[0\] \|\| ''\), a\[1\] \|\| \[\], a\[2\] \? 1 : 0\)/, 'the router carries the queue and order');
+like($router, qr/musicPlayTrack\(String\(a\[0\] \|\| ''\), a\[1\] \|\| \[\], a\[2\] \? 1 : 0, String\(a\[3\] \|\| ''\)\)/, 'the router carries the queue, order and origin');
 like($music, qr/function musicPlayTrack\(/, 'the host can start a named row');
 like($music, qr/function musicPlayTrackFlush/, 'and waits for a window that is opening');
 like($router, qr/musicPlayTrack: function/, 'the browser router whitelists the row');
@@ -242,10 +248,10 @@ like($music_css, qr/music_remote_glow/, 'the controlled machine glows');
 unlike($music_css, qr/:not\(\[data-remote-target="local"\]\)/, 'This machine glows when its own library is on screen');
 like($remote, qr{/music/remote_queue}, 'the controlled machine has a queue route');
 like($remote, qr/sub music_remote_queue/, 'which reads the host queue cache');
-like($music, qr/function musicToggle\(files, same_order, start_key\)/, 'a handed list can name its start row');
+like($music, qr/function musicToggle\(files, same_order, start_key, remote_uuid\)/, 'a handed list can name its start row and origin');
 like($music, qr/if \(start_key\) \{ thisTrack\(start_key\); \}/, 'and opens on that row');
 like($music, qr/tree\.all_songs\[n\]\.file === key/, 'thisTrack finds a row by its path');
-like($music, qr/musicToggle\(files, same_order \? 1 : 0, key\)/, 'play_files hands the start row through');
+like($music, qr/musicToggle\(files, same_order \? 1 : 0, key, remote_uuid\)/, 'play_files hands the start row and origin through');
 like($taskbar, qr/action: 'play_track', file: file/, 'the Sound list names the row too');
 like($boot, qr/my \$handed_list/, 'a handed list is recognised on open');
 like($boot, qr/!\$handed_list/, 'and the old now-playing is not pushed ahead of it');
@@ -254,17 +260,36 @@ like($taskbar, qr/data-remote-track/, 'and lists its tracks');
 like($taskbar, qr/action: 'play_track', file: file/, 'a track press names the row, not a list');
 my ($lib_change) = $music =~ /(\$\(document\)\.on\('change', '#music_library_select'.*?\n\}\);)/s;
 ok(defined $lib_change, 'the library selector is readable as a hunk');
-like($lib_change || '', qr/if \(library !== target\) \{ musicRemoteChoose\(library\); return; \}/,
-	'choosing a remote library switches the controlled machine');
-like($lib_change || '', qr/searchMusic\(\{ library: library, remote_view: 1 \}\)/,
-	'and asks for that machine\'s own view');
+like($lib_change || '', qr/\$\.post\('\/music\/remote_setting', \{ target: target, setting: 'library', value: library \}\)/,
+	'the controlled machine gets the library choice');
+like($lib_change || '', qr/searchMusic\(\{ library: library, keep_library: 1 \}\)/,
+	'this window shows the remoted list without moving its own library');
+like($lib_change || '', qr/select_library: library/,
+	'Local and None name themselves in the select');
+like($music, qr/keep_library: keep_library/, 'the search tells the route not to move this machine\'s library');
+like($music, qr/var select_library = data\['select_library'\]/, 'and the select can be told the chosen value');
 like($lib_change || '', qr/musicRemoteLocalViewRestore\(\)/,
-	'Local returns to this machine\'s saved view');
-like($lib_change || '', qr/library !== 'none'/,
-	'None leaves remote mode');
+	'Local returns to this machine\'s saved view when not remote');
 like($music, qr/\$\('#music_library_select'\)\.val\(library \|\| 'local'\)/,
 	'a remote render keeps the chosen library in the select');
 like($music, qr/function musicTitleFit\(\)/, 'the player bar title shrinks to fit');
+like($search_routes, qr/my \$keep_library = \$c->param\('keep_library'\)/,
+	'a controller can show a remoted list without writing its own library');
+like($search_routes, qr/unless \$keep_library/, 'the library setting is skipped for it');
+like($search_routes, qr/my \$library_want = \(\$keep_library/, 'and the relay follows the requested library');
+like($boot, qr/&& !\$handed_list/, 'a handed queue is not relayed to the library machine');
+like($music, qr/if \(setting == 'library'\) \{[\s\S]*?searchMusic\(\{ library: String\(value \|\| 'local'\) \}\);/s,
+	'the host searches the chosen library');
+like($remote, qr/remote_uuid => \(\$player->\{'remote_uuid'\} \|\| ''\)/,
+	'the state names the file origin');
+like($music, qr/remote_uuid: current_entry \? \(current_entry\.remote_uuid \|\| ''\) : ''/,
+	'the player cache records it');
+like($music, qr/music_remote_state\.remote_uuid = r\.remote_uuid \|\| musicRemoteTarget\(\) \|\| '';/,
+	'the controller keeps it');
+like($music, qr/function musicRemoteWatchPaint\(\)/, 'the controller advertises the remoted frame');
+like($music, qr/advertise_watching != 'on'/, 'only when Me advertises watching');
+like($music, qr/&remote_uuid=' \+ encodeURIComponent\(origin\)/, 'from the file\'s own peer');
+like($jp, qr/returner\['music_remote'\]/, 'and jpWatcher carries it');
 like($music, qr/setting == 'normalize'/, 'normalization is applied in the peer player');
 like($music, qr/setting == 'video'/, 'video enhancement is applied in the peer player');
 

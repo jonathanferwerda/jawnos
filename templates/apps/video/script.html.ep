@@ -842,6 +842,9 @@
 				// poll carries that track's file, type and duration.
 				var remote_target = (typeof musicRemoteTarget === 'function') ? musicRemoteTarget() : '';
 				var remote_file = (remote_target && typeof music_remote_state === 'object' && music_remote_state.file) ? music_remote_state.file : '';
+				// a remoted library's file lives on that peer, not on the machine
+				// whose player is being controlled
+				var remote_origin = (remote_target && typeof music_remote_state === 'object' && music_remote_state.remote_uuid) ? music_remote_state.remote_uuid : remote_target;
 				var remote_entry = (remote_target && remote_file && typeof musicEntryByFile === 'function') ? musicEntryByFile(remote_file) : null;
 				var remote_type = remote_target ? ((typeof music_remote_state === 'object' && music_remote_state.type) || (remote_entry && remote_entry.type) || '') : '';
 				var remote_duration = (remote_target && typeof music_remote_state === 'object' && parseFloat(music_remote_state.duration)) || 0;
@@ -859,7 +862,7 @@
 								$('#<%= $miss %>_position_preview').attr('src',
 									'/file_open?file=' + encodeURIComponent(remote_file) +
 									'&thumb=ya&position=' + remote_bucket +
-									'&remote_uuid=' + encodeURIComponent(remote_target));
+									'&remote_uuid=' + encodeURIComponent(remote_origin));
 							}
 							$('#<%= $miss %>_position_preview').show();
 						};

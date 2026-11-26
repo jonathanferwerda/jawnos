@@ -60,6 +60,10 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 	# search is the host's search. The older "play a remote library here" view
 	# only borrows the list and leaves the host's own search alone.
 	my $remote_control = $c->param('remote_control') ? 1 : 0;
+	# A controller that keeps its own window shell while showing a peer's
+	# library asks for the remoted list without writing that library onto its
+	# own settings: its shell stays local and its remote target stays set.
+	my $keep_library = $c->param('keep_library') ? 1 : 0;
 	# A controller drawing a peer's window keeps its own shape: a laptop must
 	# not get the phone's stacked shelves just because the library lives there.
 	my $mirror_phone;
@@ -93,7 +97,7 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 		# machine again, which looked like being stuck on a remote library. It is a
 		# local-machine choice, so it is not forwarded as new_settings.
 		if (my $library = $c->param('library')) {
-			&subs::setting_setter({ app => 'music', setting => 'library', value => $library });
+			&subs::setting_setter({ app => 'music', setting => 'library', value => $library }) unless $keep_library;
 		}
 	}
 	my $settings = &subs::settings_grabber({ app => 'music' });
@@ -136,9 +140,12 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 		}
 	}
 
-	if ($settings->{'library'} ne 'local' && $c->param('remoted') ne 'yes') {
+	my $library_want = ($keep_library && defined $c->param('library') && length $c->param('library'))
+		? $c->param('library')
+		: ($settings->{'library'} // 'local');
+	if ($library_want ne 'local' && $library_want ne 'none' && $c->param('remoted') ne 'yes') {
 		$c->param('resizes' => undef);
-		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
+		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $library_want, 'active')->hashes->[0];
 		if ($rm->{'uuid'}) {
 			$c->param('remote_uuid' => $rm->{'uuid'});
 			$c->param('library_name' => &music_remote_label($rm));
@@ -158,7 +165,7 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 				return;
 			}
 		}
-		else { &subs::setting_setter({ app => 'music', setting => 'library', value => 'local' }); $settings->{'library'} = 'local'; }
+		else { &subs::setting_setter({ app => 'music', setting => 'library', value => 'local' }) unless $keep_library; $settings->{'library'} = 'local'; }
 	}
 
 	$settings->{'artist'} = eval { return decode_json $settings->{'artist'} } || [];

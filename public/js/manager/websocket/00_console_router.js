@@ -61,7 +61,7 @@ var jawnosConsoleCommands = {
 		if (typeof musicTransportLocal === 'function') { musicTransportLocal(String(a[0]), { percent: a[1] }); }
 	},
 	musicPlayFiles: function (a) {
-		if (typeof musicPlayFiles === 'function') { musicPlayFiles(a[0], a[1] ? 1 : 0, String(a[2] || '')); }
+		if (typeof musicPlayFiles === 'function') { musicPlayFiles(a[0], a[1] ? 1 : 0, String(a[2] || ''), String(a[3] || '')); }
 	},
 	musicSettingApply: function (a) {
 		if (typeof musicSettingApply === 'function') { musicSettingApply(String(a[0]), a[1]); }
@@ -73,7 +73,7 @@ var jawnosConsoleCommands = {
 		if (typeof musicFullscreenSet === 'function') { musicFullscreenSet(a[0]); }
 	},
 	musicPlayTrack: function (a) {
-		if (typeof musicPlayTrack === 'function') { musicPlayTrack(String(a[0] || ''), a[1] || [], a[2] ? 1 : 0); }
+		if (typeof musicPlayTrack === 'function') { musicPlayTrack(String(a[0] || ''), a[1] || [], a[2] ? 1 : 0, String(a[3] || '')); }
 	},
 	musicVolumeSet: function (a) {
 		// a level aimed at this machine never forwards to a machine this window

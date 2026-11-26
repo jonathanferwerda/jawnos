@@ -2425,7 +2425,7 @@ $(document).on('click', '#music_toggle', function() {
 	musicToggle();
 });
 
-function musicToggle(files, same_order, start_key) {
+function musicToggle(files, same_order, start_key, remote_uuid) {
 	var url = '/manager/music';
 	var timestamp = Date.now();
 	var jmiss = JSON.stringify(misses);
@@ -2437,7 +2437,7 @@ function musicToggle(files, same_order, start_key) {
 		$.ajax({
 			url: url,
 			type: 'GET',
-			data: { window_maker: 'yes', timestamp: timestamp, misses: jmiss, files: jfiles, same_order: same_order ? 1 : 0 },
+			data: { window_maker: 'yes', timestamp: timestamp, misses: jmiss, files: jfiles, same_order: same_order ? 1 : 0, remote_uuid: remote_uuid || '' },
 			success: function(response) {
 
 				var window_id = windowMaker(response);
@@ -2530,7 +2530,7 @@ function musicTransportLocal(action, opts) {
 	action = String(action || '').toLowerCase();
 	opts = opts || {};
 	if (!/^(?:play|pause|toggle|next|prev|stop|open|seek_percent|play_files)$/.test(action)) { return false; }
-	if (action == 'play_files') { return musicPlayFiles(opts.files, opts.same_order, opts.key); }
+	if (action == 'play_files') { return musicPlayFiles(opts.files, opts.same_order, opts.key, opts.remote_uuid); }
 	if (!musicTransportReady()) {
 		music_transport_pending.push({ action: action, opts: opts });
 		// A window already in the DOM is either initialising or minimised; the
@@ -2585,9 +2585,9 @@ function musicTransportRun(action, opts) {
 // Hand a queue to a machine's Music app. musicToggle(files) already means
 // "open with this list and start it", and windowMaker replaces the existing
 // Music window rather than making a second one.
-function musicPlayFiles(files, same_order, key) {
+function musicPlayFiles(files, same_order, key, remote_uuid) {
 	if (!files || !files.length) { return false; }
-	if (typeof musicToggle == 'function') { musicToggle(files, same_order ? 1 : 0, key); }
+	if (typeof musicToggle == 'function') { musicToggle(files, same_order ? 1 : 0, key, remote_uuid); }
 	return true;
 }
 function musicTransportStateLocal() {
@@ -2607,7 +2607,12 @@ function musicTransportStateLocal() {
 	};
 }
 
-var music_remote_state = { playing: null, key: '', file: '', title: '', type: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
+var music_remote_state = { playing: null, key: '', file: '', title: '', type: '', remote_uuid: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
+// The frame the controller advertises while advertise_watching is on: the
+// remoted player's own picture at its current second, drawn to a data URL for
+// the house's watcher (jp_data). A frame is fetched only when the second moves.
+var music_remote_watch = null;
+var music_remote_watch_key = '';
 var music_remote_poll_timer = 0;
 var music_remote_progress_timer = 0;
 var music_remote_level_timer = 0;
@@ -2639,10 +2644,12 @@ function musicRemotePaint() {
 		music_remote_poll_timer = 0;
 		clearInterval(music_remote_progress_timer);
 		music_remote_progress_timer = 0;
-		music_remote_state = { playing: null, key: '', file: '', title: '', type: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
+		music_remote_state = { playing: null, key: '', file: '', title: '', type: '', remote_uuid: '', currentTime: 0, duration: 0, volume: null, muted: 0, fullscreen: 0, at: 0, display: 0, seek_at: 0 };
 		$('#music_remote_now').hide().text('');
 		// the borrowed fullscreen control goes back to this machine's own
 		musicRemoteFullscreenPaint();
+		music_remote_watch = null;
+		music_remote_watch_key = '';
 		// the bar goes back to this machine's own level and mute
 		$('#music_volume').val(musicVolumeLevel());
 		updateMusicMuteIcon();
@@ -2712,6 +2719,9 @@ function musicRemoteApplyState(r) {
 	music_remote_state.file = r.file || '';
 	music_remote_state.title = r.title || '';
 	music_remote_state.type = r.type || '';
+	// a remoted library's file is on that peer; a local file is on the machine
+	// whose player we are reading
+	music_remote_state.remote_uuid = r.remote_uuid || musicRemoteTarget() || '';
 	// The bottom bar names the track the way this machine names it locally: the
 	// mirrored queue entry's own labels. The host writes that title beside the
 	// file too, for a track the queue on screen does not list.
@@ -2744,7 +2754,51 @@ function musicRemoteApplyState(r) {
 	music_remote_state.fullscreen = r.fullscreen ? 1 : 0;
 	musicRemoteFullscreenPaint();
 	musicRemoteLevelPaint();
+	musicRemoteWatchPaint();
 	if ((Date.now() - (music_remote_sound.devices_at || 0)) > 30000) { musicRemoteSoundLoad(); }
+}
+// Advertise the controlled player's picture on this machine when Me's
+// advertise_watching is on. The frame is the remoted file's own frame at the
+// current second, fetched from the peer that holds the file. The house's
+// watcher wants a data URL, so the image is drawn once and cached until the
+// second moves.
+function musicRemoteWatchPaint() {
+	if (typeof advertise_watching === 'undefined' || advertise_watching != 'on'
+		|| !musicRemoteTarget() || !music_remote_state.playing
+		|| (music_remote_state.type || '') != 'video' || !music_remote_state.file) {
+		music_remote_watch = null;
+		music_remote_watch_key = '';
+		return;
+	}
+	var at = Math.max(0, Math.floor(parseFloat(music_remote_state.display) || parseFloat(music_remote_state.currentTime) || 0));
+	var origin = music_remote_state.remote_uuid || musicRemoteTarget();
+	var key = music_remote_state.file + '#' + at + '@' + origin;
+	if (key === music_remote_watch_key) { return; }
+	music_remote_watch_key = key;
+	var url = '/file_open?file=' + encodeURIComponent(music_remote_state.file) +
+		'&thumb=ya&position=' + at + '&remote_uuid=' + encodeURIComponent(origin);
+	var img = new Image();
+	img.onload = function () {
+		if (music_remote_watch_key !== key) { return; }
+		var c = document.createElement('canvas');
+		c.width = img.naturalWidth || img.width || 0;
+		c.height = img.naturalHeight || img.height || 0;
+		if (!c.width || !c.height) { return; }
+		c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+		try {
+			music_remote_watch = {
+				image: c.toDataURL('image/png'),
+				ratio: c.width / c.height,
+				width: c.width,
+				height: c.height
+			};
+		}
+		catch (e) { music_remote_watch = null; }
+	};
+	img.onerror = function () {
+		if (music_remote_watch_key === key) { music_remote_watch = null; }
+	};
+	img.src = url;
 }
 // The full-screen control belongs to the machine whose face this window wears:
 // a press tells the host to fill its screen and the next one brings it back.
@@ -3115,15 +3169,25 @@ function musicRemotePlayItem(item) {
 	// closed window or another list on screen), so the row starts inside the
 	// queue rather than alone and still advances at its end.
 	var files = [];
+	var origin = '';
+	var mixed = false;
 	if (typeof tree == 'object' && tree && tree.all_songs) {
 		for (var i = 0; i < tree.all_songs.length; i++) {
 			var entry = tree.all_songs[i];
-			if (entry && entry.file) { files.push(entry.file); }
+			if (entry && entry.file) {
+				files.push(entry.file);
+				if (!entry.remote_uuid) { mixed = true; }
+				else if (!origin) { origin = entry.remote_uuid; }
+				else if (origin !== entry.remote_uuid) { mixed = true; }
+			}
 		}
 	}
 	musicRemoteApplyPlaying(musicKey(item), file);
 	var data = { file: file };
 	if (files.length) { data.files = JSON.stringify(files); data.same_order = 1; }
+	// a remoted library's whole queue shares one origin; name it so the host
+	// can open the queue from that peer when its own list is not holding the row
+	if (files.length && !mixed && origin) { data.remote_uuid = origin; }
 	musicRemoteSend('play_track', data);
 }
 // A track named from a controller. The host's queue is already on screen (or is
@@ -3134,12 +3198,14 @@ function musicRemotePlayItem(item) {
 var music_play_track_pending = '';
 var music_play_track_queue = null;
 var music_play_track_order = 0;
-function musicPlayTrack(file, files, same_order) {
+var music_play_track_origin = '';
+function musicPlayTrack(file, files, same_order, remote_uuid) {
 	file = String(file || '');
 	if (!file) { return false; }
 	if (musicTransportReady() && musicEntryByFile(file)) {
 		music_play_track_pending = '';
 		music_play_track_queue = null;
+		music_play_track_origin = '';
 		thisTrack(file);
 		mediaMaker();
 		return true;
@@ -3147,6 +3213,7 @@ function musicPlayTrack(file, files, same_order) {
 	music_play_track_pending = file;
 	music_play_track_queue = (files && files.length) ? files : null;
 	music_play_track_order = same_order ? 1 : 0;
+	music_play_track_origin = String(remote_uuid || '');
 	if (!$('#music').length && typeof musicToggle === 'function') { musicToggle(); }
 	musicPlayTrackFlush();
 	return true;
@@ -3159,14 +3226,17 @@ function musicPlayTrackFlush() {
 		// queue at it rather than doing nothing or starting it alone
 		var files = music_play_track_queue;
 		var order = music_play_track_order;
+		var origin = music_play_track_origin;
 		music_play_track_pending = '';
 		music_play_track_queue = null;
-		if (files && files.length) { musicToggle(files, order, file); return; }
+		music_play_track_origin = '';
+		if (files && files.length) { musicToggle(files, order, file, origin); return; }
 		musicToggle([file], 1);
 		return;
 	}
 	music_play_track_pending = '';
 	music_play_track_queue = null;
+	music_play_track_origin = '';
 	thisTrack(file);
 	mediaMaker();
 }
@@ -3174,6 +3244,12 @@ function musicPlayTrackFlush() {
 // machine's own player, exactly as the panel would have done it here.
 function musicSettingApply(setting, value) {
 	setting = String(setting || '');
+	if (setting == 'library') {
+		// the host's own window now looks at the chosen library; a remote one
+		// relays to that peer, so the host plays the remoted tracks
+		searchMusic({ library: String(value || 'local') });
+		return;
+	}
 	if (setting == 'normalize') {
 		music_normalize = String(value || 'off');
 		$('#music').attr('normalize', music_normalize);
@@ -3525,6 +3601,8 @@ function playerCacheSaver(type, force) {
 			// the track's own label, so a controller names it as this window does;
 			// a bare file would otherwise show its whole name
 			title: current_entry ? (current_entry.display_track || current_entry.song || '') : '',
+			// a track from a remoted library lives on that peer, not on this one
+			remote_uuid: current_entry ? (current_entry.remote_uuid || '') : '',
 			volume: musicVolumeLevel(), 
 			muted: music_muted, 
 			state: tree.sound.state, 
@@ -5922,6 +6000,10 @@ function searchMusic(data) {
 	var new_settings = data['new_settings'];
 	var source = data['source'];
 	var library = data['library'];
+	// a controller showing a peer's library keeps its own shell: the library is
+	// not written onto this machine, and the select can name the chosen value
+	var keep_library = data['keep_library'] ? 1 : 0;
+	var select_library = data['select_library'];
 	// A remote view asks the host for its own window: its saved search, artists,
 	// albums and queue come back, and this machine's now-playing is not sent.
 	var remote_view = data['remote_view'] ? 1 : 0;
@@ -5976,6 +6058,7 @@ function searchMusic(data) {
 			search: search, 
 			window_maker: 'yes', 
 			library: library,
+			keep_library: keep_library,
 			folders: folders, 
 			artist: artist, 
 			album: album, 
@@ -6068,7 +6151,10 @@ function searchMusic(data) {
 			if (remoteTargetAtSearch) { $('#music').attr('remote_target', remoteTargetAtSearch); }
 			// a remote render brings the host's configuration panel; keep the
 			// controller's own library choice in its select
-			if (library !== undefined && $('#music_library_select').length) {
+			if (select_library !== undefined) {
+				$('#music_library_select').val(select_library);
+			}
+			else if (library !== undefined && $('#music_library_select').length) {
 				$('#music_library_select').val(library || 'local');
 			}
 			musicTitleFit();
@@ -6282,16 +6368,19 @@ $(document).on('change', '#music_library_select', function() {
 	// switches the window's control to it, rather than dropping the session
 	// and showing a list nothing is driving. Local and None leave remote mode.
 	var target = musicRemoteTarget();
-	if (library && library !== 'local' && library !== 'none') {
-		if (library !== target) { musicRemoteChoose(library); return; }
-		searchMusic({ library: library, remote_view: 1 });
-		return;
-	}
 	if (target) {
-		$('#music').attr('remote_target', '');
-		$.post('/music/remote_target', { target: '', scope: 'window' });
-		musicRemoteSnapshotRestore();
-		musicRemotePaint();
+		// The face of a peer's Music app changes that machine's library, not this
+		// window's: the controlled player looks at the remoted library and plays
+		// its tracks. This window keeps its own shell and remote target.
+		$.post('/music/remote_setting', { target: target, setting: 'library', value: library });
+		if (library && library !== 'local' && library !== 'none') {
+			searchMusic({ library: library, keep_library: 1 });
+		}
+		else {
+			// ask the controlled machine for its own window (its local or none list)
+			searchMusic({ library: target, remote_view: 1, keep_library: 1, select_library: library });
+		}
+		return;
 	}
 	if (library === 'local') { musicRemoteLocalViewRestore(); return; }
 	searchMusic({ library: library });

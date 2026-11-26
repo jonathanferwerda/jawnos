@@ -41,6 +41,15 @@ function jpWatcher() {
 		var image = vcanvas.toDataURL('image/png');
 		returner['we'] = { 'image': image, 'ratio': ratio, 'width': canvas.width, 'height': canvas.height };
 	}
+	if (typeof advertise_watching !== 'undefined' && advertise_watching == 'on'
+		&& typeof music_remote_watch === 'object' && music_remote_watch && music_remote_watch.image) {
+		returner['music_remote'] = {
+			image: music_remote_watch.image,
+			ratio: music_remote_watch.ratio,
+			width: music_remote_watch.width,
+			height: music_remote_watch.height
+		};
+	}
 	return returner;
 }
 

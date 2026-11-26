@@ -95,6 +95,9 @@ sub music_transport_state {
 		file => $file,
 		key => ($player->{'key'} || ''),
 		title => $title,
+		# the file's own origin: a remoted library's track is on that peer, so a
+		# controller's seek preview asks the peer that holds it
+		remote_uuid => ($player->{'remote_uuid'} || ''),
 		# whether the peer's player has a picture, so a controller can offer a
 		# seek preview without holding the file itself
 		type => ($player->{'type'} || ''),
@@ -120,7 +123,8 @@ sub music_transport_local($action, $opts = {}) {
 				'musicPlayFiles',
 				$files,
 				$opts->{'same_order'} ? 1 : 0,
-				($opts->{'key'} || '')
+				($opts->{'key'} || ''),
+				($opts->{'remote_uuid'} || '')
 			)
 		});
 		return 1;
@@ -150,7 +154,8 @@ sub music_transport_local($action, $opts = {}) {
 				'musicPlayTrack',
 				$file,
 				$files,
-				($opts->{'same_order'} ? 1 : 0)
+				($opts->{'same_order'} ? 1 : 0),
+				($opts->{'remote_uuid'} || '')
 			)
 		});
 		return 1;
@@ -181,17 +186,25 @@ sub music_transport_local($action, $opts = {}) {
 }
 
 # The settings a controller may change on the machine it is controlling. A
-# whitelist, not a filter: `library` would move the host's own library, and
-# `remote_target` would make the host try to control a third machine.
-my %music_remote_setting = map { $_ => 1 } qw(normalize video equalizer subtitles);
+# whitelist, not a filter: `library` may be moved to this machine's own library
+# or to an active peer (the controlled player then relays that remoted
+# library), while `remote_target` is left out so a host cannot be made to
+# control a third machine.
+my %music_remote_setting = map { $_ => 1 } qw(normalize video equalizer subtitles library);
 
 sub music_remote_setting_write($setting, $value) {
 	return 0 unless defined $setting && $music_remote_setting{$setting};
-	&subs::setting_setter({ app => 'music', setting => $setting, value => (defined $value ? $value : '') });
-	# The setting is data in the host's database; the player in its browser is
-	# what has to hear it now. This console command applies it without a reload.
+	my $clean = defined $value ? $value : '';
+	# The library may be moved to this machine's own library or to another
+	# reachable peer. It is not arbitrary text: the peer is the machine the
+	# controlled player will relay the tracks from.
+	if ($setting eq 'library') {
+		$clean = 'local' unless length $clean;
+		return 0 unless $clean =~ /^(?:local|none)$/ || &music_remote_row($clean);
+	}
+	&subs::setting_setter({ app => 'music', setting => $setting, value => $clean });
 	&Websocket::send('server', {
-		console => &Websocket::console_command('musicSettingApply', $setting, defined $value ? $value : '')
+		console => &Websocket::console_command('musicSettingApply', $setting, $clean)
 	});
 	return 1;
 }
@@ -239,6 +252,7 @@ Manager::app->routes->post('/music/transport' => sub ($c) {
 		files => $files,
 		same_order => ($c->param('same_order') ? 1 : 0),
 		key => ($c->param('key') || ''),
+		remote_uuid => ($c->param('remote_uuid') || ''),
 		percent => $c->param('percent'),
 		value => $c->param('value'),
 		file => $c->param('file')
