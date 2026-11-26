@@ -60,18 +60,55 @@ sub action_92002 {
 	my $app = &subs::unformat_name($c->param('app')) || '__president';
 	my $cadence = $c->param('cadence');
 	$cadence = 'off' unless defined $cadence && length $cadence;
-	my $days = $c->param('days');
-	if (defined $days) {
+	my $days_param = $c->param('days');
+	my $write_error;
+	my $write_value;
+	if (defined $days_param) {
 		my %seen;
-		my @keep = grep { !$seen{$_}++ } grep { /^[0-6]$/ } split /,/, $days;
-		my $value = @keep ? join(',', @keep) : 'none';
-		eval { &subs::setting_setter({ app => $app, setting => 'nightly_evaluation_days', value => $value }) };
+		my @keep = sort { $a <=> $b } grep { !$seen{$_}++ } grep { /^[0-6]$/ } split /,/, $days_param;
+		$write_value = @keep ? join(',', @keep) : 'none';
+		# Read the setting back before arranging the schedule. A failed write must
+		# stop here: applying the cadence against the old days is exactly the drift
+		# the single request exists to prevent.
+		my $saved = eval {
+			&subs::setting_setter({ app => $app, setting => 'nightly_evaluation_days', value => $write_value });
+			&subs::setting_grabber({ app => $app, setting => 'nightly_evaluation_days' });
+		};
+		if ($@ || !defined $saved) { $write_error = 'Could not save the evaluation days.'; }
+		else {
+			my @saved = sort { $a <=> $b } grep { /^[0-6]$/ } split /,/, $saved;
+			my $saved_value = @saved ? join(',', @saved) : 'none';
+			$write_error = 'Could not save the evaluation days.' unless $saved_value eq $write_value;
+		}
+	}
+	# The days answer is the normalised wish the row should show: a blank legacy
+	# value is every day, and the literal none is no day at all.
+	my $current_days = eval { &subs::setting_grabber({ app => $app, setting => 'nightly_evaluation_days' }) };
+	my $none = (defined $current_days && $current_days =~ /^\s*none\s*$/i) ? 1 : 0;
+	my @shown = $none ? () : sort { $a <=> $b } grep { /^[0-6]$/ } split /,/, (defined $current_days ? $current_days : '');
+	@shown = ( 0 .. 6 ) unless $none || @shown;
+	my $days_answer = @shown ? join(',', @shown) : 'none';
+	if ($write_error) {
+		$c->render(json => {
+			ok      => 0,
+			error   => $write_error,
+			app     => $app,
+			cadence => &subs::evaluation_cadence($app),
+			days    => $days_answer,
+		});
+		return;
 	}
 	my $schedule = &subs::evaluation_cadence_apply($app, $cadence);
+	# After applying, the stored days are the ones the fresh schedule read.
+	my $after = eval { &subs::setting_grabber({ app => $app, setting => 'nightly_evaluation_days' }) };
+	my $after_none = (defined $after && $after =~ /^\s*none\s*$/i) ? 1 : 0;
+	my @after_days = $after_none ? () : sort { $a <=> $b } grep { /^[0-6]$/ } split /,/, (defined $after ? $after : '');
+	@after_days = ( 0 .. 6 ) unless $after_none || @after_days;
 	$c->render(json => {
 		ok       => 'yes',
 		app      => $app,
 		cadence  => &subs::evaluation_cadence($app),
+		days     => (@after_days ? join(',', @after_days) : 'none'),
 		next_run => $schedule ? $schedule->{'next_run'} : undef,
 	});
 }

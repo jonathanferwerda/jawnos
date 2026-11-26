@@ -324,6 +324,14 @@ sub intelligence_evaluations {
 	foreach my $app ( sort keys %scope ) {
 		my $cadence = eval { &subs::evaluation_cadence($app) } || 'off';
 		my $days = eval { &subs::nightly_evaluation_days($app) } || [];
+		# A blank legacy value means every day, and a literal none means no day.
+		# The picker must show those truths too, or a blank setting would look like
+		# an empty week while the cron still ran nightly.
+		my $raw_days = eval { &subs::setting_grabber({ app => $app, setting => 'nightly_evaluation_days' }) };
+		my $days_none = (defined $raw_days && $raw_days =~ /^\s*none\s*$/i) ? 1 : 0;
+		my @day_list = grep { /^[0-6]$/ } @{ ref $days eq 'ARRAY' ? $days : [] };
+		my $days_all = (!$days_none && (!@day_list || @day_list == 7)) ? 1 : 0;
+		@day_list = ( 0 .. 6 ) if $days_all;
 
 		my $runs = [];
 		my $raw = eval { &subs::setting_grabber({ app => $app, setting => 'evaluation_runs' }) };
@@ -368,7 +376,9 @@ sub intelligence_evaluations {
 			scope          => $app,
 			label          => ($app eq '__president') ? 'Whole house' : $app,
 			cadence        => $cadence,
-			days           => [ grep { /^[0-6]$/ } @{ ref $days eq 'ARRAY' ? $days : [] } ],
+			days           => \@day_list,
+			days_all       => $days_all,
+			days_none      => $days_none,
 			next_run       => (defined $next_run && $next_run =~ /^\d+$/) ? $next_run + 0 : undef,
 			next_run_text  => (defined $next_run && $next_run =~ /^\d+$/) ? $_time_text->($next_run * 1000) : '',
 			last_run       => {

@@ -129,10 +129,21 @@ function intelligenceCadenceSave(scope, cadence, days) {
 		dataType: 'json',
 		data: payload,
 		success: function(response) {
-			var now = (response && response.cadence) ? response.cadence : cadence;
 			var row = $('#intelligence .intelligence_cadence').filter(function() {
 				return $(this).attr('data-scope') === scope;
 			}).first().closest('tr');
+			if (response && typeof response.days !== 'undefined') {
+				var keep = String(response.days).split(',').filter(function(v) { return v !== '' && v !== 'none'; });
+				row.find('.intelligence_days option').each(function() {
+					$(this).prop('selected', keep.indexOf($(this).val()) >= 0);
+				});
+			}
+			if (response && (response.ok === 0 || response.ok === 'no')) {
+				if (response.cadence) { row.find('.intelligence_cadence').val(response.cadence); }
+				intelligenceNote(response.error || jawnosT('Could not change the evaluation frequency.'));
+				return;
+			}
+			var now = (response && response.cadence) ? response.cadence : cadence;
 			row.find('.intelligence_cadence').val(now);
 			row.find('.intelligence_days').prop('disabled', !(now === 'daily' || now === 'weekly'));
 			var next = row.find('.intelligence_next_run').first();
