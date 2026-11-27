@@ -295,13 +295,16 @@ our %manager_app_entry = (
 # its own click handler inside its script. The first click therefore has to be
 # caught in core, the chunk loaded, and the click replayed so the app's own
 # handler (or the core Handbook handler for Marker/Terminal/Twirl) runs. The
-# key is the element's id or a class name; lazy.js checks both.
+# key is the element's id or a class name; lazy.js checks both. search_toggle
+# is the dock's magnifier beside #search: it lives outside the start menu but
+# opens the same Search app, so core must load that chunk on its first press.
 our %manager_toggle_apps = (
 	synth_toggle => 'synth', studio_toggle => 'studio', marker_toggle => 'marker',
 	terminal_toggle => 'terminal', travel_toggle => 'travel', twirl_toggle => 'twirl',
 	pipedream_toggle => 'pipedream', minesweeper_toggle => 'minesweeper',
 	editor_toggle => 'editor', relational_toggle => 'relational', people_toggle => 'people',
-	notes_toggle => 'notes', notifications_toggle => 'notifications', search_app_toggle => 'search', camera_toggle => 'camera', scan_toggle => 'scan',
+	notes_toggle => 'notes', notifications_toggle => 'notifications', search_app_toggle => 'search',
+	search_toggle => 'search', camera_toggle => 'camera', scan_toggle => 'scan',
 	network_toggle => 'network', phone_toggle => 'phone', ide_toggle => 'ide',
 	budget => 'budget', warehouse_toggle => 'warehouse', measures_toggle => 'measures',
 	market_toggle => 'market', process_monitor_toggle => 'process_monitor',

@@ -138,6 +138,12 @@ foreach my $key (sort keys %toggle) {
 	ok($apps{ $toggle{$key} }, "toggle $key maps to the lazy app $toggle{$key}");
 }
 
+# The dock's magnifier beside #search is outside the start menu, but its core
+# click handler calls window.jawnosSearchAppOpen, which search.js defines. If
+# the token is not in this map the first press finds no function and does
+# nothing, so pin it to the Search app's chunk.
+is($toggle{'search_toggle'}, 'search', 'the dock magnifier lazy-loads the Search app');
+
 # --- every split is an index plus numbered parts -----------------------------
 my @split_dirs = sort grep { -d } glob("$root/public/js/manager/*/");
 my $splits = 0;
