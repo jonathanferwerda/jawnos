@@ -1323,7 +1323,13 @@ sub _start_transcript {
 	# server does not make that transcript arrive.
 	eval { &subs::whisper_server_wanted(1) };
 	my $python   = eval { &subs::whisper_python() } || '';
-	my $model    = eval { &subs::whisper_models_dir() } || '';
+	# The screened call's transcription role names which service reads it. Only
+	# this machine's own engine can read a live call, so a role pointing at a
+	# cloud model or the phone's recogniser falls back to the base model and the
+	# note says so (the pane shows it under the live transcript).
+	my ($model, $model_note) = eval { &subs::whisper_stream_model('ivr') };
+	$model = eval { &subs::whisper_models_dir() } || '' unless defined $model && length $model;
+	$self->{'transcript_note'} = $model_note if defined $model_note && length $model_note;
 	my $streamer = eval { &subs::whisper_streamer() } || '';
 	unless (-x $python && length $model && -f $streamer) {
 		$self->{'transcript_note'} = 'whisper.cpp is installed but its streamer or model is missing';

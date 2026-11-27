@@ -19,6 +19,7 @@
 		[ 'transcription_guide',    'Transcription · Help guide',         'audio', 1 ],
 		[ 'transcription_watch',    'Transcription · T-Watch clips',      'audio' ],
 		[ 'transcription_teletype', 'Transcription · T-Deck clips',       'audio' ],
+		[ 'transcription_ivr',      'Transcription · screened calls',     'audio' ],
 	);
 	my $role_settings = &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @roles ] });
 	my $catalogue = &subs::ai_model_catalogue();
@@ -151,8 +152,8 @@
 			# offered when this machine has it, or when a house machine that advertises
 			# it can run the Crew's whisper.transcribe job (a phone cannot run the
 			# wheel, but the house can).
-			my $whisper_local = $setting eq 'transcription_assistant' && &subs::whisper_available();
-			my $whisper_house = $setting eq 'transcription_assistant' && !$whisper_local && &subs::whisper_house_available();
+			my $whisper_local = ($setting eq 'transcription_assistant' || $setting eq 'transcription_ivr') && &subs::whisper_available();
+			my $whisper_house = ($setting eq 'transcription_assistant' || $setting eq 'transcription_ivr') && !$whisper_local && &subs::whisper_house_available();
 			my $whisper_here = ($whisper_local || $whisper_house) ? 1 : 0;
 			if ($whisper_here) {
 				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0,

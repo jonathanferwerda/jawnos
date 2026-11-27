@@ -1260,7 +1260,12 @@ sub ai_role_thinking_effective {
 sub ai_role_models {
 	my ($role) = @_;
 	my $primary = &subs::setting_grabber({ app => 'mail', setting => $role });
+	# a role set house-wide from another machine answers when this one has no row
+	$primary = &subs::setting_grabber({ app => 'mail', setting => $role, device => 'all' })
+		unless defined $primary && length $primary;
 	my $fallback = &subs::setting_grabber({ app => 'mail', setting => $role . '_fallback' });
+	$fallback = &subs::setting_grabber({ app => 'mail', setting => $role . '_fallback', device => 'all' })
+		unless defined $fallback && length $fallback;
 	return (defined $primary ? $primary : '', defined $fallback ? $fallback : '');
 }
 

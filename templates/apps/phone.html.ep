@@ -420,6 +420,24 @@
 				<div class="phone_app_ivr_flows_title"><%= &subs::ui('Flows') %></div>
 				<div class="phone_app_ivr_flow_list" id="phone_ivr_flow_list"></div>
 				<button type="button" class="phone_app_ivr_save" id="phone_ivr_flow_add" hint="Add flow"><%= &subs::ui('Add flow') %></button>
+				<%# Which service reads the caller's words. A screened call is read on
+				    the gateway, so whisper.cpp is the only local choice; a cloud model
+				    is kept and named, and the gateway says under the transcript that it
+				    fell back to the base model. Empty follows the shared transcription
+				    choice in Configure / Plat. %>
+				<% my $transcription_now = defined $ivr->{'transcription'} ? $ivr->{'transcription'} : '';
+				   my $transcription_seen = 0; %>
+				<label><%= &subs::ui('Transcription') %>
+					<select id="phone_ivr_transcription" hint="Transcription for screened calls">
+						<option value=""<%= $transcription_now eq '' ? ' selected' : '' %>><%= &subs::ui('Follow the shared transcription choice') %></option>
+						<% foreach my $choice (@{ $ivr->{'transcription_choices'} || [] }) { my $value = $choice->{'value'} || ''; my $current = ($transcription_now eq $value); $transcription_seen = 1 if $current; %>
+							<option value="<%= $value %>"<%= $current ? ' selected' : '' %>><%= $choice->{'label'} || $value %></option>
+						<% } %>
+						<% if (length($transcription_now) && !$transcription_seen) { %>
+							<option value="<%= $transcription_now %>" selected><%= $transcription_now %> (<%= &subs::ui('kept') %>)</option>
+						<% } %>
+					</select>
+				</label>
 			</div>
 			<%# The messages live in the Voicemail pane; this line keeps them one
 			    press away while the flows are being edited, with their count. %>

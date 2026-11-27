@@ -94,6 +94,11 @@ sub action_23201 {
 	# The pane's status line says which audio backend carries the gateway's call
 	# and whether it is ready; a not-ready gateway says why instead of pretending.
 	&_ivr_audio_state($ivr, $ivr->{'machine'});
+	# The transcription role a screened call reads with, and the services the pane
+	# may name. Both are display data on the settings hash the pane already
+	# receives, so a page rendered without them still draws.
+	$ivr->{'transcription'} = &subs::setting_grabber({ app => 'mail', setting => 'transcription_ivr' }) || '';
+	$ivr->{'transcription_choices'} = &_ivr_transcription_choices();
 	# a row says so itself when any of its lines is on the desk's list, and each
 	# line carries its own reading (the number, its type, whether it is blocked) so
 	# the template joins them without walking the tuples itself
@@ -331,6 +336,7 @@ sub action_24760 {
 		flows     => $c->param('flows'),
 		flow_defs => $c->param('flow_defs'),
 		flow_order => $c->param('flow_order'),
+		transcription => $c->param('transcription'),
 		machines  => $c->param('machines'),
 	});
 	# The reception is the house's: hand the same save to the peers now, so the
@@ -561,6 +567,32 @@ sub _ivr_audio_state {
 	$ivr->{'ready'} = $ready ? 1 : 0;
 	$ivr->{'ready_note'} = $ready ? '' : ($why || 'the audio backend is not ready');
 	return $ivr;
+}
+
+# The services the IVR pane can name for a screened call's transcription. The
+# gateway reads a live call with whisper.cpp, so that engine is offered when this
+# machine or a house peer has it; a cloud transcription model is offered when its
+# provider already has a key on file. The live model lists (Ollama, Cloudflare)
+# are not read here - a pane that opened on a tab press must not wait on a
+# network probe - so a value chosen on the Plat page is kept by its own label.
+sub _ivr_transcription_choices {
+	my @choices;
+	push @choices, { value => 'local:whisper.cpp', label => 'whisper.cpp' }
+		if eval { &subs::whisper_house_available() };
+	foreach my $provider ( @{ &subs::ai_providers() } ) {
+		my $id = $provider->{'id'} || '';
+		next unless length $id;
+		next unless &subs::ai_provider_registered($provider);
+		foreach my $name ( @{ $provider->{'models'} || [] } ) {
+			my @caps = &subs::ai_model_caps($id, $name);
+			next unless grep { $_ eq 'audio' } @caps;
+			push @choices, {
+				value => $id . ':' . $name,
+				label => ($provider->{'label'} || $id) . ' · ' . $name,
+			};
+		}
+	}
+	return \@choices;
 }
 
 # POST /manager/phone/lines

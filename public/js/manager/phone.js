@@ -376,7 +376,8 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 			hold: receptionist.hold || '',
 			flows: JSON.stringify(flows),
 			flow_defs: JSON.stringify(defs),
-			flow_order: JSON.stringify(jawnPhoneFlowSaveOrder())
+			flow_order: JSON.stringify(jawnPhoneFlowSaveOrder()),
+			transcription: $('#phone_app #phone_ivr_transcription').val() || ''
 		},
 		success: function (res) {
 			if (res && res.ok) {

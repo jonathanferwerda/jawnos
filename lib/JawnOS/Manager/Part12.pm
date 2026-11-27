@@ -723,6 +723,16 @@ sub phone_ivr_save($params) {
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}), device => 'all' });
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flow_defs', value => encode_json($next->{'flow_defs'}), device => 'all' });
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_machines', value => encode_json($next->{'machines'}), device => 'all' });
+	# Which service reads a screened call's words. It is a transcription role, not
+	# a phone setting, so it lands in the same mail rows the Plat page edits; an
+	# empty value clears the surface row and hands the call back to the shared
+	# transcription choice.
+	if (defined $params->{'transcription'}) {
+		my $value = $params->{'transcription'};
+		$value =~ s/^\s+|\s+$//g;
+		$value = substr($value, 0, 200);
+		&subs::setting_setter({ app => 'mail', setting => 'transcription_ivr', value => $value, device => 'all' });
+	}
 	$next->{'caller_warnings'} = \@caller_warnings;
 	return $next;
 }

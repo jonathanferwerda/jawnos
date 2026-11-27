@@ -537,6 +537,11 @@ sub transcription_role_for {
 	return 'transcription_assistant' unless length $consumer;
 	my $role = 'transcription_' . $consumer;
 	my $chosen = &subs::setting_grabber({ app => 'mail', setting => $role });
+	# A surface whose reader may be another machine - the screened call's gateway,
+	# a clip that lands on whichever manager receives it - is set house-wide from
+	# the phone pane (device 'all'). The machine's own row still wins when it has one.
+	$chosen = &subs::setting_grabber({ app => 'mail', setting => $role, device => 'all' })
+		unless defined $chosen && length $chosen;
 	return (defined $chosen && length $chosen) ? $role : 'transcription_assistant';
 }
 
@@ -547,6 +552,32 @@ sub transcription_role_for {
 sub transcription_service_is_client {
 	my ($service) = @_;
 	return (defined $service && $service eq 'android:oem') ? 1 : 0;
+}
+
+# The model a screened call's live reader loads. The gateway runs
+# scripts/whisper_stream.py, so only the local engine can answer a call here:
+# a role naming a cloud model or the phone's own recogniser is read as no role
+# at all (the base model, as before) and the note says why. The surface's own
+# row (transcription_ivr) wins once the Plat page or the Phone pane sets it;
+# until then the shared transcription_assistant row answers. A role that names
+# whisper.cpp gets the concrete installed file, so the streamer never has to
+# choose a model from the directory itself. Returns (path, note); the note is
+# '' when nothing needs explaining.
+sub whisper_stream_model {
+	my ($consumer) = @_;
+	$consumer = 'ivr' unless defined $consumer && length $consumer;
+	my $role = &transcription_role_for($consumer);
+	my ($primary, $fallback) = &ai_role_models($role);
+	my @named = grep { defined $_ && length $_ } ($primary, $fallback);
+	my $base = &whisper_model_file('base');
+	$base = &whisper_model_file('tiny') unless length $base;
+	$base = &whisper_models_dir() unless length $base;
+	foreach my $value (@named) {
+		next unless &transcribe_local_engine($value);
+		return ($base, '');
+	}
+	return ($base, '') unless @named;
+	return ($base, $named[0] . ' cannot read a call on this gateway; using the base model');
 }
 
 sub whisper_transcribe {
