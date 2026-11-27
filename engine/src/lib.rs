@@ -31,6 +31,9 @@ pub mod pipewire_guard;
 pub mod plan;
 pub mod playback;
 pub mod proto;
+// PCM the app pushes in for a BLE microphone (T-Watch/T-Deck). Always
+// compiled: it needs no device backend, only the bounded ring in this module.
+pub mod pushed;
 pub mod reverb;
 pub mod roundtrip;
 pub mod sender;
@@ -95,6 +98,7 @@ pub use capture::{
     live_ring, start_hardware, start_source, CaptureHandle, LiveConsumer, LiveProducer, LiveSource,
     synthetic_sample, SyntheticSource, WindowReport, LIVE_RING_FRAMES,
 };
+pub use pushed::{PushedSource, PushError, PUSHED_RING_FRAMES};
 pub use sender::{
     run_send_live, run_send_live_with_source, run_send_take, validate_live, validate_send, LiveSender,
     LiveSpec, SendSpec, SenderReport, TakeBlock, TakeSender, ValidatedLive, ValidatedSend,

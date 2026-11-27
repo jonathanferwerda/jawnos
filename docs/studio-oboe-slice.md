@@ -30,11 +30,48 @@ Evidence gathered on this machine:
 | `cargo test --offline -j 2 -- --test-threads=1` | green |
 | `perl scripts/build_engine.pl --android --out-dir ...` with the NDK | green; staged `libjawn_audio.so` |
 | Cross-compiled artifact | `arm64-v8a/libjawn_audio.so`, 963,096 bytes, ELF aarch64, **for Android 26**, built by NDK r30; `NEEDED` only `liblog.so`, `libOpenSLES.so`, `libdl.so`, `libm.so`, `libc.so` (the C++ runtime is static) |
-| Exported C ABI | `jawn_audio_start`, `jawn_audio_stop`, `jawn_audio_status`, `jawn_audio_free` |
+| Exported C ABI | `jawn_audio_start`, `jawn_audio_stop`, `jawn_audio_status`, `jawn_audio_free`; the pushed-PCM exports below are additive and compiled without the `oboe` feature |
 
 The Linux/suite contract is `t/428-oboe-backend.t`: `oboe:false`, the prose
 sentence, and the rebuild refusal. The feature-on build is a compile check on
 Linux and a real stream only on the phone (section 9).
+
+### 0.0 Pushed PCM — a BLE microphone (2026-11-27)
+
+`engine/src/pushed.rs` adds a `PushedSource` and its C ABI. It is always
+compiled (no feature, no new dependency) and is the seam the T-Watch/T-Deck
+audio will use: the app decodes a BLE chunk to mono `i16` at the source's own
+rate and pushes it, and an in-engine recogniser drains it exactly like a
+capture device. It is useful without sherpa — the ring and its tests are plain
+`std`.
+
+```c
+int      jawn_audio_pushed_open(uint32_t rate);                 /* 0, or negative */
+int      jawn_audio_push_pcm(const int16_t *samples, uint32_t count,
+                             uint32_t rate);
+int      jawn_audio_pushed_read(int16_t *out, uint32_t capacity);
+int      jawn_audio_pushed_rate(void);                          /* Hz, or negative */
+uint64_t jawn_audio_pushed_overwritten(void);                   /* evicted frames */
+int      jawn_audio_pushed_close(void);
+```
+
+- **Rate.** The rate passed to `open` is the rate the chunks were decoded at.
+  `capture::start_source` refuses a live source at any other rate
+  (`engine/src/capture.rs:462`), and `push_pcm` returns `-3`
+  (`PUSH_ERR_RATE`) for a mismatched `rate`. Nothing is resampled.
+- **Overflow.** The ring is bounded (`PUSHED_RING_FRAMES`, 16 384 frames by
+  default, 341 ms at 48 kHz). A push that overruns it evicts the oldest unread
+  frames, adds them to the `overwritten` counter, and returns the whole block's
+  frame count — the newest audio survives.
+- **Status codes.** `0` success; `-1` no source started (`PUSH_ERR_ABSENT`);
+  `-2` null pointer (`PUSH_ERR_NULL`); `-3` rate mismatch (`PUSH_ERR_RATE`);
+  `-4` already started (`PUSH_ERR_STARTED`); `-5` zero rate
+  (`PUSH_ERR_RATE_ZERO`); `-6` count too large (`PUSH_ERR_COUNT`). A push
+  before `open` returns `-1`; it never dereferences the pointer or crashes.
+- **One target.** Like the one take in `control.rs`, a process installs one
+  pushed source and the ABI carries no handle. `jawn_audio_pushed_read` drains
+  oldest-first without waiting; `LiveSource::read` (used by `start_source`)
+  waits up to 500 ms for frames, so an attached take ends on upstream silence.
 
 ## 0.1 The Oboe crate API this slice uses
 
