@@ -24,7 +24,7 @@
 #define VOICE_LEAD_MS 2000           // a wake capture with no command at all gives up after this much quiet
 #define VOICE_BLE_CHUNK 384          // base64 chars per notify; with the "<i>/<n>:" prefix and the JSON head this stays under the MTU-3 notify limit
 #define VOICE_BLE_PACE_MS 45         // between parts: ~one per connection interval, so the controller queue does not overflow and drop parts
-#define VOICE_SAMPLE_RATE 8000       // half the mic's rate: half the clip to ship
+#define VOICE_SAMPLE_RATE 8000       // the BLE/live-stream rate: half the mic's, for the slow path
 
 // The frame RMS a wake capture holds above once the voice has stopped: the room's
 // own level - measured by voice_ambient_rms while nothing was being captured -
@@ -302,9 +302,12 @@ static void voice_b64_append(String &out, const uint8_t *p, unsigned len) {
 // unpaced burst is what leaves parts missing). Runs on the sender task only - the
 // capture task never waits on the radio.
 static void voice_stream_send(bool last) {
+  // The live stream is always the folded 8 kHz copy, whatever the whole-file
+  // path does, so its header rate is fixed at 8000 - and a watch that predates
+  // the field simply omits it, which the server reads as 8000 as well.
   String msg = "{\"type\":\"voice_stream\",\"chip_id\":\"" + chip_id_maker()
     + "\",\"edt\":\"watch\",\"ts\":" + String((long)voice_clip_ts)
-    + ",\"voice\":\"" + voice_mode_name + "\",\"seq\":" + String(voice_stream_seq)
+    + ",\"voice\":\"" + voice_mode_name + "\",\"rate\":8000,\"seq\":" + String(voice_stream_seq)
     + ",\"last\":" + (last ? "1" : "0") + ",\"audio\":\"";
   voice_b64_append(msg, voice_spart, voice_spart_len);
   msg += "\"}";
@@ -443,13 +446,15 @@ static void voice_stream_abort() {
   voice_stream_dead = true;
 }
 
-static bool voice_compress_clip(const String &in_path, const String &out_path, bool fold_half) {
+static bool voice_compress_clip(const String &in_path, const String &out_path, bool fold_half, uint32_t rate) {
   File in = FFat.open(in_path.c_str(), FILE_READ);
   if (!in || in.size() <= 44) { if (in) { in.close(); } return false; }
   uint32_t pcm_bytes = in.size() - 44;
   uint32_t in_samples = pcm_bytes / 2;
-  // The listener has already folded its capture to 8 kHz; the Rec button records
-  // at the microphone's 16 kHz, so its memo is folded here (two samples -> one).
+  // fold_half is the caller's choice: the Rec memo records at the mic's 16 kHz
+  // and is folded here, while the listener hands over samples it has already
+  // chosen to fold or not. rate is the rate of the bytes after that choice, and
+  // the header below names it, so the file never disagrees with its samples.
   uint32_t samples = fold_half ? in_samples / 2 : in_samples;
   uint32_t blocks = (samples + VOICE_ADPCM_SPB - 1) / VOICE_ADPCM_SPB;
   uint32_t data_bytes = blocks * VOICE_ADPCM_BLOCK;
@@ -457,11 +462,11 @@ static bool voice_compress_clip(const String &in_path, const String &out_path, b
   uint8_t *buf = (uint8_t *)ps_malloc(total);
   if (!buf) { buf = (uint8_t *)malloc(total); }
   if (!buf) { in.close(); return false; }
-  uint32_t abps = (uint32_t)((uint64_t)VOICE_SAMPLE_RATE * VOICE_ADPCM_BLOCK / VOICE_ADPCM_SPB);
+  uint32_t abps = (uint32_t)((uint64_t)rate * VOICE_ADPCM_BLOCK / VOICE_ADPCM_SPB);
   memcpy(buf, "RIFF", 4); voice_wr32(buf + 4, total - 8); memcpy(buf + 8, "WAVE", 4);
   memcpy(buf + 12, "fmt ", 4); voice_wr32(buf + 16, 20);
   voice_wr16(buf + 20, 0x11); voice_wr16(buf + 22, 1);
-  voice_wr32(buf + 24, VOICE_SAMPLE_RATE); voice_wr32(buf + 28, abps);
+  voice_wr32(buf + 24, rate); voice_wr32(buf + 28, abps);
   voice_wr16(buf + 32, VOICE_ADPCM_BLOCK); voice_wr16(buf + 34, 4);
   voice_wr16(buf + 36, 2); voice_wr16(buf + 38, VOICE_ADPCM_SPB);
   memcpy(buf + 40, "fact", 4); voice_wr32(buf + 44, 4); voice_wr32(buf + 48, samples);

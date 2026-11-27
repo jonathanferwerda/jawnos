@@ -22,7 +22,7 @@ static void clock_apply_to_face();
 
 // The Rec button's memo ships with the voice helpers in jw_08/jw_09 but stops in
 // jw_07, so name them here for PlatformIO's .ino preprocessor.
-static bool voice_compress_clip(const String &in_path, const String &out_path, bool fold_half);
+static bool voice_compress_clip(const String &in_path, const String &out_path, bool fold_half, uint32_t rate);
 static bool voice_ship_clip(const String &path, long ts, const char *mode);
 
 // lv_label_set_text() frees and reallocates the label's text and invalidates the

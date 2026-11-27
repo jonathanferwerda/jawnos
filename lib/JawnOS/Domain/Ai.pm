@@ -828,10 +828,14 @@ sub voice_clip_fresh {
 sub adpcm_wav_wrap {
 	# The 60-byte header the watch's voice_compress_clip writes around these same
 	# blocks, rebuilt here because a streamed clip arrives without it: IMA ADPCM,
-	# 8 kHz mono, 1024-byte blocks of 2041 samples. ffmpeg reads it natively, so
-	# the streamed and whole-clip paths meet at the very same file.
-	my ($data) = @_;
-	my ($block, $spb, $rate) = (1024, 2041, 8000);
+	# mono, 1024-byte blocks of 2041 samples. ffmpeg reads it natively, so the
+	# streamed and whole-clip paths meet at the very same file. The rate is the
+	# clip's capture rate - 16 kHz when WiFi carried it, 8 kHz otherwise - and an
+	# absent rate means 8 kHz, so an older watch's stream stays byte-identical.
+	# The block layout is rate-independent; only this header follows the rate.
+	my ($data, $rate) = @_;
+	$rate = 8000 unless $rate;
+	my ($block, $spb) = (1024, 2041);
 	my $blocks = int(length($data) / $block);
 	my $samples = $blocks * $spb;
 	my $abps = int($rate * $block / $spb);

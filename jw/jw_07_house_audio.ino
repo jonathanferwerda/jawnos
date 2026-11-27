@@ -822,7 +822,9 @@ static void rec_voice_ship_task(void *pv) {
     // the Com clip holds the screen on while it is sent and waits for the Guide
     if (!note) { voiceShipping = true; }
     String ship_path = src;
-    if (voice_compress_clip(src, packed, true)) { ship_path = packed; }
+    // fold_half takes the memo to half the mic's rate, and that is the rate the
+    // compressed header must name (8 kHz for the 16 kHz microphone).
+    if (voice_compress_clip(src, packed, true, MIC_I2S_SAMPLE_RATE / 2)) { ship_path = packed; }
     bool ok = voice_ship_clip(ship_path, ts, mode);
     Serial.printf("[%s] clip ts=%ld %s\n", note ? "rec" : "com", ts, ok ? "shipped" : "NOT shipped");
     if (!note) {

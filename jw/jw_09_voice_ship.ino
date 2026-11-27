@@ -221,6 +221,7 @@ static void voiceListenTask(void *pv) {
     bool command_seen = false; // the command is under way, not just the wake phrase
     bool gave_up = false;      // nothing was said: drop the clip rather than ship it
     uint32_t rec_ms = 0, silence_ms = 0, pcm_bytes = 0;
+    uint32_t capture_rate = VOICE_SAMPLE_RATE;   // fixed when the capture commits
     File f;
     while (voiceListening) {
       if (isRecording || isPlaying) {
@@ -292,7 +293,12 @@ static void voiceListenTask(void *pv) {
         if (!have_onset) { have_onset = true; onset_ts = timestamp_maker(); voiceWakeHoldUntil = millis() + 15000; }
         if (++speech_run < VOICE_ONSET_FRAMES) { continue; }
         Serial.println("[voice] speech (vad)");
-        if (!create_wav_header_on_flash(VOICE_WAV_PATH.c_str(), VOICE_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) { break; }
+        // The whole-clip file keeps the microphone's 16 kHz when WiFi is up at
+        // capture start (it will POST the file in one request); without WiFi it
+        // is folded to 8 kHz for the BLE fallback. The live stream is always the
+        // folded 8 kHz copy, so this choice moves only the file and its header.
+        capture_rate = (WiFi.status() == WL_CONNECTED) ? MIC_I2S_SAMPLE_RATE : VOICE_SAMPLE_RATE;
+        if (!create_wav_header_on_flash(VOICE_WAV_PATH.c_str(), capture_rate, MIC_I2S_BITS_PER_SAMPLE)) { break; }
         f = FFat.open(VOICE_WAV_PATH.c_str(), FILE_APPEND);
         if (!f) { break; }
         recording = true;
@@ -312,11 +318,12 @@ static void voiceListenTask(void *pv) {
         voice_stream_begin();
         Serial.println("[voice] speech detected, recording");
       }
-      // The clip ships at 8 kHz: half of what the microphone produced, so a BLE
-      // transfer (the only radio when the watch is off WiFi) carries half the
-      // notifications and stands a far better chance of arriving whole. Whisper
-      // resamples to 16 kHz regardless, so speech decodes the same. Averaging
-      // each pair is the crude half-band filter - enough for a spoken command.
+      // The file's rate was chosen when the capture committed: 16 kHz when WiFi
+      // will POST the whole clip, folded to 8 kHz when BLE must carry it (half
+      // the notifications, and a far better chance of arriving whole). The live
+      // stream is always the folded 8 kHz copy - fold only that copy, so the
+      // WiFi file keeps every sample. Averaging each pair is the crude half-band
+      // filter, enough for a spoken command; whisper resamples regardless.
       {
         int16_t *in16 = (int16_t *)buf;
         static int16_t folded[VOICE_FRAME_SAMPLES / 2 + 2];
@@ -324,8 +331,13 @@ static void voiceListenTask(void *pv) {
         for (int i = 0; i + 1 < n; i += 2) {
           folded[m++] = (int16_t)(((int32_t)in16[i] + (int32_t)in16[i + 1]) >> 1);
         }
-        pcm_bytes += f.write((uint8_t *)folded, m * 2);
-        voice_stream_feed(folded, m);   // and up the link, as it is spoken
+        if (capture_rate == MIC_I2S_SAMPLE_RATE) {
+          pcm_bytes += f.write((uint8_t *)in16, n * 2);    // full rate for the WiFi file
+        }
+        else {
+          pcm_bytes += f.write((uint8_t *)folded, m * 2);  // folded for the BLE file
+        }
+        voice_stream_feed(folded, m);   // the live stream stays 8 kHz either way
       }
       // A wake-word model speaks only for its phrase: its output cannot be the
       // silence detector once the capture has started, or every command ends
@@ -392,12 +404,15 @@ static void voiceListenTask(void *pv) {
         // hold the screen on until the Guide answers
         voiceAwaitingSince = millis();
         voiceAwaitingReply = true;
-        finalize_wav_sizes(VOICE_WAV_PATH.c_str(), pcm_bytes, VOICE_SAMPLE_RATE);
+        finalize_wav_sizes(VOICE_WAV_PATH.c_str(), pcm_bytes, capture_rate);
         Serial.printf("[voice] clip %u bytes ts=%ld -> homebase\n", (unsigned)pcm_bytes, (long)voice_clip_ts);
         // Compact it first: ffmpeg on the server reads IMA ADPCM WAV natively, so
-        // the BLE link carries a quarter of the bytes with no server change.
+        // the BLE link carries a quarter of the bytes with no server change. The
+        // rate was fixed when the capture began; if WiFi has dropped since, the
+        // BLE fallback ships these same bytes - twice as many when the clip was
+        // 16 kHz - so it is slow, but the header always matches the samples.
         String ship_path = VOICE_WAV_PATH;
-        if (voice_compress_clip(VOICE_WAV_PATH, VOICE_ADPCM_PATH, false)) { ship_path = VOICE_ADPCM_PATH; }
+        if (voice_compress_clip(VOICE_WAV_PATH, VOICE_ADPCM_PATH, false, capture_rate)) { ship_path = VOICE_ADPCM_PATH; }
         // Ship, then hold the file until the server says the clip arrived whole.
         // A clip that never lands is tried again as a whole - the queue is one
         // clip, retried in place - so a busy bridge costs a moment, not the

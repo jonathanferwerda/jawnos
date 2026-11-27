@@ -303,7 +303,9 @@ sub ble_message_processor {
 			delete $gb::voice_rx->{$k} if $now - ($gb::voice_rx->{$k}->{'at'} || 0) > 60;
 		}
 		if ($seq == 0) {
-			$gb::voice_rx->{$key} = { data => '', at => $now, edt => $msg->{'edt'} || 'watch', chip_id => $chip_id, ts => $ts, voice => $msg->{'voice'} };
+			# The clip's capture rate rides the stream message; an older watch
+			# sends none and 8 kHz is what adpcm_wav_wrap already defaults to.
+			$gb::voice_rx->{$key} = { data => '', at => $now, edt => $msg->{'edt'} || 'watch', chip_id => $chip_id, ts => $ts, voice => $msg->{'voice'}, rate => $msg->{'rate'} };
 		}
 		my $rec = $gb::voice_rx->{$key};
 		if ($rec) {
@@ -314,7 +316,7 @@ sub ble_message_processor {
 				my $data = $rec->{'data'};
 				delete $gb::voice_rx->{$key};
 				if (length($data) > 100 && &subs::voice_clip_fresh($chip_id, $ts)) {
-					my $wav = &subs::adpcm_wav_wrap($data);
+					my $wav = &subs::adpcm_wav_wrap($data, $rec->{'rate'});
 					$log->info('BLE streamed clip for ' . $chip_id . ': ' . length($data) . ' encoded bytes');
 					&subs::bluetooth_sender_async({
 						intent => 'com.jawn.president.bt.connect',

@@ -258,14 +258,14 @@ my $loop = read_file('jw/jw_04_loop.ino');
 like($loop, qr/voiceRecording \|\| comRecording/, 'a Com capture shows the listening ring');
 
 my $voice = read_file('jw/jw_08_voice.ino');
-like($voice, qr/voice_compress_clip\(const String &in_path, const String &out_path, bool fold_half\)/,
-	'the compressor takes the memo path and folds 16 kHz for it');
+like($voice, qr/voice_compress_clip\(const String &in_path, const String &out_path, bool fold_half, uint32_t rate\)/,
+	'the compressor takes the memo path, folds 16 kHz for it, and names the output rate');
 
 my $ship = read_file('jw/jw_09_voice_ship.ino');
 like($ship, qr/voice_ship_clip\(const String &path, long ts, const char \*mode\)/,
 	'the ship carries the clip stamp and mode');
-like($ship, qr/voice_compress_clip\(VOICE_WAV_PATH, VOICE_ADPCM_PATH, false\)/,
-	'the listener still compresses its own 8 kHz capture');
+like($ship, qr/voice_compress_clip\(VOICE_WAV_PATH, VOICE_ADPCM_PATH, false, capture_rate\)/,
+	'the listener compresses its own capture and names the rate it recorded at');
 like($ship, qr/voice_ship_clip\(ship_path, ts, voice_mode_name\)/,
 	'and ships with the model that heard it');
 
