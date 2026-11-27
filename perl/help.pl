@@ -550,6 +550,21 @@ sub fixed_labels {
 			(my $v = $1) =~ s/\\"/"/g;
 			$h{$v} = 1;
 		}
+		# A JavaScript file has no template helper: its on-screen text is
+		# written through jawnosT, so a fixed jawnosT literal counts too. Only
+		# a .js file is read this way - a jawnosT inside a template's hint is
+		# that expression stitched into the attribute, not a label the template
+		# itself puts on screen.
+		if ($f =~ /\.js$/) {
+			while ($body =~ /jawnosT\('((?:[^'\\]|\\.)*)'\)/g) {
+				(my $v = $1) =~ s/\\'/'/g;
+				$h{$v} = 1;
+			}
+			while ($body =~ /jawnosT\("((?:[^"\\]|\\.)*)"\)/g) {
+				(my $v = $1) =~ s/\\"/"/g;
+				$h{$v} = 1;
+			}
+		}
 	}
 	return sort keys %h;
 }

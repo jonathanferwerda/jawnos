@@ -89,6 +89,27 @@ my $info = $bucket{'info'} || [];
 	ok($labels{"Save this drawing as an app's icon"}, 'a double-quoted hint is a control');
 }
 
+# An app whose UI is drawn in JavaScript has no template helper: its on-screen
+# text goes through jawnosT, so a fixed jawnosT literal in a listed .js file is
+# a control too. A jawnosT stitched into a template's hint attribute is not.
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $js = "$dir/app.js";
+	open my $jsfh, '>', $js or die "$js: $!";
+	print {$jsfh} qq{var hint = remote ? jawnosT('Full screen on the controlled machine') : jawnosT("Fullscreen");\n};
+	close $jsfh;
+	my %labels = map { $_ => 1 } help::fixed_labels($js);
+	ok($labels{'Full screen on the controlled machine'}, 'a fixed jawnosT label in a JavaScript file is a control');
+	ok($labels{'Fullscreen'}, 'a double-quoted jawnosT label is a control');
+
+	my $ep = "$dir/app.html.ep";
+	open my $epfh, '>', $ep or die "$ep: $!";
+	print {$epfh} qq{<img hint="' + jawnosT('stale') + '">\n};
+	close $epfh;
+	my %ep_labels = map { $_ => 1 } help::fixed_labels($ep);
+	ok(!$ep_labels{'stale'}, 'jawnosT stitched into a template hint is not a control');
+}
+
 {
 	my ($code, $out, $err) = run_audit($script, '--quiet');
 	is($code, 0, 'the real registry exits 0 (it has no hard error)')
