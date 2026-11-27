@@ -2142,7 +2142,7 @@ $(document).on('input change', '#studio_bpm, #studio_signature', function () {
 $(document).on('click', '#studio_save', function () {
 	studioRemotePublishSoon();
 });
-$(document).on('click', '#pedalboard .studio_pedal_foot, #pedalboard .studio_pedal_led, #studio_palette_add, .studio_rack_up, .studio_rack_down, .studio_rack_remove, .studio_chain_choice', function () {
+$(document).on('click', '#pedalboard .studio_pedal_foot, #pedalboard .studio_pedal_led, #studio_palette_add, .studio_chain_choice', function () {
 	studioRemotePublishSoon();
 });
 $(document).on('change', '#pedalboard .knob_control, #pedalboard .studio_pedal_model, #pedalboard .studio_pedal_text', function () {

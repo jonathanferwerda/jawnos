@@ -128,16 +128,22 @@ like($rack, qr/function studioSetInsertBypass[\s\S]*?studioRebuildOutputs\(ch\)[
 like($knobs, qr/rack_restore\.forEach[\s\S]*?studioRebuildInserts\(ch2\)/,
 	'a restored bypass is wired in after every record is applied');
 
-# The pedal menu: a readable alternative to the small X and the footswitch.
+# The pedal menu: the tile's one surface for move, On/Off and Remove.
 like($rack, qr/function studioPedalMenu\(t, px, py\)/, 'a pedal menu is placed at the pointer');
 like($rack, qr/'contextmenu', '#studio_pedalboard_rack \.studio_rack_tile'/,
 	'right-click on a tile opens the pedal menu');
+like($rack, qr/studioPedalMenuRow\(menu, 'earlier'[\s\S]*?studioPedalMenuRow\(menu, 'later'[\s\S]*?studioPedalMenuRow\(menu, 'bypass',[\s\S]*?studioPedalMenuRow\(menu, 'remove'/,
+	'the menu lists Move left, Move right, On/Off and Remove in that order');
 like($rack, qr/studioPedalMenuRow\(menu, 'bypass'/, 'the menu offers On/Off');
 like($rack, qr/studioPedalMenuRow\(menu, 'remove', studioLayoutText\('Remove'\)\)/,
 	'the menu offers Remove');
 like($rack, qr/'\.studio_pedal_menu \.studio_menu_row'/, 'the menu rows are wired');
-like($rack, qr/if \(typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget\) \{ return; \}/,
-	'a controller leaves the pedal menu alone');
+# The menu is the same on a controller's board: the remote path carries move,
+# bypass and remove, so a tile never depends on which machine it drives.
+unlike($rack, qr/the remote vocabulary has no pedal move/,
+	'the stale no-remote-move comment is gone');
+like($rack, qr/function studioRemotePedalMove\(ch, name, delta, chain\)/,
+	'a controller moves the peer insert through its menu');
 
 # A Sync field starts empty so its datalist lists every division; `off` lives
 # in the placeholder, because a value of `off` filters the list to itself.
@@ -147,9 +153,16 @@ like($markup, qr/value="" placeholder="off"/,
 	'the source Sync field carries the off placeholder');
 
 like($rack, qr/'\.studio_rack_bypass'/, 'the rack wires the footswitch');
-like($rack, qr/'\.studio_rack_up'/, 'the rack wires Up');
-like($rack, qr/'\.studio_rack_down'/, 'the rack wires Down');
-like($rack, qr/'\.studio_rack_remove'/, 'the rack wires X');
+like($rack, qr/studioPedalMenuRow\(menu, 'earlier', studioLayoutText\('Move left'\)\)/,
+	'the pedal menu offers Move left');
+like($rack, qr/studioPedalMenuRow\(menu, 'later', studioLayoutText\('Move right'\)\)/,
+	'the pedal menu offers Move right');
+like($rack, qr/studioPedalMenuRow\(menu, 'bypass'/, 'the pedal menu offers On/Off');
+like($rack, qr/studioPedalMenuRow\(menu, 'remove'/, 'the pedal menu offers Remove');
+like($rack, qr/command === 'earlier'[\s\S]*?studioRackMove\(t\.ch, t\.name, -1, t\.chain\)/,
+	'Move left steps the insert one place earlier');
+like($rack, qr/command === 'later'[\s\S]*?studioRackMove\(t\.ch, t\.name, 1, t\.chain\)/,
+	'Move right steps the insert one place later');
 
 # --- the song keeps the order and the on/off state -------------------------
 like($knobs, qr/song\[ch\]\['fx'\] = c\.inserts\.map\(function\(ins\) \{/,
@@ -235,6 +248,44 @@ for my $name (qw(flanger fuzz amp limiter autotune equalizer tone harmonizer de_
 	like($studio, qr/\b\Q$name\E\s*=>\s*\[ qw\(/, "the palette art names $name's knob colours");
 }
 like($studio, qr/palette_knob_colours\s*=>\s*\[ qw\(/, 'there is a fallback knob-colour rotation');
+# --- each drawn pedal wears its own muted body tint -------------------------
+# The owner names a colour per effect (chorus blue, delay yellow, fuzz purple,
+# distortion grey, harmonizer orange, reverb red). The map mutes those so the
+# template's mix with the theme panels still reads in light and dark, and every
+# effect gets a distinct tint rather than a flat sticker.
+my ($colour_block) = $studio =~ /palette_colour\s*=>\s*\{(.*?)\n\t\}/s;
+ok(defined $colour_block, 'the studio data carries a palette colour map');
+$colour_block = q{} unless defined $colour_block;
+my %colour;
+while ($colour_block =~ /\b([a-z_]+)\s*=>\s*'(#[0-9a-fA-F]{6})'/g) {
+	$colour{$1} = $2;
+}
+is(scalar(keys %colour), scalar(keys %palette), 'every palette effect has one body tint');
+for my $name (keys %palette) {
+	ok($colour{$name}, "the palette effect $name has its own body tint");
+}
+my %seen_tint;
+my @duplicate_tint;
+for my $name (sort keys %colour) {
+	push @duplicate_tint, $name if $seen_tint{$colour{$name}}++;
+}
+is(scalar(@duplicate_tint), 0, 'every palette body tint is distinct');
+for my $name (qw(chorus delay fuzz distortion harmonizer reverb)) {
+	ok($colour{$name}, "the owner's association for $name has a tint");
+}
+like($markup, qr/window\.jawnos_studio_palette_colour = <%== Mojo::JSON::encode_json\(\$gb::studio->\{'palette_colour'\}\) %>;/,
+	'the markup exports the palette colour map to the browser');
+like($markup, qr/<span id="pedal_<%= \$name %>".*?style="--pedal-tint: [^"]*palette_colour[^"]*"/,
+	'the palette tile carries its own --pedal-tint');
+like($style, qr/color-mix\(in srgb, var\(--pedal-tint, var\(--accent\)\) 46%/,
+	'.pedal_body tints its glow from --pedal-tint');
+like($style, qr/color-mix\(in srgb, var\(--panel\) 55%, var\(--pedal-tint, var\(--accent\)\)\)/,
+	'.pedal_body tints the top of its body from --pedal-tint');
+like($rack, qr/window\.jawnos_studio_palette_colour \|\| \{\}\)\[studioEffectKind\(ins\.name\)\]/,
+	'the fallback tile reads the palette colour map');
+like($rack, qr/tile\.css\('--pedal-tint', tint\)/,
+	'the fallback tile sets its own --pedal-tint');
+
 like($rack, qr/function studioUpdatePedalLamps\(\)/, 'one function paints every lamp');
 like($rack, qr/var on = !!\(ins && !ins\.bypassed\);[\s\S]*tile\.find\('\.studio_pedal_led'\)\.attr\(\{/,
 	'a board lamp reads the insert\'s bypass');
@@ -269,7 +320,7 @@ like($markup, qr/class="studio_pedal_led" role="button" aria-pressed="false" tit
 
 # --- the board tile is the one pedal -----------------------------------------
 like($style, qr/\.studio_rack_tile button\s*\{/, 'a board tile is styled');
-like($style, qr/\.studio_board_tools\s*\{/, 'a board tile carries its small tools');
+unlike($style, qr/\.studio_board_tools/, 'a board tile carries no on-face tools');
 like($style, qr/\.studio_board_empty\s*\{/, 'the empty board has a hint slot');
 like($style, qr/\.studio_tuner\s*\{/, 'the tuner display is styled on its tile');
 like($style, qr/\.studio_rack_placeholder\s*\{/, 'the drag marker is styled');
@@ -308,17 +359,15 @@ like($rack, qr/function studioInsertControl\(ch, name, control, value, chain\)/,
 like($controls_js, qr/studioInsertControl\(row\.attr\('channel'\), row\.attr\('insert'\), input\.attr\('control'\), input\.val\(\), row\.attr\('chain'\)\);/,
 	'a typed tile control edits the chain its tile names');
 like($rack, qr/function studioRackMove\(ch, name, delta, chain\)/,
-	'Up and Down move within the tile chain');
+	'Move left and Move right move within the tile chain');
 
-# A tool is a real button, never a form submit, and sits above the tile face.
-like($markup, qr/<button type="button" class="studio_rack_up hover"/, 'Up is an explicit button');
-like($markup, qr/<button type="button" class="studio_rack_down hover"/, 'Down is an explicit button');
-like($markup, qr/<button type="button" class="studio_rack_remove hover"/, 'X is an explicit button');
+# The move and remove actions live in the tile's menu, not on its face: there is
+# no tool template, no Up/Down/X button and no clone of the one onto a tile.
+unlike($markup, qr/studio_board_tool_template/, 'there is no on-pedal tool template');
+unlike($markup, qr/class="studio_rack_(?:up|down|remove)/, 'no Up, Down or X button is on the face');
+unlike($rack, qr/\$\('#studio_board_tool_template'\)/, 'no tool template is cloned onto a tile');
+unlike($rack, qr/tools\.find\('button'\)/, 'no cloned tool is given a button type');
 like($markup, qr/<button type="button" class="studio_pedal_foot studio_pedal_stomp"/, 'the footswitch is a native, keyboard-reachable button');
-like($rack, qr/tools\.find\('button'\)\.attr\('type', 'button'\);/,
-	'a cloned tool keeps type=button');
-like($style, qr/\.studio_board_tools\s*\{[^}]*z-index:\s*6/s,
-	'the tools paint above the title and controls they overlap');
 
 # --- a controller's board edits the peer -----------------------------------
 # A controller turns a press on the sheet into a `pedal` command, so the sheet
@@ -341,9 +390,6 @@ $controls =~ s/\\'/'/g;
 for my $label (
 	'The effects in this track\'s chain, in order',
 	'Drag to reorder this effect',
-	'Move this effect earlier in the chain',
-	'Move this effect later in the chain',
-	'Remove this effect from the chain',
 	'Choose the reverb model',
 	'Master effects, after every track',
 	'Turn this mastering effect on or off',

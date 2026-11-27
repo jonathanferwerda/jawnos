@@ -321,7 +321,7 @@ is(scalar(@racks), 1, 'the markup carries exactly one chain container');
 like($markup, qr/id="pedalboard"[\s\S]*?class="studio_pedalboard_bar"[\s\S]*?id="studio_palette_add"[\s\S]*?id="studio_pedalboard_rack"/,
 	'the Add palette sits in the bar above the chain it adds to');
 like($pedals, qr/var holder = \$\('#studio_pedalboard_rack'\);/, 'the rack renders into the pedalboard');
-for my $action (qw(studio_rack_led studio_rack_bypass studio_rack_up studio_rack_down studio_rack_remove)) {
+for my $action (qw(studio_rack_led studio_rack_bypass)) {
 	like($pedals, qr/'\.$action/, "the rack keeps its $action action");
 }
 

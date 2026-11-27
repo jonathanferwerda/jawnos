@@ -114,24 +114,6 @@
 		margin: 0;
 		zoom: var(--studio-pedal-zoom, 1);
 	}
-	.studio_board_tools {
-		position: absolute;
-		left: 4px;
-		top: 4px;
-		display: flex;
-		gap: 2px;
-		/* Above the title and controls that share the tile's face, so a tool is
-		   always the thing the pointer lands on. */
-		z-index: 6;
-	}
-	.studio_board_tools button {
-		font-size: 10px;
-		min-width: 0;
-		height: 16px;
-		min-height: 16px;
-		line-height: 14px;
-		padding: 0 3px;
-	}
 	.studio_board_empty {
 		opacity: .6;
 		font-size: 12px;
@@ -153,7 +135,6 @@
 	}
 	.studio_board_readonly .studio_pedal_foot,
 	.studio_board_readonly .studio_pedal_led,
-	.studio_board_readonly .studio_board_tools,
 	.studio_board_readonly .studio_chain_choice,
 	.studio_board_readonly #studio_palette_add,
 	.studio_board_readonly #studio_board_delete,
@@ -270,9 +251,9 @@
 		z-index: 0;
 		border-radius: 5px;
 		background:
-			radial-gradient(130% 90% at 50% -10%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 62%),
+			radial-gradient(130% 90% at 50% -10%, color-mix(in srgb, var(--pedal-tint, var(--accent)) 46%, transparent), transparent 64%),
 			repeating-linear-gradient(90deg, rgba(255, 255, 255, .03) 0 2px, transparent 2px 5px),
-			linear-gradient(180deg, color-mix(in srgb, var(--panel) 80%, var(--accent)) 0%, var(--panel-2) 55%, color-mix(in srgb, var(--panel-2) 82%, var(--ink)) 100%);
+			linear-gradient(180deg, color-mix(in srgb, var(--panel) 55%, var(--pedal-tint, var(--accent))) 0%, color-mix(in srgb, var(--panel-2) 80%, var(--pedal-tint, var(--accent))) 48%, var(--panel-2) 72%, color-mix(in srgb, var(--panel-2) 82%, var(--ink)) 100%);
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), inset 0 -12px 20px rgba(0, 0, 0, .45);
 		pointer-events: none;
 	}
@@ -362,9 +343,8 @@
 		flex: 0 0 auto;
 		opacity: .75;
 	}
-	/* the same small dropdown the shelf's reverb carries, in the pedal's row */
-	.pedal_select,
-	.pedal_model {
+	/* a small dropdown in a drawn pedal's control column */
+	.pedal_select {
 		box-sizing: border-box;
 		height: 16px;
 		min-height: 16px;
@@ -393,26 +373,6 @@
 		line-height: 14px;
 		border-width: 1px;
 		border-radius: 4px;
-	}
-	/* The Delay shelf tile has no .pedal_controls column, so its sync row
-	   sits directly above the footswitch like the reverb's model select. */
-	.pedal .pedal_sync_row {
-		position: absolute;
-		left: 7%;
-		right: 7%;
-		bottom: 36%;
-		width: auto;
-		z-index: 6;
-	}
-	/* The shelf's reverb model sits in its own row above the footswitch, clear
-	   of the knobs; the old top-percentage position left it over Mix. */
-	.pedal .pedal_model {
-		position: absolute;
-		left: 7%;
-		right: 7%;
-		bottom: 36%;
-		width: auto;
-		z-index: 6;
 	}
 	/* The footswitch is drawn, not an image: a fixed plate with four grip lines.
 	   The whole plate is the button, so a press anywhere on it toggles the pedal.
@@ -904,6 +864,56 @@
 	#studio.studio_config_open #studio_grid,
 	#studio.studio_config_open #pedalboard {
 		display: none !important;
+	}
+	/* The sheet's own header scrolls with it, so on a phone it could leave the
+	   screen with the settings below it. Keep it stuck just under the window's
+	   title bar, and opaque so the rows passing beneath it stay hidden. */
+	#song_controls {
+		position: sticky;
+		top: calc(var(--navbar_h, 36px) + 4px);
+		z-index: 1;
+		padding: 2px 0;
+		background-color: var(--panel);
+	}
+	/* Minimize tucks Configure to the dot below; the close gear puts the whole
+	   sheet away, as it always has. */
+	#studio_config_min {
+		font-size: 15px;
+		line-height: 1;
+		padding: 1px 8px;
+		margin-left: 2px;
+		vertical-align: top;
+		background: var(--panel-2);
+		color: var(--ink);
+		border: 1px solid var(--line);
+		border-radius: 6px;
+		cursor: var(--jawnos-cursor-pointer, pointer);
+	}
+	/* The restore dot sits in the bottom-right corner of Studio once Configure is
+	   minimized: a sibling of the sheet, so the desk is usable behind it and the
+	   dot brings the settings straight back. */
+	.studio_config_dot {
+		position: absolute;
+		right: 14px;
+		bottom: 14px;
+		z-index: 80001;
+		width: 46px;
+		height: 46px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		background: var(--panel-2);
+		border: 2px solid var(--line);
+		box-shadow: var(--shadow-2);
+		cursor: var(--jawnos-cursor-pointer, pointer);
+	}
+	.studio_config_dot img {
+		width: 26px;
+		height: 26px;
+		display: block;
+		pointer-events: none;
 	}
 	/* The desk is the panels' screen: every panel is an interior window,
 	   positioned and stacked inside this box. It never scrolls; a panel's own

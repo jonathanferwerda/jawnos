@@ -5,8 +5,9 @@
 // and this part is the UI over that list. The pedalboard is the one FX surface:
 // its Add list puts the chosen effect into the chain, and the sheet draws the
 // selected track's chain as the stompbox tiles it holds, in signal order. Drag
-// a tile to reorder it, press its lamp or stomp to bypass it, and use the small
-// tools on the tile for Up, Down and X. A track's panel never lists effects, so
+// a tile to reorder it, press its lamp or stomp to bypass it, and right-click or
+// press and hold a tile for Move left, Move right, On/Off and Remove. A track's
+// panel never lists effects, so
 // choosing one can never cramp its FX/Monitor line or the Auto line under it. The
 // song keeps the order and the on/off state in the channel's `fx` records (see
 // studioSaver / studioRetriever).
@@ -56,7 +57,7 @@ document.addEventListener('touchstart', function (event) {
 	var under = document.elementFromPoint
 		? document.elementFromPoint(event.touches[0].clientX, event.touches[0].clientY)
 		: event.target;
-	if (under && under.closest && under.closest('.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, .studio_board_tools, select, option, input, button')) { return; }
+	if (under && under.closest && under.closest('.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, select, option, input, button')) { return; }
 	studioBoardSwipe = {
 		rack: rack,
 		x: event.touches[0].clientX,
@@ -458,6 +459,8 @@ function studioStompButton(effect, hint) {
 function studioRackFallbackTile(ins) {
 	var spec = studioEffectSpec(ins.name);
 	var tile = $('<span class="pedal pedal_graphic studio_rack_tile"></span>');
+	var tint = (window.jawnos_studio_palette_colour || {})[studioEffectKind(ins.name)];
+	if (tint) { tile.css('--pedal-tint', tint); }
 	$('<span class="studio_pedal_led" role="button" aria-pressed="false"></span>')
 		.attr('hint', studioLayoutText('Turn this pedal on or off for this track')).appendTo(tile);
 	$('<span class="pedal_body" aria-hidden="true"></span>').appendTo(tile);
@@ -575,13 +578,6 @@ function studioRackTile(ch, ins, chain) {
 	// drawn, so a restored song and a new insert sound the same before a knob
 	// moves. An Out insert is browser playback only and is not posted.
 	if (typeof studioTempoSyncApply === 'function') { studioTempoSyncApply(ins, ch, chain !== 'out'); }
-	// Small tools on the frame: touch order and removal without leaving the board.
-	var tools = $('#studio_board_tool_template').first().clone();
-	tools.removeAttr('id').removeAttr('style').removeAttr('aria-hidden');
-	// The template already marks them type=button; set it again so a clone can
-	// never become a form submit in some other embedding.
-	tools.find('button').attr('type', 'button');
-	if (tools.length) { tools.appendTo(tile); }
 	return tile;
 }
 
@@ -659,7 +655,7 @@ function studioRackRender(ch) {
 			zIndex: 90000,
 			// Knobs, dropdowns, the lamp and the stomp stay clickable; the artwork is
 			// the handle, as it was on the shelf.
-			cancel: '.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, .studio_board_tools, select, option, input, button',
+			cancel: '.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, select, option, input, button',
 			cursor: 'var(--jawnos-cursor-grabbing, grabbing)',
 			update: function (event, ui) {
 				dropped = true;
@@ -1013,29 +1009,14 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 // The stomp is a real button now, so Enter and Space reach it natively; the
 // lamp beside it is still a role=button span with its own key handling.
 
-$(document).on('click', '.studio_rack_up', function () {
-	var t = studioTileTarget(this);
-	if (t) { studioRackMove(t.ch, t.name, -1, t.chain); }
-});
-
-$(document).on('click', '.studio_rack_down', function () {
-	var t = studioTileTarget(this);
-	if (t) { studioRackMove(t.ch, t.name, 1, t.chain); }
-});
-
-$(document).on('click', '.studio_rack_remove', function () {
-	var t = studioTileTarget(this);
-	if (!t || !t.ins) { return; }
-	studioSetInsert(t.ch, t.name, false, t.chain);
-	studioSaver();
-});
 
 // ---- the pedal menu --------------------------------------------------------
 //
-// The small X is easy to miss on a crowded board, and a touch pad has no hover.
-// A right-click on a tile offers the same two moves in one readable menu: the
-// footswitch's On/Off and Remove. It acts on the tile's own chain, like every
-// other board action, and never on the chain the board happens to show.
+// The tile's face has no buttons, and a touch pad has no hover. A right-click
+// with a mouse - or a press and hold on a touch screen - opens one readable
+// menu: Move left, Move right, the footswitch's On/Off and Remove. It acts on
+// the tile's own chain, like every other board action, and never on the chain
+// the board happens to show.
 var studioPedalMenuTarget = null;
 
 function studioPedalMenuRow(menu, command, label) {
@@ -1052,6 +1033,8 @@ function studioPedalMenu(t, px, py) {
 	var title = (spec && spec['label']) ? spec['label'] : t.name;
 	var menu = $('<div class="studio_menu studio_pedal_menu"></div>');
 	$('<div class="studio_menu_head"></div>').text(studioLayoutText(title)).appendTo(menu);
+	studioPedalMenuRow(menu, 'earlier', studioLayoutText('Move left'));
+	studioPedalMenuRow(menu, 'later', studioLayoutText('Move right'));
 	studioPedalMenuRow(menu, 'bypass', studioLayoutText(t.ins.bypassed ? 'Turn on' : 'Turn off'));
 	studioPedalMenuRow(menu, 'remove', studioLayoutText('Remove'));
 	$('body').append(menu);
@@ -1061,10 +1044,10 @@ function studioPedalMenu(t, px, py) {
 	menu.css({ left: Math.max(margin, left), top: Math.max(margin, top) });
 }
 
-// A controller's board is read-only (the remote vocabulary has no pedal move),
-// so it leaves the browser's own menu alone rather than offering a dead Remove.
+// A controller's board gets the same menu: the remote vocabulary has pedal
+// move, bypass and remove, so the verbs a tile offers never depend on which
+// machine the sheet drives.
 $(document).on('contextmenu', '#studio_pedalboard_rack .studio_rack_tile', function (e) {
-	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget) { return; }
 	e.preventDefault();
 	var t = studioTileTarget(this);
 	if (!t || !t.ins) { return; }
@@ -1087,6 +1070,12 @@ $(document).on('click', '.studio_pedal_menu .studio_menu_row', function (e) {
 	}
 	else if (command === 'bypass') {
 		studioSetInsertBypass(t.ch, t.name, !ins.bypassed, t.chain);
+	}
+	else if (command === 'earlier') {
+		studioRackMove(t.ch, t.name, -1, t.chain);
+	}
+	else if (command === 'later') {
+		studioRackMove(t.ch, t.name, 1, t.chain);
 	}
 });
 
@@ -1231,7 +1220,7 @@ function studioBoardPresetsMark() {
 $(document).on('change', '#pedalboard .knob_control, #pedalboard .studio_pedal_model, #pedalboard .studio_pedal_text', function () {
 	setTimeout(studioBoardPresetsMark, 0);
 });
-$(document).on('click', '#pedalboard .studio_pedal_foot, #pedalboard .studio_pedal_led, .studio_rack_up, .studio_rack_down, .studio_rack_remove, #studio_palette_add, .studio_chain_choice', function () {
+$(document).on('click', '#pedalboard .studio_pedal_foot, #pedalboard .studio_pedal_led, #studio_palette_add, .studio_chain_choice', function () {
 	setTimeout(studioBoardPresetsMark, 0);
 });
 

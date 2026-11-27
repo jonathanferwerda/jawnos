@@ -41,8 +41,8 @@ for my $sel (qw(#studio_layout_bar #studio_viewer #studio_grid #pedalboard)) {
 }
 
 # Opening Configure closes the docked pedalboard first.
-like($js, qr/studio\.addClass\('studio_config_open'\);\s*\n\s*config\.show\(\);[\s\S]{0,240}?studioPedalboardOpen\(false\);/,
-	'the config toggle closes the pedalboard as it opens');
+like($js, qr/function studioConfigShow\(\)[\s\S]{0,500}?studioPedalboardOpen\(false\);/,
+	'the config sheet closes the pedalboard as it opens');
 like($js, qr/studioMonitorProbeStop\(\);/, 'and keeps the monitor stop on the hide path');
 
 # --- pedal size: +/- beside Close, saved ----------------------------------

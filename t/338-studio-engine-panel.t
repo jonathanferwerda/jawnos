@@ -620,4 +620,40 @@ like($controls_js, qr/bridge\.stop\(\)/, 'stopping Listen stops the native strea
 like($studio_js, qr/c\.live\.gain\.value = live \? 1 : 0;/,
 	'the live path is silent while the engine Listen owns the device');
 
+# --- Configure tucks away to a dot, so a phone can reach Studio again --------
+like($markup, qr/<button[^>]*id="studio_config_min"/,
+	'the sheet header carries a Minimize button');
+like($markup, qr/id="studio_config_dot" class="studio_config_dot hover"/,
+	'and the sheet has a restore dot beside it');
+like($markup, qr/&subs::ui\('Minimize Configure'\)/, 'the Minimize button is translatable');
+like($markup, qr/&subs::ui\('Open Configure'\)/, 'and the dot says what it opens');
+
+my $style = read_file("$root/templates/studio/style.html.ep");
+like($style, qr/#song_controls \{\s*position: sticky/,
+	'the sheet header sticks instead of scrolling away on a phone');
+like($style, qr/#song_controls \{[^}]*top: calc\(var\(--navbar_h, 36px\) \+ 4px\)/,
+	'just under the window title bar');
+like($style, qr/\.studio_config_dot \{[^}]*position: absolute/,
+	'the restore dot is pinned to the corner');
+like($style, qr/\.studio_config_dot \{[^}]*right: 14px;[^}]*bottom: 14px;/,
+	'at the bottom right');
+like($style, qr/\.studio_config_dot \{[^}]*border-radius: 50%/,
+	'and is round');
+like($style, qr/\.studio_config_dot img \{[^}]*width: 26px/,
+	'its gear is sized for the dot');
+
+like($controls_js, qr/function studioConfigShow\(\)/,
+	'Configure opens through one function');
+like($controls_js, qr/function studioConfigHide\(toDot\)/,
+	'and closes through another that may leave the dot');
+like($controls_js, qr/'#studio_config_min'/, 'Minimize is bound in the controls part');
+like($controls_js, qr/'#studio_config_dot'/, 'and the restore dot is bound');
+like($controls_js, qr/studioConfigHide\(true\)/, 'Minimize leaves the dot up');
+like($controls_js, qr/studioConfigHide\(false\)/, 'while the close gear puts it away entirely');
+
+like($body, qr/Minimize button/, 'help names the Minimize button');
+like($body, qr/bottom-right corner of Studio/, 'and the dot it leaves there');
+like($body, qr/pressing that dot brings Configure back/,
+	'and that the dot restores the sheet');
+
 done_testing();

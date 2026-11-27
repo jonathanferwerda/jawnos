@@ -1,10 +1,11 @@
-# tests-for: perl/gb/05_abilities_and_studio.pl templates/studio/markup.html.ep public/icons/sets/build.js public/images/studio/pedal_harmonizer.png public/images/studio/pedal_de_esser.png public/images/studio/pedal_modulator.png public/images/studio/pedal_pitch_shift.png public/images/studio/pedal_gate.png public/images/studio/pedal_slider.png public/images/studio/pedal_overdrive.png public/images/studio/pedal_wah.png public/images/studio/pedal_chorus.png public/images/studio/pedal_vibrato.png
+# tests-for: perl/gb/05_abilities_and_studio.pl public/icons/sets/build.js public/images/studio/pedal_harmonizer.png public/images/studio/pedal_de_esser.png public/images/studio/pedal_modulator.png public/images/studio/pedal_pitch_shift.png public/images/studio/pedal_gate.png public/images/studio/pedal_slider.png public/images/studio/pedal_overdrive.png public/images/studio/pedal_wah.png public/images/studio/pedal_chorus.png public/images/studio/pedal_vibrato.png
 # covers:    The ten newer pedals' hand-drawn shelf faces. Each has an artwork
 #            asset (`pedal_<name>`, namespaced because `slider` is the UI
 #            fader), a 344x408 PNG for the hand-drawn set, a matching generated
-#            SVG in all sixteen icon sets and both cuts, a shelf entry whose
-#            knobs and selects cover exactly its contract controls, and the
-#            template path that renders a shelf tile's choices and Sync field.
+#            SVG in all sixteen icon sets and both cuts, and a shelf entry whose
+#            knobs and selects cover exactly its contract controls. Those entries
+#            now supply only the mixer-badge artwork; the board draws each of
+#            these pedals in the theme body.
 
 use strict;
 use warnings;
@@ -17,7 +18,6 @@ use RepoSource qw(repo_root);
 
 my $root   = repo_root();
 my $studio = read_file("$root/perl/gb/05_abilities_and_studio.pl");
-my $markup = read_file("$root/templates/studio/markup.html.ep");
 my $build  = read_file("$root/public/icons/sets/build.js");
 
 my @pedals = (
@@ -103,18 +103,5 @@ for my $p (@pedals) {
 like($build, qr/'slider': 'groove'/, 'the UI fader graphic stays a groove');
 unlike($build, qr/'slider': 'pedal'/, 'the Slider pedal does not take the fader name');
 ok(-f "$root/public/images/studio/slider.png", 'the fader PNG is still there');
-
-# --- the template renders a shelf tile's choices and tempo field ------------
-like($markup, qr/\@\{\$p->\{'selects'\} \|\| \[\]\}/,
-	'a shelf tile can carry a list of dropdowns');
-like($markup, qr/\$p->\{'sync'\}/, 'and one optional Sync row');
-like($markup, qr/class="studio_pedal_model pedal_select"/,
-	'a shelf dropdown wears the same classes the drawn tiles use');
-like($markup, qr/class="studio_pedal_text pedal_text"/,
-	'a shelf Sync field is the same typed control');
-like($markup, qr/style="position:absolute;left:<%= \$s->\{'left'\} %>;top:<%= \$s->\{'top'\} %>;width:<%= \$s->\{'width'\} %>;/,
-	'the pedals entry places the dropdown on the artwork');
-like($markup, qr/studio_tempo_<%= &subs::html_name\(\$ch\) %>_sync/,
-	'each synced shelf tile has its own datalist');
 
 done_testing();

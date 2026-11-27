@@ -5,6 +5,7 @@
 	<script>window.jawnos_studio_effects = <%== Mojo::JSON::encode_json($gb::studio->{'effects'}) %>;
 	window.jawnos_studio_master = <%== Mojo::JSON::encode_json($gb::studio->{'master'}) %>;
 	window.jawnos_studio_pedal_art = <%== Mojo::JSON::encode_json({ map { $_->{'name'} => &subs::icon_for('/images/studio/' . $_->{'image'} . '.png') } @{$gb::studio->{'pedals'}} }) %>;
+	window.jawnos_studio_palette_colour = <%== Mojo::JSON::encode_json($gb::studio->{'palette_colour'}) %>;
 	window.jawnos_studio_pedalboards = <%== Mojo::JSON::encode_json(eval { Mojo::JSON::decode_json($settings->{'pedalboards'} || '[]') } || []) %>;</script>
 	<audio id="metronome" autoplay style="display:none;"></audio>
 	<%# The selector's box (position, stacking, the window cap that lets a long
@@ -90,55 +91,6 @@
 			<% foreach my $b ( @{$p->{'buttons'}} ) { %>
 				<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;" flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" hint="<%= &subs::ui($b->{'hint'} || &subs::format_name($b->{'control'})) %>" src="<%= $button_icon->('depressed', $b->{'colour'}) %>">
 			<% } %>
-			<%# A hand-drawn shelf tile may still carry a choice or a tempo field the
-			   artwork does not paint: the pedals entry lists the control and its
-			   place, and the same handlers the drawn tiles use do the rest. %>
-			<% foreach my $s ( @{$p->{'selects'} || []} ) { %>
-				<% my $shelf_effect = $gb::studio->{'effects'}->{$p->{'name'}} || {}; %>
-				<% my ($pick) = grep { ($_->{'control'} || '') eq $s->{'control'} } @{$shelf_effect->{'controls'} || []}; %>
-				<select class="studio_pedal_model pedal_select" channel="<%= $ch %>" control="<%= $s->{'control'} %>" style="position:absolute;left:<%= $s->{'left'} %>;top:<%= $s->{'top'} %>;width:<%= $s->{'width'} %>;z-index:6;" hint="<%= &subs::ui(($pick && $pick->{'hint'}) || 'Choose the option') %>">
-					<% my $oi = 0; %>
-					<% foreach my $option ( @{($pick && $pick->{'options'}) || []} ) { %>
-						<option value="<%= $oi %>"><%= &subs::ui($option) %></option>
-						<% $oi++; %>
-					<% } %>
-				</select>
-			<% } %>
-			<% if ($p->{'sync'}) { %>
-				<label class="pedal_select_row pedal_sync_row">
-					<span class="pedal_knob_label"><%= &subs::ui('Sync') %></span>
-					<input type="text" class="studio_pedal_text pedal_text" channel="<%= $ch %>" control="sync" list="studio_tempo_<%= &subs::html_name($ch) %>_sync" hint="<%= &subs::ui('A note division, milliseconds, or off') %>" value="" placeholder="off">
-					<datalist id="studio_tempo_<%= &subs::html_name($ch) %>_sync">
-						<% foreach my $division ( @{$gb::studio->{'tempo_divisions'}} ) { %>
-							<option value="<%= $division %>"></option>
-						<% } %>
-					</datalist>
-				</label>
-			<% } %>
-			<% if ($p->{'name'} eq 'reverb2') { %>
-				<select class="studio_pedal_model pedal_model" channel="<%= $ch %>" control="model" hint="<%= &subs::ui('Choose the reverb model') %>">
-					<% my $mi = 0; %>
-					<% foreach my $model ( @{$gb::studio->{'reverb_models'}} ) { %>
-						<option value="<%= $mi %>"<%= $mi == 2 ? ' selected' : '' %>><%= &subs::ui($model) %></option>
-						<% $mi++; %>
-					<% } %>
-				</select>
-			<% } %>
-			<%# The Delay shelf pedal keeps its artwork's knobs, so its tempo sync is
-			   the one readable control row above the footswitch. The text field
-			   accepts any note division, a manual millisecond value, or off; the
-			   datalist only offers the common ones. %>
-			<% if ($p->{'name'} eq 'Delayed') { %>
-				<label class="pedal_select_row pedal_sync_row">
-					<span class="pedal_knob_label"><%= &subs::ui('Sync') %></span>
-					<input type="text" class="studio_pedal_text pedal_text" channel="<%= $ch %>" control="sync" list="studio_tempo_<%= &subs::html_name($ch) %>_sync" hint="<%= &subs::ui('A note division, milliseconds, or off') %>" value="" placeholder="off">
-					<datalist id="studio_tempo_<%= &subs::html_name($ch) %>_sync">
-						<% foreach my $division ( @{$gb::studio->{'tempo_divisions'}} ) { %>
-							<option value="<%= $division %>"></option>
-						<% } %>
-					</datalist>
-				</label>
-			<% } %>
 			<button type="button" class="studio_pedal_foot studio_pedal_stomp" control="stomp" aria-pressed="false" effect="<%= $p->{'name'} %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>
 		</span>
 	<% } %>
@@ -146,7 +98,7 @@
 			<% my $effect = $gb::studio->{'effects'}->{$name} || {}; %>
 			<% my $art = $gb::studio->{'palette_art'}->{$name} || []; %>
 			<% my $fallback = $gb::studio->{'palette_knob_colours'} || [ 'grey_plain' ]; %>
-			<span id="pedal_<%= $name %>" class="pedal pedal_graphic" data-effect="<%= $name %>" hint="<%= &subs::ui('Drag to reorder this effect') %>">
+			<span id="pedal_<%= $name %>" class="pedal pedal_graphic" data-effect="<%= $name %>" style="--pedal-tint: <%= $gb::studio->{'palette_colour'}->{$name} || 'var(--accent)' %>;" hint="<%= &subs::ui('Drag to reorder this effect') %>">
 				<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
 				<span class="pedal_body" aria-hidden="true"></span>
 				<b class="pedal_title"><%= &subs::ui($effect->{'label'} || $name) %></b>
@@ -194,13 +146,6 @@
 				<button type="button" class="studio_pedal_foot studio_pedal_stomp" control="stomp" aria-pressed="false" effect="<%= $name %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>
 			</span>
 		<% } %>
-	</div>
-	<%# The small tools cloned onto every board tile. The labels stay literal so the
-	   help registry can see them. %>
-	<div id="studio_board_tool_template" class="studio_board_tools" style="display:none;" aria-hidden="true">
-		<button type="button" class="studio_rack_up hover" hint="<%= &subs::ui('Move this effect earlier in the chain') %>">‹</button>
-		<button type="button" class="studio_rack_down hover" hint="<%= &subs::ui('Move this effect later in the chain') %>">›</button>
-		<button type="button" class="studio_rack_remove hover" hint="<%= &subs::ui('Remove this effect from the chain') %>">X</button>
 	</div>
 	<div id="studio_layout_bar" class="studio_layout_bar">
 		<span class="studio_window_grip hover" hint="<%= &subs::ui('Drag to move the Studio window') %>">⠿</span>
@@ -568,6 +513,7 @@
 
 		<div id="song_controls">
 			<img id="studio_delete" hint="Delete" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/icons/trash.png') %>">
+			<button type="button" id="studio_config_min" class="hover" hint="<%= &subs::ui('Minimize Configure') %>" aria-label="<%= &subs::ui('Minimize Configure') %>">&minus;</button>
 			<img class="little_thumb hover studio_config_toggle_close" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_close"><br>
 			<input type="hidden" id="studio_name">
 			<%# The old dropdown stays hidden: the Open dialog reads it, and the save
@@ -765,4 +711,5 @@
 						
 		</div>
 	</div>
+	<button type="button" id="studio_config_dot" class="studio_config_dot hover" style="display:none;" hint="<%= &subs::ui('Open Configure') %>" aria-label="<%= &subs::ui('Open Configure') %>"><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" alt=""></button>
 

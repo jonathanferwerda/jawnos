@@ -553,9 +553,39 @@ our $studio = {
 		chorus      => [ qw(blue cyan pink) ],
 		vibrato     => [ qw(pink blue) ],
 	},
+	# One body tint per palette effect, so every drawn pedal reads as itself.
+	# The values follow the owner's associations (chorus blue, reverb red,
+	# delay yellow, fuzz purple, distortion grey, harmonizer orange) but are
+	# muted: the template mixes each with the theme's panel colours, so it reads
+	# in both light and dark without turning into a flat, bright sticker.
+	palette_colour => {
+		reverb        => '#b25a5a',
+		delay         => '#c2a24e',
+		fuzz          => '#8f6fb5',
+		distortion    => '#80838a',
+		harmonizer    => '#c67f45',
+		chorus        => '#5079ad',
+		flanger       => '#3f928c',
+		phaser        => '#6f72b8',
+		amp           => '#a5825c',
+		limiter       => '#6d7f91',
+		tremolo       => '#93b354',
+		stereo_panner => '#4fa1ad',
+		autotune      => '#b45f92',
+		equalizer     => '#9a9a4d',
+		tone          => '#b58f5f',
+		compressor    => '#5b93ad',
+		stereowidener => '#5aa6c8',
+		de_esser      => '#4fae8a',
+		modulator     => '#a05fae',
+		pitch_shift   => '#c76f5c',
+		gate          => '#5c6772',
+		slider        => '#4fa5a0',
+		overdrive     => '#b56f4d',
+		wah           => '#c6a64d',
+		vibrato       => '#a56f92',
+	},
 	palette_knob_colours => [ qw(red yellow green blue orange pink cyan navy) ],
-	# The order of the reverb model dropdown; both implementations agree.
-	reverb_models => [ qw(Room Spring Plate Hall Cave) ],
 	# The fixed mastering chain: after every channel, before the destination.
 	master => [
 		{ name => 'master_comp', label => 'Compressor', controls => [

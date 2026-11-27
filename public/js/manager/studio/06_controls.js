@@ -974,30 +974,52 @@ $(document).on('click', '#studio_prev, #studio_next', function() {
 	studioTimeDisplay()
 });
 
+// Configure is a whole-window sheet. Its gear, and the layout bar's Configure,
+// put it away entirely; its Minimize button tucks it to a small dot in the
+// corner of Studio so the desk stays usable on a phone, and pressing that dot
+// brings the sheet back.
+function studioConfigShow() {
+	$('#studio').addClass('studio_config_open');
+	$('#studio_config').show();
+	$('#studio_config_dot').hide();
+	// Configure covers the whole window, so the docked pedalboard would sit
+	// over its settings; put the board away as it opens.
+	if (typeof studioPedalboardOpen === 'function') { studioPedalboardOpen(false); }
+	studioUpdateLatencyInfo();
+	studioEngineStatus();
+	studioOutputLoad();
+	// The interface may have been plugged in since the page loaded, so the
+	// monitor picker is re-read now and every couple of seconds while the
+	// sheet stays open.
+	studioMonitorBackendRender();
+	studioMonitorProbeStart();
+}
+
+function studioConfigHide(toDot) {
+	$('#studio_config').hide();
+	studioMonitorProbeStop();
+	// Removing the class brings the grid back exactly as its own hide
+	// toggles left it; nothing here shows a panel the user hid.
+	$('#studio').removeClass('studio_config_open');
+	// Close puts the sheet away entirely; Minimize leaves the restore dot.
+	if (toDot) { $('#studio_config_dot').show(); }
+	else { $('#studio_config_dot').hide(); }
+}
+
 $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', function() {
-	var studio = $('#studio');
-	var config = $('#studio_config');
-	if (config.is(':visible')) {
-		config.hide();
-		studioMonitorProbeStop();
-		// Removing the class brings the grid back exactly as its own hide
-		// toggles left it; nothing here shows a panel the user hid.
-		studio.removeClass('studio_config_open');
+	if ($('#studio_config').is(':visible')) {
+		studioConfigHide(false);
 	} else {
-		studio.addClass('studio_config_open');
-		config.show();
-		// Configure covers the whole window, so the docked pedalboard would
-		// sit over its settings; put the board away as it opens.
-		if (typeof studioPedalboardOpen === 'function') { studioPedalboardOpen(false); }
-		studioUpdateLatencyInfo();
-		studioEngineStatus();
-		studioOutputLoad();
-		// The interface may have been plugged in since the page loaded, so the
-		// monitor picker is re-read now and every couple of seconds while the
-		// sheet stays open.
-		studioMonitorBackendRender();
-		studioMonitorProbeStart();
+		studioConfigShow();
 	}
+});
+
+$(document).on('click', '#studio_config_min', function() {
+	studioConfigHide(true);
+});
+
+$(document).on('click', '#studio_config_dot', function() {
+	studioConfigShow();
 });
 
 $(window).on('focus', function () { studioMonitorBackendRender(); });
