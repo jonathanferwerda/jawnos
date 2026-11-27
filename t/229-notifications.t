@@ -1,4 +1,4 @@
-# tests-for: templates/apps/notifications.html.ep templates/notification.html.ep public/icons/sets/build.js templates/configure/app_notification.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Domain/Notify.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
+# tests-for: templates/apps/notifications.html.ep templates/notification.html.ep public/icons/sets/build.js templates/configure/app_notification.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Domain/Notify.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
 # covers:    The Notifications app (search, app filter, remove all), the in-program
 #            notice cards that replaced the browser's Notification, and the
 #            taskbar bell that counts what arrived since the list was opened.
@@ -21,6 +21,8 @@ like($routes, qr/\[\s*22699\s*,\s*'get'\s*,\s*'\/manager\/notifications'\s*,\s*'
 	'the Notifications app has its window route');
 like($routes, qr/\[\s*25150\s*,\s*'get'\s*,\s*'\/manager\/notifications\/status'\s*,\s*'action_25150'\s*\]/,
 	'the widget has a JSON status route');
+like($routes, qr/\[\s*25151\s*,\s*'post'\s*,\s*'\/manager\/notifications\/seen'\s*,\s*'action_25151'\s*\]/,
+	'a route stores the house read mark');
 like($routes, qr{/manager/notifications/search}, 'the existing search route is still there');
 like($routes, qr{/manager/notifications/filter}, 'and the app filter');
 like($routes, qr{/manager/notifications/remove}, 'and the remove route');
@@ -32,6 +34,12 @@ like($controller, qr/template => 'apps\/notifications'/, 'through the new app te
 like($controller, qr/^sub action_25150\b/m, 'the status action exists');
 like($controller, qr/from notifications order by cast\(timestamp as integer\) desc limit 50/,
 	'and returns the newest notices as JSON');
+like($controller, qr/^sub action_25151\b/m, 'the seen action exists');
+like($controller, qr/setting_setter\(\{ app => 'notifications', setting => 'seen', device => 'all'/, 'and writes the house row');
+like($controller, qr/setting_grabber\(\{ app => 'notifications', setting => 'seen', device => 'all'/, 'the status reads the house mark back');
+like($controller, qr/seen => \$seen \+ 0/, 'and returns it with the notices');
+like(source('lib/JawnOS/Manager/Part17.pm'), qr/notifications_shared.*'notifications'.*'seen'/,
+	'a peer keeps the house read mark on the house row');
 
 # --- the app template -------------------------------------------------------
 my $template = source('templates/apps/notifications.html.ep');
@@ -172,7 +180,10 @@ like($sound, qr/key: 'volume'/, 'and updates one card in place');
 # --- the taskbar bell -------------------------------------------------------
 my $widget = source('public/js/manager/taskbar_notifications.js');
 like($widget, qr{/manager/notifications/status}, 'the bell reads the JSON status');
-like($widget, qr/jawnos_notifications_seen/, 'the count is kept per browser');
+like($widget, qr{/manager/notifications/seen}, 'the mark is stored on the house row');
+unlike($widget, qr/jawnos_notifications_seen|localStorage/, 'not in this browser alone');
+like($widget, qr/function jawnosNotificationsTaskbarSeed/, 'the first machine seeds the house mark');
+
 like($widget, qr/function jawnosNotificationsTaskbarUnread/, 'and is the notices newer than the mark');
 like($widget, qr/jawnosTaskbarPanelToggle\('taskbar_notifications_panel'/, 'a press opens its panel');
 like($widget, qr/data-app', 'notifications'/, 'the panel opens the app');

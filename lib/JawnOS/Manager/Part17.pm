@@ -372,7 +372,12 @@ sub merge_table_rows {
 									# A draw list lives on the house row (`device = 'all'`); keep it one on
 									# arrival so cards_list reads it. Mode and variant are per-device and
 									# join this device's class as usual.
-									my $house_wide = ($clothesline_shared || $studio_shared || ($cards_shared && $cards_setting =~ /^(?:day|week|month|year|free|cycle|spread|all)$/
+									# The taskbar bell's read mark is one mark for the House, kept on
+									# the house row so a notice read on one machine is read on every
+									# machine. Preserve that row on arrival instead of flattening it
+									# onto this device's class.
+									my $notifications_shared = (($r->{'app'} // '') eq 'notifications' && ($r->{'setting'} // '') eq 'seen' && ($r->{'device'} // '') eq 'all') ? 1 : 0;
+									my $house_wide = ($notifications_shared || $clothesline_shared || $studio_shared || ($cards_shared && $cards_setting =~ /^(?:day|week|month|year|free|cycle|spread|all)$/
 										&& ($r->{'device'} // '') eq 'all')) ? 1 : 0;
 									#next if $protected == 1;
 									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$cards_shared && !$clothesline_shared && !$studio_shared)) {

@@ -541,7 +541,34 @@ sub action_25150 {
 	my $rows = eval {
 		&subs::db_query('select title, message, app, timestamp, image, uuid from notifications order by cast(timestamp as integer) desc limit 50')->hashes;
 	} || [];
-	$c->render(json => { ok => 1, total => scalar(@{$rows}), notifications => $rows });
+	# The mark is the house's, so every machine's bell counts from the same
+	# moment: a notice read on the phone is read on the laptop too.
+	my $seen = eval { &subs::setting_grabber({ app => 'notifications', setting => 'seen', device => 'all' }) } || 0;
+	$c->render(json => { ok => 1, total => scalar(@{$rows}), seen => $seen + 0, notifications => $rows });
+}
+
+# POST /manager/notifications/seen
+#
+# Opening the list (or the bell's panel) marks the house's notices read. The
+# mark is one value on the 'all' device row - like the language and the
+# warranty - so every machine reads and syncs the same moment instead of each
+# browser keeping its own. A caller may offer its own moment; the mark never
+# moves backwards, and it always covers the newest notice already on screen, so
+# a browser whose clock trails the machine that announced a notice cannot make
+# it unread again.
+sub action_25151 {
+	my $c = shift;
+	my $seen = $c->param('seen');
+	$seen = 0 unless defined $seen && $seen =~ /^\d{1,19}$/;
+	my $stored = eval { &subs::setting_grabber({ app => 'notifications', setting => 'seen', device => 'all' }) } || 0;
+	$seen = $stored + 0 if ($stored + 0) > $seen;
+	my $newest = eval {
+		&subs::db_query('select timestamp from notifications order by cast(timestamp as integer) desc limit 1')->hashes->[0]->{'timestamp'};
+	} || 0;
+	$seen = $newest + 0 if ($newest + 0) > $seen;
+	$seen = &subs::rightNow() unless $seen;
+	&subs::setting_setter({ app => 'notifications', setting => 'seen', device => 'all', value => $seen });
+	$c->render(json => { ok => 1, seen => $seen + 0 });
 }
 
 # GET /manager/appointment_viewer

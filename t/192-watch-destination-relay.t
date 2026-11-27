@@ -75,6 +75,7 @@ my @queued;
 	local *subs::remote_useragent_maker = sub {
 		return { ua => $ua, manager => 'https://192.168.1.123:45545', ip => '192.168.1.123' };
 	};
+	local *subs::manager_file_maker = sub { return 'Jon@jawnos.Phone' };
 	local *subs::remote_relay_queue_push = sub {
 		my ($item) = @_;
 		push @queued, { %{$item} };
@@ -119,6 +120,7 @@ my @queued;
 	is($ua->{'posted'}[0]->{'form'}{'type'}, 'command', 'the movement rides the relay');
 	is($ua->{'posted'}[0]->{'form'}{'app'}, 'vol_+', 'and the app it belongs to');
 	is($ua->{'posted'}[0]->{'form'}{'command_id'}, 'press-1', 'the press id travels with the command');
+	is($ua->{'posted'}[0]->{'form'}{'manager_file'}, 'Jon@jawnos.Phone', 'the relay names the calling machine');
 
 	# --- a named miss is handed to the relay, not run on the homebase ---------
 	$ua = FakeUA->new(ok => 0);
@@ -140,6 +142,7 @@ my @queued;
 	is($queued[0]->{'params'}{'app'}, 'vol_-', 'the app rides the queued copy');
 	is($queued[0]->{'params'}{'type'}, 'command', 'and the movement');
 	is($queued[0]->{'params'}{'command_id'}, 'press-2', 'the queued copy carries the same press id');
+	is($queued[0]->{'params'}{'manager_file'}, 'Jon@jawnos.Phone', 'the queued copy names the calling machine');
 
 	# --- every machine: red when one missed, green only when all took it ------
 	@roster = (

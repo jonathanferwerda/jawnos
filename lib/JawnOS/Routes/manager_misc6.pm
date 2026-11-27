@@ -22,6 +22,7 @@ sub routes {
 	[25140, 'get', '/manager/notifications/search', 'action_25140'],
 	[25147, 'get', '/manager/notifications/scroll', 'action_25147'],
 	[25150, 'get', '/manager/notifications/status', 'action_25150'],
+	[25151, 'post', '/manager/notifications/seen', 'action_25151'],
 	[25183, 'get', '/manager/appointment_viewer', 'action_25183'],
 	[25345, 'get', '/manager/clothesline_rail', 'action_25345'],
 	[25356, 'get', '/manager/tasks', 'action_25356'],

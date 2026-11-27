@@ -3,27 +3,47 @@
 // panel under it with the newest notices and a search box; the footer opens
 // the Notifications app. The reading is a small JSON route, so the widget does
 // not pull the whole list into the page on every poll.
-var jawnosNotificationsTaskbarData = { notifications: [] };
-var jawnosNotificationsTaskbarSeenKey = 'jawnos_notifications_seen';
+// The "seen" mark is one value for the house, not one per browser: a notice
+// read on the phone is read on the laptop too. The server keeps it on the
+// house row and every machine's status poll reads it back.
+var jawnosNotificationsTaskbarData = { notifications: [], seen: 0 };
+var jawnosNotificationsTaskbarSeeded = false;
 
-// A fresh browser has no mark. Start it at now, so the history that predates
-// the widget is not counted as a hundred unread notices.
+// A house that has never opened the list has no mark yet. Start it at now, so
+// the history that predates the bell is not counted as a hundred unread
+// notices; the first load then writes that moment to the house row.
 function jawnosNotificationsTaskbarSeen() {
-	var now = Date.now();
-	try {
-		var raw = localStorage.getItem(jawnosNotificationsTaskbarSeenKey);
-		if (raw === null) {
-			localStorage.setItem(jawnosNotificationsTaskbarSeenKey, String(now));
-			return now;
-		}
-		return parseInt(raw, 10) || 0;
-	}
-	catch (e) { return now; }
+	var seen = parseInt(jawnosNotificationsTaskbarData.seen, 10) || 0;
+	return seen > 0 ? seen : Date.now();
 }
 
-function jawnosNotificationsTaskbarMarkSeen() {
-	try { localStorage.setItem(jawnosNotificationsTaskbarSeenKey, String(Date.now())); }
-	catch (e) {}
+function jawnosNotificationsTaskbarMarkSeen(seen) {
+	var at = parseInt(seen, 10) || Date.now();
+	if (at > (parseInt(jawnosNotificationsTaskbarData.seen, 10) || 0)) {
+		jawnosNotificationsTaskbarData.seen = at;
+	}
+	// The route answers with the house's mark: another machine may have seen
+	// more than this one, and that later moment wins.
+	$.ajax({
+		url: '/manager/notifications/seen',
+		type: 'POST',
+		data: { seen: at },
+		success: function(response) {
+			var stored = parseInt(response && response.seen, 10) || 0;
+			if (stored > 0) {
+				jawnosNotificationsTaskbarData.seen = stored;
+				jawnosNotificationsTaskbarPaint();
+			}
+		}
+	});
+}
+
+// The first machine to open the bell establishes the house mark, so the notices
+// that predate it are history rather than a badge that never clears.
+function jawnosNotificationsTaskbarSeed() {
+	if (jawnosNotificationsTaskbarSeeded) { return; }
+	jawnosNotificationsTaskbarSeeded = true;
+	jawnosNotificationsTaskbarMarkSeen(Date.now());
 }
 
 function jawnosNotificationsTaskbarUnread() {
@@ -67,7 +87,8 @@ function jawnosNotificationsTaskbarLoad() {
 		type: 'GET',
 		cache: false,
 		success: function(response) {
-			jawnosNotificationsTaskbarData = (response && response.notifications) ? response : { notifications: [] };
+			jawnosNotificationsTaskbarData = (response && response.notifications) ? response : { notifications: [], seen: 0 };
+			if (!(parseInt(jawnosNotificationsTaskbarData.seen, 10) > 0)) { jawnosNotificationsTaskbarSeed(); }
 			jawnosNotificationsTaskbarPaint();
 		},
 		error: function() { jawnosNotificationsTaskbarPaint(); }

@@ -656,6 +656,13 @@ sub destination_relay {
 		timestamp => $timestamp,
 		notes => 'sent from ' . $me
 	};
+	# A relay carries the calling machine's durable name, not only the
+	# address this hop happened to arrive from. A receiving machine places a
+	# caller it has enrolled by that name even when the address its roster pins
+	# is stale (a phone that moved onto the tailnet), so the house is not asked
+	# "who is at the door" for one of its own machines.
+	my $from = eval { &subs::manager_file_maker() } || '';
+	$form->{'manager_file'} = $from if length $from;
 	# Only a media relay has a capture machine to name; a command relay is
 	# unchanged (it runs the command on the peer, not on a chosen recorder).
 	$form->{'remote_signatorial'} = $destination
