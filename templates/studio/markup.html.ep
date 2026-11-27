@@ -53,6 +53,7 @@
 				<select id="studio_board_presets" hint="<%= &subs::ui('Load a saved pedalboard, most recently used first') %>">
 					<option value=""><%= &subs::ui('Saved pedalboards') %></option>
 				</select>
+				<button id="studio_board_delete" class="hover" hint="<%= &subs::ui('Delete this saved pedalboard') %>"><%= &subs::ui('Delete board') %></button>
 			</span>
 			<span class="studio_board_size" role="group" aria-label="<%= &subs::ui('Pedal size and Close') %>">
 				<button id="studio_pedalboard_zoom_out" class="hover" hint="<%= &subs::ui('Smaller pedals') %>">&minus;</button>

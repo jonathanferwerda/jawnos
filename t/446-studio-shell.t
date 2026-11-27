@@ -129,4 +129,11 @@ like($help, qr/Distorjawn.*?s one knob is Drive/, "the help names the Distorjawn
 like($help, qr/JawnPitch and Harmonizer both offer a Chromatic scale/,
 	'the help says both scale controls offer Chromatic');
 
+# --- a saved board can be deleted -------------------------------------------
+like($markup, qr/id="studio_board_delete"/, 'the board bar carries a delete control');
+like($markup, qr/hint="[^"]*Delete this saved pedalboard/, 'the delete control says what it does');
+like($help, qr/Delete this saved pedalboard/, 'the help lists the delete control');
+like($help, qr/press Delete board twice/, 'the help explains the two-press delete');
+like($help, qr/removal stays in the house list/, 'the help explains the tombstone');
+
 done_testing();

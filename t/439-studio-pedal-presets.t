@@ -69,4 +69,20 @@ like($js, qr/function studioBoardSave\(\) \{\s*\n\s*if \(studioBoardReadOnly\(\)
 like($js, qr/function studioBoardLoad\(index\) \{\s*\n\s*if \(studioBoardReadOnly\(\)\) \{ return false; \}/,
 	'load refuses on a read-only board');
 
+# --- deleting a saved board leaves a tombstone ------------------------------
+like($js, qr/function studioBoardDelete\(\)/, 'one function owns the delete');
+like($js, qr/#studio_board_delete/, 'the delete button is bound');
+like($js, qr/preset\.deleted = Date\.now\(\);/, 'a delete stamps the board');
+like($js, qr/if \(!item \|\| !item\.name \|\| item\.deleted\) \{ return; \}/,
+	'a tombstone is not offered in the dropdown');
+like($js, qr/if \(!preset \|\| preset\.deleted \|\| !preset\.chain\) \{ return false; \}/,
+	'a tombstone cannot be loaded');
+like($js, qr/delete preset\.deleted;/, 'saving a name again revives a tombstone');
+like($js, qr/studioBoardDeleteArmed = setTimeout\(studioBoardDeleteReset, 3000\);/,
+	'the delete asks twice, three seconds apart');
+like($js, qr/preset\.used = Math\.max\(Number\(preset\.used\) \|\| 0, preset\.deleted\);/,
+	'a tombstone is as new as its delete for the merge');
+like($js, qr/\$\('#studio_board_delete'\)\.addClass\('studio_board_delete_armed'\)/,
+	'the armed press says so');
+
 done_testing();

@@ -315,10 +315,11 @@ sub studio_shared_setting($app, $setting) {
 	return ($app eq 'studio' && $setting eq 'pedalboards') ? 1 : 0;
 }
 
-# One library from two: a board is its name, and the copy with the later `used`
-# stamp wins. The Studio page saves the whole list, so a machine that has not yet
-# seen a board saved elsewhere must never drop it; the same merge is what a peer
-# row goes through. Boards are newest-used first, the order the page draws.
+# One library from two: a board is its name, and the copy with the later event
+# wins - `used` for a save, `deleted` for a tombstone. A delete outlives a stale
+# copy of the same board, so a machine that still holds the old library cannot
+# put it back; saving the name again after the delete is a newer event and
+# revives it. Boards are newest-first, the order the page draws.
 sub studio_pedalboards_merge($left, $right) {
 	my @lists = grep { ref $_ eq 'ARRAY' } ($left, $right);
 	return undef unless @lists;
@@ -331,8 +332,19 @@ sub studio_pedalboards_merge($left, $right) {
 			my $used = (defined $entry->{'used'} && !ref $entry->{'used'}
 				&& $entry->{'used'} =~ /^\s*\d+(?:\.\d+)?\s*$/)
 				? $entry->{'used'} + 0 : 0;
-			my $copy = { %{$entry}, name => $name, used => $used };
-			if (!$board{$name} || $used > $board{$name}->{'used'}) { $board{$name} = $copy; }
+			my $deleted = (defined $entry->{'deleted'} && !ref $entry->{'deleted'}
+				&& $entry->{'deleted'} =~ /^\s*\d+(?:\.\d+)?\s*$/)
+				? $entry->{'deleted'} + 0 : undef;
+			my $copy = { %{$entry}, name => $name, used => (defined $deleted ? ($used || $deleted) : $used) };
+			if (defined $deleted) { $copy->{'deleted'} = $deleted; }
+			else { delete $copy->{'deleted'}; }
+			my $event = defined $deleted ? $deleted : $used;
+			my $held = $board{$name};
+			my $held_event = $held ? (defined $held->{'deleted'} ? $held->{'deleted'} : $held->{'used'}) : -1;
+			if (!$held || $event > $held_event
+				|| ($event == $held_event && defined $deleted && !defined $held->{'deleted'})) {
+				$board{$name} = $copy;
+			}
 		}
 	}
 	return [ sort { ($b->{'used'} <=> $a->{'used'}) || ($a->{'name'} cmp $b->{'name'}) } values %board ];

@@ -153,6 +153,7 @@
 	.studio_board_readonly .studio_board_tools,
 	.studio_board_readonly .studio_chain_choice,
 	.studio_board_readonly #studio_palette_add,
+	.studio_board_readonly #studio_board_delete,
 	.studio_board_readonly #studio_palette_effect {
 		cursor: var(--jawnos-cursor-not-allowed, not-allowed);
 	}
@@ -182,6 +183,18 @@
 		min-height: 18px;
 		line-height: 16px;
 		padding: 0 4px;
+	}
+	#studio_board_delete {
+		font-size: 12px;
+		height: 18px;
+		min-height: 18px;
+		line-height: 16px;
+		padding: 0 6px;
+	}
+	#studio_board_delete.studio_board_delete_armed {
+		background: var(--runway-bad, #b3453f);
+		border-color: var(--runway-bad, #b3453f);
+		color: #fff;
 	}
 	.studio_board_save_name {
 		width: 110px;

@@ -64,8 +64,8 @@ like(
 );
 like(
 	$merge_helper,
-	qr/if \(!\$board\{\$name\} \|\| \$used > \$board\{\$name\}->\{'used'\}\)/,
-	'the newer copy of a name replaces the older one'
+	qr/if \(!\$held \|\| \$event > \$held_event/,
+	'the newer event for a name replaces the older one'
 );
 like(
 	$merge_helper,
@@ -203,5 +203,26 @@ like(
 	qr/\$settings = &subs::settings_grabber\(\{ app => 'studio' \}\) if \$data->\{'settings'\};/,
 	'a save answers with the house library after the merge'
 );
+
+# --- a delete is a tombstone, not an absence --------------------------------
+my $tomb = subs::studio_pedalboards_merge(
+	[ { name => 'Gone', used => 100, chain => [ { name => 'delay' } ] } ],
+	[ { name => 'Gone', deleted => 200 } ]
+);
+is($tomb->[0]->{'name'}, 'Gone', 'the deleted name stays in the library');
+ok(exists $tomb->[0]->{'deleted'}, 'as a tombstone');
+is($tomb->[0]->{'deleted'}, 200, 'with its delete stamp');
+my $revived = subs::studio_pedalboards_merge(
+	[ { name => 'Gone', deleted => 200 } ],
+	[ { name => 'Gone', used => 300, chain => [ { name => 'drive' } ] } ]
+);
+ok(!exists $revived->[0]->{'deleted'}, 'a save after the delete revives the board');
+is($revived->[0]->{'used'}, 300, 'at its new save time');
+is_deeply($revived->[0]->{'chain'}, [ { name => 'drive' } ], 'with the new chain');
+like($merge_helper, qr/my \$deleted = /, 'the merger reads a tombstone stamp');
+like($merge_helper, qr/\$event = defined \$deleted \? \$deleted : \$used;/,
+	'the later event wins');
+like($merge_helper, qr/\$event == \$held_event && defined \$deleted && !defined \$held->\{'deleted'\}/,
+	'a delete wins a tie against a live board');
 
 done_testing();

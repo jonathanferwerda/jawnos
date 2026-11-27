@@ -828,7 +828,7 @@ function studioBoardPresetsRefresh() {
 	select.empty();
 	select.append($('<option></option>').attr('value', '').text(studioLayoutText('Saved pedalboards')));
 	library.forEach(function (item, index) {
-		if (!item || !item.name) { return; }
+		if (!item || !item.name || item.deleted) { return; }
 		select.append($('<option></option>').attr('value', String(index)).text(item.name));
 	});
 	if (chosen !== null && chosen !== undefined && select.find('option[value="' + chosen + '"]').length) {
@@ -856,6 +856,7 @@ function studioBoardSave() {
 	}
 	preset.chain = studioBoardCapture(ch, chain);
 	preset.used = Date.now();
+	delete preset.deleted;
 	studioBoardSort(library);
 	studioBoardPersist();
 	studioBoardPresetsRefresh();
@@ -871,7 +872,7 @@ function studioBoardLoad(index) {
 	if (studioBoardReadOnly()) { return false; }
 	var library = studioBoardLibrary();
 	var preset = library[index];
-	if (!preset || !preset.chain) { return false; }
+	if (!preset || preset.deleted || !preset.chain) { return false; }
 	var ch = studioPaletteChannel();
 	var chain = studioChannelChain(ch);
 	var c = studioAudio.channels[ch];
@@ -914,13 +915,58 @@ function studioBoardLoad(index) {
 	return true;
 }
 
+// ---- deleting a saved board -------------------------------------------------
+//
+// A delete is a tombstone, not the absence of a row: the name stays in the
+// house library with its own `deleted` stamp, so a machine that still holds the
+// old copy cannot merge it back. Saving the same name again is a newer `used`
+// stamp and revives it. The button asks twice, a press apart.
+var studioBoardDeleteArmed = null;
+
+function studioBoardDeleteReset() {
+	if (studioBoardDeleteArmed) { clearTimeout(studioBoardDeleteArmed); studioBoardDeleteArmed = null; }
+	$('#studio_board_delete').removeClass('studio_board_delete_armed').text(studioLayoutText('Delete board'));
+}
+
+function studioBoardDelete() {
+	if (studioBoardReadOnly()) { studioBoardDeleteReset(); return false; }
+	var select = $('#studio_board_presets');
+	var name = String(select.find('option:selected').text() || '');
+	if (!name || !String(select.val() || '').length) { studioBoardDeleteReset(); return false; }
+	var library = studioBoardLibrary();
+	var preset = null;
+	library.forEach(function (item) {
+		if (!preset && item && !item.deleted && String(item.name) === name) { preset = item; }
+	});
+	if (!preset) { studioBoardDeleteReset(); return false; }
+	if (!studioBoardDeleteArmed) {
+		studioBoardDeleteArmed = setTimeout(studioBoardDeleteReset, 3000);
+		$('#studio_board_delete').addClass('studio_board_delete_armed').text(studioLayoutText('Delete board?'));
+		return true;
+	}
+	studioBoardDeleteReset();
+	preset.deleted = Date.now();
+	preset.used = Math.max(Number(preset.used) || 0, preset.deleted);
+	studioBoardSort(library);
+	studioBoardPersist();
+	studioBoardPresetsRefresh();
+	select.val('');
+	return true;
+}
+
 $(document).on('click', '#studio_board_save', function (e) {
 	e.preventDefault();
 	studioBoardSave();
 });
 
+$(document).on('click', '#studio_board_delete', function (e) {
+	e.preventDefault();
+	studioBoardDelete();
+});
+
 $(document).on('change', '#studio_board_presets', function () {
 	var index = parseInt($(this).val(), 10);
+	studioBoardDeleteReset();
 	if (!(index >= 0)) { return; }
 	studioBoardLoad(index);
 });
