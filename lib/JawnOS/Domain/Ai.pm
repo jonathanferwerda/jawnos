@@ -400,6 +400,9 @@ sub whisper_streamer {
 
 # The Plat page and the Crew rail both ask this; one probe a minute is enough.
 our $whisper_probe;
+# Set while a Crew whisper.transcribe job runs on a peer: the job must use that
+# machine's own engine and never dispatch the same clip onward.
+our $whisper_no_peer = 0;
 sub whisper_available {
 	my $now = time;
 	return $whisper_probe->{'ok'} if $whisper_probe && $now - $whisper_probe->{'at'} < 60;
@@ -413,6 +416,37 @@ sub whisper_available {
 	}
 	$whisper_probe = { at => $now, ok => $ok };
 	return $ok;
+}
+
+sub whisper_peer_transcribe {
+	# A machine without the local engine can still use the house's: the Crew rail
+	# has a whisper.transcribe job with `needs => ['whisper']`, so placement runs
+	# it on a peer that advertises the tool. The audio rides base64 on the wire.
+	# '' when no peer answers (the caller then tries its own fallback).
+	my ($raw, $lang) = @_;
+	return '' if $whisper_no_peer;
+	return '' unless defined &crew::dispatch;
+	my $out = eval {
+		&crew::dispatch('whisper.transcribe', {
+			audio_b64 => encode_base64($raw, ''),
+			lang      => ($lang || 'auto'),
+		});
+	};
+	return '' unless $out && ref $out eq 'HASH' && $out->{'ok'};
+	my $result = $out->{'result'};
+	return '' unless ref $result eq 'HASH';
+	return $result->{'text'} // '';
+}
+
+sub whisper_house_available {
+	# True when this machine has whisper.cpp, or a house peer that advertises it
+	# can run the Crew's whisper.transcribe job. The Plat page offers the engine
+	# on that basis: a phone cannot run the wheel itself, but the house can.
+	return 1 if &whisper_available();
+	return 0 unless defined &crew::place;
+	my $me = eval { &subs::signatorial_designer() } || '';
+	my $where = eval { &crew::place('whisper.transcribe', {}, from => $me) };
+	return ($where && ref $where eq 'HASH' && $where->{'ok'} && !$where->{'local'}) ? 1 : 0;
 }
 
 sub _python_has_module {
@@ -504,12 +538,21 @@ sub whisper_transcribe {
 		my $engine = ($m eq 'local:vosk') ? 'local:whisper.cpp' : $m;
 		next if $seen{$engine}++;
 		my $local = &transcribe_local_engine($engine);
-		my $text = $local ? $local->($raw, $lang) : &ai_transcribe_cloud($engine, $raw, $lang);
+		my $text;
+		if ($local) {
+			# The role names this machine; if the engine is not installed here, the
+			# house's own engine is the next best thing (the fallback model below is
+			# still tried when no peer answers).
+			$text = &whisper_available() ? $local->($raw, $lang) : &whisper_peer_transcribe($raw, $lang);
+		}
+		else {
+			$text = &ai_transcribe_cloud($engine, $raw, $lang);
+		}
 		next if $text && &subs::voice_silence_hallucination($text);
 		return $text if $text;
 	}
 	return '' if grep { $_ eq 'local:whisper.cpp' || $_ eq 'local:vosk' } @order;
-	return &whisper_local_transcribe($raw, $lang);
+	return &whisper_available() ? &whisper_local_transcribe($raw, $lang) : &whisper_peer_transcribe($raw, $lang);
 }
 
 sub whisper_name_transcribe {

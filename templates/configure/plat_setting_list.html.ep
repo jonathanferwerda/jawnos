@@ -139,13 +139,17 @@
 					push @role_models, { %{$m}, group => $provider->{'label'} };
 				}
 			}
-			# whisper.cpp on this machine is a transcription choice like any
-			# other: it answers offline and costs nothing, so it belongs in both
-			# the model and fallback lists. It is offered when its streamer, a
-			# model and a command are installed.
-			my $whisper_here = $setting eq 'transcription_assistant' && &subs::whisper_available();
+			# whisper.cpp is a transcription choice like any other: it answers offline and
+			# costs nothing, so it belongs in both the model and fallback lists. It is
+			# offered when this machine has it, or when a house machine that advertises
+			# it can run the Crew's whisper.transcribe job (a phone cannot run the
+			# wheel, but the house can).
+			my $whisper_local = $setting eq 'transcription_assistant' && &subs::whisper_available();
+			my $whisper_house = $setting eq 'transcription_assistant' && !$whisper_local && &subs::whisper_house_available();
+			my $whisper_here = ($whisper_local || $whisper_house) ? 1 : 0;
 			if ($whisper_here) {
-				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0, group => 'This machine', caps => ['audio'] };
+				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0,
+					group => ($whisper_local ? 'This machine' : 'Another machine'), caps => ['audio'] };
 			}
 		%>
 			<div class="ai_role" setting="<%= $setting %>"<% if ($cap eq 'chat') { %> data-qualify="1"<% } %>>
@@ -171,8 +175,8 @@
 							</optgroup>
 						<% } %>
 						<% if ($whisper_here) { %>
-							<optgroup label="This machine">
-								<option value="local:whisper.cpp" data-thinks="0" <% if ($current eq 'local:whisper.cpp') { %>selected="selected"<% $shown = 1; } %>>whisper.cpp · this machine · free</option>
+							<optgroup label="<%= $whisper_local ? 'This machine' : 'Another machine' %>">
+								<option value="local:whisper.cpp" data-thinks="0" <% if ($current eq 'local:whisper.cpp') { %>selected="selected"<% $shown = 1; } %>>whisper.cpp · <%= $whisper_local ? 'this machine' : 'another machine' %> · free</option>
 							</optgroup>
 						<% } %>
 						<%# a model already chosen that does not fit, or is paid and stood down, is kept so it is not silently dropped %>

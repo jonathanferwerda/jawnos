@@ -1,14 +1,16 @@
 # tests-for: lib/JawnOS/Domain/Ai.pm perl/crew.pl scripts/jawnos_deps.pl scripts/whisper_tool.py templates/configure/plat_setting_list.html.ep
 # covers:    whisper.cpp is the one local transcription engine the role can name
 #           (local:whisper.cpp); the wheel install and its wrappers, the model
-#           chooser, a stored local:vosk read as whisper.cpp, the Crew rail,
-#           and the Plat page offering only the engine that is installed.
+#           chooser, a stored local:vosk read as whisper.cpp, a machine without
+#           the engine using a house peer's through the Crew whisper.transcribe
+#           job, and the Plat page offering the engine where it can run.
 use strict;
 use warnings;
 
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use MIME::Base64 qw(decode_base64);
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
@@ -82,6 +84,67 @@ is(subs::transcribe_local_engine('groq:whisper-large-v3'), undef, 'a cloud model
 }
 &subs::setting_setter({ app => 'mail', setting => 'transcription_assistant', value => '' });
 
+# ------------------------------------------------------------ a peer's engine
+# A machine without the local engine (a phone) uses the house's: the Crew's
+# whisper.transcribe job is placed on a peer that advertises the tool.
+{
+	my @sent;
+	local *subs::whisper_available = sub { 0 };
+	local *crew::dispatch = sub {
+		my ($kind, $payload) = @_;
+		push @sent, [ $kind, $payload ];
+		return { ok => 1, result => { text => 'the peer heard this' } };
+	};
+	local *subs::ai_role_models = sub { ('local:whisper.cpp', '') };
+	is(subs::whisper_transcribe('RIFF-peer', 'en'), 'the peer heard this',
+		'a machine without the engine asks a peer that has it');
+	is(scalar(@sent), 1, 'one Crew job is dispatched');
+	is($sent[0][0], 'whisper.transcribe', 'the whisper.transcribe job');
+	is(decode_base64($sent[0][1]{'audio_b64'}), 'RIFF-peer',
+		'the clip rides base64 on the wire');
+	is($sent[0][1]{'lang'}, 'en', 'with the language');
+}
+
+# When no peer answers, the role's own fallback is still tried.
+{
+	local *subs::whisper_available = sub { 0 };
+	local *crew::dispatch = sub { return { ok => 0, error => 'no peer' } };
+	local *subs::ai_transcribe_cloud = sub { return 'the cloud heard this' };
+	local *subs::ai_role_models = sub { ('local:whisper.cpp', '@cf/openai/whisper') };
+	is(subs::whisper_transcribe('RIFF-cloud', 'en'), 'the cloud heard this',
+		'no peer leaves the role fallback in charge');
+}
+
+# An installed engine is used here, never dispatched away.
+{
+	local *subs::whisper_available = sub { 1 };
+	local *crew::dispatch = sub { die 'must not dispatch' };
+	local *subs::whisper_local_transcribe = sub { return 'the local engine heard this' };
+	local *subs::ai_role_models = sub { ('local:whisper.cpp', '') };
+	is(subs::whisper_transcribe('RIFF-local', 'en'), 'the local engine heard this',
+		'the installed engine answers locally');
+}
+
+# A Crew whisper job must never dispatch the same clip onward.
+{
+	local $subs::whisper_no_peer = 1;
+	local *subs::whisper_available = sub { 0 };
+	local *crew::dispatch = sub { die 'must not dispatch' };
+	local *subs::ai_role_models = sub { ('local:whisper.cpp', '') };
+	is(subs::whisper_transcribe('RIFF', 'en'), '', 'a Crew job never dispatches onward');
+}
+
+# The Plat page offers the engine when this machine has it, or when a peer does.
+{
+	local *subs::whisper_available = sub { 0 };
+	local *crew::place = sub { { ok => 1, local => 0, hostname => 'dev' } };
+	ok(subs::whisper_house_available(), 'a peer with the engine makes it a house choice');
+	local *crew::place = sub { { ok => 0, error => 'nothing can run it' } };
+	ok(!subs::whisper_house_available(), 'no peer means it is not offered');
+	local *subs::whisper_available = sub { 1 };
+	ok(subs::whisper_house_available(), 'a local engine is offered without asking a peer');
+}
+
 # ------------------------------------------------------------ the Crew rail
 my $kind = crew::job_kind('whisper.transcribe');
 ok($kind, 'the Crew registry knows whisper.transcribe');
@@ -102,7 +165,8 @@ unlike($deps, qr{sub install_vosk}, 'the Vosk installer is gone');
 # ------------------------------------------------------------ the Plat page
 my $plat = read_file("$repo/templates/configure/plat_setting_list.html.ep");
 like($plat, qr/value="local:whisper\.cpp"/, 'the transcription role offers whisper.cpp');
-like($plat, qr/&subs::whisper_available\(\)/, 'only when the engine is installed');
+like($plat, qr/&subs::whisper_house_available\(\)/, 'when this machine has it, or a house machine does');
+like($plat, qr/Another machine/, 'and labels a peer\'s engine as another machine');
 unlike($plat, qr/value="local:vosk"/, 'and no longer offers Vosk');
 like($plat, qr{\$current = 'local:whisper\.cpp' if \$current eq 'local:vosk'},
 	'a stored local:vosk is shown as whisper.cpp');

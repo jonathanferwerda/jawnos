@@ -1496,6 +1496,9 @@ sub _job_whisper_transcribe {
 	my $raw = _payload_audio($payload);
 	die "whisper.transcribe needs audio\n" unless defined $raw && length $raw;
 	my $lang = $payload->{'lang'} // 'auto';
+	# This job is already running on a machine chosen for its whisper tool: it must
+	# use that engine, never dispatch the same clip onward to another peer.
+	local $subs::whisper_no_peer = 1;
 	my $text = &subs::whisper_transcribe($raw, $lang);
 	die "no transcript\n" unless defined $text && length $text;
 	return { text => $text, lang => $lang };
