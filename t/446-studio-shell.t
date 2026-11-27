@@ -73,28 +73,28 @@ like($style, qr/#studio_pedalboard_rack\s*\{[^}]*max-height:\s*min\(calc\(240px 
 like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*min\(calc\(344px \* var\(--studio-pedal-zoom,\s*1\)\),\s*80vh\)/s,
 	'and so does the whole sheet');
 
-# --- the artwork stomp switch on every pedal ------------------------------
-like($markup, qr/class="button_control studio_pedal_foot studio_pedal_stomp"/,
-	'a pedal footswitch is the artwork stomp image');
+# --- the drawn stomp plate on every pedal ----------------------------------
+like($markup, qr/<button type="button" class="studio_pedal_foot studio_pedal_stomp"/,
+	'a pedal footswitch is a drawn button');
 like($markup, qr/studio_pedal_stomp[^>]*control="stomp"/, 'it names the stomp control');
-like($markup, qr/studio_pedal_stomp[^>]*state="depressed"/, 'it carries an artwork state');
-like($markup, qr/studio_pedal_stomp"[\s\S]{0,400}?src="<%= \$button_icon->\('depressed', 'ruby_red'\) %>"/,
-	'and uses the pressed artwork');
 like($markup, qr/studio_pedal_stomp[^>]*effect="<%= \$p->\{'name'\} %>"/,
 	'the shelf loop names its own pedal');
 like($markup, qr/studio_pedal_stomp[^>]*effect="<%= \$name %>"/,
 	'the drawn palette loop names its own pedal');
 my @stomp = $markup =~ /studio_pedal_stomp/g;
-is(scalar @stomp, 2, 'both the shelf and the drawn palette loops carry the stomp image');
-unlike($markup, qr/<button[^>]*class="studio_pedal_foot/,
-	'the old CSS-drawn footswitch button is gone');
+is(scalar @stomp, 2, 'both the shelf and the drawn palette loops carry the switch');
+like($markup, qr/hint="[^"]*">(?:<span aria-hidden="true"><\/span>){4}/,
+	'the switch is a plate with four grip lines');
+unlike($markup, qr/studio_pedal_stomp[^>]*\bsrc=/, 'no stomp image is drawn any more');
 
-like($style, qr/\.studio_pedal_foot\s*\{[^}]*object-fit:\s*fill/s,
-	'the stomp fills its fixed box, so its two artworks do not shift it sideways');
 like($style, qr/\.studio_pedal_foot\s*\{[^}]*transform:\s*translateX\(-50%\)/s,
-	'and centred at the foot of the case');
-like($style, qr/\.pedal_controls\s*\{[^}]*bottom:\s*40px/s,
-	'the drawn pedals leave room for the artwork');
+	'the plate is centred at the foot of the case');
+like($style, qr/\.studio_pedal_foot span\s*\{[^}]*height:\s*2px/s,
+	'the four grip lines are bars');
+like($style, qr/\.pedal_background\s*\{[^}]*clip-path:\s*inset\(0 0 30% 0\)/s,
+	"the artwork's own stomp plate is cropped away");
+like($style, qr/\.pedal_controls\s*\{[^}]*bottom:\s*52px/s,
+	'the drawn pedals leave room for the switch');
 like($style, qr/\.studio_board_readonly \.studio_pedal_foot/, 'a read-only board still marks its switch');
 
 # --- the Distorjawn's knob is Drive ---------------------------------------
@@ -122,8 +122,8 @@ like($help, qr/The \+ and .{1,4}buttons beside Close make the pedals bigger or s
 	'the help names the + and - size buttons');
 like($help, qr/size is remembered for the next visit/,
 	'and says the size is remembered');
-like($help, qr/footswitch drawn as the pedal.*?s own stomp artwork/,
-	'the help describes the artwork footswitch');
+like($help, qr/footswitch: a drawn plate with four grip lines/,
+	'the help describes the drawn footswitch');
 unlike($help, qr/it reads On or Off/, 'and no longer describes a text On/Off swatch');
 like($help, qr/Distorjawn.*?s one knob is Drive/, "the help names the Distorjawn's Drive knob");
 like($help, qr/JawnPitch and Harmonizer both offer a Chromatic scale/,

@@ -44,17 +44,6 @@
 				</select>
 				<button id="studio_palette_add" class="hover" hint="<%= &subs::ui('Add the chosen effect to this chain') %>"><%= &subs::ui('Add') %></button>
 			</span>
-			<%# A saved board is a named copy of this track's chain, kept in the house's
-			   settings like the synth loops, so it is one press away on another
-			   track, another song or another machine. The list is newest-used first. %>
-			<span class="studio_board_presets" role="group" aria-label="<%= &subs::ui('Saved pedalboards') %>">
-				<input id="studio_board_save_name" class="studio_board_save_name" placeholder="<%= &subs::ui('Pedalboard name') %>" hint="<%= &subs::ui('Name this pedalboard') %>">
-				<button id="studio_board_save" class="hover" hint="<%= &subs::ui('Save this track\'s pedalboard under this name') %>"><%= &subs::ui('Save board') %></button>
-				<select id="studio_board_presets" hint="<%= &subs::ui('Load a saved pedalboard, most recently used first') %>">
-					<option value=""><%= &subs::ui('Saved pedalboards') %></option>
-				</select>
-				<button id="studio_board_delete" class="hover" hint="<%= &subs::ui('Delete this saved pedalboard') %>"><%= &subs::ui('Delete board') %></button>
-			</span>
 			<span class="studio_board_size" role="group" aria-label="<%= &subs::ui('Pedal size and Close') %>">
 				<button id="studio_pedalboard_zoom_out" class="hover" hint="<%= &subs::ui('Smaller pedals') %>">&minus;</button>
 				<button id="studio_pedalboard_zoom_in" class="hover" hint="<%= &subs::ui('Bigger pedals') %>">+</button>
@@ -64,9 +53,20 @@
 		<%# A controller edits the peer's chain with `pedal` commands; the note names
 		   the machine a press is sent to rather than calling the sheet read-only. %>
 		<span id="studio_pedalboard_remote" class="studio_pedalboard_remote" role="status" aria-live="polite" style="display:none;"><%= &subs::ui('Pedal changes are sent to the machine this Studio controls') %></span>
-		<%# The In/Out switch and the selected track's board. studioRackRender()
-		   fills both; the board holds only the inserts, in signal order. %>
-		<div id="studio_pedalboard_chain" class="studio_pedalboard_chain"></div>
+		<%# In/Out and the saved-board group share this row: studioRackRender()
+		   prepends the chain switch, and the saved boards follow it. A saved board
+		   is a named copy of this track's chain, kept in the house's settings like
+		   the synth loops, so it is one press away elsewhere. %>
+		<div id="studio_pedalboard_chain" class="studio_pedalboard_chain">
+			<span class="studio_board_presets" role="group" aria-label="<%= &subs::ui('Saved pedalboards') %>">
+				<input id="studio_board_save_name" class="studio_board_save_name" placeholder="<%= &subs::ui('Pedalboard name') %>" hint="<%= &subs::ui('Name this pedalboard') %>">
+				<select id="studio_board_presets" hint="<%= &subs::ui('Load a saved pedalboard, most recently used first') %>">
+					<option value=""><%= &subs::ui('Saved pedalboards') %></option>
+				</select>
+				<button id="studio_board_save" class="hover" hint="<%= &subs::ui('Save this track\'s pedalboard under this name') %>"><%= &subs::ui('Save board') %></button>
+				<button id="studio_board_delete" class="hover" hint="<%= &subs::ui('Delete this saved pedalboard') %>"><%= &subs::ui('Delete board') %></button>
+			</span>
+		</div>
 		<div id="studio_pedalboard_rack" class="studio_channel_rack" hint="<%= &subs::ui('The effects in this track\'s chain, in order') %>"></div>
 	</div>
 	<%# The tile library. It is never shown: studioRackRender() clones one tile per
@@ -141,7 +141,7 @@
 					</datalist>
 				</label>
 			<% } %>
-			<img class="button_control studio_pedal_foot studio_pedal_stomp" role="button" tabindex="0" control="stomp" colour="ruby_red" state="depressed" aria-pressed="false" effect="<%= $p->{'name'} %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>" src="<%= $button_icon->('depressed', 'ruby_red') %>">
+			<button type="button" class="studio_pedal_foot studio_pedal_stomp" control="stomp" aria-pressed="false" effect="<%= $p->{'name'} %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>
 		</span>
 	<% } %>
 		<% foreach my $name ( @{$gb::studio->{'palette'}} ) { next if $shelf_has{$name}; %>
@@ -193,7 +193,7 @@
 							</datalist>
 						</label>
 					<% } %></span>
-				<img class="button_control studio_pedal_foot studio_pedal_stomp" role="button" tabindex="0" control="stomp" colour="ruby_red" state="depressed" aria-pressed="false" effect="<%= $name %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>" src="<%= $button_icon->('depressed', 'ruby_red') %>">
+				<button type="button" class="studio_pedal_foot studio_pedal_stomp" control="stomp" aria-pressed="false" effect="<%= $name %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>
 			</span>
 		<% } %>
 	</div>

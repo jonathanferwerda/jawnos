@@ -38,8 +38,10 @@ my $help     = slurp("$root/perl/help/topics_apps.pl");
 # --- the wheel moves the chain sideways, after the knobs took their press ---
 like($knobs, qr/closest\('#studio_pedalboard_rack'\)/,
 	'the wheel handler finds the pedalboard rack');
-like($knobs, qr/rack\.scrollLeft -= studioWheelDelta\(event\)/,
-	'a one-wheel mouse scrolls the rack sideways');
+like($knobs, qr/rack\.scrollLeft \+= \(Math\.abs\(dx\) > Math\.abs\(dy\)\) \? dx : dy;/,
+	'a wheel or a trackpad gesture scrolls the rack sideways');
+like($knobs, qr/var dx = \('deltaX' in event\) \? Number\(event\.deltaX\) : 0;/,
+	'and a trackpad\'s left/right delta drives it');
 my $knob_at = index($knobs, "target.closest('.knob')");
 my $rack_at = index($knobs, "target.closest('#studio_pedalboard_rack')");
 ok($knob_at >= 0 && $rack_at > $knob_at,

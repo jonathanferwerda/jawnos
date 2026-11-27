@@ -247,25 +247,29 @@ like($rack, qr/function studioBoardZoom\(delta\) \{\s*\n\s*if \(!\$\('#pedalboar
 like($rack, qr/\$\(function \(\) \{[\s\S]{0,160}?studioBoardZoomApply\(studioBoardZoomValue\(\)\);/,
 	'document ready settles the buttons and the saved size');
 
-# --- the artwork footswitch -------------------------------------------------
-# A tile's stomp is an image now: its state, src and aria must follow the
-# insert, and the text fallback only belongs to a real button.
+# --- the board follows a trackpad's left/right gesture ----------------------
+like($knobs, qr/var dx = \('deltaX' in event\) \? Number\(event\.deltaX\) : 0;/,
+	'the wheel reads a horizontal delta');
+like($knobs, qr/var dy = \('deltaY' in event\) \? Number\(event\.deltaY\) : Number\(-event\.wheelDelta\);/,
+	'and the vertical one');
+like($knobs, qr/rack\.scrollLeft \+= \(Math\.abs\(dx\) > Math\.abs\(dy\)\) \? dx : dy;/,
+	'whichever moved more scrolls the board sideways');
+
+# --- the drawn footswitch ---------------------------------------------------
+# The stomp is a plate button: its aria must follow the insert, and the same
+# plate is built for a fallback tile. A native button handles Enter and Space.
 like($rack, qr/tile\.find\('\.studio_pedal_foot'\)\s*\n?\s*\.attr\('aria-pressed', on \? 'true' : 'false'\)/,
-	'a freshly drawn tile paints the foot from its insert');
-like($rack, qr/state: on \? 'pressed' : 'depressed',/,
-	'the stomp image swaps its pressed/depressed state');
-like($rack, qr/src: jawnosStudioButtonIcon\(on \? 'pressed' : 'depressed', foot\.attr\('colour'\) \|\| 'ruby_red'\)/,
-	'and its artwork for the insert state');
-my $text_fallbacks = () = $rack =~ /if \(foot\.is\('button'\)\) \{ foot\.text\(studioLayoutText\(on \? 'On' : 'Off'\)\); return; \}/g;
-is($text_fallbacks, 2, 'On/Off text survives only on a button, in both painters');
-like($rack, qr/button_control studio_pedal_foot studio_pedal_stomp/,
-	'the fallback tile builds the same artwork switch');
-like($rack, qr/\.attr\('src', jawnosStudioButtonIcon\('depressed', 'ruby_red'\)\)/,
-	'with a dark artwork image to start');
+	'a freshly drawn tile paints the plate from its insert');
+like($rack, qr/function studioStompButton\(effect, hint\)/,
+	'one builder makes the four-line plate');
+like($rack, qr/for \(var i = 0; i < 4; i\+\+\) \{ \$\('<span aria-hidden="true"><\/span>'\)\.appendTo\(button\); \}/,
+	'the switch carries four grip lines');
+like($rack, qr/studioStompButton\(ins\.name, studioLayoutText\('Bypass this effect without removing it'\)\)\.appendTo\(tile\);/,
+	'the fallback tile builds the same plate switch');
 like($rack, qr/\$\(document\)\.on\('click', '\.studio_rack_led, #pedalboard \.studio_pedal_led, #pedalboard \.studio_pedal_foot'/,
-	'the pedal handler still owns a press on the foot');
-like($rack, qr/\$\(document\)\.on\('keydown', '#pedalboard \.studio_pedal_foot'/,
-	'the artwork stomp keeps Enter and Space working as a button did');
+	'the pedal handler still owns a press on the plate');
+unlike($rack, qr/\$\(document\)\.on\('keydown', '#pedalboard \.studio_pedal_foot'/,
+	'no key handler is needed: the plate is a native button');
 like($knobs, qr/if \(b\.hasClass\('studio_pedal_stomp'\) \|\| b\.hasClass\('studio_pedal_foot'\)\) \{ return; \}/,
 	'the shared button_control handler leaves the stomp alone');
 like($knobs, qr/tile\.attr\('data-tuner'\) === 'yes'[\s\S]{0,160}?studioTunerToggle/,

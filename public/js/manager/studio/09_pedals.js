@@ -444,6 +444,17 @@ function studioTileTarget(row) {
 
 // A tile with no library entry (an old song's name, or a future effect) is
 // drawn from the contract instead, so it still has knobs and a stomp.
+function studioStompButton(effect, hint) {
+	// The footswitch is drawn, not an image: a fixed plate with four grip lines.
+	// One <button> means the whole plate is the click target, and changing the
+	// on/off state cannot move it.
+	var button = $('<button type="button" class="studio_pedal_foot studio_pedal_stomp" control="stomp" aria-pressed="false"></button>');
+	if (effect) { button.attr('effect', effect); }
+	button.attr('hint', hint || studioLayoutText('Turn this pedal on or off for this track'));
+	for (var i = 0; i < 4; i++) { $('<span aria-hidden="true"></span>').appendTo(button); }
+	return button;
+}
+
 function studioRackFallbackTile(ins) {
 	var spec = studioEffectSpec(ins.name);
 	var tile = $('<span class="pedal pedal_graphic studio_rack_tile"></span>');
@@ -484,11 +495,7 @@ function studioRackFallbackTile(ins) {
 		label.appendTo(controls);
 	});
 	controls.appendTo(tile);
-	$('<img class="button_control studio_pedal_foot studio_pedal_stomp" role="button" tabindex="0" control="stomp" colour="ruby_red" state="depressed" aria-pressed="false">')
-		.attr('effect', ins.name)
-		.attr('hint', studioLayoutText('Bypass this effect without removing it'))
-		.attr('src', jawnosStudioButtonIcon('depressed', 'ruby_red'))
-		.appendTo(tile);
+	studioStompButton(ins.name, studioLayoutText('Bypass this effect without removing it')).appendTo(tile);
 	return tile;
 }
 
@@ -547,21 +554,10 @@ function studioRackTile(ch, ins, chain) {
 	});
 	var on = !ins.bypassed;
 	if (!on) { tile.addClass('studio_rack_off'); }
-	// The tile is born in step with its insert: the foot says On or Off and the
-	// lamp reads the same state before any later paint runs. Opening the board
-	// draws tiles without a lamp pass, so a bypassed insert must not show "On".
-	tile.find('.studio_pedal_foot')
-		.attr('aria-pressed', on ? 'true' : 'false')
-		.each(function () {
-			var foot = $(this);
-			// The new board draws the footswitch as artwork; a button is only the
-			// fallback an insert with no library tile can still be built from.
-			if (foot.is('button')) { foot.text(studioLayoutText(on ? 'On' : 'Off')); return; }
-			foot.attr({
-				state: on ? 'pressed' : 'depressed',
-				src: jawnosStudioButtonIcon(on ? 'pressed' : 'depressed', foot.attr('colour') || 'ruby_red')
-			});
-		});
+	// The tile is born in step with its insert: the plate reads the same state the
+	// lamp does before any later paint runs. Opening the board draws tiles without
+	// a lamp pass, so a bypassed insert must not show "On".
+	tile.find('.studio_pedal_foot').attr('aria-pressed', on ? 'true' : 'false');
 	if (tile.attr('data-tuner') === 'yes') {
 		// Jtune's lamp is the tuner's light, not an effect lamp: paint it from the
 		// tuner, so opening the board never shows a stale colour.
@@ -600,7 +596,7 @@ function studioRackRender(ch) {
 	var chain = studioRackChain(ch);
 	// every board action reads this attribute to find its channel
 	holder.attr('channel', ch);
-	header.attr('channel', ch).empty();
+	header.attr('channel', ch).find('.studio_chain_toggle').remove();
 	holder.empty();
 	// In is before the recording, so its pedals print into the take; Out is
 	// after it, so the take stays clean. One switch chooses what the board shows
@@ -614,7 +610,7 @@ function studioRackRender(ch) {
 			.text(studioLayoutText(choice[1]))
 			.appendTo(toggle);
 	});
-	header.append(toggle);
+	header.prepend(toggle);
 	var list = (chain === 'out') ? c.outInserts : c.inserts;
 	list.forEach(function (ins) { holder.append(studioRackTile(ch, ins, chain)); });
 	if (!list.length) {
@@ -879,16 +875,7 @@ function studioUpdatePedalLamps() {
 				hint: label
 			});
 		}
-		tile.find('.studio_pedal_foot')
-			.attr('aria-pressed', on ? 'true' : 'false')
-			.each(function () {
-				var foot = $(this);
-				if (foot.is('button')) { foot.text(studioLayoutText(on ? 'On' : 'Off')); return; }
-				foot.attr({
-					state: on ? 'pressed' : 'depressed',
-					src: jawnosStudioButtonIcon(on ? 'pressed' : 'depressed', foot.attr('colour') || 'ruby_red')
-				});
-			});
+		tile.find('.studio_pedal_foot').attr('aria-pressed', on ? 'true' : 'false');
 	});
 	// the tuner listens only while its insert is on, wherever the board puts it
 	if (typeof studioTunerSync === 'function') { studioTunerSync(); }
@@ -1023,13 +1010,8 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 	studioTogglePedal(tile.attr('channel') || studioPaletteChannel(), name, tile.attr('chain'));
 });
 
-// The artwork stomp is an image, so it has no native button key handling. Keep
-// Enter and Space working exactly as they did when the stomp was a <button>.
-$(document).on('keydown', '#pedalboard .studio_pedal_foot', function (e) {
-	if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') { return; }
-	e.preventDefault();
-	$(this).trigger('click');
-});
+// The stomp is a real button now, so Enter and Space reach it natively; the
+// lamp beside it is still a role=button span with its own key handling.
 
 $(document).on('click', '.studio_rack_up', function () {
 	var t = studioTileTarget(this);
@@ -1172,8 +1154,11 @@ function studioBoardReadOnly() {
 // was already saved.
 function studioBoardCapture(ch, chain) {
 	// On a controller the sheet shows the peer's chain, so a save keeps what is
-	// on screen, not this machine's silenced copy of the song.
-	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && studioRemoteBoard && String(studioRemoteBoard.track) === String(ch)) {
+	// on screen, not this machine's silenced copy of the song. Before the first
+	// poll there is no peer chain to read, so the capture is empty rather than
+	// this machine's hidden song.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget) {
+		if (!studioRemoteBoard || String(studioRemoteBoard.track) !== String(ch)) { return []; }
 		var shown = (chain === 'out') ? studioRemoteBoard.out : studioRemoteBoard.in;
 		return (shown || []).map(function (entry) {
 			return { name: entry.name, bypass: !!entry.bypassed, values: $.extend({}, entry.values || {}) };
@@ -1190,23 +1175,65 @@ function studioBoardCapture(ch, chain) {
 	return out;
 }
 
+// A board compares by name, stomp and values, whatever order the value keys were
+// written in, so the dropdown can tell that the chain on the sheet is a saved
+// board. Values are compared as strings: a knob is a number either way.
+function studioBoardSignature(records) {
+	return JSON.stringify((records || []).map(function (item) {
+		var values = {};
+		var source = (item && item.values) || {};
+		Object.keys(source).sort().forEach(function (key) { values[key] = String(source[key]); });
+		return { name: String((item && item.name) || ''), bypass: (item && item.bypass) ? 1 : 0, values: values };
+	}));
+}
+
 // Rebuild the dropdown from the library: the blank prompt first, then the saved
-// boards in recent-use order. A selection that still exists is kept.
+// boards in recent-use order. A selection that still exists is kept. When the
+// chain on the sheet matches a saved board, that board is named in the dropdown
+// instead of the blank prompt, so a saved board reads as saved.
 function studioBoardPresetsRefresh() {
 	var select = $('#studio_board_presets');
 	if (!select.length) { return; }
 	var chosen = select.val();
 	var library = studioBoardLibrary();
+	var ch = studioPaletteChannel();
+	var current = studioBoardSignature(studioBoardCapture(ch, studioRackChain(ch)));
+	var match = '';
 	select.empty();
 	select.append($('<option></option>').attr('value', '').text(studioLayoutText('Saved pedalboards')));
 	library.forEach(function (item, index) {
 		if (!item || !item.name || item.deleted) { return; }
-		select.append($('<option></option>').attr('value', String(index)).text(item.name));
+		var value = String(index);
+		select.append($('<option></option>').attr('value', value).text(item.name));
+		if (!match && studioBoardSignature(item.chain || []) === current) { match = value; }
 	});
-	if (chosen !== null && chosen !== undefined && select.find('option[value="' + chosen + '"]').length) {
-		select.val(chosen);
+	var keep = (chosen !== null && chosen !== undefined && select.find('option[value="' + chosen + '"]').length) ? String(chosen) : '';
+	if (keep !== '' && studioBoardSignature((library[keep] && library[keep].chain) || []) !== current) { keep = ''; }
+	if (keep === '' && match !== '') { keep = match; }
+	if (keep !== '') { select.val(keep); }
+}
+
+// A saved board's name is only true while the sheet still matches it. After an
+// edit, drop the selection back to the prompt until it matches again.
+function studioBoardPresetsMark() {
+	var select = $('#studio_board_presets');
+	if (!select.length) { return; }
+	var chosen = String(select.val() || '');
+	if (chosen === '') { return; }
+	var preset = studioBoardLibrary()[chosen];
+	var ch = studioPaletteChannel();
+	var current = studioBoardSignature(studioBoardCapture(ch, studioRackChain(ch)));
+	if (!preset || preset.deleted || studioBoardSignature(preset.chain || []) !== current) {
+		select.val('');
 	}
 }
+
+$(document).on('change', '#pedalboard .knob_control, #pedalboard .studio_pedal_model, #pedalboard .studio_pedal_text', function () {
+	setTimeout(studioBoardPresetsMark, 0);
+});
+$(document).on('click', '#pedalboard .studio_pedal_foot, #pedalboard .studio_pedal_led, .studio_rack_up, .studio_rack_down, .studio_rack_remove, #studio_palette_add, .studio_chain_choice', function () {
+	setTimeout(studioBoardPresetsMark, 0);
+});
 
 // Save the chain the sheet shows under the typed name. The same name replaces
 // the old board rather than making a second one, and the save becomes the most

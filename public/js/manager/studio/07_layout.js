@@ -2602,7 +2602,8 @@ function studioRemoteInterceptKey(event) {
 	// Save) do not act on the controller's local copy.
 	var target = event.target;
 	if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(String(target.tagName || '')))) { return; }
-	// The stomp is an image; Enter and Space must reach its own key handler.
+	// The stomp and the lamp are controls of their own; Enter and Space must
+	// reach them rather than being swallowed as a Studio shortcut.
 	if (target && target.closest && target.closest('#pedalboard')) { return; }
 	event.stopPropagation();
 }

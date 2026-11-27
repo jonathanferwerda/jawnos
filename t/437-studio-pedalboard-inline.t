@@ -100,8 +100,8 @@ like($style,
 	qr/#pedalboard\.studio_board_inline\s*\{[^}]*max-height:\s*min\(calc\(344px \* var\(--studio-pedal-zoom, 1\)\), 80vh\)/s,
 	'the inline board grows with the pedal size, so a bigger tile is not clipped');
 like($style,
-	qr/\.studio_pedal_foot\s*\{[^}]*object-fit:\s*fill/s,
-	'the stomp is pinned to its box, so swapping its artwork does not slide it');
+	qr/\.studio_pedal_foot\s*\{[^}]*position:\s*absolute/s,
+	'the stomp plate is pinned to its box, so its on/off state cannot move it');
 like($style, qr/#pedalboard\s*\{[^}]*position:\s*absolute/s,
 	'the bottom-sheet rule stays for the moment before the reparent');
 

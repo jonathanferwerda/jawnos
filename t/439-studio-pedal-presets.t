@@ -31,6 +31,14 @@ like($js, qr/#studio_board_presets/, 'the saved-board dropdown is rebuilt and ha
 like($js, qr/function studioBoardPresetsRefresh\(\)/, 'the dropdown has its own refresh');
 like($js, qr/studioLayoutText\('Saved pedalboards'\)/, 'the blank option says what the list is');
 like($js, qr/setTimeout\(studioBoardPresetsRefresh, 0\)/, 'a press that opens the board refreshes the list');
+like($js, qr/function studioBoardSignature\(records\)/, 'one signature compares a chain to a saved board');
+like($js, qr/if \(!match && studioBoardSignature\(item\.chain \|\| \[\]\) === current\) \{ match = value; \}/,
+	'the dropdown names the board the sheet is showing');
+like($js, qr/if \(keep === '' && match !== ''\) \{ keep = match; \}/,
+	'and keeps it selected while the chain still matches');
+like($js, qr/function studioBoardPresetsMark\(\)/, 'an edit can re-check whether the board is still the saved one');
+like($js, qr/if \(!preset \|\| preset\.deleted \|\| studioBoardSignature\(preset\.chain \|\| \[\]\) !== current\) \{\s*\n\s*select\.val\(''\);/, 
+	'and drops the name when it no longer matches');
 like($js, qr/click', '\.studio_track_fx'/,
 	'the refresh follows an FX press into the board');
 like($js, qr/\$\(function \(\) \{ studioBoardPresetsRefresh\(\); \}\);/, 'document ready rebuilds the list');

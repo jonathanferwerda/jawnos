@@ -310,6 +310,12 @@ like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_palette_effect"/
 	'the effect palette select sits in the sheet\'s own bar');
 like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_palette_add"/,
 	'the Add button sits beside the palette select');
+like($markup, qr/id="studio_pedalboard_chain"[\s\S]*?class="studio_board_presets"[\s\S]*?id="studio_board_save_name"/,
+	'the saved-board controls sit on the In/Out row');
+like($markup, qr/class="studio_board_presets"[\s\S]*?id="studio_board_presets"[\s\S]*?id="studio_pedalboard_rack"/,
+	'just above the rack they belong to');
+like($style, qr/\.studio_board_save_name\s*\{[^}]*width:\s*150px/s,
+	'the name field fits its placeholder');
 my @racks = $markup =~ /class="studio_channel_rack"/g;
 is(scalar(@racks), 1, 'the markup carries exactly one chain container');
 like($markup, qr/id="pedalboard"[\s\S]*?class="studio_pedalboard_bar"[\s\S]*?id="studio_palette_add"[\s\S]*?id="studio_pedalboard_rack"/,

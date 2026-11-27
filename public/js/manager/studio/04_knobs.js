@@ -320,11 +320,19 @@ function studioWheelHandler(event) {
 	}
 
 	// A one-wheel mouse still moves the board: the wheel scrolls the chain
-	// sideways. A knob above already took the press, so the chain only moves
-	// when the pointer is on the board itself.
+	// sideways. A trackpad's own left/right gesture is already in scroll units,
+	// so whichever axis moved more drives scrollLeft; a vertical wheel goes right
+	// on a downward turn. A knob above already took the press, so the chain only
+	// moves when the pointer is on the board itself.
 	var rack = target.closest('#studio_pedalboard_rack');
 	if (rack && rack.scrollWidth > rack.clientWidth) {
-		rack.scrollLeft -= studioWheelDelta(event);
+		var dx = ('deltaX' in event) ? Number(event.deltaX) : 0;
+		var dy = ('deltaY' in event) ? Number(event.deltaY) : Number(-event.wheelDelta);
+		if (!isFinite(dx)) { dx = 0; }
+		if (!isFinite(dy)) { dy = 0; }
+		if (event.deltaMode === 1) { dx *= 16; dy *= 16; }
+		else if (event.deltaMode === 2) { dx *= 100; dy *= 100; }
+		rack.scrollLeft += (Math.abs(dx) > Math.abs(dy)) ? dx : dy;
 		event.preventDefault();
 		return;
 	}
