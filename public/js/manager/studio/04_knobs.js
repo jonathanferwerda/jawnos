@@ -219,7 +219,10 @@ function studioKnobPaint(input, scope) {
 		var flip = numeral(knob.attr('flip')).value() || 0;
 		var range = numeral(knob.attr('range')).value() || .85;
 		var turn = numeral((360 / 100) * (value * range)).value();
-		var angle = (knob.attr('direction') == 'counter') ? (flip - turn) : (flip + turn);
+		// Every knob turns clockwise as its value rises - channels and pedals
+		// alike - so a clockwise pointer always means a bigger number. The
+		// artwork's own printed scale does not get to reverse that.
+		var angle = flip + turn;
 		knob.css({ transform: 'rotate(' + angle + 'deg)' });
 		if (knob.closest('.pedal').length) { studioKnobValue(knob, value); }
 	});

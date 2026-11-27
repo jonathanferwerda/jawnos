@@ -247,10 +247,22 @@
 		width: 100%;
 		height: 100%;
 		object-fit: contain;
-		/* The hand-drawn and icon-set pedals paint a stomp plate across the bottom
-		   third. The board draws its own switch there, so the artwork's plate is
-		   cut away instead of showing a second, busier one under it. */
-		clip-path: inset(0 0 30% 0);
+	}
+	/* The artwork paints its own stomp plate across the bottom third. A matching
+	   lower-case panel covers that band, so the drawn plate - and any pale edge of
+	   it - never peeks around the real switch. It reads as the pedal's black lower
+	   case rather than the grey theme surface, and the knobs paint above it. */
+	.pedal.pedal_art::after {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 34%;
+		z-index: 2;
+		background: linear-gradient(180deg, #262626, #111111 55%, #0b0b0b);
+		border-top: 1px solid rgba(0, 0, 0, .75);
+		pointer-events: none;
 	}
 	/* A palette effect with no hand-drawn artwork is drawn from the theme at the
 	   same size: a case frame, a body inside it, one knob per slider and the
@@ -315,7 +327,7 @@
 		left: 5px;
 		right: 5px;
 		top: 27px;
-		bottom: 52px;
+		bottom: 35%;
 		z-index: 4;
 		display: flex;
 		flex-direction: column;
@@ -399,7 +411,7 @@
 		position: absolute;
 		left: 7%;
 		right: 7%;
-		bottom: 52px;
+		bottom: 36%;
 		width: auto;
 		z-index: 6;
 	}
@@ -409,49 +421,56 @@
 		position: absolute;
 		left: 7%;
 		right: 7%;
-		bottom: 52px;
+		bottom: 36%;
 		width: auto;
 		z-index: 6;
 	}
 	/* The footswitch is drawn, not an image: a fixed plate with four grip lines.
-	   The whole plate is the button, so a press anywhere on it toggles the pedal,
-	   and changing the on/off state never moves it. It sits in the band the
-	   artwork's own plate leaves behind. */
-	.studio_pedal_foot {
+	   The whole plate is the button, so a press anywhere on it toggles the pedal.
+	   It is placed with left/width, never a translate: a theme's `button:active`
+	   transform would otherwise replace the translate and jerk it sideways on the
+	   press. It fills the lower-case band the artwork's plate used to occupy. */
+	#pedalboard .studio_pedal_foot {
 		position: absolute;
-		left: 50%;
-		bottom: 6%;
-		width: 58%;
-		height: 18%;
+		left: 8%;
+		bottom: 4%;
+		width: 84%;
+		height: 24%;
 		min-width: 0;
 		min-height: 0;
-		padding: 4px 10px;
+		padding: 5px 12px;
 		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
 		justify-content: space-evenly;
-		transform: translateX(-50%);
-		border: 2px solid color-mix(in srgb, var(--ink) 55%, #000);
-		border-radius: 11px;
-		background: linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 70%, #000), color-mix(in srgb, var(--panel-2) 45%, #000));
+		border: 2px solid #080808;
+		border-radius: 8px;
+		background: linear-gradient(180deg, #3a3a3a, #1d1d1d 55%, #121212);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14);
 		cursor: var(--jawnos-cursor-pointer, pointer);
 		z-index: 7;
 	}
-	.studio_pedal_foot span {
+	#pedalboard .studio_pedal_foot span {
 		display: block;
 		height: 2px;
 		border-radius: 1px;
-		background: color-mix(in srgb, var(--ink) 65%, transparent);
+		background: rgba(232, 232, 232, .72);
 	}
-	.studio_pedal_foot[aria-pressed="true"] {
+	#pedalboard .studio_pedal_foot[aria-pressed="true"] {
 		border-color: var(--accent);
-		box-shadow: 0 0 7px color-mix(in srgb, var(--accent) 65%, transparent);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent);
 	}
-	.studio_pedal_foot[aria-pressed="false"] {
-		opacity: .78;
+	#pedalboard .studio_pedal_foot[aria-pressed="false"] {
+		opacity: .82;
 	}
-	.studio_pedal_foot:active {
-		transform: translateX(-50%) translateY(1px);
+	#pedalboard .studio_pedal_foot:active {
+		transform: translateY(1px);
+	}
+	/* A knob or an artwork button on the lower case still sits above the switch,
+	   so a low row is never hidden and its own press still reaches it. */
+	.pedal .knob,
+	.pedal .button_control {
+		z-index: 8;
 	}
 	/* The lamp: a 14px roundel. The unlit state is a dark red disc with a pale
 	   ring (never invisible); on it is a bright green with a soft glow. Every

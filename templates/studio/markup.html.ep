@@ -73,7 +73,7 @@
 	   insert into the board, so every pedal keeps its artwork, knobs and stomp. %>
 	<div id="studio_pedalboard_tiles" style="display:none;" aria-hidden="true">
 	<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
-		<span id="pedal_<%= $p->{'name'} %>" class="pedal" data-effect="<%= $p->{'name'} %>"<% if ($p->{'tuner'}) { %> data-tuner="yes"<% } %> hint="<%= $p->{'tuner'} ? &subs::ui('Start or stop the tuner') : &subs::ui('Drag to reorder this effect') %>">
+		<span id="pedal_<%= $p->{'name'} %>" class="pedal pedal_art" data-effect="<%= $p->{'name'} %>"<% if ($p->{'tuner'}) { %> data-tuner="yes"<% } %> hint="<%= $p->{'tuner'} ? &subs::ui('Start or stop the tuner') : &subs::ui('Drag to reorder this effect') %>">
 			<% my $ch = $p->{'name'}; %>
 			<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
 			<img class="pedal_background" hint="<%= $p->{'name'} %>" src="<%= &subs::icon_for('/images/studio/' . $p->{'image'} . '.png') %>">

@@ -36,8 +36,8 @@ like($style, qr/\.pedal_graphic\s*\{[^}]*color-mix\(in srgb, var\(--panel-2\) 30
 like($style, qr/\.pedal_graphic::before\s*\{[^}]*inset:\s*3px/s,
 	'the case frame has its own bright rim');
 like($style, qr/\.pedal_body\s*\{[^}]*inset:\s*4px/s, 'the drawn body sits inside the case frame');
-like($style, qr/\.studio_pedal_foot\s*\{[^}]*border-radius:\s*11px/s, 'the footswitch is a rounded treadle');
-like($style, qr/\.studio_pedal_foot\s*\{[^}]*transform:\s*translateX\(-50%\)/s, 'the treadle is centred in the case');
+like($style, qr/\.studio_pedal_foot\s*\{[^}]*border-radius:\s*8px/s, 'the footswitch is a rounded treadle');
+like($style, qr/\.studio_pedal_foot\s*\{[^}]*left:\s*8%/s, 'the treadle is placed in the case without a translate');
 like($style, qr/\.studio_pedal_foot\[aria-pressed="true"\]\s*\{[\s\S]*?var\(--accent\)/,
 	'the lit treadle takes the theme accent');
 

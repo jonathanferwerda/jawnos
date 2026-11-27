@@ -157,7 +157,7 @@ our $studio = {
 		knobs => [{
 			control => 'time', colour => 'star_trek',  left => '3%', top => '30%', width => '25%', range => .75
 		},{
-			control => 'vol', colour => 'orange_grower', direction => 'counter', width => '23%', flip => 5, range => .8, left => '34%', top => '31%'
+			control => 'vol', colour => 'orange_grower', width => '23%', flip => 5, range => .8, left => '34%', top => '31%'
 		},{
 			control => 'feedback', colour => 'fire_j', flip => 0, range => .75, left => '64%', top => '32%', width => '25%'
 		}]
@@ -167,7 +167,7 @@ our $studio = {
 		knobs => [{
 			control => 'mix', colour => 'green_rounded', flip => 180, left => '7%', top => '28%', 'width' => '60px'
 		},{
-			control => 'volume', colour => 'red_numbered', direction => 'counter', width => '60px', flip => 180, range => .65, left => '53%', top => '26%'
+			control => 'volume', colour => 'red_numbered', width => '60px', flip => 180, range => .65, left => '53%', top => '26%'
 		}]
 	},{
 		name => 'JawnSynth',

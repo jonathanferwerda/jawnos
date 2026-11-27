@@ -87,13 +87,15 @@ like($markup, qr/hint="[^"]*">(?:<span aria-hidden="true"><\/span>){4}/,
 	'the switch is a plate with four grip lines');
 unlike($markup, qr/studio_pedal_stomp[^>]*\bsrc=/, 'no stomp image is drawn any more');
 
-like($style, qr/\.studio_pedal_foot\s*\{[^}]*transform:\s*translateX\(-50%\)/s,
-	'the plate is centred at the foot of the case');
+like($style, qr/\.studio_pedal_foot\s*\{[^}]*left:\s*8%/s,
+	'the plate is placed by left, not a translate that a press could replace');
 like($style, qr/\.studio_pedal_foot span\s*\{[^}]*height:\s*2px/s,
 	'the four grip lines are bars');
-like($style, qr/\.pedal_background\s*\{[^}]*clip-path:\s*inset\(0 0 30% 0\)/s,
-	"the artwork's own stomp plate is cropped away");
-like($style, qr/\.pedal_controls\s*\{[^}]*bottom:\s*52px/s,
+like($style, qr/\.pedal\.pedal_art::after\s*\{[^}]*height:\s*34%/s,
+	"a lower-case panel covers the artwork's own stomp plate");
+like($style, qr/\.pedal\.pedal_art::after\s*\{[^}]*background:\s*linear-gradient/s,
+	'and it reads as the pedal case, not the theme surface');
+like($style, qr/\.pedal_controls\s*\{[^}]*bottom:\s*35%/s,
 	'the drawn pedals leave room for the switch');
 like($style, qr/\.studio_board_readonly \.studio_pedal_foot/, 'a read-only board still marks its switch');
 

@@ -493,6 +493,10 @@ like($knobs, qr/knob\.nextAll\('\.knob_value'\)\.first\(\)/,
 	'the label is found again rather than made twice');
 like($rack, qr/studioKnobPaint\(\$\(this\), tile\);/,
 	'a board tile paints its restored knobs, so a reload is not all zeroes');
+like($knobs, qr/var angle = flip \+ turn;/,
+	'every knob turns clockwise as its value rises');
+unlike($knobs, qr/direction'\) == 'counter'/,
+	'no knob reverses that clockwise rule');
 like($style, qr/\.knob_value\s*\{[^}]*position:\s*absolute/s,
 	'the value sits above an artwork knob');
 like($style, qr/\.pedal_knob \.knob_value\s*\{[^}]*position:\s*static/s,
