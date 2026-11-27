@@ -21,8 +21,8 @@ use File::Temp qw(tempdir);
 use File::Slurp qw(read_file);
 use IO::Socket::INET ();
 
-require(root() . '/lib/JawnOS/Domain/Say.pm');
-require(root() . '/lib/JawnOS/Domain/Evaluation.pm');
+require(root() . '/lib/JawnOS/Domain/Say.pm') unless defined &subs::reply_wav_bytes;
+require(root() . '/lib/JawnOS/Domain/Evaluation.pm') unless defined &subs::ai_text_to_speech_spec;
 
 # --- the request an OpenAI-compatible speech endpoint expects ----------------
 {

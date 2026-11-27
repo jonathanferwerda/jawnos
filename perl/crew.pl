@@ -916,10 +916,14 @@ sub _which {
 # Piper AND a voice model: a binary with no model renders nothing, so the
 # ability has to mean "this machine can actually speak".
 sub _piper_binary {
-	my $argv = eval { &subs::say_piper_argv() } || [];
-	my ($parts, $espeak, $model) = eval { &subs::say_piper_parts() } || ();
-	return '' unless $argv && ref $argv eq 'ARRAY' && @{$argv} && $parts && $model;
-	return $argv->[-1] || 'piper';
+	# List context, deliberately: say_piper_argv and say_piper_parts return a
+	# LIST, and `eval {...} || ()` would put the call in scalar context (the
+	# last element - a rate number - instead of the array). That made the
+	# ability always say no, so the phone homebase never asked a peer to speak.
+	my @argv = eval { &subs::say_piper_argv() };
+	my (undef, undef, $model) = eval { &subs::say_piper_parts() };
+	return '' unless @argv && $model;
+	return $argv[-1] || 'piper';
 }
 
 sub _whisper_binary {

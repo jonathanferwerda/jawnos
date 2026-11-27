@@ -19,13 +19,36 @@ use JawnOSTest;
 use MIME::Base64 qw(encode_base64 decode_base64);
 
 require(root() . '/perl/crew.pl');
-require(root() . '/lib/JawnOS/Domain/Say.pm');
+# The harness may already have loaded Say.pm through its module name (a
+# different %INC key), so guard the path require to keep the output clean.
+require(root() . '/lib/JawnOS/Domain/Say.pm') unless defined &subs::reply_wav_bytes;
 
 my $kind = crew::job_kind('say.render');
 ok($kind, 'the Crew registry knows say.render');
 is_deeply($kind->{'needs'}, ['piper'], 'and gates it on a machine that can really speak');
 is($kind->{'timeout'}, 60, 'a reply is seconds, so the job is bounded');
 ok(ref $kind->{'handler'} eq 'CODE', 'and has a handler');
+
+# The ability itself: binary AND model, read in LIST context (a scalar-context
+# eval returns only the last element, which made every machine say no).
+{
+	no warnings 'redefine';
+	local *subs::say_piper_argv = sub { return ('/opt/piper') };
+	local *subs::say_piper_parts = sub { return (['/opt/piper'], [], '/voices/ljspeech.onnx', 22050) };
+	is(crew::_piper_binary(), '/opt/piper', 'a machine with piper and a model reads as able to speak');
+}
+{
+	no warnings 'redefine';
+	local *subs::say_piper_argv = sub { return () };
+	local *subs::say_piper_parts = sub { return () };
+	is(crew::_piper_binary(), '', 'no binary is not able to speak');
+}
+{
+	no warnings 'redefine';
+	local *subs::say_piper_argv = sub { return ('/opt/piper') };
+	local *subs::say_piper_parts = sub { return (['/opt/piper'], [], '', 22050) };
+	is(crew::_piper_binary(), '', 'a binary without a voice model is not able to speak');
+}
 
 my $able = { cores => 4, load1 => 0.2, tools => { piper => 1 } };
 ok(crew::can('say.render', $able), 'a machine with piper can run it');
