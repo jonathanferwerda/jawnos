@@ -346,11 +346,13 @@
 	/* a small dropdown in a drawn pedal's control column */
 	.pedal_select {
 		box-sizing: border-box;
-		height: 16px;
-		min-height: 16px;
-		padding: 0 4px;
+		/* auto, not a fixed height: a phone that scales text up must not clip the
+		   top of the words inside the frame. */
+		height: auto;
+		min-height: 18px;
+		padding: 1px 4px;
 		font-size: 10px;
-		line-height: 14px;
+		line-height: 1.35;
 		border-width: 1px;
 		border-radius: 4px;
 	}
@@ -366,11 +368,12 @@
 		flex: 1 1 auto;
 		min-width: 0;
 		width: auto;
-		height: 16px;
-		min-height: 16px;
-		padding: 0 4px;
+		/* auto, not a fixed height: a scaled-up font must not lose its ascenders. */
+		height: auto;
+		min-height: 18px;
+		padding: 1px 4px;
 		font-size: 10px;
-		line-height: 14px;
+		line-height: 1.35;
 		border-width: 1px;
 		border-radius: 4px;
 	}
@@ -852,9 +855,9 @@
 		box-sizing: border-box;
 		overflow-y: auto;
 		overflow-x: hidden;
-		/* The window's title bar floats over the top of the sheet; keep the
-		   settings clear of it, and keep the sheet under it in every mode. */
-		padding: calc(var(--navbar_h, 36px) + 4px) 10px 4px 10px;
+		/* The sheet is a child of #studio, so it starts below the window's title
+		   bar and never covers it; only the sheet's own edge needs a little air. */
+		padding: 4px 10px;
 		background-color: var(--panel);
 	}
 	/* The class stands the desk down while Configure is open: the layout bar, the
@@ -866,11 +869,11 @@
 		display: none !important;
 	}
 	/* The sheet's own header scrolls with it, so on a phone it could leave the
-	   screen with the settings below it. Keep it stuck just under the window's
-	   title bar, and opaque so the rows passing beneath it stay hidden. */
+	   screen with the settings below it. Keep it stuck at the top of the sheet,
+	   and opaque so the rows passing beneath it stay hidden. */
 	#song_controls {
 		position: sticky;
-		top: calc(var(--navbar_h, 36px) + 4px);
+		top: 4px;
 		z-index: 1;
 		padding: 2px 0;
 		background-color: var(--panel);

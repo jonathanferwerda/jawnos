@@ -33,8 +33,8 @@ like($style, qr/#studio_config\s*\{[^}]*height:\s*auto/s,
 	'and so does its height');
 like($style, qr/#studio_config\s*\{[^}]*overflow-y:\s*auto/s,
 	'its own content still scrolls');
-like($style, qr/#studio_config\s*\{[^}]*padding:\s*calc\(var\(--navbar_h,\s*36px\) \+ 4px\)\s+10px\s+4px\s+10px/s,
-	'its content starts below the window title bar');
+like($style, qr/#studio_config\s*\{[^}]*padding:\s*4px\s+10px/s,
+	'the sheet is a child of #studio, below the window title bar');
 for my $sel (qw(#studio_layout_bar #studio_viewer #studio_grid #pedalboard)) {
 	like($style, qr/#studio\.studio_config_open \Q$sel\E[\s\S]{0,200}?display:\s*none\s*!important/,
 		"the open state hides $sel");

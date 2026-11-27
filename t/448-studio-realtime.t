@@ -67,6 +67,14 @@ like($controls, qr/on\('blur', '\.studio_pedal_text'/,
 	'closing the field settles the choice');
 like($controls, qr/if \(!valid\) \{ input\.val\(previous\); return; \}/,
 	'an abandoned edit puts the old division back');
+like($controls, qr/on\('keydown', '\.studio_pedal_text'[\s\S]{0,400}?data-sync-dirty/,
+	'a keyboard edit keeps the list narrowed while the person types');
+like($controls, qr/if \(input\.attr\('data-sync-dirty'\) === '1'\) \{ return; \}/,
+	'but a fresh open still empties the field');
+like($controls, qr/if \(String\(input\.val\(\) \|\| ''\)\.trim\(\) !== ''\) \{ input\.blur\(\); \}/,
+	'a pick from the list closes the field so the next open lists every division');
+like($controls, qr/removeAttr\('data-sync-open'\)\.removeAttr\('data-sync-value'\)\.removeAttr\('data-sync-dirty'\)/,
+	'leaving the field clears the open and typed state');
 
 # --- the Up/Down tools re-arm the Listen ------------------------------------
 my ($move) = $rack =~ /^function studioRackMove\(ch, name, delta, chain\) \{(.*?)^\}/ms;

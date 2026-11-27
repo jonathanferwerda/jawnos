@@ -494,8 +494,16 @@ $(document).on('input change', '.studio_pedal_text', function (event) {
 	var input = $(this);
 	// Opening the field empties it so the datalist lists every division. A
 	// change event fired by that empty value is not a person turning sync off;
-	// the blur handler settles the real value.
-	if (event.type === 'change' && input.attr('data-sync-open') === '1') { return; }
+	// the blur handler settles the real value. A real pick commits while the
+	// field keeps focus, so close it: otherwise its open flag survives, the next
+	// click would not clear the value, and the list would filter down to it.
+	if (event.type === 'change') {
+		input.removeAttr('data-sync-dirty');
+		if (input.attr('data-sync-open') === '1') {
+			if (String(input.val() || '').trim() !== '') { input.blur(); }
+			return;
+		}
+	}
 	var row = input.closest('.studio_rack_tile');
 	if (!row.length || typeof studioInsertControl !== 'function') { return; }
 	if (event.type === 'input') {
@@ -512,19 +520,29 @@ $(document).on('input change', '.studio_pedal_text', function (event) {
 // already reading 1/8t offered only that one division and a longer span could
 // not be picked. Empty the field while it is open (no input event, so the value
 // is not committed) to list every division again; if the person types nothing
-// valid, put the old value back on the way out.
+// valid, put the old value back on the way out. Only a keyboard edit is taken
+// as narrowing the list on purpose: a pick from the list or a second click is
+// not, so it clears again.
+$(document).on('keydown', '.studio_pedal_text', function (event) {
+	// Only a key that edits the text narrows the list; Tab, Escape, the arrows
+	// and the modifiers move focus or walk the list without changing it.
+	var key = event.key || '';
+	if (/^(Tab|Escape|Enter|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Shift|Control|Alt|Meta)$/.test(key)) { return; }
+	$(this).attr('data-sync-dirty', '1');
+});
+
 $(document).on('pointerdown focus', '.studio_pedal_text', function () {
 	var input = $(this);
-	if (input.attr('data-sync-open') === '1') { return; }
+	if (input.attr('data-sync-dirty') === '1') { return; }
 	input.attr('data-sync-open', '1').attr('data-sync-value', String(input.val() || ''));
 	input.val('');
 });
 
 $(document).on('blur', '.studio_pedal_text', function () {
 	var input = $(this);
-	if (input.attr('data-sync-open') !== '1') { return; }
+	if (input.attr('data-sync-open') !== '1') { input.removeAttr('data-sync-dirty'); return; }
 	var previous = String(input.attr('data-sync-value') || '');
-	input.removeAttr('data-sync-open').removeAttr('data-sync-value');
+	input.removeAttr('data-sync-open').removeAttr('data-sync-value').removeAttr('data-sync-dirty');
 	var now = String(input.val() || '').trim();
 	var valid = now === '' || now.toLowerCase() === 'off'
 		|| (typeof studioTempoDivision === 'function' && studioTempoDivision(now) !== null)

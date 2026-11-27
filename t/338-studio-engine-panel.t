@@ -627,12 +627,16 @@ like($markup, qr/id="studio_config_dot" class="studio_config_dot hover"/,
 	'and the sheet has a restore dot beside it');
 like($markup, qr/&subs::ui\('Minimize Configure'\)/, 'the Minimize button is translatable');
 like($markup, qr/&subs::ui\('Open Configure'\)/, 'and the dot says what it opens');
+unlike($markup, qr/^<\/div>\s*\n<div id="studio_config"/m,
+	'the sheet is a child of #studio, not a sibling that fills the whole window');
+like($markup, qr/id="studio_config_dot"[\s\S]*?<\/button>\s*\n<\/div>\s*$/,
+	'and the Studio root closes after the sheet and its dot');
 
 my $style = read_file("$root/templates/studio/style.html.ep");
 like($style, qr/#song_controls \{\s*position: sticky/,
 	'the sheet header sticks instead of scrolling away on a phone');
-like($style, qr/#song_controls \{[^}]*top: calc\(var\(--navbar_h, 36px\) \+ 4px\)/,
-	'just under the window title bar');
+like($style, qr/#song_controls \{[^}]*top: 4px/,
+	'at the top of the sheet, which is already below the window title bar');
 like($style, qr/\.studio_config_dot \{[^}]*position: absolute/,
 	'the restore dot is pinned to the corner');
 like($style, qr/\.studio_config_dot \{[^}]*right: 14px;[^}]*bottom: 14px;/,

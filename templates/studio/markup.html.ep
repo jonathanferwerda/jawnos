@@ -507,7 +507,6 @@
 			<% } %>
 		</div>
 	</div>
-</div>
 <div id="studio_config" style="display:none;">
 		<h1>Configure</h1>
 
@@ -712,4 +711,5 @@
 		</div>
 	</div>
 	<button type="button" id="studio_config_dot" class="studio_config_dot hover" style="display:none;" hint="<%= &subs::ui('Open Configure') %>" aria-label="<%= &subs::ui('Open Configure') %>"><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" alt=""></button>
+</div>
 
