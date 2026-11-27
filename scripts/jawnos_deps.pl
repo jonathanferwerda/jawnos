@@ -12,6 +12,7 @@
 #                                          # font (optional: their absence is not
 #                                          # fatal)
 #   perl scripts/jawnos_deps.pl --extras-only --install  # only the optional apps
+#   perl scripts/jawnos_deps.pl --extras-only --install --only=whisper  # one of them
 #                                          # (Piper); run after a code update
 #   perl scripts/jawnos_deps.pl --local-lib DIR --install
 #                                          # install missing modules into DIR
@@ -203,7 +204,19 @@ my @extras = (
 );
 
 if ($extras_only) {
-	my @want = grep { !$_->{'check'}->() } @extras;
+	# --only names one or more extras; a deploy that stages whisper on a phone
+	# should not also try Piper, which needs a glibc bridge there.
+	my %only = map { $_ => 1 } @only;
+	if (%only) {
+		my %known = map { $_->{'id'} => 1 } @extras;
+		my @unknown = grep { !$known{$_} } sort keys %only;
+		if (@unknown) {
+			print "Unknown optional application(s): @unknown\n";
+			exit 2;
+		}
+	}
+	my @want = grep { !%only || $only{$_->{'id'}} }
+		grep { !$_->{'check'}->() } @extras;
 	if (!@want) { print "Optional applications: all present.\n"; exit 0; }
 	print "Optional applications missing:\n";
 	print "  - " . $_->{'label'} . "\n" for @want;
