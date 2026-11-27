@@ -6,6 +6,7 @@ use feature 'signatures';
 
 use List::Util qw(shuffle);
 use File::Find;
+use Digest::SHA qw(sha256_hex);
 use Mojo::JSON qw(decode_json);
 
 our ($music_thumb_files);
@@ -37,6 +38,18 @@ sub music_window_window($data) {
 sub music_song_key($f) {
 	return '' unless ref $f eq 'HASH';
 	return $f->{'file_uuid'} || $f->{'filename'} || $f->{'file'} || '';
+}
+
+# A track's identity is the place it lives, not a fresh random string. The
+# client keys the queue, the playing row and the saved position on file_uuid,
+# so it must come back the same from one render to the next. A random one made
+# every re-render look like a different list: treeMaker could not match the old
+# queue keys, fell back to the whole list, and the restored player advanced
+# from the top (the second row) instead of the track after the one it was
+# playing. The machine is part of the identity so two peers holding the same
+# path are still two tracks.
+sub music_track_uuid($remote_uuid, $path) {
+	return substr(sha256_hex(join "\x1f", ($remote_uuid // ''), ($path // '')), 0, 21);
 }
 
 # The picture a card and the theatre draw, as a URL the client can put in src.
@@ -143,6 +156,8 @@ sub music_row_new($path, $ctx, $archive_row, $noise) {
 	my $app = &subs::unformat_name($t[-2]);
 	$app = $t[-2] if $base =~ /\.enc$/gi;
 
+	my $remote_uuid = $archive_row ? ($archive_row->{'remote_uuid'} // '') : '';
+
 	my $f = {
 		filename => $path,
 		file => $path,
@@ -164,7 +179,7 @@ sub music_row_new($path, $ctx, $archive_row, $noise) {
 		full_title => $stem,
 		formatted_name => &subs::format_name(join '.', $stem),
 		track_number => 0,
-		file_uuid => &subs::random_string_creator(21),
+		file_uuid => &music_track_uuid($remote_uuid, $path),
 		description => $tree->{lc $stem},
 		computer_name => $ctx->{'computer_name'} || '',
 		colour => $ctx->{'background_colour'} || '',

@@ -160,6 +160,56 @@ my $help_js   = read_file("$root/public/js/manager/help/01_music_speech.js");
 	is($crate->{'songs'}->[0]->{'playing'}, 'yes', 'and marked as playing');
 }
 
+# ---------------------------------------------- the track id survives a render
+# file_uuid is the client's queue key: treeMaker matches its live queue against
+# the rebuilt manifest by it, and the player cache names the current track by
+# it. A fresh random string per render made every re-render look like a
+# different list, so the queue fell back to the whole list and the restored
+# player advanced from the top (the second row) instead of the next track. The
+# id is therefore a hash of the file's own place, and stays put across renders.
+{
+	my @files = ('Videos/Show/Episode 1.mp4', 'Videos/Show/Episode 2.mp4');
+	my $make = sub {
+		my (%over) = @_;
+		my @queue = @{ $over{'files'} || \@files };
+		my $remote = $over{'remote'} // '';
+		my %archive = map { $_ => {
+			type => 'video', info => { duration => '60', tags => {} },
+			remote_uuid => $remote, remote_hostname => $remote ? 'peer' : '',
+		} } @queue;
+		no warnings 'redefine';
+		local *subs::config_reader = sub { { manager => { background_colour => 'white' }, name => 'Test', folders => [] } };
+		local *subs::setting_grabber = sub {
+			my $q = shift;
+			return 'Test' if ($q->{'setting'} // '') eq 'computer_name';
+			return '';
+		};
+		local *subs::dark_colour_for = sub { return 'black' };
+		local *subs::inventory_grabber = sub { return {} };
+		local *subs::cache_get = sub { return undef };
+		local *subs::cache_set = sub { return 1 };
+		local *subs::file_media_information = sub { die 'a manifest must not probe' };
+		return &Manager::song_maker({
+			c => bless({}, 'MusicWindowFakeC'), config => {}, port => 443,
+			files => \@queue, archive => \%archive,
+			settings => { shuffle => 'off', all_albums => 'no', all_artists => 'no',
+				artist => [], album => [], library => 'local', normalize => 'off' },
+			now_playing => {}, same_order => 1,
+			window => { offset => 0, limit => 60 },
+		});
+	};
+	my $first = $make->();
+	my $second = $make->();
+	my %one = map { $_->{'file'} => $_->{'file_uuid'} } @{ $first->{'manifest'} };
+	my %two = map { $_->{'file'} => $_->{'file_uuid'} } @{ $second->{'manifest'} };
+	is_deeply(\%one, \%two, 'the same files keep the same track ids across renders');
+	isnt($one{$files[0]}, $one{$files[1]}, 'different files get different track ids');
+	my $elsewhere = $make->(files => [ $files[0] ], remote => 'peer-machine');
+	my ($remote_row) = @{ $elsewhere->{'manifest'} };
+	isnt($remote_row->{'file_uuid'}, $one{$files[0]},
+		'the same path on another machine is a different track');
+}
+
 # Only the drawn window is probed. 200 local tracks, one window: ffprobe runs
 # for the rows that are drawn, not for the queue.
 {
