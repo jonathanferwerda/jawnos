@@ -75,7 +75,16 @@ $(document).on('contextmenu', '.jawnos_taskbar', function (e) {
 		jawnosTaskbarContextOpen(e.clientX, e.clientY, null, widget.attr('widget'), bar);
 		return;
 	}
-	// An app pin is a launcher, not a window: its menu is the dock's add/remove.
+	// A window button wins over the pin that may carry it: while a pinned app's
+	// window is open its own button is parked inside the pin, so the press asks
+	// for that window's menu - Close, Maximize, Minimize, Move, another desktop
+	// and Unpin - not the pin's lone add/remove row.
+	var win = $(e.target).closest('.window_toggle');
+	if (win.length) {
+		jawnosTaskbarContextOpen(e.clientX, e.clientY, win.attr('app'), null, bar, win.attr('timestamp') || '');
+		return;
+	}
+	// A closed app pin is a launcher: its menu is the dock's add/remove.
 	var pin = $(e.target).closest('.taskbar_app_pin');
 	if (pin.length && typeof jawnosDockAppMenu == 'function') {
 		jawnosDockAppMenu(e.clientX, e.clientY, {
@@ -85,11 +94,7 @@ $(document).on('contextmenu', '.jawnos_taskbar', function (e) {
 		});
 		return;
 	}
-	// the app under the pointer, if the press landed on a window button
-	var win = $(e.target).closest('.window_toggle');
-	var app = win.length ? win.attr('app') : null;
-	var timestamp = win.length ? (win.attr('timestamp') || '') : '';
-	jawnosTaskbarContextOpen(e.clientX, e.clientY, app, null, bar, timestamp);
+	jawnosTaskbarContextOpen(e.clientX, e.clientY, null, null, bar, '');
 });
 
 // a long press opens the same menu on touch: the shared handler dispatches a

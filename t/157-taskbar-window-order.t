@@ -20,6 +20,7 @@ my $root = repo_root();
 my $windows = js_source('public/js/manager/windows.js');
 my $bar = js_source('public/js/manager/taskbar.js');
 my $edit = js_source('public/js/manager/taskbar_edit.js');
+my $events = js_source('public/js/manager/taskbar_edit/01_window_events.js');
 my $kb = js_source('public/js/manager/soft_keyboard.js');
 my $kb_events = js_source('public/js/manager/soft_keyboard/04_eval_text.js');
 my $css = read_file("$root/public/css/manager.css");
@@ -68,6 +69,17 @@ like($bar, qr/window_order: jawnosTaskbarWindowOrderSetting\(jawnos_bar_settings
 	'taskbar.js parses the saved window order');
 like($layout, qr/taskbar_window_order: <%== encode_json\(/,
 	'the layout embeds the order as raw JSON');
+
+# --- a pinned app's open window keeps the window's own menu ------------------
+# While a pinned app's window is open its window button is parked inside the
+# pin; a right-click must read that button as a window, not as the pin, so the
+# regular Close, Maximize, Minimize, Move and Unpin rows are offered.
+my $win_check = index($events, "closest('.window_toggle')");
+my $pin_check = index($events, "closest('.taskbar_app_pin')");
+ok($win_check >= 0 && $pin_check >= 0 && $win_check < $pin_check,
+	'a parked window button is read as a window before its pin');
+like($events, qr/if \(win\.length\) \{\s*jawnosTaskbarContextOpen\(e\.clientX, e\.clientY, win\.attr\('app'\), null, bar, win\.attr\('timestamp'\) \|\| ''\);\s*return;/s,
+	'the parked button opens the window menu with its own stamp');
 
 # --- a tile drags without answering as a press ------------------------------
 like($edit, qr/function jawnosTaskbarWindowDragInit\(\)/, 'the window list is made sortable');
