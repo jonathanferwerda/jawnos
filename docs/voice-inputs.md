@@ -83,6 +83,26 @@ sufficient.
 a Pico (or a watch) *near* where you are — a 1–2 m pickup is trivially reliable with a
 decent mic, versus fighting 20 ft of reverb.
 
+## Capture rates today (the watch's live stream and its file)
+
+The **live BLE stream stays 8 kHz.** The **whole-clip file** records **16 kHz when WiFi is up
+at capture start** and 8 kHz otherwise — it is uploaded over HTTP, not notified, so it can
+afford the rate that the link cannot.
+
+Why the stream cannot follow: at the phone's **MTU 23** a notify carries **12 payload bytes**
+(`jw/jw_02_ble.ino:115`), so an 8 kHz stream already runs roughly **11x slower than realtime**
+and the sender abandons it rather than truncate the clip (`jw/jw_08_voice.ino:319-331`).
+16 kHz over the same link would double a BLE file upload that is slow to begin with.
+
+**Requesting a larger MTU is deliberately deferred, not rejected.** A 512-byte request
+disturbed the watch's display rendering (`JawnBleService.java` ~:1191 — the radio and the LVGL
+flush contend), so it stays an opt-in and a later, *measured* change: get the number from the
+watch, then decide.
+
+**Open decision:** whether the live stream or the whole-clip file is the **authoritative
+transcript**. *File-is-truth* was proposed — the file is the only copy at the full rate and the
+only one whose truncation leaves a valid clip — but it is **not built**.
+
 ## Parked items (pick up any)
 
 1. **Pico mic + gain spec, and the SDK port** (same models).

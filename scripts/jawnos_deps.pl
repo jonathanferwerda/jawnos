@@ -551,6 +551,8 @@ sub have_whisper {
 	my $py = "$whisper_dir/venv/bin/python3";
 	return 0 unless -x $py;
 	return 0 unless -x "$whisper_dir/whisper-cli" || -x "$whisper_dir/whisper-server";
+	# the live reader is the repo script, not a wrapper: whisper_available needs it
+	return 0 unless -f "$FindBin::Bin/whisper_stream.py";
 	return 0 unless -s whisper_models_dir() . '/ggml-base.bin' || -s whisper_models_dir() . '/ggml-tiny.bin';
 	# the directory alone is not proof: an interrupted pip leaves the venv
 	return system($py, '-c', 'import pywhispercpp') == 0 ? 1 : 0;

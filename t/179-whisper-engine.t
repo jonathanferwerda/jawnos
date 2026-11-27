@@ -12,6 +12,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use MIME::Base64 qw(decode_base64);
 use File::Path qw(make_path);
+use File::Copy qw(copy);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 
@@ -160,17 +161,54 @@ like($deps, qr{qw\(base tiny\)}, 'which brings the base and tiny models');
 like($deps, qr{Termux \(Bionic\) has no pywhispercpp wheel}, 'and says why Termux cannot run it');
 like($deps, qr{'pip', '--version'}, 'a venv with no pip is checked, not trusted');
 like($deps, qr{remove_tree\("\$whisper_dir/venv"\)}, 'and rebuilt rather than reused');
+
 unlike($deps, qr{sub install_vosk}, 'the Vosk installer is gone');
+
+# The installer's own probe must agree with whisper_available: a tree with the
+# interpreter, the command wrapper and a model is still not an install when the
+# repo's live reader is gone, because the reader is what the probe runs.
+{
+	my $tree = "$tmp/deps";
+	my $fake = "$tmp/home";
+	my $wd   = "$fake/.local/share/jawnos/whisper";
+	make_path("$tree/scripts", "$wd/models", "$wd/venv/bin",
+		"$fake/.local/share/jawnos/piper", "$fake/.local/share/jawnos/rtc/venv/bin");
+	copy("$repo/scripts/jawnos_deps.pl", "$tree/scripts/jawnos_deps.pl");
+	copy("$repo/scripts/whisper_stream.py", "$tree/scripts/whisper_stream.py");
+	write_file("$wd/models/ggml-base.bin", 'base');
+	foreach my $exe ("$wd/venv/bin/python3", "$wd/whisper-cli", "$wd/whisper-server",
+		"$fake/.local/share/jawnos/piper/piper",
+		"$fake/.local/share/jawnos/rtc/venv/bin/python3") {
+		write_file($exe, "#!/bin/sh\nexit 0\n");
+		chmod 0755, $exe;
+	}
+	local $ENV{'HOME'} = $fake;
+	my $run = sub {
+		my $out = qx{'$^X' '-I$repo/lib' '$tree/scripts/jawnos_deps.pl' --extras-only --report 2>&1};
+		return $out . "\n" . ($? >> 8);
+	};
+	my $all = $run->();
+	like($all, qr/Optional applications: all present/, 'four parts plus the reader is an install');
+	like($all, qr/\n0\z/, 'and the installer reports nothing missing');
+	unlink "$tree/scripts/whisper_stream.py";
+	my $gone = $run->();
+	like($gone, qr/whisper\.cpp speech-to-text/, 'a tree without the live reader is missing the engine');
+	like($gone, qr/\n1\z/, 'and the installer reports it instead of an install');
+}
 
 # ------------------------------------------------------------ the Plat page
 my $plat = read_file("$repo/templates/configure/plat_setting_list.html.ep");
 like($plat, qr/value="local:whisper\.cpp"/, 'the transcription role offers whisper.cpp');
 like($plat, qr/&subs::whisper_house_available\(\)/, 'when this machine has it, or a house machine does');
 like($plat, qr/Another machine/, 'and labels a peer\'s engine as another machine');
+
 unlike($plat, qr/value="local:vosk"/, 'and no longer offers Vosk');
+
 like($plat, qr{\$current = 'local:whisper\.cpp' if \$current eq 'local:vosk'},
 	'a stored local:vosk is shown as whisper.cpp');
+
 unlike($plat, qr/\$vosk_here/, 'no dead Vosk probe is left in the page');
+
 
 # ------------------------------------------------------------ the commands
 my $py3 = (grep { -x $_ } map { "$_/python3" } split /:/, $ENV{'PATH'})[0];
