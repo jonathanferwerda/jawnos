@@ -323,9 +323,12 @@ sub whisper_cli_transcribe {
 	# A screened call still has prompts to play while its name is read: base
 	# held ~3 of 4 ARM cores for 27 s and starved the Piper voice. Both stages
 	# yield with nice 19 so ffmpeg and whisper-cli give the CPU back to the call.
+	# The launcher, not the path: on the app runtime the wrapper is read by sh
+	# and a native binary is opened by the linker, because exec is refused.
+	my $runner = join(' ', map { &subs::shell_quote($_) } &whisper_launch_argv($bin));
 	my $cmd = sprintf(
 		'nice -n 19 ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | nice -n 19 %s -m %s%s --output-txt --file - 2>/dev/null',
-		&subs::shell_quote($bin), &subs::shell_quote($model), $language
+		$runner, &subs::shell_quote($model), $language
 	);
 	my ($in, $out, $err);
 	$err = Symbol::gensym();
@@ -426,6 +429,45 @@ sub whisper_server_bin {
 		return $path if -x $path;
 	}
 	return '';
+}
+
+# Android's app runtime mounts its own data directory noexec, so an ELF copied
+# into $PREFIX or ~/.local/share cannot be exec'd at all ("Permission denied",
+# even with 0755). The system linker can still map it. Termux papers over the
+# same mount with termux-exec; the app runtime has no such shim, so the tree
+# asks the linker itself. JAWNOS_ANDROID_LINKER forces the answer for a test
+# (an empty value turns it off); elsewhere the app runtime is detected.
+sub _whisper_android_linker {
+	my $forced = $ENV{'JAWNOS_ANDROID_LINKER'};
+	return $forced if defined $forced;
+	return '' unless -e '/system/bin/linker64';
+	my $prefix = $ENV{'PREFIX'} // '';
+	return '/system/bin/linker64' if $prefix =~ m{^/data/(?:data|user/\d+)/com\.jawnos/};
+	return '';
+}
+
+sub whisper_launch_argv {
+	# The argv that runs $bin, for a call that must not go through a shell (the
+	# warm server) or for the one that does (the CLI pipeline). A shell wrapper
+	# is text: `sh file` reads it where exec would be refused. A binary on the
+	# app runtime goes through the linker; everywhere else it runs as itself.
+	my ($bin) = @_;
+	return () unless defined $bin && length $bin;
+	return ($bin) unless -f $bin;
+	if (!-B $bin) {
+		# Only a shell script can be handed to sh; a Python console script
+		# still needs its own interpreter and its exec bit.
+		my $first = '';
+		if (open(my $fh, '<', $bin)) {
+			$first = <$fh> // '';
+			close $fh;
+		}
+		return ('sh', $bin) if $first !~ m{^#!} || $first =~ m{^#!.*\b(?:ba|da)?sh\b};
+		return ($bin);
+	}
+	my $linker = &_whisper_android_linker();
+	return ($linker, $bin) if length $linker;
+	return ($bin);
 }
 
 sub whisper_streamer {

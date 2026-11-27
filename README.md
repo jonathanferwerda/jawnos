@@ -615,9 +615,10 @@ bash ./models/download-ggml-model.sh base
 # no sudo. On Termux it builds whisper.cpp natively (static, no OpenMP) and
 # installs the same wrappers and models. The phone/tablet app runtime has no
 # compiler, so the prebuilt arm64 binaries are installed there; either way the
-# device transcribes on its own. Configure -> Plat offers "whisper.cpp · this
-# machine" for Transcription; a hand-built whisper.cpp in ~/whisper.cpp is still
-# found.
+# device transcribes on its own (the app runtime cannot exec its own data
+# directory, so the engine is opened by /system/bin/linker64 there). Configure ->
+# Plat offers "whisper.cpp · this machine" for Transcription; a hand-built
+# whisper.cpp in ~/whisper.cpp is still found.
 perl scripts/jawnos_deps.pl --extras-only --install
 
 sudo cpanm --notest --force Mojolicious::Lite \

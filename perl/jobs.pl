@@ -410,7 +410,8 @@ sub job_whisper_server {
 			if (defined $pid && $pid == 0) {
 				open(STDOUT, '>&', $log_fh) if $log_fh;
 				open(STDERR, '>&', $log_fh) if $log_fh;
-				exec($bin, '-m', $model, '--host', '127.0.0.1', '--port', $port, '--convert')
+				my @argv = &subs::whisper_launch_argv($bin);
+				exec(@argv, '-m', $model, '--host', '127.0.0.1', '--port', $port, '--convert')
 					or POSIX::_exit(1);
 			}
 			close($log_fh) if $log_fh;

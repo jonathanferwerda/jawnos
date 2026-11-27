@@ -549,11 +549,17 @@ WRAP
 sub whisper_native_wrapper {
 	# The native whisper.cpp CLI takes a WAV path, not stdin. The tree pipes a
 	# WAV to `--file -`; read it to a temp file, run the native binary, and print
-	# only the text (the same contract the wheel wrapper keeps).
+	# only the text (the same contract the wheel wrapper keeps). On Android's app
+	# runtime the copied binary cannot be exec'd; the system linker opens it.
 	my $text = <<'WRAP';
 #!/bin/sh
 dir="__DIR__"
 native="$dir/whisper-cli-native"
+loader=""
+case "$native" in
+	/data/data/*|/data/user/*) loader=/system/bin/linker64 ;;
+esac
+[ -x "$loader" ] || loader=""
 model=""
 lang=""
 while [ $# -gt 0 ]; do
@@ -572,7 +578,13 @@ fi
 tmp="$dir/.whisper-stdin-$$.wav"
 trap 'rm -f "$tmp"' EXIT INT TERM
 cat > "$tmp"
-if [ -n "$lang" ]; then
+if [ -n "$loader" ]; then
+	if [ -n "$lang" ]; then
+		"$loader" "$native" -m "$model" -f "$tmp" -nt -l "$lang"
+	else
+		"$loader" "$native" -m "$model" -f "$tmp" -nt
+	fi
+elif [ -n "$lang" ]; then
 	"$native" -m "$model" -f "$tmp" -nt -l "$lang"
 else
 	"$native" -m "$model" -f "$tmp" -nt

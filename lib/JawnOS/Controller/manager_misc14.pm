@@ -210,10 +210,11 @@ sub action_45403 {
 				# 1. Resolve your absolute home directory paths first so they pass smoothly into the shell string
 				my $whisper_bin   = &subs::whisper_cli_bin();
 				my $whisper_model = &subs::whisper_model_file('base');
+				my $whisper_runner = join(' ', map { &subs::shell_quote($_) } &subs::whisper_launch_argv($whisper_bin));
 
 				my $pipeline_cmd = sprintf(
 					'ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s --output-txt --file -',
-					&subs::shell_quote($whisper_bin),
+					$whisper_runner,
 					&subs::shell_quote($whisper_model)
 				);
 

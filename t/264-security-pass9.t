@@ -81,9 +81,12 @@ like($root, qr/\$remote_signatorial eq \$signatorial/, 'it is compared');
 my $alarm = source('perl/Alarm.pl');
 unlike($alarm, qr/`ls -a \$cf`/, 'the cache folder is not listed by a shell');
 like($alarm, qr/opendir\(my \$dh, \$cf\)/, 'it is read in Perl');
-like(source('lib/JawnOS/Domain/Ai.pm'), qr/&subs::shell_quote\(\$bin\), &subs::shell_quote\(\$model\)/,
-	'the whisper pipeline shell-quotes its program and model');
-like(source('lib/JawnOS/Controller/manager_misc14.pm'), qr/&subs::shell_quote\(\$whisper_bin\)/,
+like(source('lib/JawnOS/Domain/Ai.pm'), qr/join\(' ', map \{ &subs::shell_quote\(\$_\) \} &whisper_launch_argv\(\$bin\)\)/,
+	'the whisper pipeline shell-quotes every word it runs');
+like(source('lib/JawnOS/Domain/Ai.pm'), qr/&subs::shell_quote\(\$model\)/,
+	'and its model');
+like(source('lib/JawnOS/Controller/manager_misc14.pm'),
+	qr/join\(' ', map \{ &subs::shell_quote\(\$_\) \} &subs::whisper_launch_argv\(\$whisper_bin\)\)/,
 	'and so does the second pipeline');
 my $lan = source('lib/JawnOS/Domain/Lan.pm');
 unlike($lan, qr/`ps -e \| grep \$pid`/, 'a pid is not grep\'d through a shell');
