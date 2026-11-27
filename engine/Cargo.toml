@@ -18,6 +18,15 @@ crate-type = ["lib", "cdylib"]
 name = "jawn-audio"
 path = "src/main.rs"
 
+# The recogniser is a separate process: the default engine never links the C
+# libraries, and a crash, restart or upgrade of ASR cannot take the audio
+# engine with it (docs/engine-asr.md). The bin is invisible unless the feature
+# is asked for.
+[[bin]]
+name = "jawn-asr"
+path = "src/bin/jawn_asr.rs"
+required-features = ["sherpa"]
+
 # Device backends are optional so the suite, and every machine that cannot
 # build against ALSA or JACK, still gets the null device and the protocol.
 # `--features alsa`, `--features jack`, or both, add the real hardware seam
@@ -29,6 +38,11 @@ default = []
 alsa = ["dep:alsa"]
 jack = ["dep:jack"]
 oboe = ["dep:oboe"]
+# Streaming ASR through the prebuilt sherpa-onnx C API. A flag, not a crate:
+# build.rs links `sherpa-onnx-c-api` and `onnxruntime` from
+# $SHERPA_ONNX_LIB_DIR, so the default build and its offline suite never need
+# the libraries (docs/engine-asr.md).
+sherpa = []
 
 [dependencies]
 alsa = { version = "0.9", optional = true }

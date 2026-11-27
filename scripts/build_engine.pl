@@ -26,7 +26,11 @@
 # or library for one of them is not fatal: the script retries with no features,
 # and says plainly that the staged binary has no device backend. That keeps a
 # machine without libjack or ALSA development files on the null device rather
-# than without an engine.
+# than without an engine. Only those two hardware backends may be dropped: a
+# requested `sherpa` build that cannot link fails loudly (docs/engine-asr.md).
+#
+# `sherpa` also stages `perl/audio/jawn-asr` and the shared libraries it loads,
+# with an `$ORIGIN` rpath so the pair moves together.
 #
 # $ENV{CARGO} names the toolchain (default `cargo` on PATH), and
 # $ENV{CARGO_TARGET_DIR} is honoured so a test can build into a scratch folder.
@@ -36,6 +40,7 @@
 use strict;
 use warnings;
 
+use File::Basename ();
 use File::Copy qw(copy);
 use File::Find ();
 use File::Path qw(make_path);
@@ -75,6 +80,13 @@ for ( my $i = 0; $i < @ARGV; $i++ ) {
 }
 my $build_features = defined $features ? $features : 'alsa,jack';
 
+# The feature list is kept apart so a retry can drop only `alsa` or `jack`.
+# `sherpa` is never dropped: build.rs links the C libraries from
+# SHERPA_ONNX_LIB_DIR, and a link failure must be loud (docs/engine-asr.md).
+my @build_feature_list = grep { length } split /\s*,\s*/, $build_features;
+my $sherpa_requested = scalar grep { $_ eq 'sherpa' } @build_feature_list;
+my $sherpa_lib_dir;
+
 # Windows has no engine: the sound there is the browser's. Say so once instead
 # of failing inside cargo, and keep --check honest - a machine that cannot
 # stage the binary reports it missing. --android still cross-compiles, since
@@ -103,7 +115,8 @@ if ($check) {
 sub newest_source_mtime {
 	my $newest = 0;
 	my @roots = grep { -e $_ }
-		( "$root/engine/Cargo.toml", "$root/engine/Cargo.lock", "$root/engine/src" );
+		( "$root/engine/Cargo.toml", "$root/engine/Cargo.lock",
+		  "$root/engine/build.rs", "$root/engine/src" );
 	foreach my $path (@roots) {
 		if ( -d $path ) {
 			File::Find::find(
@@ -195,6 +208,17 @@ if ($android) {
 			unless -d $out_dir;
 	}
 
+	# The recogniser joins the app only when the shared libraries it links are
+	# already staged: SHERPA_ONNX_LIB_DIR must name the Android aarch64 `lib/`
+	# directory, not the host's. No directory means plain oboe, not a failure
+	# (docs/engine-asr.md).
+	my $android_features = 'oboe';
+	my $android_sherpa_dir;
+	if ( sherpa_libs_present( $ENV{'SHERPA_ONNX_LIB_DIR'} ) ) {
+		$android_sherpa_dir = $ENV{'SHERPA_ONNX_LIB_DIR'};
+		$android_features .= ',sherpa';
+	}
+
 	local $ENV{'ANDROID_NDK_HOME'} = $ndk;
 	local $ENV{'CC_aarch64-linux-android'}   = $clang;
 	local $ENV{'CXX_aarch64-linux-android'}  = $clangxx;
@@ -219,7 +243,7 @@ if ($android) {
 
 	my @cmd = (
 		$cargo, 'build', '--manifest-path', $manifest, '--lib', '--target',
-		'aarch64-linux-android', '--features', 'oboe', '-j', '4'
+		'aarch64-linux-android', '--features', $android_features, '-j', '4'
 	);
 	push @cmd, '--release' unless $debug;
 	print "+ @cmd\n";
@@ -241,6 +265,16 @@ if ($android) {
 		die "cannot stage $staged: $err\n";
 	}
 	print "built: $staged\n";
+
+	# The app's loader resolves DT_NEEDED by soname from the same native
+	# library directory, so the sherpa `.so`s sit beside libjawn_audio.so.
+	if ( defined $android_sherpa_dir ) {
+		for my $lib ( sherpa_libs($android_sherpa_dir) ) {
+			stage_file( File::Spec->catfile( $android_sherpa_dir, $lib ),
+				File::Spec->catfile( $abi_dir, $lib ), 0644 );
+		}
+		print "staged: sherpa-onnx shared libraries beside libjawn_audio.so\n";
+	}
 	exit 0;
 }
 
@@ -249,34 +283,48 @@ my $target = ( defined $ENV{'CARGO_TARGET_DIR'} && length $ENV{'CARGO_TARGET_DIR
 	: File::Spec->catdir( $root, 'engine', 'target' );
 my $profile = $debug ? 'debug' : 'release';
 
+# A requested sherpa build is resolved before cargo runs: a missing variable
+# or library dies here in one line, and the recogniser's siblings are found
+# through the `$ORIGIN` rpath when it runs from perl/audio (docs/engine-asr.md).
+if ($sherpa_requested) {
+	$sherpa_lib_dir = resolve_sherpa_lib_dir();
+	add_rustflag( '-C', 'link-arg=-Wl,-rpath,$ORIGIN' );
+}
+
 my @base = ( $cargo, 'build', '--manifest-path', $manifest );
 push @base, '--release' unless $debug;
 
-my @cmd = @base;
-push @cmd, ( '--features', $build_features ) if length $build_features;
-print "+ @cmd\n";
-my $built = system(@cmd) == 0;
-
 # A machine with libasound but no libjack is the normal case (the house's
-# audio interfaces do not need JACK at all), so drop features one at a time
-# before giving up: ALSA alone still records, monitors and plays. Falling
-# straight from `alsa,jack` to nothing would stage a silent engine on exactly
-# the machine that has the interface plugged in.
-for my $fallback ( 'alsa', '' ) {
-	last if $built;
-	next if length $fallback && $fallback eq $build_features;
-	print "note: the device build failed with features `$build_features`;\n";
-	print "note: retrying with " . ( length $fallback ? "features `$fallback`" : 'no features' ) . "\n";
-	@cmd = @base;
-	push @cmd, ( '--features', $fallback ) if length $fallback;
+# audio interfaces do not need JACK at all), so drop the two hardware
+# backends one at a time before giving up: ALSA alone still records, monitors
+# and plays. Everything else the person asked for stays in every attempt; a
+# requested `sherpa` that cannot link is a loud failure, not a smaller engine
+# (docs/engine-asr.md).
+my $has_alsa = grep { $_ eq 'alsa' } @build_feature_list;
+my @keep = grep { $_ ne 'alsa' && $_ ne 'jack' } @build_feature_list;
+my @attempts = ( join( ',', @build_feature_list ) );
+push @attempts, join( ',', ( @keep, 'alsa' ) ) if $has_alsa;
+push @attempts, ( @keep ? join( ',', @keep ) : '' );
+my %seen;
+@attempts = grep { !$seen{$_}++ } @attempts;
+
+my $built = 0;
+my $attempt = '';
+for my $candidate (@attempts) {
+	$attempt = $candidate;
+	my @cmd = @base;
+	push @cmd, ( '--features', $attempt ) if length $attempt;
 	print "+ @cmd\n";
 	$built = system(@cmd) == 0;
-	print "note: no device backend in the staged binary (null only)\n"
-		if $built && !length $fallback;
-	$build_features = $fallback if $built;
+	last if $built;
+	print "note: the build failed with features `"
+		. ( length $attempt ? $attempt : 'none' ) . "`;\n";
 }
 
 die "cargo build failed\n" unless $built;
+$build_features = $attempt;
+print "note: no device backend in the staged binary (null only)\n"
+	unless $build_features =~ /(?:^|,)(?:alsa|jack)(?:,|$)/;
 
 my $binary = File::Spec->catfile( $target, $profile, 'jawn-audio' );
 die "cargo reported success but $binary is missing\n" unless -x $binary;
@@ -296,6 +344,24 @@ if ( !copy( $binary, $tmp ) || !chmod( 0755, $tmp ) || !rename( $tmp, $out ) ) {
 	die "cannot stage $out: $err\n";
 }
 print "built: $out\n";
+
+# A sherpa build also stages the recogniser and the shared libraries it loads.
+# The `$ORIGIN` rpath added before the build makes the siblings independent of
+# the caller's LD_LIBRARY_PATH; a manual cargo build needs that variable
+# instead (docs/engine-asr.md).
+if ( defined $sherpa_lib_dir ) {
+	my $asr = File::Spec->catfile( $target, $profile, 'jawn-asr' );
+	die "cargo reported success but $asr is missing: sherpa was requested\n"
+		unless -x $asr;
+	my $staged_asr = File::Spec->catfile( $audio_dir, 'jawn-asr' );
+	stage_file( $asr, $staged_asr, 0755 );
+	print "built: $staged_asr\n";
+	for my $lib ( sherpa_libs($sherpa_lib_dir) ) {
+		stage_file( File::Spec->catfile( $sherpa_lib_dir, $lib ),
+			File::Spec->catfile( $audio_dir, $lib ), 0644 );
+	}
+	print "staged: sherpa-onnx shared libraries beside jawn-asr\n";
+}
 
 # The NDK a cross-build uses: an explicit --ndk, then the conventional
 # environment variables, then the newest NDK under a known SDK root. Nothing
@@ -322,6 +388,71 @@ sub resolve_ndk {
 		return File::Spec->catdir( $root, $versions[-1] ) if @versions;
 	}
 	return undef;
+}
+
+# --- sherpa-onnx helpers -----------------------------------------------------
+
+# The `.so` files in a prebuilt asset's lib/ directory. Versioned names
+# (`libfoo.so.1`) count; symlinks are copied by content when staged.
+sub sherpa_libs {
+	my ($dir) = @_;
+	opendir( my $dh, $dir ) or return ();
+	my @libs = sort grep { !/^\.\.?$/ && /\.so(?:\.|$)/ } readdir $dh;
+	closedir $dh;
+	return @libs;
+}
+
+# The two libraries build.rs links. A directory that lacks either is not a
+# sherpa-onnx shared asset.
+sub sherpa_libs_present {
+	my ($dir) = @_;
+	return 0 unless defined $dir && length $dir && -d $dir;
+	my @libs = sherpa_libs($dir);
+	return 0 unless grep { /^libsherpa-onnx-c-api\.so/ } @libs;
+	return 0 unless grep { /^libonnxruntime\.so/ } @libs;
+	return 1;
+}
+
+# Resolve a requested sherpa build or die in one actionable line. Never fall
+# back to a smaller engine (docs/engine-asr.md).
+sub resolve_sherpa_lib_dir {
+	my $dir = $ENV{'SHERPA_ONNX_LIB_DIR'};
+	die "the sherpa feature needs SHERPA_ONNX_LIB_DIR: point it at the lib/ "
+		. "directory of a sherpa-onnx-v2.0.3 shared asset (docs/engine-asr.md)\n"
+		unless defined $dir && length $dir;
+	die "SHERPA_ONNX_LIB_DIR=$dir does not exist: point it at the lib/ "
+		. "directory of a sherpa-onnx-v2.0.3 shared asset (docs/engine-asr.md)\n"
+		unless -d $dir;
+	die "SHERPA_ONNX_LIB_DIR=$dir has no libsherpa-onnx-c-api.so and "
+		. "libonnxruntime.so: point it at the lib/ directory of a "
+		. "sherpa-onnx-v2.0.3 shared asset (docs/engine-asr.md)\n"
+		unless sherpa_libs_present($dir);
+	return $dir;
+}
+
+# Append rustc flags to the encoded environment cargo already reads. Values
+# containing spaces must stay one flag, hence the \x1f separator.
+sub add_rustflag {
+	my (@flags) = @_;
+	my $existing = ( defined $ENV{'CARGO_ENCODED_RUSTFLAGS'}
+		&& length $ENV{'CARGO_ENCODED_RUSTFLAGS'} )
+		? $ENV{'CARGO_ENCODED_RUSTFLAGS'} : '';
+	$ENV{'CARGO_ENCODED_RUSTFLAGS'} = join( "\x1f",
+		( length $existing ? $existing : () ), @flags );
+}
+
+# Stage over a destination with a rename: a running image keeps its inode,
+# and a sibling shared library is never half-written.
+sub stage_file {
+	my ( $src, $dst, $mode ) = @_;
+	my $dir = File::Basename::dirname($dst);
+	my ( $fh, $tmp ) = tempfile( 'jawn-stage.XXXXXX', DIR => $dir, UNLINK => 0 );
+	close $fh;
+	if ( !copy( $src, $tmp ) || !chmod( $mode, $tmp ) || !rename( $tmp, $dst ) ) {
+		my $err = $!;
+		unlink $tmp if -e $tmp;
+		die "cannot stage $dst: $err\n";
+	}
 }
 
 # The NDK ships one prebuilt toolchain per build host (linux-x86_64 here).

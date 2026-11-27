@@ -10,6 +10,10 @@
 //! default dependency and the suite builds anywhere. The patch-cable loopback
 //! reports the monitoring round trip and its honest precision.
 
+// The `jawn-asr` command line, model-file discovery and JSON output. Always
+// compiled: they need no C library, so the default suite tests them
+// (docs/engine-asr.md).
+pub mod asr_args;
 pub mod auth;
 pub mod backends;
 // The one take slot both the Oboe and the direct-USB backends arm; a process
@@ -50,6 +54,11 @@ pub mod alsa_device;
 pub mod jack_device;
 #[cfg(feature = "oboe")]
 pub mod oboe_device;
+// Streaming ASR through the prebuilt sherpa-onnx C API. Off by default: the
+// linker and the libraries are only needed by the separate `jawn-asr` binary
+// (docs/engine-asr.md).
+#[cfg(feature = "sherpa")]
+pub mod sherpa;
 
 pub use auth::{mac_tag, tags_match, MAC_LEN};
 pub use backends::{availability, Availability, BackendKind, RunReport};

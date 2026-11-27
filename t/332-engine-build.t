@@ -89,6 +89,14 @@ if [ "$1" = "build" ]; then
 	for arg in "$@"; do
 		[ "$arg" = "--release" ] && profile=release
 	done
+	case " $* " in
+	*sherpa*)
+		if [ -n "$FAKE_CARGO_REJECT_SHERPA" ]; then
+			echo "fake cargo: refusing --features sherpa" >&2
+			exit 1
+		fi
+		;;
+	esac
 	if [ -z "$CARGO_TARGET_DIR" ]; then
 		echo "fake cargo: CARGO_TARGET_DIR is unset" >&2
 		exit 1
@@ -97,6 +105,13 @@ if [ "$1" = "build" ]; then
 	bin="$CARGO_TARGET_DIR/$profile/jawn-audio"
 	printf '#!/bin/sh\necho "fake-engine-%s"\n' "$profile" > "$bin" || exit 1
 	chmod 0755 "$bin" || exit 1
+	case " $* " in
+	*sherpa*)
+		asr="$CARGO_TARGET_DIR/$profile/jawn-asr"
+		printf '#!/bin/sh\necho "fake-asr-%s"\n' "$profile" > "$asr" || exit 1
+		chmod 0755 "$asr" || exit 1
+		;;
+	esac
 	exit 0
 fi
 echo "fake cargo: unsupported: $*" >&2
@@ -318,6 +333,77 @@ SKIP: {
 		"$dir/engine/Cargo.toml", '--', '--test-threads=1'
 	);
 	is( $tcode, 0, q{the crate's own tests pass} ) or diag( $ttext . $terr );
+}
+
+# --- a requested sherpa is staged with its libraries, or fails loudly -------
+# The default build never sees this code. A sherpa request is the one place
+# the script must not fall back: build.rs links `sherpa-onnx-c-api` and
+# `onnxruntime`, and a link failure is a loud failure, not a smaller engine
+# (docs/engine-asr.md).
+{
+	my $dir  = fixture();
+	my $libs = "$dir/sherpa-lib";
+	make_path($libs);
+	for my $name ( 'libsherpa-onnx-c-api.so', 'libonnxruntime.so' ) {
+		open( my $fh, '>', "$libs/$name" ) or die "$libs/$name: $!";
+		print {$fh} "fixture";
+		close $fh;
+	}
+
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	local $ENV{'CARGO'}            = $cargo;
+	local $ENV{'CARGO_TARGET_DIR'} = $ware;
+
+	{
+		local $ENV{'SHERPA_ONNX_LIB_DIR'} = '';
+		my ( $status, $out, $err ) = run_in( $dir, '--features', 'sherpa' );
+		isnt( $status, 0, 'a sherpa build without SHERPA_ONNX_LIB_DIR fails' );
+		like( $out . $err, qr/needs SHERPA_ONNX_LIB_DIR/,
+			'and names the variable instead of building a smaller engine' );
+		ok( !-e "$dir/perl/audio/jawn-asr", 'and stages no recogniser' );
+	}
+
+	{
+		local $ENV{'SHERPA_ONNX_LIB_DIR'} = $libs;
+		my ( $status, $out, $err ) = run_in( $dir, '--features', 'sherpa' );
+		is( $status, 0, 'a sherpa build with the libraries stages' )
+			or diag( $out . $err );
+		ok( -x "$dir/perl/audio/jawn-asr", 'the recogniser is staged executable' );
+		ok( -f "$dir/perl/audio/libsherpa-onnx-c-api.so",
+			'and its sibling libsherpa-onnx-c-api.so' );
+		ok( -f "$dir/perl/audio/libonnxruntime.so",
+			'and libonnxruntime.so beside it' );
+		like( $out, qr/^built: .*jawn-asr/m, 'and the script says where' );
+	}
+}
+
+# A build that keeps failing with sherpa must die; dropping sherpa and staging
+# a working no-feature engine would be the silent downgrade this guards.
+{
+	my $dir  = fixture();
+	my $libs = "$dir/sherpa-lib";
+	make_path($libs);
+	for my $name ( 'libsherpa-onnx-c-api.so', 'libonnxruntime.so' ) {
+		open( my $fh, '>', "$libs/$name" ) or die "$libs/$name: $!";
+		print {$fh} "fixture";
+		close $fh;
+	}
+
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	local $ENV{'CARGO'}                     = $cargo;
+	local $ENV{'CARGO_TARGET_DIR'}          = $ware;
+	local $ENV{'SHERPA_ONNX_LIB_DIR'}       = $libs;
+	local $ENV{'FAKE_CARGO_REJECT_SHERPA'}  = 1;
+
+	my ( $status, $out, $err ) =
+		run_in( $dir, '--features', 'alsa,jack,sherpa' );
+	isnt( $status, 0, 'a link failure with sherpa requested fails' );
+	like( $out . $err, qr/cargo build failed/, 'and says the build failed' );
+	like( $out, qr/--features sherpa\n/, 'after trying sherpa alone, not dropping it' );
+	ok( !-e "$dir/perl/audio/jawn-audio", 'and stages no smaller engine' );
+	ok( !-e "$dir/perl/audio/jawn-asr", 'and no recogniser' );
 }
 
 # --- a monitor that underruns queues the lead again ------------------------
