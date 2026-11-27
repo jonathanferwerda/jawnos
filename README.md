@@ -498,9 +498,9 @@ cpanm --notest --force Mojolicious::Lite \
 pkg install -y glibc-repo && pkg install -y glibc-runner
 ```
 
-`perl scripts/jawnos_deps.pl` installs Piper (engine and voices) for you as an
-"extra", and re-runs on every code update; the `pkg install` line above is the manual
-equivalent.
+`perl scripts/jawnos_deps.pl` installs Piper (engine and voices) and whisper.cpp
+(native on Termux, the wheel on a desktop) for you as "extras", and re-runs on
+every code update; the `pkg install` line above is the manual equivalent for Piper.
 
 Activate developer settings: go to **Settings → About Device → Software Information** and tap
 **Build Number** seven times. In **Developer options**, turn on **Wireless debugging**, tap it,
@@ -609,11 +609,13 @@ make
 # Fetch the base model configuration
 bash ./models/download-ggml-model.sh base
 
-# Offline speech-to-text: whisper.cpp. The installer puts the pywhispercpp
-# wheel, the base and tiny models, and the whisper-cli/whisper-server wrappers
-# under ~/.local/share/jawnos/whisper with no cmake and no sudo, then Configure
-# -> Plat offers "whisper.cpp · this machine" for Transcription. A hand-built
-# whisper.cpp in ~/whisper.cpp is still found. Termux cannot run the glibc wheel.
+# Offline speech-to-text: whisper.cpp. On a desktop the installer puts the
+# pywhispercpp wheel, the base and tiny models, and the whisper-cli/
+# whisper-server wrappers under ~/.local/share/jawnos/whisper with no cmake and
+# no sudo. On Termux it builds whisper.cpp natively (static, no OpenMP) and
+# installs the same wrappers and models, so the phone/tablet transcribes on its
+# own. Either way Configure -> Plat offers "whisper.cpp · this machine" for
+# Transcription; a hand-built whisper.cpp in ~/whisper.cpp is still found.
 perl scripts/jawnos_deps.pl --extras-only --install
 
 sudo cpanm --notest --force Mojolicious::Lite \

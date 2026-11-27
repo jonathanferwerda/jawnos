@@ -1,9 +1,11 @@
 # tests-for: lib/JawnOS/Domain/Ai.pm perl/crew.pl scripts/jawnos_deps.pl scripts/whisper_tool.py templates/configure/plat_setting_list.html.ep
 # covers:    whisper.cpp is the one local transcription engine the role can name
-#           (local:whisper.cpp); the wheel install and its wrappers, the model
-#           chooser, a stored local:vosk read as whisper.cpp, a machine without
-#           the engine using a house peer's through the Crew whisper.transcribe
-#           job, and the Plat page offering the engine where it can run.
+#           (local:whisper.cpp); the desktop wheel and the Termux native build,
+#           their wrappers, the model chooser, a stored local:vosk read as
+#           whisper.cpp, a machine without the engine using a house peer's
+#           through the Crew whisper.transcribe job, the WAV conversion the
+#           native server needs, and the Plat page offering the engine where it
+#           can run.
 use strict;
 use warnings;
 
@@ -11,7 +13,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use MIME::Base64 qw(decode_base64);
-use File::Path qw(make_path);
+use File::Path qw(make_path remove_tree);
 use File::Copy qw(copy);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
@@ -158,7 +160,11 @@ like($deps, qr{id => 'whisper'}, 'the installer offers whisper.cpp as an optiona
 like($deps, qr{sub install_whisper}, 'and has an installer for it');
 like($deps, qr{pywhispercpp}, 'from the wheel, with no cmake');
 like($deps, qr{qw\(base tiny\)}, 'which brings the base and tiny models');
-like($deps, qr{Termux \(Bionic\) has no pywhispercpp wheel}, 'and says why Termux cannot run it');
+like($deps, qr/WHISPER_BUILD_SERVER/, 'and builds the native CLI and server on Termux');
+like($deps, qr/whisper-cli-native/, 'staging the native CLI beside the wrapper');
+like($deps, qr/whisper_native_wrapper/, 'whose wrapper adapts the tree\'s --file - interface');
+like($deps, qr/JAWNOS_WHISPER_PREBUILT/, 'with a prebuilt fallback for a slow or failed build');
+like($deps, qr/pkg.*install/s, 'through Termux pkg');
 like($deps, qr{'pip', '--version'}, 'a venv with no pip is checked, not trusted');
 like($deps, qr{remove_tree\("\$whisper_dir/venv"\)}, 'and rebuilt rather than reused');
 
@@ -190,10 +196,86 @@ unlike($deps, qr{sub install_vosk}, 'the Vosk installer is gone');
 	my $all = $run->();
 	like($all, qr/Optional applications: all present/, 'four parts plus the reader is an install');
 	like($all, qr/\n0\z/, 'and the installer reports nothing missing');
+
+	# A native install (the Termux/Android build) needs no venv: a real ELF
+	# server, the model and the reader are the whole thing.
+	{
+		my $true = -x '/bin/true' ? '/bin/true' : -x '/usr/bin/true' ? '/usr/bin/true' : '';
+		SKIP: {
+			skip 'no /bin/true to stand in for a native binary', 2 unless length $true;
+			remove_tree("$wd/venv");
+			unlink "$wd/whisper-cli";
+			copy($true, "$wd/whisper-server");
+			chmod 0755, "$wd/whisper-server";
+			my $native = $run->();
+			like($native, qr/Optional applications: all present/,
+				'a native server, model and reader are an install with no venv');
+			like($native, qr/\n0\z/, 'and the installer reports nothing missing');
+		}
+	}
+
 	unlink "$tree/scripts/whisper_stream.py";
 	my $gone = $run->();
 	like($gone, qr/whisper\.cpp speech-to-text/, 'a tree without the live reader is missing the engine');
 	like($gone, qr/\n1\z/, 'and the installer reports it instead of an install');
+}
+
+# ------------------------------------------------------------ the native prebuilt install
+# The Termux build can be replaced by a prebuilt directory: the installer copies
+# the two binaries, writes the CLI wrapper, and needs no pkg, cmake or network
+# when the models are already there.
+{
+	my $tree = "$tmp/native-deps";
+	my $fake = "$tmp/native-home";
+	my $wd   = "$fake/.local/share/jawnos/whisper";
+	my $pre  = "$tmp/prebuilt";
+	make_path("$tree/scripts", "$wd/models", "$pre",
+		"$fake/.local/share/jawnos/piper", "$fake/.local/share/jawnos/rtc/venv/bin");
+	copy("$repo/scripts/jawnos_deps.pl", "$tree/scripts/jawnos_deps.pl");
+	copy("$repo/scripts/whisper_stream.py", "$tree/scripts/whisper_stream.py");
+	write_file("$wd/models/ggml-base.bin", 'base');
+	write_file("$wd/models/ggml-tiny.bin", 'tiny');
+	foreach my $exe ("$fake/.local/share/jawnos/piper/piper",
+		"$fake/.local/share/jawnos/rtc/venv/bin/python3") {
+		write_file($exe, "#!/bin/sh\nexit 0\n");
+		chmod 0755, $exe;
+	}
+	my $true = -x '/bin/true' ? '/bin/true' : -x '/usr/bin/true' ? '/usr/bin/true' : '';
+	SKIP: {
+		skip 'no native ELF to stand in for the prebuilt', 6 unless length $true;
+		copy($true, "$pre/whisper-cli");
+		copy($true, "$pre/whisper-server");
+		chmod 0755, "$pre/whisper-cli", "$pre/whisper-server";
+		local $ENV{'HOME'} = $fake;
+		local $ENV{'TERMUX_VERSION'} = '1';
+		local $ENV{'JAWNOS_WHISPER_PREBUILT'} = $pre;
+		my $out = qx{'$^X' '-I$repo/lib' '$tree/scripts/jawnos_deps.pl' --extras-only --install 2>&1};
+		is($? >> 8, 0, 'the native prebuilt install runs without pkg or cmake');
+		like($out, qr/staged the native CLI/, 'and says it staged the prebuilt');
+		ok(-x "$wd/whisper-cli-native", 'the native CLI is installed');
+		ok(-x "$wd/whisper-server", 'the server is installed');
+		ok(-x "$wd/whisper-cli", 'and the CLI wrapper is executable');
+		like(read_file("$wd/whisper-cli"), qr/whisper-cli-native.*-nt/s,
+			'whose body calls the native binary and prints text');
+	}
+}
+
+# ------------------------------------------------------------ the warm-server upload
+# The desktop wheel's server decodes webm; the native whisper.cpp server (the
+# phone's) reads WAV only. The manager converts the clip before the POST.
+{
+	my $ffmpeg = `command -v ffmpeg 2>/dev/null`;
+	chomp $ffmpeg;
+	SKIP: {
+		skip 'no ffmpeg on PATH', 2 unless length $ffmpeg;
+		my $pcm = "\x00\x00" x 1600;
+		my $wav = 'RIFF' . pack('V', 36 + length($pcm))
+			. 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 16_000, 32_000, 2, 16)
+			. 'data' . pack('V', length($pcm)) . $pcm;
+		my $out = subs::whisper_server_wav($wav);
+		like($out, qr/^RIFF....WAVE/s, 'the warm server is sent a WAV the native build can read');
+		is(unpack('V', substr($out, 24, 4)), 16_000, 'at the model rate');
+	}
 }
 
 # ------------------------------------------------------------ the Plat page

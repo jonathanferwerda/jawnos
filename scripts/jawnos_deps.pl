@@ -522,12 +522,13 @@ sub install_piper_bundle {
 }
 
 # --- whisper.cpp: the local recogniser --------------------------------------
-# pywhispercpp ships a glibc wheel with libwhisper but no command. The two
-# wrappers below give the tree the whisper-cli and whisper-server shapes it
-# already speaks, so nothing here needs cmake or sudo. The models are the
-# multilingual base and tiny ggml files. Re-running this upgrades the wheel.
-# Termux is Bionic and has no wheel: a phone leaves a screened call's audio on
-# the gateway, which is where the transcript is made anyway.
+# Two ways to get whisper.cpp. On a desktop the pywhispercpp wheel ships
+# libwhisper but no command, so the wrappers below give the tree the
+# whisper-cli and whisper-server shapes it speaks. On Termux (bionic) there is
+# no wheel: whisper.cpp is built natively, static and without OpenMP, and needs
+# only libc/libm/libdl. Both install the same two shapes under
+# ~/.local/share/jawnos/whisper. The models are the multilingual base and tiny
+# ggml files in both cases.
 sub whisper_model_url {
 	my ($name) = @_;
 	return "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$name.bin";
@@ -545,22 +546,90 @@ WRAP
 	return $text;
 }
 
+sub whisper_native_wrapper {
+	# The native whisper.cpp CLI takes a WAV path, not stdin. The tree pipes a
+	# WAV to `--file -`; read it to a temp file, run the native binary, and print
+	# only the text (the same contract the wheel wrapper keeps).
+	my $text = <<'WRAP';
+#!/bin/sh
+dir="__DIR__"
+native="$dir/whisper-cli-native"
+model=""
+lang=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-m|--model) model="$2"; shift 2 ;;
+		-l|--language) lang="$2"; shift 2 ;;
+		--file|-f) shift ;;   # the tree passes '-'; the audio follows on stdin
+		--output-txt) shift ;;
+		*) shift ;;
+	esac
+done
+if [ -z "$model" ]; then
+	echo "whisper-cli: no model (-m) was given" >&2
+	exit 2
+fi
+tmp="$dir/.whisper-stdin-$$.wav"
+trap 'rm -f "$tmp"' EXIT INT TERM
+cat > "$tmp"
+if [ -n "$lang" ]; then
+	"$native" -m "$model" -f "$tmp" -nt -l "$lang"
+else
+	"$native" -m "$model" -f "$tmp" -nt
+fi
+status=$?
+rm -f "$tmp"
+exit $status
+WRAP
+	$text =~ s{__DIR__}{$whisper_dir}g;
+	return $text;
+}
+
+sub download_whisper_models {
+	# The models are the big part; keep them between upgrades. The part file
+	# lives beside the model, not in /tmp: on a machine where /tmp is a tmpfs,
+	# rename() across filesystems fails and leaves the engine with no model.
+	foreach my $name (qw(base tiny)) {
+		my $path = whisper_models_dir() . "/ggml-$name.bin";
+		next if -s $path;
+		my $tmp = "$path.part";
+		unlink $tmp;
+		if (run('curl', '-L', '--fail', '--retry', '2', '-o', $tmp, whisper_model_url($name)) != 0) {
+			print "  whisper: $name model download failed; the engine has no model for it yet.\n";
+			unlink $tmp;
+			next;
+		}
+		rename $tmp, $path;
+	}
+}
+
 sub whisper_models_dir { return "$whisper_dir/models"; }
 
 sub have_whisper {
+	# the live reader is the repo script, not a wrapper: whisper_available needs it
+	return 0 unless -f "$FindBin::Bin/whisper_stream.py";
+	return 0 unless -s whisper_models_dir() . '/ggml-base.bin'
+		|| -s whisper_models_dir() . '/ggml-tiny.bin';
+	# The native build (Termux/Android) is self-contained: a real ELF server or
+	# CLI plus the model is the whole install. -B keeps shell wrappers out of
+	# this branch.
+	if (-x "$whisper_dir/whisper-server" && -B "$whisper_dir/whisper-server") {
+		return 1;
+	}
+	if (-x "$whisper_dir/whisper-cli-native" && -B "$whisper_dir/whisper-cli-native") {
+		return 1;
+	}
+	# The wheel path: the wrapper runs the venv's Python, so an interrupted pip
+	# is caught by the import rather than by the file's presence.
 	my $py = "$whisper_dir/venv/bin/python3";
 	return 0 unless -x $py;
 	return 0 unless -x "$whisper_dir/whisper-cli" || -x "$whisper_dir/whisper-server";
-	# the live reader is the repo script, not a wrapper: whisper_available needs it
-	return 0 unless -f "$FindBin::Bin/whisper_stream.py";
-	return 0 unless -s whisper_models_dir() . '/ggml-base.bin' || -s whisper_models_dir() . '/ggml-tiny.bin';
-	# the directory alone is not proof: an interrupted pip leaves the venv
 	return system($py, '-c', 'import pywhispercpp') == 0 ? 1 : 0;
 }
 
 sub install_whisper {
 	if ($platform eq 'termux') {
-		print "  whisper: Termux (Bionic) has no pywhispercpp wheel; the gateway machine transcribes the call.\n";
+		install_whisper_native();
 		return;
 	}
 	my $py = which('python3') || which('python');
@@ -597,23 +666,122 @@ sub install_whisper {
 			chmod 0755, $path;
 		}
 	}
-	# The models are the big part; keep them between upgrades. The part file
-	# lives beside the model, not in /tmp: on a machine where /tmp is a tmpfs,
-	# rename() across filesystems fails and leaves the engine with no model.
-	foreach my $name (qw(base tiny)) {
-		my $path = whisper_models_dir() . "/ggml-$name.bin";
-		next if -s $path;
-		my $tmp = "$path.part";
-		unlink $tmp;
-		if (run('curl', '-L', '--fail', '--retry', '2', '-o', $tmp, whisper_model_url($name)) != 0) {
-			print "  whisper: $name model download failed; the engine has no model for it yet.\n";
-			unlink $tmp;
-			next;
-		}
-		rename $tmp, $path;
-	}
+	download_whisper_models();
 	print "  whisper: installed to $whisper_dir\n" if have_whisper();
 	print "  whisper: installed, but the model or import check failed\n" unless have_whisper();
+}
+
+# The Termux/Android half. There is no pywhispercpp wheel on bionic, but
+# whisper.cpp builds with the same clang family as the NDK: static, no OpenMP,
+# and it needs only libc/libm/libdl. The models are the same ggml files. A
+# prebuilt directory can stand in for the build (JAWNOS_WHISPER_PREBUILT) on a
+# device whose toolchain or network makes the compile awkward.
+sub install_whisper_native {
+	make_path(whisper_models_dir());
+	my $prebuilt = $ENV{'JAWNOS_WHISPER_PREBUILT'};
+	if (defined $prebuilt && length $prebuilt && -d $prebuilt) {
+		if (stage_whisper_native($prebuilt)) {
+			print "  whisper: staged the native CLI from $prebuilt\n";
+			download_whisper_models();
+			print "  whisper: installed to $whisper_dir\n" if have_whisper();
+			print "  whisper: installed, but the model or streamer check failed\n" unless have_whisper();
+			return;
+		}
+		print "  whisper: $prebuilt has no whisper-cli/whisper-server; building instead.\n";
+	}
+
+	if (!install_whisper_toolchain()) {
+		print "  whisper: the native build needs pkg, cmake, clang, make and git; skipping.\n";
+		print "  whisper: set JAWNOS_WHISPER_PREBUILT to a directory holding whisper-cli and whisper-server to stage a copy instead.\n";
+		return;
+	}
+
+	my $src   = "$whisper_dir/.whisper-src";
+	my $build = "$whisper_dir/.whisper-build";
+	remove_tree($src, $build) if -d $src || -d $build;
+	make_path($whisper_dir);
+	my $tag = 'v1.7.4';
+	if (run('git', 'clone', '--depth', '1', '--branch', $tag,
+		'https://github.com/ggerganov/whisper.cpp', $src) != 0) {
+		print "  whisper: could not fetch whisper.cpp $tag; skipping.\n";
+		remove_tree($src, $build) if -d $src || -d $build;
+		return;
+	}
+	my $configure = run('cmake', '-S', $src, '-B', $build,
+		'-DCMAKE_BUILD_TYPE=Release',
+		'-DWHISPER_BUILD_EXAMPLES=ON',
+		'-DWHISPER_BUILD_SERVER=ON',
+		'-DWHISPER_BUILD_TESTS=OFF',
+		'-DGGML_OPENMP=OFF',
+		'-DBUILD_SHARED_LIBS=OFF');
+	my $compile = $configure == 0
+		? run('cmake', '--build', $build, '--target', 'whisper-cli', 'whisper-server', '-j', '4')
+		: 1;
+	if ($compile != 0) {
+		print "  whisper: the native build failed; skipping.\n";
+		remove_tree($src, $build) if -d $src || -d $build;
+		return;
+	}
+	my $bin = "$build/bin";
+	foreach my $pair (
+		[ 'whisper-cli',    'whisper-cli-native' ],
+		[ 'whisper-server', 'whisper-server' ],
+	) {
+		my ($from, $to) = @{$pair};
+		next unless -f "$bin/$from";
+		if (copy("$bin/$from", "$whisper_dir/$to")) {
+			chmod 0755, "$whisper_dir/$to";
+		}
+		else {
+			print "  whisper: could not copy $from: $!\n";
+		}
+	}
+	remove_tree($src, $build) if -d $src || -d $build;
+	write_whisper_native_wrapper();
+	download_whisper_models();
+	print "  whisper: built whisper.cpp $tag for this machine in $whisper_dir\n" if have_whisper();
+	print "  whisper: built, but the model or streamer check failed\n" unless have_whisper();
+}
+
+sub install_whisper_toolchain {
+	return 0 unless length which('pkg');
+	my @missing;
+	push @missing, 'cmake' unless length which('cmake');
+	push @missing, 'clang' unless length which('clang');
+	push @missing, 'make'  unless length which('make');
+	push @missing, 'git'   unless length which('git');
+	push @missing, 'python' unless length which('python3') || length which('python');
+	run('pkg', 'install', '-y', @missing) if @missing;
+	return length which('cmake') && length which('clang') && length which('make')
+		&& length which('git') && (length which('python3') || length which('python')) ? 1 : 0;
+}
+
+sub stage_whisper_native {
+	my ($dir) = @_;
+	my $cli = -f "$dir/whisper-cli-native" ? "$dir/whisper-cli-native"
+		: -f "$dir/whisper-cli" ? "$dir/whisper-cli" : '';
+	my $server = -f "$dir/whisper-server" ? "$dir/whisper-server" : '';
+	return 0 unless length $cli || length $server;
+	make_path($whisper_dir);
+	if (length $cli) {
+		return 0 unless copy($cli, "$whisper_dir/whisper-cli-native");
+		chmod 0755, "$whisper_dir/whisper-cli-native";
+	}
+	if (length $server) {
+		return 0 unless copy($server, "$whisper_dir/whisper-server");
+		chmod 0755, "$whisper_dir/whisper-server";
+	}
+	write_whisper_native_wrapper() if length $cli;
+	return 1;
+}
+
+sub write_whisper_native_wrapper {
+	my $path = "$whisper_dir/whisper-cli";
+	return 0 unless open(my $w, '>', $path);
+	print {$w} &whisper_native_wrapper();
+	close $w;
+	chmod 0755, $path;
+	return 1;
 }
 
 # --- the WebRTC bridge: its own venv ----------------------------------------

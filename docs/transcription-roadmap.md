@@ -7,11 +7,19 @@ of work. Everything below assumes the house rules in `AGENTS.md` (worktree per t
 
 ## Status: complete — 2026-11-27
 
-The transcription engine is **whisper.cpp**: local on a laptop or tablet, or a house
-peer's through the `whisper.transcribe` Crew job on a phone. The Guide and the soft
-keyboard can also name **Android on-device (OEM)**, a live-microphone service the
-manager never runs. Every transcription row offers whisper — this machine or another —
+The transcription engine is **whisper.cpp**: local on a laptop, tablet or phone
+(Termux builds it natively, so the phone is independent), or a house peer's through
+the `whisper.transcribe` Crew job as a last resort. The Guide and the soft keyboard
+can also name **Android on-device (OEM)**, a live-microphone service the manager
+never runs. Every transcription row offers whisper — this machine or another —
 including the watch and deck rows; the live rows also offer OEM.
+
+The phone/tablet install is `jawnos_deps.pl`'s Termux path: whisper.cpp v1.7.4 is
+compiled static (no OpenMP) with the device's clang, so it needs only
+libc/libm/libdl; a `JAWNOS_WHISPER_PREBUILT` directory can stand in for the compile.
+The CLI wrapper reads the WAV the tree pipes to `--file -`, and the manager converts
+the browser's webm to 16 kHz WAV before the warm-server POST because the native
+server reads WAV only.
 
 The 20M streaming sherpa-onnx model was **shelved on accuracy**. On 170 clips (50 real
 LibriSpeech utterances, 60 house-voice commands, 30 noisy, 30 at 8 kHz) it measured

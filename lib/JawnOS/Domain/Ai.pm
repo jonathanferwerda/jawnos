@@ -242,6 +242,35 @@ sub whisper_server_stop_orphans {
 	return $stopped;
 }
 
+# The desktop wheel's server decodes whatever it is handed; the native
+# whisper.cpp server (the phone's) reads WAV only. Convert once here so both
+# accept the same bytes. '' when ffmpeg is missing or refuses the clip; the
+# caller then posts the raw upload exactly as before.
+sub whisper_server_wav {
+	my ($raw) = @_;
+	return '' unless defined $raw && length $raw;
+	require IPC::Open3;
+	require Symbol;
+	my ($in, $out, $err);
+	$err = Symbol::gensym();
+	my $pid = eval {
+		IPC::Open3::open3($in, $out, $err, 'ffmpeg',
+			'-nostdin', '-loglevel', 'error', '-i', '-',
+			'-f', 'wav', '-ar', '16000', '-ac', '1', '-acodec', 'pcm_s16le', '-');
+	};
+	return '' unless $pid;
+	binmode($in);
+	binmode($out);
+	print {$in} $raw;
+	close($in);
+	my $wav = do { local $/; <$out> // '' };
+	close($out);
+	close($err);
+	waitpid($pid, 0);
+	return '' unless ($? >> 8) == 0;
+	return $wav;
+}
+
 # A warm server keeps the model loaded, so a clip skips the model load the
 # one-shot CLI pays on every call. '' when it is not running or did not answer.
 sub whisper_server_transcribe {
@@ -251,8 +280,11 @@ sub whisper_server_transcribe {
 	# while the model loads: the next clip is the one that finds it up.
 	&whisper_server_wanted(1);
 	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 30, request_timeout => 45);
+	my $wav = &whisper_server_wav($raw);
 	my $form = {
-		file => { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },
+		file => length $wav
+			? { content => $wav, filename => 'clip.wav', 'Content-Type' => 'audio/wav' }
+			: { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },
 		response_format => 'json'
 	};
 	# the keyboard's chosen layout names the language; whisper itself treats
