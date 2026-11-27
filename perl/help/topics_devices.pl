@@ -11,14 +11,15 @@ $topic{'watch'} = {
 		body => [
 			'The T-Watch is the wearable: a clock that also shows notification lines and screens of app buttons, logs steps, wakes when you raise your wrist to look at it, and can listen for a voice command. A button you press on it runs that app\'s movement in JawnOS, and a command button runs on every machine unless it names one.',
 			'A button whose toggle is running wears a yellow ring rather than a yellow fill, so the app\'s own colour stays visible. A command reports its outcome on the button that was pressed: an every-machine command flashes green for two seconds when every machine took it and red when one did not; a command naming a machine flashes red only when it could not be handed over at all. When the named machine is away, the house relay keeps the press and delivers it there once that machine is back.',
-			'Its listening mode - off, any speech, or a wake word such as Hey Jawn or Jawn Do - is set from the watch row in the Embedded panel; see Voice and wake words.',
+			'Its listening mode - off, any speech, or a wake word such as Hey Jawn or Jawn Do - is set from the watch row in the Embedded panel; see Voice and wake words. A spoken start or stop for an app named in the house runs it - "Hey Jawn, start Email Test" - and anything else it hears is taken to the Guide as a message, never filed as a note.',
+			'The Rec button is a voice memo: hold it, speak, and let go. The clip is transcribed and filed in Notes as a note, and the watch keeps its ten most recent memos - an older one is dropped when the eleventh arrives.',
 			'Its status bar carries the battery (with the time in its place whenever the clock is not the screen you are on) and, hard against the right edge, the name of the machine it is talking to - its homebase - in place of an address.',
 			'An answer to a request the guide associate handles arrives on the watch itself: the words on screen, and the voice over its speaker unless the Audio replies toggle on its Embedded row is off.',
 			'It talks to JawnOS over Bluetooth through a bridge running on a nearby phone or desktop, and stays with the machine it was paired to (its homebase) - another machine that links to it lets it go again.',
 			'A Now Me or BT Now Me from its row in the Embedded panel hands it the Wi-Fi of the machine you pressed it on, so a watch paired over Bluetooth joins the house network without a key being typed. If that machine has been renamed since the pairing, the first re-link repairs the stored homebase.',
 			'The watch, deck and Pico join 2.4 GHz Wi-Fi only. A 5 GHz network is refused, and a saved 2.4 GHz twin is used when the machine is on the 5 GHz name.',
 		],
-		verified => '2026-10-15',
+		verified => '2026-11-26',
 		related => [ 'voice', 'ble_bridge', 'tdeck', 'embedded' ]
 	};
 $topic{'tdeck'} = {

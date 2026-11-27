@@ -1,4 +1,4 @@
-static bool voice_ship_clip(const String &path) {
+static bool voice_ship_clip(const String &path, long ts, const char *mode) {
   // Prefer WiFi: a clip is tens of KB, and over BLE that is hundreds of
   // notifications the bridge drops parts of (its reassembler logs "never
   // arrived"), so a clip often reaches the server holed and whisper gets half a
@@ -12,7 +12,7 @@ static bool voice_ship_clip(const String &path) {
     else if ((int32_t)(millis() - homebase_down_until) < 0) {
       Serial.println("[voice] homebase marked down; BLE now");
     }
-    else if (voice_post_clip(path)) {
+    else if (voice_post_clip(path, ts, mode)) {
       Serial.println("[voice] clip shipped over WiFi");
       return true;
     }
@@ -23,7 +23,7 @@ static bool voice_ship_clip(const String &path) {
   else {
     Serial.println("[voice] WiFi not connected; BLE now");
   }
-  if (deviceConnected && voice_ble_send(path)) {
+  if (deviceConnected && voice_ble_send(path, ts, mode)) {
     Serial.println("[voice] clip shipped over BLE");
     return true;
   }
@@ -397,7 +397,7 @@ static void voiceListenTask(void *pv) {
         // Compact it first: ffmpeg on the server reads IMA ADPCM WAV natively, so
         // the BLE link carries a quarter of the bytes with no server change.
         String ship_path = VOICE_WAV_PATH;
-        if (voice_compress_clip()) { ship_path = VOICE_ADPCM_PATH; }
+        if (voice_compress_clip(VOICE_WAV_PATH, VOICE_ADPCM_PATH, false)) { ship_path = VOICE_ADPCM_PATH; }
         // Ship, then hold the file until the server says the clip arrived whole.
         // A clip that never lands is tried again as a whole - the queue is one
         // clip, retried in place - so a busy bridge costs a moment, not the
@@ -411,7 +411,7 @@ static void voiceListenTask(void *pv) {
         // not a failure - wait and try again. The queue is one clip, retried in
         // place; the file stays until the server's ack deletes it.
         while (voiceListening && voice_acked_ts != ts && millis() - ship_started < 45000) {
-          if (voice_ship_clip(ship_path)) {
+          if (voice_ship_clip(ship_path, ts, voice_mode_name)) {
             uint32_t started = millis();
             while (voiceListening && voice_acked_ts != ts && millis() - started < 6000) {
               vTaskDelay(100 / portTICK_PERIOD_MS);

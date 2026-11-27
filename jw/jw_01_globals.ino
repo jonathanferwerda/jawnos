@@ -20,6 +20,11 @@ String https_request_raw(String url, String method, String payloadData);
 void apply_president_payload();
 static void clock_apply_to_face();
 
+// The Rec button's memo ships with the voice helpers in jw_08/jw_09 but stops in
+// jw_07, so name them here for PlatformIO's .ino preprocessor.
+static bool voice_compress_clip(const String &in_path, const String &out_path, bool fold_half);
+static bool voice_ship_clip(const String &path, long ts, const char *mode);
+
 // lv_label_set_text() frees and reallocates the label's text and invalidates the
 // area even when the text is identical, and the loop calls the face writers on
 // every pass (~5 ms). Compare first: an unchanged label then costs one strcmp and
@@ -159,6 +164,17 @@ static String VOICE_WAV_PATH = "/voice.wav";
 // link is the slow part off WiFi, and ffmpeg (the server's transcriber) reads
 // this container natively, so nothing server-side changes.
 static String VOICE_ADPCM_PATH = "/voice.adpcm";
+// The Rec button records a spoken memo to /recordings/<epoch>.wav (16 kHz). Once
+// the capture stops, the clip is compressed and shipped tagged "note", which the
+// server files in the Notes app instead of reading it as a command. The same
+// folder keeps at most REC_NOTE_LIMIT memos: a quick jot is useful, and a full
+// flash is a worn watch.
+#define REC_NOTE_MODE "note"
+#define REC_NOTE_LIMIT 10
+// The memo's own epoch (seconds) and the file it was written to, set at the
+// press and handed to the shipping task when the capture stops.
+static volatile long rec_clip_ts = 0;
+static String rec_clip_wav;
 // Set when the saved config says BLE should be on. Starting the BLE stack from
 // setup() crashes the watch, so the start is deferred to loop() once the rest of
 // the boot (display, LVGL, WiFi) has settled.

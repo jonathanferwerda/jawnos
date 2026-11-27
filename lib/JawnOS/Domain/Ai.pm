@@ -38,6 +38,15 @@ use Unicode::Normalize qw(NFC);
 
 our %M;
 our %Y;
+
+# A clip the watch's Rec button records is a voice memo, not a command: the
+# capture is tagged with this mode (jw_07_house_audio.ino) and always lands in
+# the Notes app. VOICE_NOTE_LIMIT is how many such memos a device keeps: a quick
+# jot is useful, an endless pile of spoken fragments is not a notebook. The cap
+# is keyed by the device that spoke them, so a manually written note is never
+# touched.
+our $VOICE_NOTE_MODE  = 'note';
+our $VOICE_NOTE_LIMIT = 10;
 our %ble_event_seen;
 our $database;
 our $device;
@@ -659,7 +668,12 @@ sub voice_note_store {
 	#
 	# $at is the clip's own time (when the utterance began); the note is stamped
 	# there, not at our processing time, so a note sorts where it was said.
-	my ($text, $at) = @_;
+	#
+	# $device is the watch that recorded a Rec-button memo. When it is given, the
+	# device keeps only its newest $VOICE_NOTE_LIMIT memos: the older rows are
+	# tombstoned, not erased, so every peer learns they are gone. A note written
+	# by hand names no device and is never counted or pruned here.
+	my ($text, $at, $device) = @_;
 	return unless defined $text;
 	my $clean = $text;
 	$clean =~ s/\s+/ /g;
@@ -678,16 +692,42 @@ sub voice_note_store {
 	my $now = &subs::rightNow();
 	# A plain note row, not an appointment: the Notes app reads this table, and the
 	# server_time column rides the generic peer sync so the note still reaches
-	# every machine.
-	&subs::db_insert('notes', {
+	# every machine. The device column carries the watch, which is what the memo
+	# cap counts.
+	my %row = (
 		app => 'notes',
 		timestamp => $at || $now,
 		server_time => $now,
 		text => $clean,
 		uuid => &subs::random_string_creator(21)
-	});
+	);
+	$row{'device'} = $device if defined $device && length $device;
+	&subs::db_insert('notes', \%row);
+	&voice_note_prune($device) if defined $device && length $device;
 	$log->info('voice: note stored (' . $clean . ')');
 	return $clean;
+}
+
+sub voice_note_prune {
+	# Keep the newest $VOICE_NOTE_LIMIT memos for one device. The rows are read
+	# newest-first the way the app lists them, and everything past the limit is
+	# tombstoned through the Notes domain's own delete, so the house and its peers
+	# agree the old memos are gone without losing the row a peer may still hold.
+	my ($device) = @_;
+	return unless defined $device && length $device;
+	my $rows = &subs::db_query(
+		"select uuid from notes where device = ? and app = 'notes' "
+		. "and coalesce(text, '') != '' and coalesce(ost, '') != ? "
+		. "order by cast(coalesce(timestamp, '0') as integer) desc, "
+		. "cast(coalesce(server_time, '0') as integer) desc",
+		$device, &subs::notes_delete_marker()
+	) || return;
+	my $kept = 0;
+	foreach my $row ( @{ $rows->hashes } ) {
+		next if ++$kept <= $VOICE_NOTE_LIMIT;
+		&subs::notes_tombstone($row->{'uuid'});
+	}
+	return $kept;
 }
 
 sub voice_clip_fresh {
@@ -945,63 +985,69 @@ sub voice_ingest {
 	my $text = &subs::whisper_transcribe($raw);
 	return { status => 'silence' } unless $text;
 	$log->info('voice: heard "' . $text . '"');
-	# A wake-word capture already consumed the phrase on the watch, so its
-	# transcript is the command itself; a VAD capture must still open with the
-	# phrase, so a stray "start" in the room does nothing. If what we heard is not
-	# a command we can run, keep it as a note rather than throw the clip away.
 	my $mode = $meta->{'voice'} || '';
-	my $wake_optional = ($mode ne '' && $mode ne 'vad');
-	my $cmd = &subs::voice_command_parse($text, $wake_optional);
-	if (($cmd->{'status'} || '') ne 'ok') {
-		$log->info('voice: ' . ($cmd->{'status'} || '?') . ' (' . $text . ')');
-		# Keep it as a note only when it was addressed to us: a wake-word capture
-		# (the phrase was consumed on the watch) or a clip that opened with the
-		# phrase. A VAD clip of the room, or a clipped fragment, is not a note.
-		my $addressed = $wake_optional || (($cmd->{'status'} || '') ne 'no_wake');
-		# addressed, but not a plain command: hand it to the voice brain before
-		# settling for a note (see voice_brain). If no brain claims it, fall through
-		if ($addressed) {
-			# the message is set to the Guide as well as answered: it lands in the
-			# Guide's chat (if one is open) so a spoken message is visible there
-			&subs::guide_set_message($text, $meta);
-			my $brain = eval { &subs::voice_brain($text, $meta) };
-			if ($brain && ref $brain eq 'HASH' && $brain->{'handled'}) {
-				$log->info('voice: brain handled "' . $text . '"');
-				&subs::voice_clip_ack($meta);
-				return { status => 'brain', said => $text, %{$brain} };
-			}
-		}
-		if ($addressed && &subs::voice_note_store($text, $meta->{'ts'})) {
-			# a note landed: refresh any open Notes window at once, and let the
-			# watch drop its local copy of the clip
+	# The watch's Rec button records a memo, not a command: file it in Notes and
+	# stop. It is the one path that turns speech into a note now.
+	if ($mode eq $VOICE_NOTE_MODE) {
+		if (&subs::voice_note_store($text, $meta->{'ts'}, $meta->{'chip_id'})) {
 			&Websocket::send('tab', { console => &Websocket::console_command('notesReload')});
 			&subs::voice_clip_ack($meta);
+			return { status => 'note', said => $text };
 		}
-		return $cmd;
+		return { status => 'note_empty', said => $text };
 	}
-	# Match the target against the apps the system actually knows (the settings
-	# table), not the static known_appts list - the user's apps (breakfast,
-	# music, ...) live in the database. Match the plain key first, then the
-	# spelled-out name, so "Mr. Sun" and "mr sun" agree.
-	my $app = &subs::unformat_name($cmd->{'target'});
-	my $row = &subs::db_select('settings', undef, { app => $app })->hashes->[0];
-	unless ($row) {
-		foreach my $r ( @{ &subs::db_select('settings', undef, { setting => 'toggle' })->hashes } ) {
-			next unless $r->{'app'};
-			if (&subs::unformat_name($r->{'app'}) eq $app) { $app = $r->{'app'}; $row = $r; last; }
+	# A wake-word capture already consumed the phrase on the watch, so its
+	# transcript is the command itself; a VAD capture must still open with the
+	# phrase, so a stray "start" in the room does nothing. Command first: a
+	# recognised start/stop with a target we know runs exactly as before. Anything
+	# else addressed to us goes to the Guide - only the Rec button makes a note.
+	my $wake_optional = ($mode ne '' && $mode ne 'vad');
+	my $cmd = &subs::voice_command_parse($text, $wake_optional);
+	my $addressed = $wake_optional || (($cmd->{'status'} || '') ne 'no_wake');
+	if (($cmd->{'status'} || '') eq 'ok') {
+		# Match the target against the apps the system actually knows (the settings
+		# table), not the static known_appts list - the user's apps (breakfast,
+		# music, ...) live in the database. Match the plain key first, then the
+		# spelled-out name, so "Mr. Sun" and "mr sun" agree.
+		my $app = &subs::unformat_name($cmd->{'target'});
+		my $row = &subs::db_select('settings', undef, { app => $app })->hashes->[0];
+		unless ($row) {
+			foreach my $r ( @{ &subs::db_select('settings', undef, { setting => 'toggle' })->hashes } ) {
+				next unless $r->{'app'};
+				if (&subs::unformat_name($r->{'app'}) eq $app) { $app = $r->{'app'}; $row = $r; last; }
+			}
 		}
-	}
-	unless ($row) {
+		if ($row) {
+			my $did = eval { &subs::voice_command_apply($app, $cmd->{'want'}, $meta); 1 };
+			unless ($did) {
+				$log->error('voice: apply failed for ' . $app . ': ' . ($@ || 'unknown'));
+				return { status => 'apply_failed', app => $app, said => $text };
+			}
+			$log->info('voice: ' . $app . ' -> ' . $cmd->{'want'} . ' (' . $text . ')');
+			return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text };
+		}
+		# The verb was heard but no app matches the target: fall through to the
+		# Guide so "start a conversation about the roof" is answered, not dropped.
 		$log->info('voice: no app for "' . $cmd->{'target'} . '" (' . $text . ')');
-		return { status => 'no_app', said => $text, target => $cmd->{'target'} };
 	}
-	my $did = eval { &subs::voice_command_apply($app, $cmd->{'want'}, $meta); 1 };
-	unless ($did) {
-		$log->error('voice: apply failed for ' . $app . ': ' . ($@ || 'unknown'));
-		return { status => 'apply_failed', app => $app, said => $text };
+	else {
+		$log->info('voice: ' . ($cmd->{'status'} || '?') . ' (' . $text . ')');
 	}
-	$log->info('voice: ' . $app . ' -> ' . $cmd->{'want'} . ' (' . $text . ')');
-	return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text };
+
+	# Anything addressed to us that we could not run goes to the Guide. The clip
+	# is consumed either way: the Guide's window may be closed and its model
+	# absent, and that is not the watch's reason to keep retrying it.
+	if ($addressed) {
+		&subs::guide_set_message($text, $meta);
+		my $brain = eval { &subs::voice_brain($text, $meta) };
+		my $handled = ($brain && ref $brain eq 'HASH' && $brain->{'handled'}) ? 1 : 0;
+		$log->info($handled ? 'voice: brain handled "' . $text . '"' : 'voice: guide left "' . $text . '"');
+		&subs::voice_clip_ack($meta);
+		return { status => ($handled ? 'brain' : 'guide'), said => $text,
+			($handled ? %{$brain} : ()) };
+	}
+	# A VAD clip of the room (no phrase) is not addressed: nothing to do.
+	return $cmd;
 }
 
 sub event_duplicate {

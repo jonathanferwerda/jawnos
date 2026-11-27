@@ -89,7 +89,7 @@ static void voice_dc_block(int16_t *s, int n) {
 
 // POST the finished clip to the homebase. Streamed from flash: the WAV is tens
 // of KB, well past what the TLS stack wants held in RAM.
-static bool voice_post_clip(const String &path) {
+static bool voice_post_clip(const String &path, long ts, const char *mode) {
   if (homebaseIP.length() == 0 || authorization.length() == 0) {
     Serial.printf("[voice] no homebase (%u) or authorization (%u)\n",
                   (unsigned)homebaseIP.length(), (unsigned)authorization.length());
@@ -116,8 +116,8 @@ static bool voice_post_clip(const String &path) {
   String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
     + "&chip_id=" + chip_id_maker()
     + "&authorization=" + urlEncode(authorization)
-    + "&voice=" + voice_mode_name
-    + "&timestamp=" + String((long)voice_clip_ts);
+    + "&voice=" + String(mode)
+    + "&timestamp=" + String(ts);
   bool ok = false;
   if (https.begin(client, url)) {
     https.addHeader("Content-Type", "application/octet-stream");
@@ -161,7 +161,7 @@ static bool voice_ble_notify(String &part) {
   return true;
 }
 
-static bool voice_ble_send(const String &path) {
+static bool voice_ble_send(const String &path, long ts, const char *mode) {
   if (!ble_link_ready()) {
     return false;
   }
@@ -178,7 +178,7 @@ static bool voice_ble_send(const String &path) {
   int total = (int)((b64_len + VOICE_BLE_CHUNK - 1) / VOICE_BLE_CHUNK);
   if (total < 1) { total = 1; }
   static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"ts\":" + String((long)voice_clip_ts) + ",\"voice\":\"" + voice_mode_name + "\",\"data\":\"";
+  String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"ts\":" + String(ts) + ",\"voice\":\"" + String(mode) + "\",\"data\":\"";
   String out = String(0) + "/" + String(total) + ":" + head;
   int in_chunk = 0;
   int index = 0;
@@ -443,11 +443,14 @@ static void voice_stream_abort() {
   voice_stream_dead = true;
 }
 
-static bool voice_compress_clip() {
-  File in = FFat.open(VOICE_WAV_PATH.c_str(), FILE_READ);
+static bool voice_compress_clip(const String &in_path, const String &out_path, bool fold_half) {
+  File in = FFat.open(in_path.c_str(), FILE_READ);
   if (!in || in.size() <= 44) { if (in) { in.close(); } return false; }
   uint32_t pcm_bytes = in.size() - 44;
-  uint32_t samples = pcm_bytes / 2;
+  uint32_t in_samples = pcm_bytes / 2;
+  // The listener has already folded its capture to 8 kHz; the Rec button records
+  // at the microphone's 16 kHz, so its memo is folded here (two samples -> one).
+  uint32_t samples = fold_half ? in_samples / 2 : in_samples;
   uint32_t blocks = (samples + VOICE_ADPCM_SPB - 1) / VOICE_ADPCM_SPB;
   uint32_t data_bytes = blocks * VOICE_ADPCM_BLOCK;
   uint32_t total = 60 + data_bytes;
@@ -465,14 +468,22 @@ static bool voice_compress_clip() {
   memcpy(buf + 52, "data", 4); voice_wr32(buf + 56, data_bytes);
   in.seek(44);
   static int16_t blk[VOICE_ADPCM_SPB];
+  int16_t pair[2];
   uint32_t o = 60;
   while (true) {
     int count = 0;
     while (count < VOICE_ADPCM_SPB) {
-      int got = in.read((uint8_t *)(blk + count), (VOICE_ADPCM_SPB - count) * 2);
-      if (got <= 0) { break; }
-      if (got % 2) { break; }        // a torn sample ends the clip
-      count += got / 2;
+      if (fold_half) {
+        int got = in.read((uint8_t *)pair, 4);   // two 16 kHz samples -> one 8 kHz
+        if (got < 4) { break; }
+        blk[count++] = (int16_t)(((int32_t)pair[0] + (int32_t)pair[1]) >> 1);
+      }
+      else {
+        int got = in.read((uint8_t *)(blk + count), (VOICE_ADPCM_SPB - count) * 2);
+        if (got <= 0) { break; }
+        if (got % 2) { break; }        // a torn sample ends the clip
+        count += got / 2;
+      }
     }
     if (count < 2) { break; }
     uint32_t block_start = o;
@@ -504,7 +515,7 @@ static bool voice_compress_clip() {
     if (count < VOICE_ADPCM_SPB) { break; }
   }
   in.close();
-  File out = FFat.open(VOICE_ADPCM_PATH.c_str(), FILE_WRITE);
+  File out = FFat.open(out_path.c_str(), FILE_WRITE);
   if (!out) { free(buf); return false; }
   size_t wrote = out.write(buf, o);
   out.close();

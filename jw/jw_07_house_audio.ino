@@ -647,12 +647,14 @@ static void audio_button(lv_event_t * e) {
         if (code == LV_EVENT_PRESSED) {
             if (isPlaying) return; // Prevent conflicts during execution
             
+            rec_clip_ts = timestamp_maker();
             isRecording = true;
             lv_label_set_text(btn_label, "Recording...");
-            String filename = String(timestamp_maker()) + ".wav";
+            String filename = String((long)rec_clip_ts) + ".wav";
             saveFileToFolder("/recordings", filename.c_str());
             
             WAV_FILE_PATH = "/recordings/" + filename;
+            rec_clip_wav = WAV_FILE_PATH;
             xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 4096, NULL, 2, NULL, 1);
 
         } else if (code == LV_EVENT_RELEASED) {
@@ -745,6 +747,56 @@ void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes, uint32_t 
     Serial.printf("[WAV] Header successfully updated. File size: %lu bytes.\n", raw_pcm_bytes + 44);
 }
 
+// Keep the Rec folder to REC_NOTE_LIMIT memos. Names are epoch seconds, so the
+// oldest sort first; everything past the limit goes, except the memo just
+// recorded (a wrong clock must not delete the note being shipped).
+static void rec_note_prune() {
+    File dir = FFat.open("/recordings");
+    if (!dir || !dir.isDirectory()) { if (dir) { dir.close(); } return; }
+    long names[64];
+    int n = 0;
+    File f = dir.openNextFile();
+    while (f && n < 64) {
+        if (!f.isDirectory()) {
+            String name = f.name();
+            if (name.endsWith(".wav")) {
+                int slash = name.lastIndexOf('/');
+                String base = (slash >= 0) ? name.substring(slash + 1) : name;
+                long ts = base.toInt();
+                if (ts > 0) { names[n++] = ts; }
+            }
+        }
+        f = dir.openNextFile();
+    }
+    dir.close();
+    for (int i = 1; i < n; i++) {
+        long v = names[i];
+        int j = i - 1;
+        while (j >= 0 && names[j] > v) { names[j + 1] = names[j]; j--; }
+        names[j + 1] = v;
+    }
+    for (int i = 0; i < n - REC_NOTE_LIMIT; i++) {
+        String path = "/recordings/" + String(names[i]) + ".wav";
+        if (path == rec_clip_wav) { continue; }
+        Serial.printf("[rec] prune %s\n", path.c_str());
+        FFat.remove(path.c_str());
+    }
+}
+
+// The Rec memo's shipping task: compress the 16 kHz clip to the 8 kHz IMA ADPCM
+// the server reads natively, then hand it over tagged "note". It runs off the
+// microphone task so the TLS/BLE send never sits on the mic's small stack.
+static void rec_voice_ship_task(void *pv) {
+    (void)pv;
+    long ts = rec_clip_ts;
+    String ship_path = rec_clip_wav;
+    if (voice_compress_clip(ship_path, "/rec.adpcm", true)) { ship_path = "/rec.adpcm"; }
+    bool ok = voice_ship_clip(ship_path, ts, REC_NOTE_MODE);
+    Serial.printf("[rec] voice note ts=%ld %s\n", ts, ok ? "shipped" : "NOT shipped");
+    if (ship_path == "/rec.adpcm" && FFat.exists("/rec.adpcm")) { FFat.remove("/rec.adpcm"); }
+    vTaskDelete(NULL);
+}
+
 // FreeRTOS background task handling the microphone pipeline data stream
 void micCaptureTask(void *pvParameters) {
     AudioInputIf *mic = watch.getAudioInput();
@@ -796,6 +848,16 @@ void micCaptureTask(void *pvParameters) {
 
     // Patch structural sizing tags so whisper.cpp can process it cleanly
     finalize_wav_sizes(WAV_FILE_PATH.c_str(), bytes_written_total, MIC_I2S_SAMPLE_RATE);
+
+    // A Rec clip is a voice memo for the Notes app. Keep the folder to its limit
+    // and ship the clip tagged as a note; a tap too short to carry speech is not
+    // worth a transcription. The send runs in its own task (see above).
+    if (bytes_written_total > 1600) {
+        rec_note_prune();
+        if (xTaskCreatePinnedToCore(rec_voice_ship_task, "RecShip", 12288, NULL, 1, NULL, 0) != pdPASS) {
+            Serial.println("[rec] could not start the ship task");
+        }
+    }
     vTaskDelete(NULL);
 }
 
