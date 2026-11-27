@@ -174,6 +174,12 @@ function studioKnobSet(knob, value) {
 	if (!input.length) { return; }
 	value = Math.max(0, Math.min(100, value));
 	input.val(value);
+	// The hover hint is the control's name; the readout above the knob carries the
+	// value. Keeping both would put the name over the number while the wheel or a
+	// drag changes it, so the hint stands down on every change - including a
+	// pending hover timer that has not shown it yet.
+	if (typeof jawnosHintHide === 'function') { jawnosHintHide(); }
+	if (typeof jawnos_hint_timer !== 'undefined' && jawnos_hint_timer) { clearTimeout(jawnos_hint_timer); }
 	input.trigger('change');
 	studioKnobReadout(knob, value);
 }

@@ -91,12 +91,16 @@ like($style, qr/\.studio_pedal_foot\s*\{[^}]*left:\s*8%/s,
 	'the plate is placed by left, not a translate that a press could replace');
 like($style, qr/\.studio_pedal_foot span\s*\{[^}]*height:\s*2px/s,
 	'the four grip lines are bars');
-like($style, qr/\.pedal\.pedal_art::after\s*\{[^}]*height:\s*34%/s,
-	"a lower-case panel covers the artwork's own stomp plate");
-like($style, qr/\.pedal\.pedal_art::after\s*\{[^}]*background:\s*linear-gradient/s,
-	'and it reads as the pedal case, not the theme surface');
+unlike($style, qr/\.pedal\.pedal_art::after/, 'no lower-case panel covers the artwork');
+like($markup, qr/foreach my \$name \( \@\{\$gb::studio->\{'palette'\}\} \) \{ %>/,
+	'every effect is drawn in the theme body');
+like($markup, qr/next unless \$p->\{'name'\} eq 'Jtune' \|\| \$p->\{'name'\} eq 'JawnSynth'/,
+	'only the tuner and the synth keep their own faces');
 like($style, qr/\.pedal_controls\s*\{[^}]*bottom:\s*35%/s,
 	'the drawn pedals leave room for the switch');
+like($style, qr/\.pedal_knob_label\s*\{[^}]*text-overflow:\s*ellipsis/s,
+	'a long knob name ellipsises in its own cell instead of overlapping the next');
+like($style, qr/\.pedal_knob\s*\{[^}]*width:\s*36px/s, 'four 36px knob cells fit one row in a tile');
 like($style, qr/\.studio_board_readonly \.studio_pedal_foot/, 'a read-only board still marks its switch');
 
 # --- the Distorjawn's knob is Drive ---------------------------------------
@@ -127,7 +131,7 @@ like($help, qr/size is remembered for the next visit/,
 like($help, qr/footswitch: a drawn plate with four grip lines/,
 	'the help describes the drawn footswitch');
 unlike($help, qr/it reads On or Off/, 'and no longer describes a text On/Off swatch');
-like($help, qr/Distorjawn.*?s one knob is Drive/, "the help names the Distorjawn's Drive knob");
+like($help, qr/Distortion.*?s one knob is Drive/, "the help names Distortion's Drive knob");
 like($help, qr/JawnPitch and Harmonizer both offer a Chromatic scale/,
 	'the help says both scale controls offer Chromatic');
 

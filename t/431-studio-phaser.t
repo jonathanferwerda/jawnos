@@ -124,7 +124,8 @@ like($audit, qr/MXR Phase 90/, 'and names the Phase 90');
 like($audit, qr/engine\/src\/effect\/phaser\.rs/, 'and its native module');
 like($audit, qr/those three are the documented mods/, 'and calls depth/feedback/mix mods');
 
-like($help, qr/Flanger, Phaser, Fuzz, Amp/, 'the help lists Phaser among the newer effects');
+like($help, qr/Every effect on the pedalboard is drawn in the theme/,
+	'the help says every effect is drawn in the theme body');
 like($help, qr/Phaser sweeps four allpass stages like an MXR Phase 90/,
 	'and describes the pedal in on-screen words');
 like($help, qr/Rate is the sweep speed \(0\.05 to 5 Hz\)/, 'naming Rate and its band');

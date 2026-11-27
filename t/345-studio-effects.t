@@ -275,8 +275,11 @@ like($style, qr/\.studio_tuner\s*\{/, 'the tuner display is styled on its tile')
 like($style, qr/\.studio_rack_placeholder\s*\{/, 'the drag marker is styled');
 like($markup, qr/id="studio_pedalboard_tiles"[\s\S]*id="pedal_/,
 	'each pedal has a hidden library tile');
-like($markup, qr/%shelf_kind = /, 'the hidden library maps the artwork names to kinds');
-like($markup, qr/%shelf_has = /, 'and skips a drawn tile when artwork exists');
+unlike($markup, qr/%shelf_(?:kind|has) = /, 'the hidden library no longer maps artwork names to kinds');
+like($markup, qr/foreach my \$name \( \@\{\$gb::studio->\{'palette'\}\} \) \{ %>/,
+	'every palette effect is drawn in the theme body');
+like($markup, qr/next unless \$p->\{'name'\} eq 'Jtune' \|\| \$p->\{'name'\} eq 'JawnSynth'/,
+	'only the tuner and the synth keep their artwork');
 unlike($markup, qr/Jtune\s*=>\s*'autotune'/, 'Jtune is not mapped to an audio effect');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork is contained, not cropped');
 
@@ -495,6 +498,8 @@ like($rack, qr/studioKnobPaint\(\$\(this\), tile\);/,
 	'a board tile paints its restored knobs, so a reload is not all zeroes');
 like($knobs, qr/var angle = flip \+ turn;/,
 	'every knob turns clockwise as its value rises');
+like($knobs, qr/if \(typeof jawnosHintHide === 'function'\) \{ jawnosHintHide\(\); \}/,
+	'a knob hides its hover hint as the value changes');
 unlike($knobs, qr/direction'\) == 'counter'/,
 	'no knob reverses that clockwise rule');
 like($style, qr/\.knob_value\s*\{[^}]*position:\s*absolute/s,

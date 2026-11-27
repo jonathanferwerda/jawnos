@@ -248,22 +248,6 @@
 		height: 100%;
 		object-fit: contain;
 	}
-	/* The artwork paints its own stomp plate across the bottom third. A matching
-	   lower-case panel covers that band, so the drawn plate - and any pale edge of
-	   it - never peeks around the real switch. It reads as the pedal's black lower
-	   case rather than the grey theme surface, and the knobs paint above it. */
-	.pedal.pedal_art::after {
-		content: '';
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		height: 34%;
-		z-index: 2;
-		background: linear-gradient(180deg, #262626, #111111 55%, #0b0b0b);
-		border-top: 1px solid rgba(0, 0, 0, .75);
-		pointer-events: none;
-	}
 	/* A palette effect with no hand-drawn artwork is drawn from the theme at the
 	   same size: a case frame, a body inside it, one knob per slider and the
 	   footswitch. The frame matches the black case the artwork pedals wear, in
@@ -333,14 +317,14 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 5px;
+		gap: 4px;
 	}
 	.pedal_knobs {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: flex-start;
 		justify-content: center;
-		/* four 35px knobs and their gaps fit one row inside the tile */
+		/* four 36px knobs and their gaps fit one row inside the tile */
 		gap: 2px 1px;
 	}
 	.pedal_knob {
@@ -348,7 +332,7 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 1px;
-		width: 35px;
+		width: 36px;
 		cursor: var(--jawnos-cursor-ns-resize, ns-resize);
 	}
 	.pedal_knob .knob {
@@ -362,6 +346,11 @@
 		white-space: nowrap;
 		color: var(--ink);
 		opacity: .85;
+		/* A long name (Threshold, Feedback) stays inside its own 36px cell and
+		   ellipsises rather than running into the next knob's label. */
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.pedal_select_row {
 		display: flex;
@@ -377,11 +366,11 @@
 	.pedal_select,
 	.pedal_model {
 		box-sizing: border-box;
-		height: 18px;
-		min-height: 18px;
+		height: 16px;
+		min-height: 16px;
 		padding: 0 4px;
 		font-size: 10px;
-		line-height: 16px;
+		line-height: 14px;
 		border-width: 1px;
 		border-radius: 4px;
 	}
@@ -397,11 +386,11 @@
 		flex: 1 1 auto;
 		min-width: 0;
 		width: auto;
-		height: 18px;
-		min-height: 18px;
+		height: 16px;
+		min-height: 16px;
 		padding: 0 4px;
 		font-size: 10px;
-		line-height: 16px;
+		line-height: 14px;
 		border-width: 1px;
 		border-radius: 4px;
 	}
@@ -429,7 +418,7 @@
 	   The whole plate is the button, so a press anywhere on it toggles the pedal.
 	   It is placed with left/width, never a translate: a theme's `button:active`
 	   transform would otherwise replace the translate and jerk it sideways on the
-	   press. It fills the lower-case band the artwork's plate used to occupy. */
+	   press. It sits in the pedal's lower band, clear of the controls. */
 	#pedalboard .studio_pedal_foot {
 		position: absolute;
 		left: 8%;
