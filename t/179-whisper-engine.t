@@ -73,6 +73,33 @@ ok(subs::whisper_available(), 'streamer + model + interpreter + command is an in
 }
 $subs::whisper_probe = undef;
 
+# ------------------------------------------------------------ how a copied engine runs
+# Android's app runtime mounts the directory the app writes noexec: exec of a
+# copied binary is refused even at 0755, while the system linker can still open
+# it. The launcher names the linker there; a desktop runs the binary itself. A
+# shell wrapper is always read by sh (exec of the script is refused there too).
+{
+	my $elf = $^X;
+	local $ENV{'JAWNOS_ANDROID_LINKER'} = '/system/bin/linker64';
+	is_deeply([subs::whisper_launch_argv($elf)], ['/system/bin/linker64', $elf],
+		'the app runtime opens a binary with the linker');
+	is_deeply([subs::whisper_launch_argv("$root/whisper-cli")], ['sh', "$root/whisper-cli"],
+		'and reads a shell wrapper with sh');
+}
+{
+	my $elf = $^X;
+	local $ENV{'JAWNOS_ANDROID_LINKER'} = '';
+	is_deeply([subs::whisper_launch_argv($elf)], [$elf], 'a desktop execs the binary as itself');
+	is_deeply([subs::whisper_launch_argv('')], [], 'no command, no argv');
+}
+{
+	my $py = "$tmp/py-console";
+	write_file($py, "#!/usr/bin/env python3\nexit 0\n");
+	local $ENV{'JAWNOS_ANDROID_LINKER'} = '/system/bin/linker64';
+	is_deeply([subs::whisper_launch_argv($py)], [$py],
+		'a Python console script keeps its own interpreter');
+}
+
 unlink "$root/models/ggml-base.bin";
 unlink "$root/models/ggml-tiny.bin";
 $subs::whisper_probe = undef;
@@ -254,7 +281,7 @@ unlike($deps, qr{sub install_vosk}, 'the Vosk installer is gone');
 	}
 	my $true = -x '/bin/true' ? '/bin/true' : -x '/usr/bin/true' ? '/usr/bin/true' : '';
 	SKIP: {
-		skip 'no native ELF to stand in for the prebuilt', 6 unless length $true;
+		skip 'no native ELF to stand in for the prebuilt', 7 unless length $true;
 		copy($true, "$pre/whisper-cli");
 		copy($true, "$pre/whisper-server");
 		chmod 0755, "$pre/whisper-cli", "$pre/whisper-server";
@@ -269,6 +296,8 @@ unlike($deps, qr{sub install_vosk}, 'the Vosk installer is gone');
 		ok(-x "$wd/whisper-cli", 'and the CLI wrapper is executable');
 		like(read_file("$wd/whisper-cli"), qr/whisper-cli-native.*-nt/s,
 			'whose body calls the native binary and prints text');
+		like(read_file("$wd/whisper-cli"), qr{/system/bin/linker64},
+			'and opens a binary under app data with the system linker');
 	}
 }
 

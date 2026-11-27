@@ -22,7 +22,9 @@ copy on either. The file engine needs only the CLI/server and a model; the Pytho
 streamer is the live-call reader's, so the app runtime (no Python) still transcribes a
 clip. The CLI wrapper reads the WAV the tree pipes to `--file -`, and the manager
 converts the browser's webm to 16 kHz WAV before the warm-server POST because the
-native server reads WAV only.
+native server reads WAV only. Android mounts the app's own data directory noexec, so
+even a 0755 binary copied there is refused by `exec`; the tree runs an ELF through
+`/system/bin/linker64` and reads the shell wrapper with `sh` (`whisper_launch_argv`).
 
 The 20M streaming sherpa-onnx model was **shelved on accuracy**. On 170 clips (50 real
 LibriSpeech utterances, 60 house-voice commands, 30 noisy, 30 at 8 kHz) it measured
