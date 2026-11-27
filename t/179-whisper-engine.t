@@ -309,20 +309,25 @@ unlike($deps, qr{sub install_vosk}, 'the Vosk installer is gone');
 	my $wd   = "$home/.local/share/jawnos/whisper";
 	my $pre  = "$tmp/prebuilt";
 	my $elf  = -x '/bin/true' ? '/bin/true' : -x '/usr/bin/true' ? '/usr/bin/true' : '';
-	make_path("$wd/models");
+	make_path("$wd/models", "$home/pfx/etc");
+	write_file("$home/pfx/etc/jawnos-runtime.json", '{"version":"test"}');
 	write_file("$wd/models/ggml-base.bin", 'base');
 	write_file("$wd/models/ggml-tiny.bin", 'tiny');
 	SKIP: {
-		skip 'no native ELF to stand in for the prebuilt', 4 unless length $elf;
+		skip 'no native ELF to stand in for the prebuilt', 5 unless length $elf;
 		local $ENV{'HOME'} = $home;
 		local $ENV{'TERMUX_VERSION'} = '1';
+		local $ENV{'PREFIX'} = "$home/pfx";
 		local $ENV{'JAWNOS_WHISPER_PREBUILT'} = $pre;
 		local $ENV{'PATH'} = '/nonexistent';
 		my $out = qx{'$^X' '-I$repo/lib' '$tree/scripts/jawnos_deps.pl' --extras-only --install --only=whisper 2>&1};
 		is($? >> 8, 0, '--only=whisper installs that extra and exits 0');
-		like($out, qr/staged the native CLI/, 'and stages the prebuilt CLI');
+		like($out, qr/staged the native CLI/, 'and stages the prebuilt CLI on the app runtime');
 		unlike($out, qr/piper:/, 'without reaching for Piper');
 		ok(!-e "$home/.local/share/jawnos/piper", 'and leaves no Piper tree');
+		my $full = qx{'$^X' '-I$repo/lib' '$tree/scripts/jawnos_deps.pl' --install 2>&1};
+		like($full, qr/supplies every module and tool/,
+			'while a full install still honors the runtime marker');
 	}
 }
 
