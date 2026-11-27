@@ -1,4 +1,4 @@
-# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js public/js/manager/manager/08_handbook.js public/css/manager.css lib/JawnOS/Manager/Part11.pm perl/language.pl perl/help/topics_features.pl public/js/manager/taskbar.js
+# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js public/js/manager/search.js public/js/manager/manager/08_handbook.js public/css/manager.css lib/JawnOS/Manager/Part11.pm perl/language.pl perl/help/topics_features.pl public/js/manager/taskbar.js
 # covers:    the running list lists open sessions only, Internet is the one web entry
 #            point, and every catalog-driven app label reads as a capitalised name
 
@@ -30,6 +30,17 @@ unlike($template, qr/id="web_toggle"/, 'no separate Web icon in the start menu')
 like($template, qr/id="internet_toggle"/, 'Internet is the one web entry point');
 my $menu_js = read_file(root() . '/public/js/manager/manager/05_start_menu.js');
 unlike($menu_js, qr/web_toggle/, 'the start menu no longer maps a Web icon');
+
+# The dock's magnifier is the house's app search: after typing in #search, its
+# press must land on the Apps tab even when the Search window last remembered
+# Web or AI. The start menu's Search icon passes no tab and keeps the memory.
+like($menu_js, qr/window\.jawnosSearchAppOpen\(search, 'apps'\)/,
+	'the dock magnifier opens Search on the Apps tab');
+my $search_js = read_file(root() . '/public/js/manager/search.js');
+like($search_js, qr/window\.jawnosSearchAppOpen = function \(search, tab\)/,
+	'the Search opener accepts the tab to land on');
+like($search_js, qr/if \(tab === 'apps' \|\| tab === 'web' \|\| tab === 'ai'\) \{ saveTab\(tab\); \}/,
+	'and saves it before the window initialises');
 my $taskbar_js = read_file(root() . '/public/js/manager/taskbar.js');
 my $help_features = read_file(root() . '/perl/help/topics_features.pl');
 

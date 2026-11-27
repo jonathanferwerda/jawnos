@@ -12,14 +12,14 @@ $(document).on('click', '.search_toggle', function(i,e) {
 		return;
 	}
 	// The magnifier opens the Search app: one window with the Apps, Web and AI
-	// contexts, remembering the last tab. The dock's box stays where it is and
-	// keeps its own dropdown while typing; this press hands the query over.
+	// contexts. Typing in #search is a house search, so this press lands on the
+	// Apps tab; the dock's own dropdown stays while typing.
 	var search = $('#search').val() || '';
 	localStorage.setItem('lastSearchTime', Date.now());
 	localStorage.setItem('search', search);
 	$('#search_results').html('').hide();
 	if (typeof window.jawnosSearchAppOpen === 'function') {
-		window.jawnosSearchAppOpen(search);
+		window.jawnosSearchAppOpen(search, 'apps');
 	}
 });
 

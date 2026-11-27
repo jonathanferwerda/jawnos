@@ -204,13 +204,18 @@
 		}
 		markTabs();
 		// An empty query draws the tab's own hint; a query handed over by the
-		// dock's magnifier is searched at once, whichever tab was last used.
+		// dock's magnifier is searched at once. The magnifier also sets the Apps
+		// tab, so the query lands on the house's own records.
 		loadEngines(false);
 		run();
 	}
 
-	window.jawnosSearchAppOpen = function (search) {
+	// `tab` lets the caller pick the context. The dock's magnifier passes 'apps'
+	// because typing in #search is a house search; no tab keeps the context the
+	// window last remembered (the start menu's Search icon).
+	window.jawnosSearchAppOpen = function (search, tab) {
 		var q = (search == null) ? '' : String(search);
+		if (tab === 'apps' || tab === 'web' || tab === 'ai') { saveTab(tab); }
 		$('#search_results').hide();
 		$('#start_menu').hide();
 		if (typeof pseudonymHomeHider === 'function') { pseudonymHomeHider(pseudonymHIntervals); }
