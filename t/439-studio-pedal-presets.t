@@ -2,8 +2,8 @@
 # covers:    Named pedalboard presets. The library the page publishes, the
 #            save name and button, the saved-board dropdown kept in
 #            most-recently-used order, the load path that rebuilds a track's
-#            chain from the saved inserts, and the read-only refusal while this
-#            Studio controls another machine.
+#            chain from the saved inserts, the badge's read-only refusal, and
+#            replaying a saved board onto a machine this Studio controls.
 
 use strict;
 use warnings;
@@ -62,12 +62,14 @@ like($js, qr/if \(out && typeof studioEnginePlanTouched === 'function' && studio
 # --- the read-only guard ----------------------------------------------------
 like($js, qr/function studioBoardReadOnly\(\)/, 'one guard decides whether the board may be written');
 like($js, qr/\$\('#pedalboard'\)\.hasClass\('studio_board_readonly'\)/, 'the badge class marks a read-only board');
-like($js, qr/(?:typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget)/,
-	'an active remote target also refuses');
+unlike($js, qr/return \(typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget\) \? true : false;/,
+	'a controller is not read-only any more: it edits the peer through pedal commands');
 like($js, qr/function studioBoardSave\(\) \{\s*\n\s*if \(studioBoardReadOnly\(\)\) \{ return false; \}/,
 	'save refuses on a read-only board');
 like($js, qr/function studioBoardLoad\(index\) \{\s*\n\s*if \(studioBoardReadOnly\(\)\) \{ return false; \}/,
 	'load refuses on a read-only board');
+like($js, qr/studioRemotePedalReplace\(ch, chain, preset\.chain\);/,
+	'a controller replays a saved board onto the machine it drives');
 
 # --- deleting a saved board leaves a tombstone ------------------------------
 like($js, qr/function studioBoardDelete\(\)/, 'one function owns the delete');

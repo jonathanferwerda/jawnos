@@ -89,10 +89,341 @@ document.addEventListener('touchmove', function (event) {
 document.addEventListener('touchend', function () { studioBoardSwipe = null; }, { passive: true });
 document.addEventListener('touchcancel', function () { studioBoardSwipe = null; }, { passive: true });
 
-function studioRackFind(ch, name, chain) {
+// ---- the controlled machine's board ----------------------------------------
+//
+// A controller draws the peer's selected track, not its own channels. The
+// target publishes that chain as plain records; the adapter below gives the
+// tile builder the same shape an insert has, and every edit becomes one `pedal`
+// command. The target runs the same command through its own board functions,
+// so a remote edit and a local one take the same path.
+var studioRemoteBoard = null;
+var studioRemoteBoardSig = '';
+// A press is optimistic: the adapter changes its own copy at once and sends the
+// command. A state poll that lands before the peer has applied the change must
+// not repaint the sheet under the person's hand, so a short hold defers the
+// redraw; a poll during the hold is remembered and drawn when it ends.
+var studioRemoteBoardHold = 0;
+var studioRemoteBoardHoldTimer = 0;
+var studioRemoteBoardPending = false;
+
+// Redraw the sheet from the adapter's records. A hidden board, or a selected
+// track that is not the peer's, waits for the next open or poll instead.
+function studioRemoteBoardRender() {
+	if (!studioRemoteBoard) { return false; }
+	if (!$('#pedalboard').is(':visible') || String(studioPaletteChannel()) !== String(studioRemoteBoard.track)) {
+		studioRemoteBoardPending = true;
+		return false;
+	}
+	studioRackRender(studioRemoteBoard.track);
+	studioPaletteLabel();
+	studioUpdatePedalLamps();
+	studioRemoteBoardPending = false;
+	return true;
+}
+
+// An optimistic edit holds the redraw for a moment. `redraw` is true for a
+// structural edit (a stomp, a move, an add) whose DOM must change now, and
+// false for a knob, whose input already carries the value and must not be
+// rebuilt under the hand.
+function studioRemoteBoardTouched(redraw) {
+	studioRemoteBoardHold = Date.now() + 900;
+	if (redraw) { studioRemoteBoardRender(); }
+	if (studioRemoteBoardHoldTimer) { clearTimeout(studioRemoteBoardHoldTimer); }
+	studioRemoteBoardHoldTimer = setTimeout(function () {
+		studioRemoteBoardHoldTimer = 0;
+		studioRemoteBoardHold = 0;
+		if (studioRemoteBoardPending) { studioRemoteBoardRender(); }
+	}, 950);
+}
+
+function studioRemoteBoardCopy(list) {
+	var out = [];
+	(list || []).forEach(function (entry) {
+		if (!entry || !entry.name) { return; }
+		out.push({ name: String(entry.name), bypassed: !!entry.bypassed, values: $.extend({}, entry.values || {}) });
+	});
+	return out;
+}
+
+function studioRemoteBoardList(ch, chain) {
+	if (!studioRemoteBoard || String(studioRemoteBoard.track) !== String(ch)) { return null; }
+	return (chain === 'out') ? studioRemoteBoard.out : studioRemoteBoard.in;
+}
+
+function studioRemoteBoardFind(ch, name, chain) {
+	var list = studioRemoteBoardList(ch, chain);
+	if (!list) { return null; }
+	for (var i = 0; i < list.length; i++) { if (String(list[i].name) === String(name)) { return list[i]; } }
+	return null;
+}
+
+function studioRemoteBoardApply(pedals) {
+	if (!pedals || !studioRemoteWhole(pedals.track)) {
+		studioRemoteBoard = null;
+		studioRemoteBoardSig = '';
+		return false;
+	}
+	var next = {
+		track: studioRemoteWhole(pedals.track),
+		chain: String(pedals.chain || 'in') === 'out' ? 'out' : 'in',
+		in: studioRemoteBoardCopy(pedals.in),
+		out: studioRemoteBoardCopy(pedals.out)
+	};
+	var sig = JSON.stringify(next);
+	var changed = (sig !== studioRemoteBoardSig);
+	studioRemoteBoard = next;
+	studioRemoteBoardSig = sig;
+	if (!changed) { return true; }
+	if (Date.now() < studioRemoteBoardHold) { studioRemoteBoardPending = true; return true; }
+	studioRemoteBoardRender();
+	return true;
+}
+
+function studioRemoteBoardChannel(ch) {
+	if (!(typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget)) { return null; }
+	if (!studioRemoteBoard || String(studioRemoteBoard.track) !== String(ch)) {
+		return { inserts: [], outInserts: [], insertByName: {}, outInsertByName: {}, rackChain: 'in' };
+	}
+	var wrap = function (entry) {
+		return {
+			name: entry.name,
+			bypassed: !!entry.bypassed,
+			values: entry.values,
+			remote: true,
+			// A redraw must never post: only a press may. These change the
+			// adapter's copy, which a tile's builder writes defaults into.
+			set: function (control, value) { entry.values[control] = value; },
+			setBypass: function (on) { entry.bypassed = !!on; }
+		};
+	};
+	var ins = (studioRemoteBoard.in || []).map(wrap);
+	var outs = (studioRemoteBoard.out || []).map(wrap);
+	var by = function (list) { var map = {}; list.forEach(function (item) { map[item.name] = item; }); return map; };
+	return { inserts: ins, outInserts: outs, insertByName: by(ins), outInsertByName: by(outs), rackChain: studioRemoteBoard.chain };
+}
+
+function studioBoardChannel(ch) { return studioRemoteBoardChannel(ch) || studioAudio.channels[ch]; }
+
+// The chain a board action reads and writes. On a controller this is the peer's
+// choice, not this machine's local rack view.
+function studioRackChain(ch) {
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget) {
+		return (studioRemoteBoard && String(studioRemoteBoard.track) === String(ch) && studioRemoteBoard.chain === 'out') ? 'out' : 'in';
+	}
+	return studioChannelChain(ch);
+}
+
+function studioRemotePedalCommand(action, data) {
+	if (!(typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget)) { return false; }
+	return studioRemoteCommand('pedal', $.extend({ action: action }, data || {}));
+}
+
+// A knob streams while it is dragged. One command per control after the hand
+// settles is enough, and the last value wins.
+function studioRemotePedalSet(ch, name, control, value, chain) {
+	var ins = studioRemoteBoardFind(ch, name, chain);
+	if (ins) { ins.values[control] = value; }
+	if (!(typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget)) { return false; }
+	studioRemoteBoardTouched(false);
+	studioRemoteCommandLater('pedal:' + ch + ':' + chain + ':' + name + ':' + control, 'pedal',
+		{ action: 'set', track: ch, chain: chain, insert: name, control: control, value: value }, 90);
+	return true;
+}
+
+function studioRemotePedalBypass(ch, name, on, chain) {
+	var ins = studioRemoteBoardFind(ch, name, chain);
+	if (ins) { ins.bypassed = !!on; }
+	studioRemoteBoardTouched(true);
+	return studioRemotePedalCommand('bypass', { track: ch, chain: chain, insert: name, on: on ? 1 : 0 });
+}
+
+function studioRemotePedalInsert(ch, name, chain) {
+	var list = studioRemoteBoardList(ch, chain);
+	if (list && !studioRemoteBoardFind(ch, name, chain)) {
+		list.push({ name: String(name), bypassed: false, values: {} });
+	}
+	studioRemoteBoardTouched(true);
+	return studioRemotePedalCommand('insert', { track: ch, chain: chain, insert: name });
+}
+
+function studioRemotePedalRemove(ch, name, chain) {
+	var list = studioRemoteBoardList(ch, chain);
+	if (list) {
+		for (var i = list.length - 1; i >= 0; i--) { if (String(list[i].name) === String(name)) { list.splice(i, 1); } }
+	}
+	studioRemoteBoardTouched(true);
+	return studioRemotePedalCommand('remove', { track: ch, chain: chain, insert: name });
+}
+
+function studioRemotePedalMove(ch, name, delta, chain) {
+	var list = studioRemoteBoardList(ch, chain);
+	var ins = studioRemoteBoardFind(ch, name, chain);
+	var at = list ? list.indexOf(ins) : -1;
+	if (at >= 0) {
+		var to = at + delta;
+		if (to >= 0 && to < list.length) { list.splice(at, 1); list.splice(to, 0, ins); }
+	}
+	studioRemoteBoardTouched(true);
+	return studioRemotePedalCommand('move', { track: ch, chain: chain, insert: name, delta: delta });
+}
+
+function studioRemotePedalOrder(ch, names, chain) {
+	var list = studioRemoteBoardList(ch, chain);
+	if (list) {
+		var next = [];
+		(names || []).forEach(function (n) {
+			var found = null;
+			list.forEach(function (item) { if (!found && String(item.name) === String(n)) { found = item; } });
+			if (found && next.indexOf(found) < 0) { next.push(found); }
+		});
+		list.forEach(function (item) { if (next.indexOf(item) < 0) { next.push(item); } });
+		if (chain === 'out') { studioRemoteBoard.out = next; } else { studioRemoteBoard.in = next; }
+	}
+	studioRemoteBoardTouched(true);
+	return studioRemotePedalCommand('order', { track: ch, chain: chain, order: names });
+}
+
+function studioRemotePedalChain(ch, chain) {
+	chain = (chain === 'out') ? 'out' : 'in';
+	if (studioRemoteBoard && String(studioRemoteBoard.track) === String(ch)) { studioRemoteBoard.chain = chain; }
+	studioRemoteBoardTouched(true);
+	return studioRemotePedalCommand('chain', { track: ch, chain: chain });
+}
+
+function studioRemotePedalReplace(ch, chain, records) {
+	var ins = [];
+	var shown = [];
+	(records || []).forEach(function (item) {
+		if (!item || !item.name) { return; }
+		ins.push({ name: String(item.name), bypass: !!item.bypass, values: $.extend({}, item.values || {}) });
+		shown.push({ name: String(item.name), bypassed: !!item.bypass, values: $.extend({}, item.values || {}) });
+	});
+	if (studioRemoteBoard && String(studioRemoteBoard.track) === String(ch)) {
+		if (chain === 'out') { studioRemoteBoard.out = shown; } else { studioRemoteBoard.in = shown; }
+	}
+	studioRemoteBoardTouched(true);
+	return studioRemotePedalCommand('replace', { track: ch, chain: chain, inserts: ins });
+}
+
+// The target side of a pedal command. This is the only place a remote edit
+// enters the target's audio: it calls the same functions a local press does,
+// so the engine hears a knob live and the song is saved exactly once.
+function studioRemotePedalApply(payload) {
+	payload = payload || {};
+	var ch = studioRemoteWhole(payload.track);
+	if (!ch || !studioAudio.channels[ch]) { return false; }
+	var chain = (String(payload.chain || 'in') === 'out') ? 'out' : 'in';
+	var action = String(payload.action || '').toLowerCase();
+	var name = String(payload.insert || '');
+	// An effect name is an identifier, never a path, a space or an HTML string.
+	if (name && !/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(name)) { return false; }
+	if (action === 'set') {
+		var control = String(payload.control || '');
+		if (!name || !/^[a-z][a-z0-9_]*$/.test(control)) { return false; }
+		var value = payload.value;
+		if (value && (typeof value === 'object' || typeof value === 'function')) { return false; }
+		if (typeof value === 'string' && value.length > 200) { return false; }
+		studioInsertControl(ch, name, control, value, chain);
+		return true;
+	}
+	if (action === 'bypass') { return studioSetInsertBypass(ch, name, studioRemoteTruthy(payload.on), chain); }
+	if (action === 'insert') { if (!name) { return false; } studioSetInsert(ch, name, true, chain); return true; }
+	if (action === 'remove') { if (!name) { return false; } studioSetInsert(ch, name, false, chain); return true; }
+	if (action === 'move') {
+		var delta = parseInt(payload.delta, 10);
+		if (!name || !delta || delta < -64 || delta > 64) { return false; }
+		studioRackMove(ch, name, delta, chain);
+		return true;
+	}
+	if (action === 'order') {
+		var order = payload.order;
+		if (!Array.isArray(order) || order.length > 64) { return false; }
+		return studioRemotePedalOrderApply(ch, order, chain);
+	}
+	if (action === 'chain') {
+		studioSetChannelChain(ch, chain);
+		studioRackRender(ch);
+		studioSaver();
+		return true;
+	}
+	if (action === 'replace') {
+		var records = payload.inserts;
+		if (!Array.isArray(records) || records.length > 64) { return false; }
+		var clean = [];
+		records.forEach(function (item) {
+			if (!item || !item.name) { return; }
+			var n = String(item.name);
+			if (!/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(n)) { return; }
+			var off = (item.bypass !== undefined) ? item.bypass : item.bypassed;
+			clean.push({ name: n, bypass: !!off, values: $.extend({}, item.values || {}) });
+		});
+		return studioBoardApplyRecords(ch, chain, clean);
+	}
+	return false;
+}
+
+function studioRemotePedalOrderApply(ch, names, chain) {
 	var c = studioAudio.channels[ch];
+	if (!c) { return false; }
+	var out = chain === 'out';
+	var map = out ? c.outInsertByName : c.insertByName;
+	var list = out ? c.outInserts : c.inserts;
+	var next = [];
+	names.forEach(function (n) { var ins = map[n]; if (ins && next.indexOf(ins) < 0) { next.push(ins); } });
+	list.forEach(function (ins) { if (next.indexOf(ins) < 0) { next.push(ins); } });
+	if (out) { c.outInserts = next; studioRebuildOutputs(ch); }
+	else { c.inserts = next; studioRebuildInserts(ch); }
+	studioRackRender(ch);
+	studioUpdatePedalLamps();
+	studioSaver();
+	studioListenRearm(ch, chain);
+	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
+	return true;
+}
+
+// Put a board's records into one chain: empty it, add the records back in order,
+// then restore each knob value and stomp state. A saved-board load and a remote
+// `replace` both land here, so the two are the same operation and a controller
+// can recall a saved board onto the machine it drives.
+function studioBoardApplyRecords(ch, chain, records) {
+	var c = studioAudio.channels[ch];
+	if (!c) { return false; }
+	var out = (chain === 'out');
+	var list = out ? c.outInserts : c.inserts;
+	list.slice().forEach(function (ins) {
+		studioSetInsert(ch, ins.name, false, chain);
+	});
+	(records || []).forEach(function (item) {
+		if (!item || !item.name) { return; }
+		studioSetInsert(ch, item.name, true, chain);
+	});
+	var byName = out ? c.outInsertByName : c.insertByName;
+	(records || []).forEach(function (item) {
+		if (!item || !item.name) { return; }
+		var ins = byName[item.name];
+		if (!ins) { return; }
+		var values = item.values || {};
+		Object.keys(values).forEach(function (control) { ins.set(control, values[control]); });
+		if (ins.setBypass) { ins.setBypass(!!item.bypass); }
+		else { ins.bypassed = !!item.bypass; }
+	});
+	// The bypass state decides which inserts are wired in, so rebuild once after
+	// every saved state is back. The rack is drawn last, after the values are in
+	// place: drawing before the restore would leave the tiles on the builder's
+	// defaults, and applying those back would overwrite the board just loaded.
+	if (out) { studioRebuildOutputs(ch); } else { studioRebuildInserts(ch); }
+	studioRackRender(ch);
+	studioUpdatePedalLamps();
+	studioSaver();
+	studioListenRearm(ch, chain);
+	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
+	return true;
+}
+
+function studioRackFind(ch, name, chain) {
+	var c = studioBoardChannel(ch);
 	if (!c) { return null; }
-	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioRackChain(ch));
 	var map = (chain === 'out') ? c.outInsertByName : c.insertByName;
 	return map[name] || null;
 }
@@ -261,12 +592,12 @@ function studioRackTile(ch, ins, chain) {
 function studioRackRender(ch) {
 	var holder = $('#studio_pedalboard_rack');
 	var header = $('#studio_pedalboard_chain');
-	var c = studioAudio.channels[ch];
+	var c = studioBoardChannel(ch);
 	if (!holder.length || !c) { return; }
 	// One sheet, one chain: a render for a track that is not selected would put
 	// the wrong inserts under the Add bar, so it is skipped.
 	if (String(ch) !== String(studioPaletteChannel())) { return; }
-	var chain = studioChannelChain(ch);
+	var chain = studioRackChain(ch);
 	// every board action reads this attribute to find its channel
 	holder.attr('channel', ch);
 	header.attr('channel', ch).empty();
@@ -309,7 +640,7 @@ function studioRackRender(ch) {
 			// Let sortable finish its own stop before the board is rebuilt; the drop
 			// position is already known, so the work is deferred, not lost.
 			setTimeout(function () {
-				studioRackDragChain = chain || studioChannelChain(from);
+				studioRackDragChain = chain || studioRackChain(from);
 				if (from !== to) { studioRackMoveInsert(from, to, name); } else { studioRackReorder(to); }
 				studioRackDragChain = null;
 			}, 0);
@@ -404,9 +735,20 @@ function studioRackMoveInsert(from, to, name) {
 }
 
 function studioRackReorder(ch) {
+	// A drag on a controller is one `order` command; the peer's own drag path
+	// rebuilds its graph and re-arms its Listen.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && typeof studioRemotePedalOrder === 'function') {
+		var seq = [];
+		$('#studio_pedalboard_rack .studio_rack_tile').each(function () {
+			var n = $(this).attr('insert');
+			if (n) { seq.push(n); }
+		});
+		studioRemotePedalOrder(ch, seq, studioRackChain(ch));
+		return;
+	}
 	var c = studioAudio.channels[ch];
 	if (!c) { return; }
-	var chain = studioChannelChain(ch);
+	var chain = studioRackChain(ch);
 	var out = chain === 'out';
 	var map = out ? c.outInsertByName : c.insertByName;
 	var list = out ? c.outInserts : c.inserts;
@@ -434,9 +776,15 @@ function studioRackReorder(ch) {
 }
 
 function studioRackMove(ch, name, delta, chain) {
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioRackChain(ch));
+	// A controller moves the peer's copy and sends one `move`; the target runs its
+	// own studioRackMove, so the order and the Listen re-arm are the same there.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && typeof studioRemotePedalMove === 'function') {
+		studioRemotePedalMove(ch, name, delta, chain);
+		return;
+	}
 	var c = studioAudio.channels[ch];
 	if (!c) { return; }
-	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
 	var out = chain === 'out';
 	var map = out ? c.outInsertByName : c.insertByName;
 	var list = out ? c.outInserts : c.inserts;
@@ -458,7 +806,11 @@ function studioRackMove(ch, name, delta, chain) {
 // the tile's own, so a pedal that also exists in the other chain is never
 // switched by a click aimed at this one.
 function studioSetInsertBypass(ch, name, on, chain) {
-	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioRackChain(ch));
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && typeof studioRemotePedalBypass === 'function') {
+		studioRemotePedalBypass(ch, name, on, chain);
+		return true;
+	}
 	var ins = studioRackFind(ch, name, chain);
 	if (!ins) { return false; }
 	if (ins.setBypass) { ins.setBypass(on); }
@@ -487,10 +839,10 @@ function studioPedalInsert(ch, name, chain) {
 	// Look in the chain asked for - the tile's, or the one the board shows. A
 	// miss may still be the same kind under another name (reverb vs reverb2), but
 	// only within that same chain: the other chain is a different insert.
-	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioRackChain(ch));
 	var direct = studioRackFind(ch, name, chain);
 	if (direct) { return direct; }
-	var c = studioAudio.channels[ch];
+	var c = studioBoardChannel(ch);
 	if (!c) { return null; }
 	var kind = studioEffectKind(name);
 	var found = null;
@@ -545,7 +897,7 @@ function studioUpdatePedalLamps() {
 // The lamp is the footswitch: absent means switch it on in this track's rack,
 // present means bypass it in place exactly as the rack row does.
 function studioTogglePedal(ch, name, chain) {
-	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioRackChain(ch));
 	var ins = studioPedalInsert(ch, name, chain);
 	// An absent effect joins the chain the board is showing, not always In.
 	if (!ins) { studioSetInsert(ch, name, true, chain); }
@@ -555,7 +907,14 @@ function studioTogglePedal(ch, name, chain) {
 }
 
 function studioInsertControl(ch, name, control, value, chain) {
-	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioChannelChain(ch));
+	chain = (chain === 'out') ? 'out' : ((chain === 'in') ? 'in' : studioRackChain(ch));
+	// A controller sends the knob to the peer; the target's own studioInsertControl
+	// posts the live engine param and saves the song there, so the change is heard
+	// as the hand moves, exactly as it is on the machine that owns the board.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && typeof studioRemotePedalSet === 'function') {
+		studioRemotePedalSet(ch, name, control, value, chain);
+		return;
+	}
 	var ins = studioRackFind(ch, name, chain);
 	if (!ins) { return; }
 	ins.set(control, value);
@@ -574,6 +933,12 @@ function studioInsertControl(ch, name, control, value, chain) {
 // ---- the palette -----------------------------------------------------------
 
 function studioPaletteChannel() {
+	// A controller's board is the peer's selected track; the local selection was
+	// put aside on entry, so every board action follows the peer, not a stale
+	// mirror click. The window before the first state poll falls back to local.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && studioRemoteBoard && studioRemoteBoard.track) {
+		return studioRemoteBoard.track;
+	}
 	var ch = parseInt(studioSelectedChannel, 10);
 	return (ch > 0) ? ch : 1;
 }
@@ -582,7 +947,7 @@ function studioPaletteLabel() {
 	var el = $('#studio_palette_channel');
 	if (!el.length) { return; }
 	var ch = studioPaletteChannel();
-	var chain = studioChannelChain(ch);
+	var chain = studioRackChain(ch);
 	// the label names the chain too, because Add follows it
 	el.text(studioLayoutText('Track') + ' ' + ch + ' · ' + studioLayoutText(chain === 'out' ? 'Out' : 'In'));
 }
@@ -591,7 +956,7 @@ function studioPaletteAdd() {
 	var name = $('#studio_palette_effect').val();
 	if (!name) { return; }
 	var ch = studioPaletteChannel();
-	var chain = studioChannelChain(ch);
+	var chain = studioRackChain(ch);
 	if (studioRackFind(ch, name, chain)) {
 		// Already in the chain: open the sheet on it rather than adding a second copy.
 		studioPedalboardOpen(true);
@@ -795,18 +1160,25 @@ function studioBoardPersist() {
 	studioSaveSettings([{ setting: 'pedalboards', value: JSON.stringify(studioBoardLibrary()) }]);
 }
 
-// A controller mirrors another machine and has no pedal command in its
-// vocabulary, so its board is a read-only view. The badge marks the sheet
-// `studio_board_readonly`; that, or an active remote target, refuses a write.
+// The badge's class is the only thing that makes a board read-only. A
+// controller is not read-only any more: it edits the peer's chain through
+// `pedal` commands, and its own saved-board list still saves and loads.
 function studioBoardReadOnly() {
-	if ($('#pedalboard').hasClass('studio_board_readonly')) { return true; }
-	return (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget) ? true : false;
+	return $('#pedalboard').hasClass('studio_board_readonly');
 }
 
 // The inserts of one chain, in signal order, as the plain records a preset
 // keeps. The values are copied so a later knob move cannot rewrite a board that
 // was already saved.
 function studioBoardCapture(ch, chain) {
+	// On a controller the sheet shows the peer's chain, so a save keeps what is
+	// on screen, not this machine's silenced copy of the song.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && studioRemoteBoard && String(studioRemoteBoard.track) === String(ch)) {
+		var shown = (chain === 'out') ? studioRemoteBoard.out : studioRemoteBoard.in;
+		return (shown || []).map(function (entry) {
+			return { name: entry.name, bypass: !!entry.bypassed, values: $.extend({}, entry.values || {}) };
+		});
+	}
 	var c = studioAudio.channels[ch];
 	if (!c) { return []; }
 	var list = (chain === 'out') ? c.outInserts : c.inserts;
@@ -844,7 +1216,7 @@ function studioBoardSave() {
 	var name = String($('#studio_board_save_name').val() || '').trim();
 	if (!name) { return false; }
 	var ch = studioPaletteChannel();
-	var chain = studioChannelChain(ch);
+	var chain = studioRackChain(ch);
 	var library = studioBoardLibrary();
 	var preset = null;
 	library.forEach(function (item) {
@@ -865,48 +1237,22 @@ function studioBoardSave() {
 	return true;
 }
 
-// Replace the shown chain with a saved board: empty it, add the saved inserts
-// back in order, then put each knob value and stomp state where it was saved.
-// A read-only board refuses, so a pedal change never travels to a peer.
+// Replace the shown chain with a saved board. On a controller the chain is the
+// peer's, so the saved records travel as one `replace` command and the peer
+// rebuilds its own chain; locally the same operation runs in this window.
 function studioBoardLoad(index) {
 	if (studioBoardReadOnly()) { return false; }
 	var library = studioBoardLibrary();
 	var preset = library[index];
 	if (!preset || preset.deleted || !preset.chain) { return false; }
 	var ch = studioPaletteChannel();
-	var chain = studioChannelChain(ch);
-	var c = studioAudio.channels[ch];
-	if (!c) { return false; }
-	var out = (chain === 'out');
-	var list = out ? c.outInserts : c.inserts;
-	list.slice().forEach(function (ins) {
-		studioSetInsert(ch, ins.name, false, chain);
-	});
-	preset.chain.forEach(function (item) {
-		if (!item || !item.name) { return; }
-		studioSetInsert(ch, item.name, true, chain);
-	});
-	var byName = out ? c.outInsertByName : c.insertByName;
-	preset.chain.forEach(function (item) {
-		if (!item || !item.name) { return; }
-		var ins = byName[item.name];
-		if (!ins) { return; }
-		var values = item.values || {};
-		Object.keys(values).forEach(function (control) { ins.set(control, values[control]); });
-		if (ins.setBypass) { ins.setBypass(!!item.bypass); }
-		else { ins.bypassed = !!item.bypass; }
-	});
-	// The bypass state decides which inserts are wired in, so rebuild once after
-	// every saved state is back. The rack is drawn last, after the values are in
-	// place: drawing before the restore would leave the tiles on the builder's
-	// defaults, and applying those back (studioApplyPedals) would overwrite the
-	// board that was just loaded.
-	if (out) { studioRebuildOutputs(ch); } else { studioRebuildInserts(ch); }
-	studioRackRender(ch);
-	studioUpdatePedalLamps();
-	studioSaver();
-	studioListenRearm(ch, chain);
-	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
+	var chain = studioRackChain(ch);
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget) {
+		studioRemotePedalReplace(ch, chain, preset.chain);
+	}
+	else if (!studioBoardApplyRecords(ch, chain, preset.chain)) {
+		return false;
+	}
 	preset.used = Date.now();
 	studioBoardSort(library);
 	studioBoardPersist();

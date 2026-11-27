@@ -494,6 +494,12 @@ function studioSongSet(song) {
 }
 
 function studioSaver() {
+	// A controller mirrors another machine. Its own song was snapshotted on entry
+	// and is silenced; writing the mirror's values over it would lose the work
+	// this machine had open. The snapshot is what restores it on the way out.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget) {
+		return studioSongCache || {};
+	}
 	// Adding a track clones markup and resets its controls; those changes are not
 	// a user edit, so do not write a half-built song over the live one.
 	if (typeof studioLayoutQuiet != 'undefined' && studioLayoutQuiet) {

@@ -3527,7 +3527,7 @@ sub studio_remote_relay {
 
 # The command names the target browser's console table will accept. A name not
 # on this list never reaches the peer and never reaches this machine.
-my %studio_remote_command = map { $_ => 1 } qw(transport record track mixer master song select);
+my %studio_remote_command = map { $_ => 1 } qw(transport record track mixer master song pedal select);
 
 # GET /manager/studio/remote_machines
 # The machines a Studio window may control, and the one it last chose. The
@@ -3633,7 +3633,7 @@ sub action_44041 {
 	$command = '' unless defined $command && !ref $command;
 	$command = lc $command;
 	unless ($studio_remote_command{$command}) {
-		$c->render(json => { ok => 0, error => 'choose a Studio command: transport, record, track, mixer, master, song or select' }, status => 400);
+		$c->render(json => { ok => 0, error => 'choose a Studio command: transport, record, track, mixer, master, song, pedal or select' }, status => 400);
 		return;
 	}
 

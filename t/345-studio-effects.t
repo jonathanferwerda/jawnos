@@ -317,17 +317,14 @@ like($rack, qr/tools\.find\('button'\)\.attr\('type', 'button'\);/,
 like($style, qr/\.studio_board_tools\s*\{[^}]*z-index:\s*6/s,
 	'the tools paint above the title and controls they overlap');
 
-# --- a controller's board says it is read-only -----------------------------
-# A remote target intercepts every press inside the sheet; without pedal
-# commands in the vocabulary the sheet has to say so instead of going silently
-# dead, and the whole board dims when it is not an editing surface.
-like($markup, qr/id="studio_pedalboard_remote"/, 'the board carries a read-only notice');
-like($markup, qr/Read-only: this Studio is controlling another machine/,
-	'and the notice says why the board is read-only');
-like($style, qr/\.studio_board_readonly #studio_pedalboard_rack/, 'a read-only board dims its rack');
-like($style, qr/\.studio_board_readonly \.studio_pedal_foot/, 'and its controls show they are not available');
-like($layout, qr/board\.addClass\('studio_board_readonly'\)\.attr\('aria-disabled', 'true'\);/,
-	'the badge marks the board read-only in remote mode');
+# --- a controller's board edits the peer -----------------------------------
+# A controller turns a press on the sheet into a `pedal` command, so the sheet
+# stays an editing surface and the notice names the machine a change is sent to.
+like($markup, qr/id="studio_pedalboard_remote"/, 'the board carries a remote notice');
+like($markup, qr/Pedal changes are sent to the machine this Studio controls/,
+	'and the notice says where a press goes');
+like($layout, qr/board\.removeClass\('studio_board_readonly'\)\.removeAttr\('aria-disabled'\);/,
+	'the badge leaves the board editable in remote mode');
 like($layout, qr/\$\('#studio_pedalboard_remote'\)/, 'and shows the notice');
 like($layout, qr/note\.hide\(\);/, 'and hides it when the controller returns to this machine');
 

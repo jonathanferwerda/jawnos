@@ -61,9 +61,9 @@
 				<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
 			</span>
 		</div>
-		<%# A controller has no pedal command in its vocabulary, so the board is a
-		   read-only view then; say so on the sheet instead of leaving it silent. %>
-		<span id="studio_pedalboard_remote" class="studio_pedalboard_remote" role="status" aria-live="polite" style="display:none;"><%= &subs::ui('Read-only: this Studio is controlling another machine, so pedal changes are not sent') %></span>
+		<%# A controller edits the peer's chain with `pedal` commands; the note names
+		   the machine a press is sent to rather than calling the sheet read-only. %>
+		<span id="studio_pedalboard_remote" class="studio_pedalboard_remote" role="status" aria-live="polite" style="display:none;"><%= &subs::ui('Pedal changes are sent to the machine this Studio controls') %></span>
 		<%# The In/Out switch and the selected track's board. studioRackRender()
 		   fills both; the board holds only the inserts, in signal order. %>
 		<div id="studio_pedalboard_chain" class="studio_pedalboard_chain"></div>

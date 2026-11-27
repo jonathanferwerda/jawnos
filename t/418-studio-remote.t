@@ -76,9 +76,9 @@ like($controller, qr/65_536/, 'the snapshot is capped at 64 KB');
 like($controller, qr/ref \$state eq 'HASH'/, 'a snapshot must be a JSON object');
 
 # --- the command whitelist ---------------------------------------------------
-like($controller, qr/my %studio_remote_command = map \{ \$_ => 1 \} qw\(transport record track mixer master song select\);/,
-	'only the seven Studio command areas cross');
-unlike($controller, qr/qw\(transport record track mixer master song select\)[^;]*\b(?:clip|export|load)\b/,
+like($controller, qr/my %studio_remote_command = map \{ \$_ => 1 \} qw\(transport record track mixer master song pedal select\);/,
+	'only the eight Studio command areas cross; pedal carries a board edit');
+unlike($controller, qr/qw\(transport record track mixer master song pedal select\)[^;]*\b(?:clip|export|load)\b/,
 	'clip, export and load are not commands');
 like($controller, qr/ref \$payload eq 'HASH'/, 'a command payload must be a JSON object');
 like($controller, qr/16_384/, 'and is bounded');

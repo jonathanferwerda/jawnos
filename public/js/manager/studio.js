@@ -434,6 +434,12 @@ function studioChannelChain(ch) {
 }
 
 function studioSetChannelChain(ch, chain) {
+	// A controller shows the peer's chain, so the In/Out switch is a `pedal`
+	// command, not a local rack state; the peer's next state poll draws the answer.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && typeof studioRemotePedalChain === 'function') {
+		studioRemotePedalChain(ch, chain);
+		return;
+	}
 	var c = studioChannelEngine(ch);
 	if (!c) { return; }
 	c.rackChain = (chain === 'out') ? 'out' : 'in';
@@ -462,6 +468,13 @@ function studioApplyPedals() {
 }
 
 function studioSetInsert(ch, name, on, chain) {
+	// A controller edits the peer's chain: add and remove are one `pedal`
+	// command each, applied by the target's own board functions.
+	if (typeof studioRemoteTarget !== 'undefined' && studioRemoteTarget && typeof studioRemotePedalInsert === 'function') {
+		if (on) { studioRemotePedalInsert(ch, name, chain); }
+		else { studioRemotePedalRemove(ch, name, chain); }
+		return;
+	}
 	var c = studioChannelEngine(ch);
 	if (!c) { return; }
 	// `chain` is 'in' (before the take, so the recording is wet) unless the

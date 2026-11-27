@@ -1815,11 +1815,11 @@ function studioRemoteBadge() {
 	var label = studioRemoteMachineLabels[studioRemoteTarget] || studioRemoteTarget;
 	if (status.length) { status.text(studioRemoteText('Controlling') + ' ' + label).addClass('on'); }
 	$('#studio').addClass('studio_remote_controller');
-	// The board mirrors this machine's own song and the command vocabulary has no
-	// pedal move, so its tools would do nothing. Mark it read-only and say why on
-	// the sheet instead of intercepting every press with no explanation.
-	board.addClass('studio_board_readonly').attr('aria-disabled', 'true');
-	note.text(studioRemoteText('Read-only: this Studio is controlling another machine, so pedal changes are not sent')).show();
+	// The board is the peer's selected chain now, and a pedal command carries the
+	// edits, so it stays editable. Say where a press goes instead of leaving the
+	// sheet silent.
+	board.removeClass('studio_board_readonly').removeAttr('aria-disabled');
+	note.text(studioRemoteText('Pedal changes are sent to the machine this Studio controls')).show();
 }
 
 // Remember the local song before its controls are repainted with a peer's
@@ -2058,6 +2058,28 @@ function studioRemoteStateBuild() {
 		});
 	});
 	var master = (typeof studioMasterSave === 'function') ? studioMasterSave() : [];
+	// The board of the selected track, as plain records. The controller draws the
+	// peer's chain instead of its own and sends `pedal` commands back. Only the
+	// selected track travels; choosing another track asks the target to select
+	// it, and this block follows on the next publish.
+	var pedals = { track: 0, chain: 'in', in: [], out: [] };
+	var pedal_ch = studioRemoteWhole(selected);
+	var strip = pedal_ch && (typeof studioAudio !== 'undefined') ? studioAudio.channels[pedal_ch] : null;
+	if (strip) {
+		pedals.track = pedal_ch;
+		pedals.chain = (typeof studioChannelChain === 'function') ? studioChannelChain(pedal_ch) : 'in';
+		['in', 'out'].forEach(function (chain) {
+			var list = (chain === 'out') ? strip.outInserts : strip.inserts;
+			(list || []).forEach(function (ins) {
+				if (!ins || !ins.name) { return; }
+				pedals[chain].push({
+					name: String(ins.name),
+					bypassed: ins.bypassed ? 1 : 0,
+					values: $.extend({}, ins.values || {})
+				});
+			});
+		});
+	}
 	return {
 		ok: 1,
 		at: Date.now(),
@@ -2077,7 +2099,8 @@ function studioRemoteStateBuild() {
 		},
 		tracks: tracks,
 		clips: clips,
-		master: master
+		master: master,
+		pedals: pedals
 	};
 }
 
@@ -2118,6 +2141,12 @@ $(document).on('input change', '#studio_bpm, #studio_signature', function () {
 	studioRemotePublishSoon();
 });
 $(document).on('click', '#studio_save', function () {
+	studioRemotePublishSoon();
+});
+$(document).on('click', '#pedalboard .studio_pedal_foot, #pedalboard .studio_pedal_led, #studio_palette_add, .studio_rack_up, .studio_rack_down, .studio_rack_remove, .studio_chain_choice', function () {
+	studioRemotePublishSoon();
+});
+$(document).on('change', '#pedalboard .knob_control, #pedalboard .studio_pedal_model, #pedalboard .studio_pedal_text', function () {
 	studioRemotePublishSoon();
 });
 
@@ -2363,6 +2392,8 @@ function studioRemoteRender(state) {
 	if (state.master && state.master.length && typeof studioMasterRestore === 'function') {
 		studioMasterRestore(state.master);
 	}
+	// The pedalboard follows the peer's selected track, not this machine's song.
+	if (typeof studioRemoteBoardApply === 'function') { studioRemoteBoardApply(state.pedals); }
 	// The arrangement mirror follows every poll: clips in the target's colours
 	// and a playhead at the target's position, drawn over, never into, the lanes.
 	studioRemoteOverlayPaint();
@@ -2429,9 +2460,15 @@ function studioRemoteInterceptClick(event) {
 	// Controls the command vocabulary does not carry yet stay local-silent: a
 	// controller must not start a monitor, open a capture, or delete the mirror.
 	if (el.closest('#studio_config_toggle, #studio_video_toggle, #studio_open').length) { stop(); return; }
-	if (el.closest('#studio_track_monitor, .studio_jack, .studio_cord, .studio_track_fx, .studio_track_automation, .studio_track_delete').length) { stop(); return; }
+	if (el.closest('.studio_track_fx').length) {
+		var fxch = studioRemoteWhole(el.closest('.studio_track_fx').attr('channel'));
+		if (fxch) { studioRemoteCommand('track', { action: 'select', index: fxch }); }
+		// Let the local FX handler open the sheet; the remote model follows the
+		// target's next state poll.
+		return;
+	}
+	if (el.closest('#studio_track_monitor, .studio_jack, .studio_cord, .studio_track_automation, .studio_track_delete').length) { stop(); return; }
 	if (el.closest('#studio_drums .studio_drums_voice, #studio_drums .studio_drums_step, #studio_drums .studio_drums_lamp, #studio_drums .studio_drums_key, #studio_drums_save_loop, #studio_drums_bar_add, #studio_drums_bar_remove, #studio_drums_beat_add, #studio_drums_beat_remove').length) { stop(); return; }
-	if (el.closest('#pedalboard').length) { stop(); return; }
 	var arm = el.closest('.armed');
 	if (arm.length) {
 		stop();
@@ -2497,6 +2534,9 @@ function studioRemoteInterceptChange(event) {
 	}
 	var knob = el.closest('.knob_control');
 	if (knob.length) {
+		// A board knob belongs to the insert handlers in 04_knobs/09_pedals; those
+		// send the pedal command. A strip knob is this handler's.
+		if (el.closest('#pedalboard').length) { return; }
 		stop();
 		var kch = studioRemoteWhole(knob.attr('channel'));
 		var control = String(knob.attr('control') || '');
@@ -2528,9 +2568,10 @@ function studioRemoteInterceptChange(event) {
 		stop();
 		return;
 	}
-	if (el.closest('#studio_drums, #pedalboard').length) {
-		// Drum kits, sound routing and pedal values have no command yet; the
-		// controller leaves the local ones exactly as they were.
+	if (el.closest('#studio_drums').length) {
+		// Drum kits and sound routing have no command yet; the controller leaves
+		// the local ones exactly as they were. The pedalboard is allowed through:
+		// its handlers turn a board edit into a pedal command.
 		stop();
 	}
 }
@@ -2538,8 +2579,9 @@ function studioRemoteInterceptChange(event) {
 function studioRemoteInterceptInput(event) {
 	if (!studioRemoteTarget || studioRemoteQuiet) { return; }
 	var el = $(event.target);
-	// The change listener above settles faders, pans and master knobs. The input
-	// event is stopped here too, so a drag never reaches the local channel graph.
+	// A board knob is an insert control; the board handlers own it and forward a
+	// pedal command. The rest is stopped so a drag never reaches the local graph.
+	if (el.closest('#pedalboard').length) { return; }
 	if (el.closest('.channel_volume, .knob_control, .studio_master_control').length) {
 		event.stopPropagation();
 	}
@@ -2561,6 +2603,8 @@ function studioRemoteInterceptKey(event) {
 	// Save) do not act on the controller's local copy.
 	var target = event.target;
 	if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(String(target.tagName || '')))) { return; }
+	// The stomp is an image; Enter and Space must reach its own key handler.
+	if (target && target.closest && target.closest('#pedalboard')) { return; }
 	event.stopPropagation();
 }
 
@@ -2741,6 +2785,11 @@ function studioRemoteApplyCommand(command, payload) {
 			return true;
 		}
 		return false;
+	}
+
+	if (command === 'pedal') {
+		if (typeof studioRemotePedalApply !== 'function') { return false; }
+		return studioRemotePedalApply(payload);
 	}
 
 	if (command === 'select') { return studioRemoteSelectTrack(payload.track); }
