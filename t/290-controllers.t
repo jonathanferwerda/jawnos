@@ -150,7 +150,7 @@ like($body, qr/Backups folder/, 'the page explains where the backups live');
 like($controller, qr/my \$readable = .*archive_card_mounted\(\$dir\)/, 'a card that is not mounted makes no folder readable');
 like($controller, qr/present => .*archive_card_mounted\(\$dir\)/s, 'the storage answer says whether the card is present');
 like($controller, qr/sub _controller_rom_root.*archive_card_mounted/s, 'the ROM shelf checks the card before reading it');
-like($controller, qr/\$to eq 'sd' && !&subs::archive_card_mounted/, 'copying to the card waits for the mount');
+like($controller, qr/!\$remote_to && !&subs::archive_card_mounted\(\$sd_dir\)/, 'copying to a local card waits for the mount');
 like($body, qr/id="controllers_walkthrough_button"/, 'the Storage section offers the walkthrough');
 like($body, qr/id="controllers_walkthrough"/, 'and a panel for its steps');
 like($controllers_js, qr/function controllerWalkthroughSteps\(data\)/, 'the walkthrough has its steps');
@@ -159,6 +159,20 @@ like($controllers_js, qr/done: dir\.length > 0/, 'and when the folder has been t
 like($controllers_js, qr/act: 'save'/, 'a step presses Save');
 like($controllers_js, qr/\.attr\('data-act', step\.act\)/, 'each step button names what it presses');
 like($controllers_js, qr/controllerWalkthroughDraw\(data\);/, 'a storage answer redraws the walkthrough');
+
+# A controller that is not this computer is reached over ssh. These checks pin
+# the shape: the address names the sshd, the eMMC side stays this computer's own
+# shelf, and only the SD column waits on the peer.
+like($controller, qr/sub _controller_ssh_target/, 'a peer controller gets an ssh target');
+like($controller, qr/'ssh', '-p'/, 'the target runs ssh with its port');
+like($controller, qr/'scp', '-r', '-p', '-P'/, 'a copy runs scp with its port');
+like($controller, qr/sub _controller_remote_list/, 'a peer card is listed over ssh');
+like($controller, qr/sub _controller_shell_quote/, 'a remote path is quoted for the remote shell');
+like($controller, qr/address in Storage, then try again/, 'a missing address is named');
+like($controller, qr/\$where eq 'sd' && !&_controller_is_this/, 'only the SD column waits on a peer');
+like($controller, qr/address => \$address/, 'the storage save answers with the address');
+like($controllers_js, qr/id="controllers_address"/, 'Storage asks for the controller address');
+like($controllers_js, qr/address: address/, 'the save carries the address');
 
 my $names = slurp('lib/JawnOS/Routes.pm');
 like($names, qr/\bmanager_controllers\b/, 'the module is registered in @NAMES');
@@ -185,6 +199,7 @@ like($labels, qr/\bcontrollers\s*=>\s*\{\s*icon/, 'the app has a known-app row')
 
 my $help = slurp('perl/help/topics_apps.pl');
 like($help, qr/\$topic\{'controllers'\}/, 'the help topic is registered as controllers');
+like($help, qr/read over SSH/, 'the help says a peer card is read over SSH');
 
 # Every template the topic claims must exist, or t/11 would fail for the wrong reason.
 my ($topic_block) = $help =~ /(\$topic\{'controllers'\}\s*=\s*\{.*?\n\t+\};)/s;

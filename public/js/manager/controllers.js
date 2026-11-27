@@ -268,6 +268,16 @@ function controllerStorageDraw(data) {
 		.attr('placeholder', controllerT('Blank - nothing is merged')));
 	box.append(field);
 
+	// Where another computer reaches this controller's card. A card in this
+	// computer needs no address; a controller on the network does, and the ROMs
+	// section reads it over SSH with the house's own key.
+	var addressField = $('<div class="controller_field"></div>');
+	addressField.append($('<label class="controller_field_label" for="controllers_address"></label>').text(controllerT('Address')));
+	addressField.append($('<input type="text" id="controllers_address">')
+		.val(data.address || '')
+		.attr('placeholder', controllerT('The controller on the network, or host:port')));
+	addressField.append($('<div class="controller_note"></div>').text(controllerT('Used to reach its card over SSH when the card is not in this computer.')));
+	box.append(addressField);
 	var quotaField = $('<div class="controller_field"></div>');
 	quotaField.append($('<label class="controller_field_label" for="controllers_backup_quota"></label>').text(controllerT('Backup space')));
 	var quotaSelect = $('<select id="controllers_backup_quota"></select>');
@@ -441,8 +451,10 @@ function controllerWalkthroughSteps(data) {
 	}
 	return [
 		{
-			text: controllerT('Put the controller\'s card in this computer and mount it. The house can only read the card while it is mounted.'),
-			done: card
+			text: (data && data.remote)
+				? controllerT('The card stays in the controller. The house reads it over the network once the address is set.')
+				: controllerT('Put the controller\'s card in this computer and mount it. The house can only read the card while it is mounted.'),
+			done: (data && data.remote) ? true : card
 		},
 		{
 			text: controllerT('Type the folder the card is mounted at.'),
@@ -514,6 +526,7 @@ function controllerStorageSave() {
 	var input = $('#controllers_archive_dir');
 	if (!input.length) { return; }
 	var dir = (input.val() || '').replace(/^\s+|\s+$/g, '');
+	var address = ($('#controllers_address').val() || '').replace(/^\s+|\s+$/g, '');
 	var archive = $('#controllers_archive_flag').prop('checked') ? 1 : 0;
 	var quota = parseInt($('#controllers_backup_quota').val(), 10);
 	if (!isFinite(quota)) { quota = 10; }
@@ -522,7 +535,7 @@ function controllerStorageSave() {
 	$.ajax({
 		url: '/manager/controllers/storage',
 		type: 'POST',
-		data: { uuid: controllerSelection.uuid, archive_dir: dir, archive: archive, backup_quota: quota, timestamp: Date.now() },
+		data: { uuid: controllerSelection.uuid, archive_dir: dir, address: address, archive: archive, backup_quota: quota, timestamp: Date.now() },
 		dataType: 'json',
 		success: function(response) {
 			button.prop('disabled', false);

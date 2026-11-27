@@ -89,7 +89,7 @@
 
 	<div class="controller_section">
 		<h2><%= &subs::ui('ROMs') %></h2>
-		<p class="controller_note"><%= &subs::ui('Copy a game from one card to the other. A game already on the other card is left alone and says so.') %></p>
+		<p class="controller_note"><%= &subs::ui('Copy a game between this computer and the controller. A game already on the other side is left alone and says so.') %></p>
 		<div class="controller_toolbar">
 			<button type="button" id="controllers_refresh_button" disabled><%= &subs::ui('Refresh') %></button>
 			<div id="controllers_roms_status" class="controller_status" aria-live="polite"></div>
