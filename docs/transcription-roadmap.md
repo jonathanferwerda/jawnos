@@ -70,13 +70,28 @@ first word on 1.wav and 8k.wav and "BROFFALS" for "BROTHELS".
 Risk: the `extern "C"` struct layouts in `engine/src/sherpa.rs` are transcribed from the v2.0.3
 `c-api.h`. A different sherpa version needs that header re-checked, not assumed compatible.
 
-### R2 — `local:sherpa` as a service
+### R2 — `local:sherpa` as a service — **done 2026-11-27**
 
-Once R1 passes: `transcribe_local_engine('local:sherpa')` returns a sub that writes the clip to a
-temp 16 kHz WAV and runs the staged `jawn-asr`; `sherpa_available()` = binary + model directory;
-`ai_transcribe_test` learns it. The Plat transcription rows offer it only when available. Because
-the model is English, a role naming sherpa with a non-English `$lang` should fall through to the
-fallback rather than return English-ish text — decide and pin that.
+`transcribe_local_engine('local:sherpa')` now returns `sherpa_local_transcribe`, which pipes the
+clip through `nice -n 19 ffmpeg` (any container to raw s16le/16 kHz/mono) into the staged `jawn-asr
+--pcm-stdin`. `sherpa_available()` is the binary being executable plus a model directory with
+`tokens.txt` and one each of `encoder*.onnx`, `decoder*.onnx`, `joiner*.onnx`; it caches for 60 s
+like `whisper_available`. The binary is `$JAWNOS_SHERPA_BIN` when executable, else the staged
+`perl/audio/jawn-asr` found from this tree (the audio engine's own root, with `jawn-asr` in place
+of `jawn-audio`). The model defaults to
+`~/.local/share/jawnos/sherpa/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17`, overridden by
+`$JAWNOS_SHERPA_MODEL_DIR`. The Plat transcription rows offer it under “This machine” only when
+it is available. `ai_transcribe_test` reports its readiness.
+
+Because the bundled model is English, a role naming sherpa with a non-English `$lang` returns
+nothing *without starting the binary*; `whisper_transcribe` falls through to the role's fallback
+and then to the usual whisper last resort. A sherpa clip is never handed to the whisper
+`whisper.transcribe` Crew job. `whisper_stream_model` still accepts only `local:whisper.cpp` (or
+the legacy `local:vosk`): the screened-call gateway runs `scripts/whisper_stream.py`, so
+`transcription_ivr` is never offered sherpa and a role naming it gets the existing “cannot read a
+call on this gateway; using the base model” note.
+
+Tests: `t/474-sherpa-service.t`; help: `help::platform`.
 
 ### R3 — Wire the engine to the audio
 

@@ -45,7 +45,7 @@ use File::Copy qw(copy);
 use File::Find ();
 use File::Path qw(make_path);
 use File::Spec;
-use File::Temp qw(tempfile);
+use File::Temp qw(tempfile tempdir);
 use FindBin;
 
 my $root     = File::Spec->rel2abs("$FindBin::Bin/..");
@@ -86,6 +86,40 @@ my $build_features = defined $features ? $features : 'alsa,jack';
 my @build_feature_list = grep { length } split /\s*,\s*/, $build_features;
 my $sherpa_requested = scalar grep { $_ eq 'sherpa' } @build_feature_list;
 my $sherpa_lib_dir;
+
+# The one sherpa-onnx release the hand-written declarations in
+# engine/src/sherpa.rs were transcribed from. The asset's own
+# bin/sherpa-onnx-version must agree, and its header layout must match the
+# probe in engine/tests/sherpa_abi_probe.c (docs/engine-asr.md).
+my $SHERPA_PINNED_VERSION = '2.0.3';
+
+# key -> byte value, measured by engine/tests/sherpa_abi_probe.c against the
+# v2.0.3 header on a 64-bit host, for the structs and the fields Recognizer::new
+# populates. A mismatch means the asset is not the release this code binds to.
+my %SHERPA_ABI_EXPECTED = (
+	'feature_config.size'                            => 8,
+	'feature_config.sample_rate'                     => 0,
+	'feature_config.feature_dim'                     => 4,
+	'transducer.size'                                => 24,
+	'transducer.encoder'                             => 0,
+	'transducer.decoder'                             => 8,
+	'transducer.joiner'                              => 16,
+	'model_config.size'                              => 136,
+	'model_config.transducer'                        => 0,
+	'model_config.tokens'                            => 48,
+	'model_config.num_threads'                       => 56,
+	'model_config.provider'                          => 64,
+	'recognizer_config.size'                         => 272,
+	'recognizer_config.feat_config'                  => 0,
+	'recognizer_config.model_config'                 => 8,
+	'recognizer_config.decoding_method'              => 144,
+	'recognizer_config.max_active_paths'             => 152,
+	'recognizer_config.enable_endpoint'              => 156,
+	'recognizer_config.rule1_min_trailing_silence'   => 160,
+	'recognizer_config.rule2_min_trailing_silence'   => 164,
+	'recognizer_config.rule3_min_utterance_length'   => 168,
+	'recognizer_config.hotwords_score'               => 184,
+);
 
 # Windows has no engine: the sound there is the browser's. Say so once instead
 # of failing inside cargo, and keep --check honest - a machine that cannot
@@ -288,6 +322,7 @@ my $profile = $debug ? 'debug' : 'release';
 # through the `$ORIGIN` rpath when it runs from perl/audio (docs/engine-asr.md).
 if ($sherpa_requested) {
 	$sherpa_lib_dir = resolve_sherpa_lib_dir();
+	verify_sherpa_asset($sherpa_lib_dir);
 	add_rustflag( '-C', 'link-arg=-Wl,-rpath,$ORIGIN' );
 }
 
@@ -428,6 +463,125 @@ sub resolve_sherpa_lib_dir {
 		. "sherpa-onnx-v2.0.3 shared asset (docs/engine-asr.md)\n"
 		unless sherpa_libs_present($dir);
 	return $dir;
+}
+
+# A requested sherpa build is gated on the release it was written for: the
+# asset's own version binary must say $SHERPA_PINNED_VERSION, and its header
+# must measure exactly the layouts engine/src/sherpa.rs declares. Either gate is
+# skipped with a `note:` when the asset cannot answer (no version binary, no
+# include/ directory, no C compiler), because the engine is optional; a gate
+# that does answer and disagrees stops the build before anything is staged
+# (docs/engine-asr.md).
+sub verify_sherpa_asset {
+	my ($lib_dir) = @_;
+	my $asset = File::Basename::dirname($lib_dir);
+	verify_sherpa_version($asset);
+	verify_sherpa_abi($asset);
+}
+
+sub verify_sherpa_version {
+	my ($asset) = @_;
+	my $version_bin = File::Spec->catfile( $asset, 'bin', 'sherpa-onnx-version' );
+	if ( !-x $version_bin ) {
+		print "note: no $version_bin; could not verify the sherpa-onnx version "
+			. "is $SHERPA_PINNED_VERSION\n";
+		return;
+	}
+
+	my $first = '';
+	if ( open( my $fh, '-|', $version_bin ) ) {
+		$first = <$fh> // '';
+		close $fh;
+	}
+	$first =~ s/\s+$//;
+	my ($found) = $first =~ /(\d+\.\d+\.\d+)/;
+	$found = $first unless defined $found && length $found;
+	if ( !length $found ) {
+		print "note: $version_bin printed no version; could not verify the "
+			. "sherpa-onnx version is $SHERPA_PINNED_VERSION\n";
+		return;
+	}
+
+	return if $found eq $SHERPA_PINNED_VERSION;
+	return if sherpa_version_override();
+	die "sherpa-onnx reports version $found, not the pinned "
+		. "$SHERPA_PINNED_VERSION: set JAWNOS_ALLOW_SHERPA_VERSION=1 to build "
+		. "against it anyway (docs/engine-asr.md)\n";
+}
+
+sub sherpa_version_override {
+	return defined $ENV{'JAWNOS_ALLOW_SHERPA_VERSION'}
+		&& length $ENV{'JAWNOS_ALLOW_SHERPA_VERSION'}
+		&& $ENV{'JAWNOS_ALLOW_SHERPA_VERSION'} ne '0';
+}
+
+# The C compiler that measures the asset's header. $ENV{CC} wins; otherwise
+# the conventional names in PATH, in the order the house machines use them.
+sub find_c_compiler {
+	my $given = $ENV{'CC'};
+	return $given if defined $given && length $given;
+	for my $name (qw(cc gcc clang)) {
+		for my $dir ( File::Spec->path ) {
+			my $candidate = File::Spec->catfile( $dir, $name );
+			return $candidate if -x $candidate;
+		}
+	}
+	return undef;
+}
+
+sub verify_sherpa_abi {
+	my ($asset) = @_;
+	my $include = File::Spec->catdir( $asset, 'include' );
+	if ( !-d $include ) {
+		print "note: no $include; could not verify the sherpa-onnx ABI\n";
+		return;
+	}
+
+	my $cc = find_c_compiler();
+	if ( !defined $cc ) {
+		print "note: no C compiler (CC, cc, gcc, clang); could not verify "
+			. "the sherpa-onnx ABI\n";
+		return;
+	}
+
+	my $probe = File::Spec->catfile( $root, 'engine', 'tests', 'sherpa_abi_probe.c' );
+	die "no $probe: the sherpa-onnx ABI probe is missing from the tree\n"
+		unless -f $probe;
+
+	my $dir = tempdir( CLEANUP => 1 );
+	my $exe = File::Spec->catfile( $dir, 'sherpa_abi_probe' );
+	my @compile = ( $cc, '-I', $include, $probe, '-o', $exe );
+	if ( system(@compile) != 0 ) {
+		die "the sherpa-onnx ABI probe did not compile: @compile failed "
+			. "(docs/engine-asr.md)\n";
+	}
+
+	open( my $fh, '-|', $exe )
+		or die "cannot run the sherpa-onnx ABI probe $exe: $!\n";
+	my %found;
+	while ( my $line = <$fh> ) {
+		chomp $line;
+		my ( $key, $value ) = split /\t/, $line, 2;
+		next unless defined $key && defined $value;
+		$found{$key} = $value;
+	}
+	close $fh;
+
+	for my $key ( sort keys %SHERPA_ABI_EXPECTED ) {
+		my $expected = $SHERPA_ABI_EXPECTED{$key};
+		my $got      = exists $found{$key} ? $found{$key} : '(missing)';
+		next if $got eq $expected;
+		die "sherpa-onnx ABI mismatch: $key is $got, expected $expected: "
+			. "the header in $asset does not match engine/src/sherpa.rs "
+			. "(docs/engine-asr.md)\n";
+	}
+	for my $key ( sort keys %found ) {
+		next if exists $SHERPA_ABI_EXPECTED{$key};
+		die "sherpa-onnx ABI mismatch: the probe reported unexpected "
+			. "$key=$found{$key} (docs/engine-asr.md)\n";
+	}
+
+	print "note: sherpa-onnx ABI matches v$SHERPA_PINNED_VERSION\n";
 }
 
 # Append rustc flags to the encoded environment cargo already reads. Values

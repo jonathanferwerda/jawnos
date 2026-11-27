@@ -329,3 +329,44 @@ fn cstring(path: &Path, role: &str) -> Result<CString, String> {
         .ok_or_else(|| format!("the {role} path {} is not UTF-8", path.display()))?;
     CString::new(text).map_err(|_| format!("the {role} path {} contains a NUL", path.display()))
 }
+
+// --- The ABI gate ------------------------------------------------------------
+//
+// `engine/tests/sherpa_abi_probe.c` measures these same sizes and offsets
+// against the v2.0.3 header, and `scripts/build_engine.pl` compiles the probe
+// and compares its lines before staging. This block makes the same
+// disagreement a compile error whenever the `sherpa` feature is built. The
+// numbers are for a 64-bit target, which is the only shape the shared assets
+// ship.
+#[cfg(all(feature = "sherpa", target_pointer_width = "64"))]
+const _: () = {
+    use core::mem::{offset_of, size_of};
+
+    assert!(size_of::<SherpaOnnxFeatureConfig>() == 8);
+    assert!(offset_of!(SherpaOnnxFeatureConfig, sample_rate) == 0);
+    assert!(offset_of!(SherpaOnnxFeatureConfig, feature_dim) == 4);
+
+    assert!(size_of::<SherpaOnnxOnlineTransducerModelConfig>() == 24);
+    assert!(offset_of!(SherpaOnnxOnlineTransducerModelConfig, encoder) == 0);
+    assert!(offset_of!(SherpaOnnxOnlineTransducerModelConfig, decoder) == 8);
+    assert!(offset_of!(SherpaOnnxOnlineTransducerModelConfig, joiner) == 16);
+
+    assert!(size_of::<SherpaOnnxOnlineModelConfig>() == 136);
+    assert!(offset_of!(SherpaOnnxOnlineModelConfig, transducer) == 0);
+    assert!(offset_of!(SherpaOnnxOnlineModelConfig, tokens) == 48);
+    assert!(offset_of!(SherpaOnnxOnlineModelConfig, num_threads) == 56);
+    assert!(offset_of!(SherpaOnnxOnlineModelConfig, provider) == 64);
+
+    assert!(size_of::<SherpaOnnxOnlineRecognizerConfig>() == 272);
+    assert!(offset_of!(SherpaOnnxOnlineRecognizerConfig, feat_config) == 0);
+    assert!(offset_of!(SherpaOnnxOnlineRecognizerConfig, model_config) == 8);
+    assert!(offset_of!(SherpaOnnxOnlineRecognizerConfig, decoding_method) == 144);
+    assert!(offset_of!(SherpaOnnxOnlineRecognizerConfig, max_active_paths) == 152);
+    assert!(offset_of!(SherpaOnnxOnlineRecognizerConfig, enable_endpoint) == 156);
+    assert!(offset_of!(SherpaOnnxOnlineRecognizerConfig, rule1_min_trailing_silence) == 160);
+    assert!(offset_of!(SherpaOnnxOnlineRecognizerConfig, rule2_min_trailing_silence) == 164);
+    assert!(
+        offset_of!(SherpaOnnxOnlineRecognizerConfig, rule3_min_utterance_length) == 168
+    );
+    assert!(offset_of!(SherpaOnnxOnlineRecognizerConfig, hotwords_score) == 184);
+};

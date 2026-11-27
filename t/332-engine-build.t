@@ -60,12 +60,75 @@ sub run_in {
 
 sub fixture {
 	my $dir = tempdir( CLEANUP => 1 );
-	make_path( "$dir/scripts", "$dir/engine", "$dir/perl/audio" );
+	make_path( "$dir/scripts", "$dir/engine/tests", "$dir/perl/audio" );
 	copy( $script, "$dir/scripts/build_engine.pl" ) or die "copy: $!";
+	copy( "$root/engine/tests/sherpa_abi_probe.c", "$dir/engine/tests/sherpa_abi_probe.c" )
+		or die "copy probe: $!";
 	open( my $man, '>', "$dir/engine/Cargo.toml" ) or die "$dir/engine/Cargo.toml: $!";
 	print {$man} "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
 	close $man;
 	return $dir;
+}
+
+# The ABI facts engine/tests/sherpa_abi_probe.c prints for v2.0.3 on a 64-bit
+# host. The probe is the authority; this copy lets a fake compiler answer
+# without a real header or a real C compiler.
+my %ABI_EXPECTED = (
+	'feature_config.size'                          => 8,
+	'feature_config.sample_rate'                   => 0,
+	'feature_config.feature_dim'                   => 4,
+	'transducer.size'                              => 24,
+	'transducer.encoder'                           => 0,
+	'transducer.decoder'                           => 8,
+	'transducer.joiner'                            => 16,
+	'model_config.size'                            => 136,
+	'model_config.transducer'                      => 0,
+	'model_config.tokens'                          => 48,
+	'model_config.num_threads'                     => 56,
+	'model_config.provider'                        => 64,
+	'recognizer_config.size'                       => 272,
+	'recognizer_config.feat_config'                => 0,
+	'recognizer_config.model_config'               => 8,
+	'recognizer_config.decoding_method'            => 144,
+	'recognizer_config.max_active_paths'           => 152,
+	'recognizer_config.enable_endpoint'            => 156,
+	'recognizer_config.rule1_min_trailing_silence' => 160,
+	'recognizer_config.rule2_min_trailing_silence' => 164,
+	'recognizer_config.rule3_min_utterance_length' => 168,
+	'recognizer_config.hotwords_score'             => 184,
+);
+
+# A compiler stand-in: it never reads the header. It writes a shell script at
+# the `-o` path that prints `key<TAB>value` lines, so the gate's comparison can
+# be exercised with no real C compiler and no real asset.
+sub fake_cc {
+	my ( $dir, $values ) = @_;
+	my %facts = ( %ABI_EXPECTED, %{ $values || {} } );
+	my $data = "$dir/abi-output.txt";
+	open( my $out, '>', $data ) or die "$data: $!";
+	print {$out} map { "$_\t$facts{$_}\n" } sort keys %facts;
+	close $out;
+
+	my $path = "$dir/fake-cc";
+	open( my $fh, '>', $path ) or die "$path: $!";
+	print {$fh} <<"SH";
+#!/bin/sh
+out=""
+while [ \$# -gt 0 ]; do
+	if [ "\$1" = "-o" ]; then
+		shift
+		out="\$1"
+	fi
+	shift
+done
+[ -n "\$out" ] || exit 2
+printf '#!/bin/sh\ncat "%s"\n' "$data" > "\$out" || exit 1
+chmod 0755 "\$out" || exit 1
+exit 0
+SH
+	close $fh;
+	chmod( 0755, $path ) or die "chmod $path: $!";
+	return $path;
 }
 
 # A cargo stand-in: it never compiles anything. `--version` answers, and
@@ -376,6 +439,148 @@ SKIP: {
 			'and libonnxruntime.so beside it' );
 		like( $out, qr/^built: .*jawn-asr/m, 'and the script says where' );
 	}
+}
+
+# --- the version gate: a different release is refused, the override allows it
+# The staging script is the last place a wrong sherpa-onnx release can be
+# caught before a recogniser that binds the wrong C ABI is staged. The asset's
+# own version binary answers; JAWNOS_ALLOW_SHERPA_VERSION=1 is the deliberate
+# override.
+{
+	my $dir  = fixture();
+	my $libs = "$dir/sherpa-lib";
+	make_path( $libs, "$dir/bin" );
+	for my $name ( 'libsherpa-onnx-c-api.so', 'libonnxruntime.so' ) {
+		open( my $fh, '>', "$libs/$name" ) or die "$libs/$name: $!";
+		print {$fh} "fixture";
+		close $fh;
+	}
+
+	my $version_bin = "$dir/bin/sherpa-onnx-version";
+	open( my $vfh, '>', $version_bin ) or die "$version_bin: $!";
+	print {$vfh} "#!/bin/sh\necho \"sherpa-onnx version : 9.9.9\"\n"
+		. "echo \"sherpa-onnx Git SHA1: fixture\"\n";
+	close $vfh;
+	chmod( 0755, $version_bin ) or die "chmod $version_bin: $!";
+
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	local $ENV{'CARGO'}               = $cargo;
+	local $ENV{'CARGO_TARGET_DIR'}    = $ware;
+	local $ENV{'SHERPA_ONNX_LIB_DIR'} = $libs;
+
+	{
+		local $ENV{'JAWNOS_ALLOW_SHERPA_VERSION'} = '';
+		my ( $status, $out, $err ) = run_in( $dir, '--features', 'sherpa' );
+		isnt( $status, 0, 'a sherpa build of version 9.9.9 is refused' );
+		like( $out . $err, qr/reports version 9\.9\.9/,
+			'and names the version it found' );
+		like( $out . $err, qr/JAWNOS_ALLOW_SHERPA_VERSION=1/,
+			'and names the override' );
+		ok( !-e "$dir/perl/audio/jawn-asr", 'and stages no recogniser' );
+	}
+
+	{
+		local $ENV{'JAWNOS_ALLOW_SHERPA_VERSION'} = 1;
+		my ( $status, $out, $err ) = run_in( $dir, '--features', 'sherpa' );
+		is( $status, 0, 'JAWNOS_ALLOW_SHERPA_VERSION=1 allows 9.9.9' )
+			or diag( $out . $err );
+		ok( -x "$dir/perl/audio/jawn-asr", 'and stages the recogniser' );
+	}
+}
+
+# --- the ABI gate: the probe's measured layout must match the pinned map ----
+# A fake compiler writes a script at the `-o` path that prints the probe's
+# lines, so the comparison runs with no real header, compiler or asset.
+{
+	my $dir  = fixture();
+	my $libs = "$dir/sherpa-lib";
+	make_path( $libs, "$dir/include" );
+	for my $name ( 'libsherpa-onnx-c-api.so', 'libonnxruntime.so' ) {
+		open( my $fh, '>', "$libs/$name" ) or die "$libs/$name: $!";
+		print {$fh} "fixture";
+		close $fh;
+	}
+
+	my $cc    = fake_cc( $dir, {} );
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	local $ENV{'CARGO'}                      = $cargo;
+	local $ENV{'CARGO_TARGET_DIR'}           = $ware;
+	local $ENV{'SHERPA_ONNX_LIB_DIR'}        = $libs;
+	local $ENV{'CC'}                         = $cc;
+	local $ENV{'JAWNOS_ALLOW_SHERPA_VERSION'} = '';
+
+	my ( $status, $out, $err ) = run_in( $dir, '--features', 'sherpa' );
+	is( $status, 0, 'a probe that matches v2.0.3 passes' ) or diag( $out . $err );
+	like( $out, qr/ABI matches v2\.0\.3/, 'and the script says the ABI was verified' );
+	ok( -x "$dir/perl/audio/jawn-asr", 'and stages the recogniser' );
+}
+
+{
+	my $dir  = fixture();
+	my $libs = "$dir/sherpa-lib";
+	make_path( $libs, "$dir/include" );
+	for my $name ( 'libsherpa-onnx-c-api.so', 'libonnxruntime.so' ) {
+		open( my $fh, '>', "$libs/$name" ) or die "$libs/$name: $!";
+		print {$fh} "fixture";
+		close $fh;
+	}
+
+	my $cc    = fake_cc( $dir, { 'model_config.size' => 999 } );
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	local $ENV{'CARGO'}                      = $cargo;
+	local $ENV{'CARGO_TARGET_DIR'}           = $ware;
+	local $ENV{'SHERPA_ONNX_LIB_DIR'}        = $libs;
+	local $ENV{'CC'}                         = $cc;
+	local $ENV{'JAWNOS_ALLOW_SHERPA_VERSION'} = '';
+
+	my ( $status, $out, $err ) = run_in( $dir, '--features', 'sherpa' );
+	isnt( $status, 0, 'a probe that disagrees fails the build' );
+	like( $out . $err, qr/model_config\.size is 999, expected 136/,
+		'and names the key, the found value and the expected value' );
+	ok( !-e "$dir/perl/audio/jawn-asr", 'and stages no recogniser' );
+}
+
+# --- no C compiler is a note, not a failed sherpa build ---------------------
+# The engine is optional. A host with the libraries but no compiler cannot
+# measure the ABI; it says so and stages the recogniser anyway.
+{
+	my $dir  = fixture();
+	my $libs = "$dir/sherpa-lib";
+	make_path( $libs, "$dir/include" );
+	for my $name ( 'libsherpa-onnx-c-api.so', 'libonnxruntime.so' ) {
+		open( my $fh, '>', "$libs/$name" ) or die "$libs/$name: $!";
+		print {$fh} "fixture";
+		close $fh;
+	}
+
+	# A PATH with the two tools the fake cargo needs and no C compiler.
+	my $tools = tempdir( CLEANUP => 1 );
+	for my $tool (qw(mkdir chmod)) {
+		my $src;
+		for my $dir ( File::Spec->path ) {
+			my $candidate = File::Spec->catfile( $dir, $tool );
+			if ( -x $candidate ) { $src = $candidate; last }
+		}
+		symlink( $src, "$tools/$tool" ) or die "symlink $tool: $!" if $src;
+	}
+
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	local $ENV{'CARGO'}                      = $cargo;
+	local $ENV{'CARGO_TARGET_DIR'}           = $ware;
+	local $ENV{'SHERPA_ONNX_LIB_DIR'}        = $libs;
+	local $ENV{'PATH'}                       = $tools;
+	local $ENV{'CC'}                         = '';
+	local $ENV{'JAWNOS_ALLOW_SHERPA_VERSION'} = '';
+
+	my ( $status, $out, $err ) = run_in( $dir, '--features', 'sherpa' );
+	is( $status, 0, 'a build with no C compiler continues' ) or diag( $out . $err );
+	like( $out, qr/no C compiler .* could not verify the sherpa-onnx ABI/s,
+		'and says the ABI was not verified' );
+	ok( -x "$dir/perl/audio/jawn-asr", 'and still stages the recogniser' );
 }
 
 # A build that keeps failing with sherpa must die; dropping sherpa and staging

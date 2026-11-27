@@ -159,6 +159,15 @@
 				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0,
 					group => ($whisper_local ? 'This machine' : 'Another machine'), caps => ['audio'] };
 			}
+			# sherpa-onnx is a file engine this machine alone runs, and its bundled
+			# model is English. The screened-call gateway reads a live call with
+			# whisper_stream.py, not jawn-asr, so it is never offered to
+			# transcription_ivr: a call there stays on whisper.cpp.
+			my $sherpa_here = ($cap eq 'audio' && $setting ne 'transcription_ivr' && &subs::sherpa_available()) ? 1 : 0;
+			if ($sherpa_here) {
+				push @role_models, { value => 'local:sherpa', name => 'sherpa-onnx', paid => 0,
+					group => 'This machine', caps => ['audio'] };
+			}
 			# The phone recogniser hears the phone microphone, so it can answer
 			# only for a surface the phone itself is speaking to. A clip from the
 			# watch or the deck has no microphone here: its role has to name a
@@ -195,6 +204,11 @@
 						<% if ($whisper_here) { %>
 							<optgroup label="<%= $whisper_local ? 'This machine' : 'Another machine' %>">
 								<option value="local:whisper.cpp" data-thinks="0" <% if ($current eq 'local:whisper.cpp') { %>selected="selected"<% $shown = 1; } %>>whisper.cpp · <%= $whisper_local ? 'this machine' : 'another machine' %> · free</option>
+							</optgroup>
+						<% } %>
+						<% if ($sherpa_here) { %>
+							<optgroup label="This machine">
+								<option value="local:sherpa" data-thinks="0" <% if ($current eq 'local:sherpa') { %>selected="selected"<% $shown = 1; } %>>sherpa-onnx · this machine · free</option>
 							</optgroup>
 						<% } %>
 						<% if ($oem_here) { %>

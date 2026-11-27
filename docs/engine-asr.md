@@ -76,6 +76,31 @@ tokens.txt
 full-precision file, which is what the model page's int8 recipe uses. A
 missing file is a sentence naming it, not a crash.
 
+## Version and ABI gate
+
+A requested `sherpa` build is pinned to the release the declarations were
+written for. `scripts/build_engine.pl` derives the asset root from
+`SHERPA_ONNX_LIB_DIR` (its parent directory) and gates the build twice:
+
+- **Version.** It runs `<asset>/bin/sherpa-onnx-version` and reads the first
+  line (`sherpa-onnx version : 2.0.3`). A different version stops the build
+  with one sentence naming the version found and the override,
+  `JAWNOS_ALLOW_SHERPA_VERSION=1`. With no version binary it prints a `note:`
+  that the version could not be verified and continues.
+- **ABI.** It compiles the committed probe `engine/tests/sherpa_abi_probe.c`
+  against `<asset>/include` and compares every `key<TAB>value` line (sizes and
+  field offsets of the structs `engine/src/sherpa.rs` populates) with the map
+  embedded in the script. A mismatch stops the build before staging, naming
+  the key, the expected value and the value found. The compiler is `$CC`, then
+  `cc`, `gcc` or `clang`; with none available it prints a `note:` that the ABI
+  was not verified and continues, because the engine is optional.
+
+The same sizes and offsets are a `const` block at the end of
+`engine/src/sherpa.rs`, using `core::mem::size_of` and
+`core::mem::offset_of!`; a drift is a compile error whenever the `sherpa`
+feature is built. The numbers are for a 64-bit target, which is the only shape
+the shared assets ship.
+
 ## Padding
 
 The stream gets **0.5 s of silence in front of the take and 0.8 s after it**.
