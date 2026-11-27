@@ -1,0 +1,125 @@
+# Transcription roadmap — the handoff
+
+What is built, what is frozen, and what is left. Written 2026-11-27 so the work can be
+picked up cold. Design rationale lives in `docs/voice-inputs.md`; this file is the order
+of work. Everything below assumes the house rules in `AGENTS.md` (worktree per task,
+`tests_for.pl --staged --run` before a commit, `land_enqueue.pl --wait` to land).
+
+## Where it stands
+
+| Landed | What it did |
+| --- | --- |
+| v0.1.3922 | Per-surface transcription roles: `transcription_keyboard`, `_guide`, `_watch`, `_teletype`, plus the shared `transcription_assistant`. `android:oem` is a client-only service the manager never runs. |
+| v0.1.3924 | `have_whisper` checks `scripts/whisper_stream.py`; the 8 kHz/16 kHz decision is written into `docs/voice-inputs.md`. |
+| v0.1.3925 | Watch file records 16 kHz when WiFi is up at capture start, 8 kHz otherwise; the live stream stays 8 kHz. `adpcm_wav_wrap($data, $rate)`. |
+| v0.1.3926 | `transcription_ivr` + the Phone pane select; the gateway resolves the role to a concrete local model. |
+| v0.1.3928 | The dock keyboard and the Guide use `window.JawnSpeech` when their role is `android:oem`, with the recorder as fallback. |
+| v0.1.3929 | Help topics for that choice; the Guide's floating associate follows it too. |
+| v0.1.3930 | Engine `PushedSource` + six C exports, so audio pushed from the app is a microphone. |
+| v0.1.3933 | Asymmetric file-is-truth: a memo waits for the whole-clip file (stream returns `deferred`), a command takes whichever arrives first. Claim is a marker file under `~/.president/voice-seen` (O_EXCL) because the BLE ingest is forked. A streamed memo withholds `voice_recv` so the file is still retried. |
+| v0.1.3934 | `jawn-asr`, a separate binary in the engine crate, sherpa-onnx via the C API behind an off-by-default feature. `docs/engine-asr.md`. |
+| App 1374 / 0.118.376 | The IME now exposes `window.JawnSpeech`; commit `247d1b6f` is an ancestor of the published build. |
+
+## Frozen decisions — do not re-litigate
+
+- **Streaming primary, whisper fallback.** English-only streaming is accepted; the other fifteen
+  languages stay on whisper.
+- **OEM is a live-microphone service only.** It can never take a file: the watch, deck and IVR
+  roles must name a file engine.
+- **8 kHz live stream; 16 kHz file only when WiFi carries it.** The MTU experiment is deferred
+  (requesting 512 disturbed the watch display); without it, BLE-only streaming cannot keep up.
+- **Memos come from the file; commands take whichever transcript arrives first.**
+- **sherpa is a separate process** (`jawn-asr`), not inference inside the audio callback.
+
+## Remaining work, in order
+
+### R1 — Vendor sherpa and prove it (the gate)
+
+Nothing downstream is trustworthy until the binary links and transcribes. Network is available
+from this shell.
+
+```sh
+cd ~/jawnos            # or a worktree; the libs and model are never committed
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.3/sherpa-onnx-v2.0.3-linux-x64-shared.tar.bz2
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2
+tar xf sherpa-onnx-v2.0.3-linux-x64-shared.tar.bz2
+tar xf sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2
+cd engine
+SHERPA_ONNX_LIB_DIR="$HOME/jawnos/sherpa-onnx-v2.0.3-linux-x64-shared/lib" \
+  cargo build --offline --release --features sherpa --bin jawn-asr
+LD_LIBRARY_PATH="$HOME/jawnos/sherpa-onnx-v2.0.3-linux-x64-shared/lib" \
+  ./target/release/jawn-asr --model-dir "$HOME/jawnos/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17" \
+  -f /path/to/ten-seconds.wav
+```
+
+Done when: real text comes back, and the run's wall time and maximum RSS are recorded (the
+S922X is roughly 3x slower than this laptop). Then `SHERPA_ONNX_LIB_DIR=… perl
+scripts/build_engine.pl --features sherpa` and run `perl/audio/jawn-asr` to prove the `$ORIGIN`
+rpath finds its siblings.
+
+Risk: the `extern "C"` struct layouts in `engine/src/sherpa.rs` are transcribed from the v2.0.3
+`c-api.h`. A different sherpa version needs that header re-checked, not assumed compatible.
+
+### R2 — `local:sherpa` as a service
+
+Once R1 passes: `transcribe_local_engine('local:sherpa')` returns a sub that writes the clip to a
+temp 16 kHz WAV and runs the staged `jawn-asr`; `sherpa_available()` = binary + model directory;
+`ai_transcribe_test` learns it. The Plat transcription rows offer it only when available. Because
+the model is English, a role naming sherpa with a non-English `$lang` should fall through to the
+fallback rather than return English-ish text — decide and pin that.
+
+### R3 — Wire the engine to the audio
+
+- **Phone:** the BLE stream decodes to PCM and is pushed through the six `jawn_audio_pushed_*`
+  exports (`engine/src/pushed.rs:392`); add the JNI declarations in `JawnAudioEngineJni.cpp` and
+  the push in the BLE decode path. 8 kHz in, so a resample to 16 kHz is needed for sherpa —
+  `LinearResampler` exists (`engine/src/bearing.rs:965`).
+- **Laptop and Gou:** `SystemCapture` already captures a named PipeWire source through `parec`;
+  the screened call's `jawn_call_in.monitor` is the source there.
+- Done when a pushed clip and the IVR monitor each produce partial lines in the log.
+
+### R4 — Surface partials
+
+`Domain/Ble2.pm` transcribes every N parts as they arrive instead of only on `last`, and sends a
+`voice_partial` message; the phone's transcript pane already renders partials (`public/js/manager/phone.js:1735`).
+Caveat: a BLE-only watch at MTU 23 cannot sustain the stream (12 payload bytes per notify), so
+partials are real on WiFi and on the laptop; de-scope or wait for the MTU work.
+
+### R5 — Build and stage the watch firmware
+
+The 16 kHz change is committed but never built. `cd jw && pio run -j 4` (cap jobs), then
+`perl scripts/stage_firmware.pl`; the manager serves `jw/build/watch/firmware.bin`, and an
+unstaged build would OTA the previous firmware. `jw/VERSION` is already 0.1.2285.
+
+### R6 — The claim across machines
+
+`~/.president/voice-seen` is per machine; two machines that both ingest the same relayed clip
+would each act on it. Decide: a synced marker / DB row, or accept single-machine atomicity.
+
+### R7 — Phone verification
+
+Install 1374 and check, on the device: the IME's recogniser starts (permission already granted?),
+a silent press falls back to the recorder instead of dying, the restart-after-phrase loop, and
+that `android:oem` set in Plat actually reaches the keyboard page without a reload.
+
+### R8 — Housekeeping
+
+- Rotate the Gou password: it was found in a world-readable systemd drop-in and removed.
+- The landed worktrees can be removed (`git worktree list`; `git worktree remove <dir>` and
+  `git branch -D <branch>` for each landed branch).
+
+## Gates
+
+`perl scripts/tests_for.pl --staged --run` while iterating; the queue runs the suite on landing.
+Prose-only changes (this file) run no test. Never bare `prove -l t`.
+
+## File map
+
+- Roles and services: `lib/JawnOS/Domain/Ai.pm` (`transcription_role_for`, `transcription_service_for`,
+  `whisper_transcribe`, `voice_ingest`, `voice_clip_fresh`), `Domain/Ai2.pm` (`ai_role_models`).
+- Watch path: `Domain/Ble2.pm`, `perl/watch.pl`, `jw/jw_08_voice.ino`, `jw/jw_09_voice_ship.ino`.
+- IVR: `lib/JawnOS/Sco/Gateway.pm`, `templates/apps/phone.html.ep`.
+- Engine: `engine/src/pushed.rs`, `engine/src/sherpa.rs`, `engine/src/bin/jawn_asr.rs`,
+  `engine/build.rs`, `scripts/build_engine.pl`, `docs/engine-asr.md`.
+- App: `JawnSpeech.java`, `JawnImeService.java`, `JawnAudioEngineJni.cpp` (JNI, R3).
+- Tests that claim this work: `t/179`, `t/468`, `t/469`, `t/470`, `t/471`, `t/472`, `t/473`.
