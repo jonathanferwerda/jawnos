@@ -489,6 +489,12 @@ class Bridge(object):
         props = dbus.Interface(self.bus.get_object(BLUEZ, path), 'org.freedesktop.DBus.Properties')
         return props.Get(DEVICE_IFACE, name)
 
+    def _char_prop(self, path, name):
+        # A characteristic's properties live on GattCharacteristic1, not on
+        # Device1. BlueZ >= 5.62 reports the negotiated ATT MTU there.
+        props = dbus.Interface(self.bus.get_object(BLUEZ, path), 'org.freedesktop.DBus.Properties')
+        return props.Get(GATT_CHAR_IFACE, name)
+
     def _bluetooth_ready(self):
         adapter = self._adapter_path()
         if adapter is None:
@@ -892,6 +898,16 @@ class Bridge(object):
         link.polling = False
         link.connected_at = time.time()
         link.mtu = int(link.target.get("mtu") or DEFAULT_MTU)
+        # The connect command's mtu is a REQUEST. Ask BlueZ what the peer
+        # actually agreed to; framing at 512 when the link settled at 23 is
+        # what loses parts. An older BlueZ has no such property, so the
+        # request stands (and status reports it, as before).
+        try:
+            negotiated = int(self._char_prop(notify_char, "MTU"))
+            if negotiated >= 23:
+                link.mtu = negotiated
+        except (dbus.exceptions.DBusException, TypeError, ValueError):
+            pass
         link.set_state("connected")
         self.info("connected to", link.mac, "mtu", link.mtu)
         self.emit({

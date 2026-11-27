@@ -89,19 +89,27 @@ The **live BLE stream stays 8 kHz.** The **whole-clip file** records **16 kHz wh
 at capture start** and 8 kHz otherwise — it is uploaded over HTTP, not notified, so it can
 afford the rate that the link cannot.
 
-Why the stream cannot follow: at the phone's **MTU 23** a notify carries **12 payload bytes**
-(`jw/jw_02_ble.ino:115`), so an 8 kHz stream already runs roughly **11x slower than realtime**
+Why the stream was assumed unable to follow: at **MTU 23** a notify carries **12 payload bytes**
+(`jw/jw_02_ble.ino:115`), so an 8 kHz stream would run roughly **11x slower than realtime**
 and the sender abandons it rather than truncate the clip (`jw/jw_08_voice.ino:319-331`).
-16 kHz over the same link would double a BLE file upload that is slow to begin with.
 
-**Requesting a larger MTU is deliberately deferred, not rejected.** A 512-byte request
-disturbed the watch's display rendering (`JawnBleService.java` ~:1191 — the radio and the LVGL
-flush contend), so it stays an opt-in and a later, *measured* change: get the number from the
-watch, then decide.
+**Measured 2026-11-27: the watch/phone link negotiates MTU 512, not 23.** The Android bridge
+requests 512 and the watch grants it (`scripts/jawn-bt status` on the phone reports
+`"mtu":512` while connected), so a notify carries 509 bytes and the 4 KB stream parts fit in
+about 11 notifies each. The display contention that made 512 an opt-in was an Android request
+time issue, not a reason to stay at 23; the watch's fragmentation already follows
+`getPeerMTU()`. The desktop bridge has no MTU API of its own, so it now reads BlueZ's
+`GattCharacteristic1.MTU` after subscribing and reports the negotiated value instead of the
+number it asked for (`desktop/jawnos_desktop/ble.py`). If a link really has settled at 23,
+that is now visible instead of hidden behind a reported 512.
+
+The **WiFi route returns at once.** `/watch/voice` sends the same `voice_recv` receipt the BLE
+whole-clip path sends, and runs whisper + the Guide in a child; previously it did both inline,
+the watch's 4 s POST timed out, and the watch re-shipped the clip over BLE for up to 45 s.
 
 **Open decision:** whether the live stream or the whole-clip file is the **authoritative
-transcript**. *File-is-truth* was proposed — the file is the only copy at the full rate and the
-only one whose truncation leaves a valid clip — but it is **not built**.
+transcript**. *File-is-truth* was built: a memo waits for the file; a command takes whichever
+copy arrives first (`lib/JawnOS/Domain/Ai.pm`, `docs/transcription-roadmap.md`).
 
 ## Parked items (pick up any)
 
@@ -112,5 +120,16 @@ only one whose truncation leaves a valid clip — but it is **not built**.
    Then the Android foreground service.
 4. **ES7210 mic-gain** on the watch (helps the close/whisper case actually used today).
 5. **WiFi-join verification** on the watch (creds are in the DB; just needs the join).
+6. **A spoken reply on a machine with no piper.** The Android app runtime runs no glibc
+   binary and ships no python, so `scripts/jawnos_deps.pl` deliberately skips piper there and
+   the watch's phone homebase was answering in text only. The reply paths now fall back to the
+   OpenAI-compatible `/audio/speech` endpoint the `text_to_audio_assistant` role names
+   (`groq:playai-tts` by default), transcribed to 8 kHz mono with ffmpeg. Before the cloud,
+   the reply paths ask the Crew for a peer with piper (`say.render`, gated on the `piper`
+   tool) and stream the 8 kHz PCM it returns, so the house voice stays the house voice. Piper
+   stays first wherever it can run, so a desktop's own voice does not change. Groq retired the PlayAI model,
+   so that setting is mapped to `canopylabs/orpheus-v1-english` (voice `hannah`) and the log
+   names the model that actually spoke. Note the privacy trade: a reply spoken through the
+   cloud sends that sentence to the provider.
 
 The spoken-input brain those all feed is the guide's; see `docs/voice-brain-handoff.md`.

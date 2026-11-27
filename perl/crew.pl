@@ -94,6 +94,19 @@ our %KINDS = (
 		needs   => ['whisper'],
 		cost    => 'heavy',
 	},
+	# A machine with piper renders a spoken reply for one that has none (the
+	# watch's phone homebase is the app runtime: no glibc piper, no python).
+	# 8 kHz mono PCM comes back, the rate every reply path already uses.
+	'say.render' => {
+		handler => \&_job_say_render,
+		timeout => 60,
+		needs   => ['piper'],
+		cost    => 'light',
+		# The result is audio, not a small answer: a cached copy would sit in
+		# the job cache for thirty minutes after each spoken reply. The caller
+		# has it as soon as the job returns, so do not store it.
+		cache   => 0,
+	},
 	# The public (Tailscale-hosted) DERP relay. Any machine may dispatch it; the
 	# `headscale` ability decides which one runs it, because only a machine that
 	# holds the Headscale control target can reach the relay's config.
@@ -111,6 +124,16 @@ sub job_kind {
 	my ($kind) = @_;
 	return undef unless defined $kind && $kind =~ /^[a-z][a-z0-9_.]{1,40}$/;
 	return $KINDS{$kind};
+}
+
+# Does this kind's successful result belong in the job cache? Pure. Audio and
+# other bulk results say no: the caller has the answer, and thirty minutes of it
+# in the cache is waste.
+sub job_caches {
+	my ($kind) = @_;
+	my $spec = job_kind($kind);
+	return 1 unless $spec;
+	return defined $spec->{'cache'} ? $spec->{'cache'} : 1;
 }
 
 # The kinds this machine can run right now.
@@ -187,6 +210,7 @@ sub _compute_abilities {
 		ffmpeg    => _which('ffmpeg') ? 1 : 0,
 		tesseract => _which('tesseract') ? 1 : 0,
 		whisper   => _whisper_binary() ? 1 : 0,
+		piper     => _piper_binary() ? 1 : 0,
 		perl      => _which('perl') ? 1 : 0,
 		node      => _which('node') ? 1 : 0,
 		git       => _which('git') ? 1 : 0,
@@ -545,7 +569,7 @@ sub dispatch {
 			job_id  => $job_id,
 			origin  => $me,
 		);
-		job_store($job_id, $outcome) if $outcome->{'ok'};
+		job_store($job_id, $outcome) if $outcome->{'ok'} && job_caches($kind);
 		return $outcome;
 	}
 
@@ -887,6 +911,15 @@ sub _which {
 		return $path if -f $path && -x $path;
 	}
 	return '';
+}
+
+# Piper AND a voice model: a binary with no model renders nothing, so the
+# ability has to mean "this machine can actually speak".
+sub _piper_binary {
+	my $argv = eval { &subs::say_piper_argv() } || [];
+	my ($parts, $espeak, $model) = eval { &subs::say_piper_parts() } || ();
+	return '' unless $argv && ref $argv eq 'ARRAY' && @{$argv} && $parts && $model;
+	return $argv->[-1] || 'piper';
 }
 
 sub _whisper_binary {
@@ -1502,6 +1535,24 @@ sub _job_whisper_transcribe {
 	my $text = &subs::whisper_transcribe($raw, $lang);
 	die "no transcript\n" unless defined $text && length $text;
 	return { text => $text, lang => $lang };
+}
+
+# Render a spoken reply here, for a caller that has no piper. The engine itself
+# decides the voice (say_piper_parts), and only the 8 kHz PCM rides the wire:
+# the caller writes or streams it exactly as its own render would.
+sub _job_say_render {
+	my ($payload) = @_;
+	my $text = defined $payload->{'text'} ? $payload->{'text'} : '';
+	$text =~ s/^\s+|\s+$//g;
+	die "say.render needs text\n" unless length $text;
+	# A reply is a sentence or two; a cap keeps a runaway caller from turning
+	# the job reply into megabytes of base64 on the wire and in the job cache.
+	die "say.render text is too long\n" if length($text) > 2000;
+	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+	die "piper is not ready here\n" unless $argv && $model;
+	my $pcm = &subs::piper_pcm_8k($text, $argv, $espeak, $model, $rate);
+	die "piper rendered nothing\n" unless defined $pcm && length $pcm;
+	return { pcm_b64 => encode_base64($pcm, ''), rate => 8000 };
 }
 
 1;

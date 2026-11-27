@@ -283,7 +283,44 @@ like($ble, qr/\(\$rec->\{'voice'\} \/\/ ''\) ne \$VOICE_NOTE_MODE/,
 	'the streamed voice_recv is withheld for a memo');
 
 my $watch = read_file('perl/watch.pl');
-like($watch, qr/voice_ingest\([^\n]*source => 'file'/,
+like($watch, qr/source => 'file', t_arrival => \$t_arrival/,
 	'the WiFi route names its body a file');
+
+# A WiFi clip is a whole file, so the route sends the same receipt the BLE
+# whole-clip path sends on reassembly - before whisper or the Guide run. The
+# watch holds the file and re-POSTs it every six seconds until it hears this,
+# and its POST timeout is 4 s, so an inline ingest made every clip retry for
+# the whole 45 s cap.
+like($watch, qr/type => 'voice_recv'[^\n]*ts => \(0 \+ \(\$ts \|\| 0\)\)/,
+	'the WiFi route sends the clip receipt');
+like($watch, qr/subprocessor\(sub \{\s*&subs::voice_ingest/, 
+	'the WiFi route ingests off the request');
+unlike($watch, qr/^\s*&subs::voice_ingest\(\$raw, \{ edt => \$edt/m,
+	'the WiFi route no longer transcribes inline in the request');
+like($watch, qr/peer_ip => \$peer_ip/, 'the WiFi route hands the device source address on');
+like($watch, qr/t_arrival => \$t_arrival/, 'the WiFi route stamps when the clip arrived');
+
+# The timing ledger answers "where did the 30 s go?". Stub the Guide's model
+# and the command app so this observes the log line alone.
+{
+	my @logged;
+	{
+		no warnings 'redefine';
+		local *TLog::info = sub { push @logged, $_[1] };
+		local *TLog::error = sub { push @logged, $_[1] };
+		local $subs::log = bless {}, 'TLog';
+		$main::WHISPER = 'start email test';
+		&subs::voice_ingest('raw', {
+			voice => 'hey_jawn', source => 'file', chip_id => 'timing-chip',
+			ts => 1_700_002_000, t_arrival => &subs::rightNow() - 250,
+		});
+	}
+	ok(scalar(grep { /voice: timing stage=asr/ } @logged),
+		'the ingest logs when whisper finished');
+	ok(scalar(grep { /voice: timing stage=command/ } @logged),
+		'the ingest logs when the command was applied');
+	ok(scalar(grep { /since_onset=\d+ms/ } @logged),
+		'and the line carries the person-side clock');
+}
 
 done_testing();

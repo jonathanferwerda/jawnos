@@ -174,9 +174,19 @@ get '/watch/telephone_msg' => sub($c) {
 post '/watch/voice' => sub($c) {
 	# A voice clip from the watch over WiFi (the Bluetooth route funnels into the
 	# same voice_ingest). The body is the raw WAV; the params carry the usual
-	# authorization. Transcribing is slow, so it runs off the request and the
-	# watch is told 'ok' at once - it hears the result only as whatever the
-	# command changes (the toggle is pushed back like any other).
+	# authorization.
+	#
+	# The watch holds the clip until it is told the bytes arrived, and it re-POSTs
+	# the file every six seconds until its 45 s cap. So answer both parts at once:
+	# voice_recv is the receipt (the same one the BLE whole-clip path sends on
+	# reassembly), and 'ok' ends the POST. whisper and the Guide run after, in a
+	# child.
+	#
+	# Running them inline here was measured at 30-40 s on the watch: the watch's
+	# POST timeout is 4 s, so every clip timed out, the homebase was marked down
+	# for 20 s, and the watch shipped the same clip again over BLE. A forked child
+	# re-dials the database itself (Domain/Key.pm detaches the parent's handle by
+	# pid), which is how the BLE ingest has always run.
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
 	if (my $watch_settings = &embeddedAuthorizer($c)) {
@@ -186,11 +196,22 @@ post '/watch/voice' => sub($c) {
 			$raw = MIME::Base64::decode_base64($b64) // '';
 		}
 		if (length $raw > 100) {
-			# inline, not forked: the ingest reads and writes the database, and a
-			# SQLite handle does not survive fork() - the forked child died mid
-			# match holding the parent's handle. whisper is a couple of seconds and
-			# a voice clip is rare, so the brief wait is fine.
-			&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id, ts => $c->param('timestamp'), voice => $c->param('voice'), source => 'file' });
+			my $ts = $c->param('timestamp');
+			my $voice = $c->param('voice');
+			my $t_arrival = &subs::rightNow();
+			&subs::bluetooth_sender_async({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $chip_id,
+				edt => $edt || 'watch',
+				message => { type => 'voice_recv', ts => (0 + ($ts || 0)) },
+			});
+			my $peer_ip = $c->tx->remote_address;
+			&subs::subprocessor(sub {
+				&subs::voice_ingest($raw, {
+					edt => $edt, chip_id => $chip_id, ts => $ts, voice => $voice,
+					source => 'file', t_arrival => $t_arrival, peer_ip => $peer_ip,
+				});
+			}, { name => 'voice ingest' });
 		}
 		$c->render('text' => 'ok');
 	}

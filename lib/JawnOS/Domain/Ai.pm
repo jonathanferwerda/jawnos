@@ -1115,10 +1115,12 @@ sub voice_brain {
 		. "words may be misheard, and there is no follow-up turn - when the intent is clear, act "
 		. "or answer; do not reply with a question. Keep spoken answers to one or two short sentences.\n";
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
+	my $brain_started = &subs::rightNow();
 	my ($out) = $fast
 		? &subs::evaluation_model_call_with_fallback($fast, $model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking_effective('help_assistant'), 'help_assistant')
 		: &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking_effective('help_assistant'));
-	$log->info('voice: brain model ' . ($fast || $model) . ' raw ' . (defined $out ? substr($out, 0, 240) : 'undef'));
+	$log->info('voice: brain call ' . (&subs::rightNow() - $brain_started) . 'ms on ' . ($fast || $model)
+		. ' raw ' . (defined $out ? substr($out, 0, 240) : 'undef'));
 	my $action = &json_from_model($out);
 	if ($action && ref $action eq 'HASH' && $action->{'action'}) {
 		$log->info('voice: brain action ' . $action->{'action'});
@@ -1227,6 +1229,23 @@ sub voice_ingest {
 	my $mode   = $meta->{'voice'} || '';
 	my $source = $meta->{'source'} || 'file';
 	$meta->{'source'} = $source;
+	# One ledger line per stage, so "it took 30 s" can be answered without
+	# guessing. The watch stamps the clip when the person STARTED speaking
+	# (ts), so since_onset is the wall clock the person actually feels; the
+	# caller's t_arrival separates the network from whisper and the Guide.
+	my $t0 = (defined $meta->{'t_arrival'} && $meta->{'t_arrival'})
+		? $meta->{'t_arrival'} : &subs::rightNow();
+	my $timing = sub {
+		my ($stage, $extra) = @_;
+		my $now = &subs::rightNow();
+		my $onset = (defined $meta->{'ts'} && $meta->{'ts'}) ? ($now - $meta->{'ts'}) : undef;
+		$log->info('voice: timing stage=' . $stage
+			. ' chip=' . ($meta->{'chip_id'} // '-')
+			. ' source=' . $source
+			. ' since_onset=' . (defined $onset ? $onset : '-') . 'ms'
+			. ' since_arrival=' . ($now - $t0) . 'ms'
+			. ((defined $extra && length $extra) ? ' ' . $extra : ''));
+	};
 	if ($mode eq $VOICE_NOTE_MODE && $source eq 'stream') {
 		$log->info('voice: memo streamed; waiting for the whole-clip file');
 		return { status => 'deferred' };
@@ -1241,7 +1260,11 @@ sub voice_ingest {
 		return { status => 'duplicate' };
 	}
 	my $text = &subs::whisper_transcribe($raw, undef, $meta->{'edt'} || 'watch');
-	return { status => 'silence' } unless $text;
+	if (!$text) {
+		$timing->('silence');
+		return { status => 'silence' };
+	}
+	$timing->('asr');
 	$log->info('voice: heard "' . $text . '"');
 	# The watch's Rec button records a memo, not a command: file it in Notes and
 	# stop. It is the one path that turns speech into a note now.
@@ -1249,8 +1272,10 @@ sub voice_ingest {
 		if (&subs::voice_note_store($text, $meta->{'ts'}, $meta->{'chip_id'})) {
 			&Websocket::send('tab', { console => &Websocket::console_command('notesReload')});
 			&subs::voice_clip_ack($meta);
+			$timing->('note');
 			return { status => 'note', said => $text };
 		}
+		$timing->('note_empty');
 		return { status => 'note_empty', said => $text };
 	}
 	# A wake-word capture already consumed the phrase on the watch, so its
@@ -1281,6 +1306,7 @@ sub voice_ingest {
 				return { status => 'apply_failed', app => $app, said => $text };
 			}
 			$log->info('voice: ' . $app . ' -> ' . $cmd->{'want'} . ' (' . $text . ')');
+			$timing->('command', 'app=' . $app . ' want=' . $cmd->{'want'});
 			return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text };
 		}
 		# The verb was heard but no app matches the target: fall through to the
@@ -1300,10 +1326,12 @@ sub voice_ingest {
 		my $handled = ($brain && ref $brain eq 'HASH' && $brain->{'handled'}) ? 1 : 0;
 		$log->info($handled ? 'voice: brain handled "' . $text . '"' : 'voice: guide left "' . $text . '"');
 		&subs::voice_clip_ack($meta);
+		$timing->($handled ? 'brain' : 'guide');
 		return { status => ($handled ? 'brain' : 'guide'), said => $text,
 			($handled ? %{$brain} : ()) };
 	}
 	# A VAD clip of the room (no phrase) is not addressed: nothing to do.
+	$timing->('unaddressed');
 	return $cmd;
 }
 

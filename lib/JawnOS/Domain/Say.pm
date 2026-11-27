@@ -271,13 +271,23 @@ sub device_wifi_reply {
 	my ($meta) = @_;
 	return undef unless $meta && $meta->{'chip_id'};
 	my $edt = $meta->{'edt'} || 'watch';
-	my $dev = &subs::device_lister(&subs::rightNow(), $edt, undef, $meta->{'chip_id'});
-	my $dev_ip = $dev->{'ip'};
-	return undef unless $dev_ip && $dev_ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
-	require IO::Socket::INET;
-	my $sock = IO::Socket::INET->new(PeerAddr => $dev_ip, PeerPort => ($ENV{PORT_BOARD} || 3000), Proto => 'tcp', Timeout => 0.7);
-	return undef unless $sock;
-	close $sock;
+	# A clip that arrived over the WiFi route names the device by its source
+	# address, even when the device list has no IP for it (a watch seen only over
+	# BLE). That is proof the device is on this network right now, so its board
+	# server is not probed: the probe stays for the BLE path, where the request's
+	# source is the bridge rather than the device.
+	my $peer = $meta->{'peer_ip'} || '';
+	my $dev_ip = $peer =~ /^(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}$/
+		? $peer : '';
+	if (!length $dev_ip) {
+		my $dev = &subs::device_lister(&subs::rightNow(), $edt, undef, $meta->{'chip_id'});
+		$dev_ip = $dev->{'ip'};
+		return undef unless $dev_ip && $dev_ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+		require IO::Socket::INET;
+		my $sock = IO::Socket::INET->new(PeerAddr => $dev_ip, PeerPort => ($ENV{PORT_BOARD} || 3000), Proto => 'tcp', Timeout => 0.7);
+		return undef unless $sock;
+		close $sock;
+	}
 	# the server's own address on the device's subnet: a fallback machine may
 	# differ from the homebase the device still has stored
 	my $addrs = &subs::network_interface_reporter();
@@ -296,27 +306,140 @@ sub device_wifi_reply {
 		$server_ip = $first->{'ip'};
 	}
 	return undef unless $server_ip;
-	my $od = eval { decode_json(&subs::embedded_operator_door($edt, $meta->{'chip_id'})) } || {};
-	my $auth = $od->{'__specs'}->{'authorization'};
-	return undef unless $auth;
+	# The reply id is the capability (see /watch/reply_audio), so the device needs
+	# no Now Me pair to fetch the one-shot file. A missing authorization spec must
+	# not push a WiFi reply back onto Bluetooth, where the sound is slow.
 	return {
 		ip => $dev_ip,
 		edt => $edt,
-		auth => $auth,
 		base => 'https://' . $server_ip . ':' . ($ENV{'PORT_ARM'} || ''),
 	};
 }
 
-# Render the answer once as a WAV, so a WiFi device can fetch it in one
-# streamed GET instead of receiving hundreds of BLE notifications. Returns the
-# id (the file is ~/.president/reply_<id>.wav) or undef when piper/ffmpeg
-# cannot produce one; the caller then keeps the BLE stream.
-sub device_reply_wav {
-	my ($text) = @_;
-	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+# The cloud speech model a reply falls back to when this machine has no piper.
+# The Android app runtime is one: it runs no glibc binary and ships no python, so
+# scripts/jawnos_deps.pl skips piper there by design. Piper is still preferred
+# wherever it can speak, so the house voice does not change on a desktop.
+sub reply_speech_model {
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'text_to_audio_assistant' });
+	$model = &subs::setting_grabber({ app => 'mail', setting => 'text_to_audio_assistant', device => 'all' })
+		unless defined $model && length $model;
+	return (defined $model && length $model) ? $model : '';
+}
+
+# Piper -> 8 kHz mono s16le PCM (the rate the watch's speaker opens). '' when
+# piper is absent or the pipeline fails; the caller then tries the cloud.
+sub piper_pcm_8k {
+	my ($text, $argv, $espeak, $model, $rate) = @_;
 	return undef unless $argv && $model;
 	require IPC::Open3;
 	require Symbol;
+	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
+	my $pipeline = join(' | ', &subs::pipeline_quote(@piper),
+		"ffmpeg -nostdin -loglevel error -f s16le -ar $rate -ac 1 -i - -f s16le -ar 8000 -ac 1 -");
+	my $err = Symbol::gensym();
+	my ($pin, $pout);
+	my $pid = eval { IPC::Open3::open3($pin, $pout, $err, 'sh', '-c', $pipeline) };
+	return undef unless $pid;
+	print {$pin} $text;
+	close $pin;
+	binmode($pout);
+	my $pcm = do { local $/; <$pout> // '' };
+	close $pout;
+	close $err;
+	waitpid($pid, 0);
+	return ($? == 0 && length $pcm) ? $pcm : undef;
+}
+
+# Any container ffmpeg reads (the cloud hands back mp3 or wav) -> the same
+# 8 kHz mono s16le PCM the reply paths have always streamed.
+sub transcode_pcm_8k {
+	my ($bytes) = @_;
+	return undef unless defined $bytes && length $bytes;
+	require IPC::Open3;
+	require Symbol;
+	my $err = Symbol::gensym();
+	my ($pin, $pout);
+	my $pid = eval {
+		IPC::Open3::open3($pin, $pout, $err, 'ffmpeg',
+			'-nostdin', '-loglevel', 'error', '-i', '-',
+			'-f', 's16le', '-ar', '8000', '-ac', '1', '-')
+	};
+	return undef unless $pid;
+	binmode($pin);
+	print {$pin} $bytes;
+	close $pin;
+	binmode($pout);
+	my $pcm = do { local $/; <$pout> // '' };
+	close $pout;
+	close $err;
+	waitpid($pid, 0);
+	return ($? == 0 && length $pcm) ? $pcm : undef;
+}
+
+# Ask the Crew for a machine with piper to render the words. Returns 8 kHz
+# PCM, or undef. This keeps the house voice on a homebase that cannot run
+# piper (the Android app runtime) without sending the reply to a provider.
+sub crew_say_render {
+	my ($text) = @_;
+	return undef unless defined $text && length $text;
+	return undef unless defined &crew::dispatch;
+	my $out = eval { &crew::dispatch('say.render', { text => $text }) };
+	if ($out && ref $out eq 'HASH' && !$out->{'ok'}) {
+		$log->info('voice: peer piper unavailable: ' . ($out->{'error'} || 'no peer')) if $log;
+	}
+	return undef unless $out && ref $out eq 'HASH' && $out->{'ok'};
+	my $res = $out->{'result'};
+	return undef unless ref $res eq 'HASH' && defined $res->{'pcm_b64'} && length $res->{'pcm_b64'};
+	require MIME::Base64;
+	my $pcm = MIME::Base64::decode_base64($res->{'pcm_b64'});
+	return (defined $pcm && length $pcm) ? $pcm : undef;
+}
+
+# The words as 8 kHz PCM by whichever engine this machine has. Returns
+# ($pcm, $source, $error); $source is 'piper', 'piper@peer' or 'cloud:<model>',
+# so a log line and a test can say who spoke.
+sub reply_pcm_8k {
+	my ($text) = @_;
+	return (undef, undef, 'nothing to say') unless defined $text && length $text;
+	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+	if ($argv && $model) {
+		my $pcm = &piper_pcm_8k($text, $argv, $espeak, $model, $rate);
+		return ($pcm, 'piper', undef) if defined $pcm && length $pcm;
+	}
+	# No local piper: a peer that has one renders the house voice. This is the
+	# phone homebase's normal path, and it keeps the reply out of the cloud.
+	my $peer = &subs::crew_say_render($text);
+	return ($peer, 'piper@peer', undef) if defined $peer && length $peer;
+	my $speech = &subs::reply_speech_model();
+	return (undef, undef, 'no piper here and no speech model is set (Configure, Plat, Audio)') unless length $speech;
+	my ($bytes, undef, $err) = &subs::ai_text_to_speech_result($text, $speech);
+	return (undef, undef, $err || 'the speech model returned nothing') unless defined $bytes && length $bytes;
+	my $pcm = &transcode_pcm_8k($bytes);
+	return (undef, undef, 'the speech audio could not be transcoded (ffmpeg)') unless defined $pcm && length $pcm;
+	# Name the model that actually answered: a stale groq:playai-tts setting
+	# is mapped to the current Orpheus model, and the log should say so.
+	my ($provider, $real) = &subs::ai_text_to_speech_spec($speech, $text);
+	my $label = ($provider && $real)
+		? (($speech =~ /^[a-z]+:/) ? $provider . ':' . $real : $real) : $speech;
+	return ($pcm, 'cloud:' . $label, undef);
+}
+
+# A 44-byte PCM WAV header around 8 kHz mono s16le samples.
+sub reply_wav_bytes {
+	my ($pcm) = @_;
+	return '' unless defined $pcm && length $pcm;
+	return 'RIFF' . pack('V', 36 + length($pcm)) . 'WAVE'
+		. 'fmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 16000, 2, 16)
+		. 'data' . pack('V', length($pcm)) . $pcm;
+}
+
+# Render the answer once as a WAV, so a WiFi device can fetch it in one
+# streamed GET instead of receiving hundreds of BLE notifications. Returns the
+# id (the file is ~/.president/reply_<id>.wav) or undef when neither piper nor
+# the cloud speech model can produce one; the caller then keeps the BLE stream.
+sub device_reply_wav {
+	my ($text) = @_;
 	my $dir = &subs::home('~/.president');
 	foreach my $old ( glob("$dir/reply_*.wav") ) {
 		unlink $old if $old && time - (stat($old))[9] > 600;
@@ -326,33 +449,19 @@ sub device_reply_wav {
 	$id = substr($id, 0, 24);
 	return undef unless length $id >= 16;
 	my $path = "$dir/reply_$id.wav";
-	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
-	my $pipeline = join(' | ', &subs::pipeline_quote(@piper),
-		"ffmpeg -nostdin -loglevel error -f s16le -ar $rate -ac 1 -i - -ar 8000 -ac 1 -f wav -");
-	my $err = Symbol::gensym();
-	my ($pin, $pout);
-	my $pid = eval { IPC::Open3::open3($pin, $pout, $err, 'sh', '-c', $pipeline) };
-	return undef unless $pid;
-	print {$pin} $text;
-	close $pin;
-	binmode($pout);
-	open(my $out, '>', $path) or return undef;
-	binmode($out);
-	my $bytes = 0;
-	while (1) {
-		my $buf = '';
-		my $n = read($pout, $buf, 8192);
-		last unless defined $n && $n > 0;
-		print {$out} $buf;
-		$bytes += $n;
-	}
-	close $pout;
-	waitpid($pid, 0);
-	close $out;
-	if ($bytes < 100) {
-		unlink $path;
+	my $started = &subs::rightNow();
+	my ($pcm, $source, $err) = &subs::reply_pcm_8k($text);
+	unless (defined $pcm && length $pcm) {
+		$log->info('voice: reply audio unavailable: ' . ($err || 'nothing rendered')) if $log;
 		return undef;
 	}
+	my $wav = &subs::reply_wav_bytes($pcm);
+	unless (write_file($path, { binmode => ':raw' }, $wav)) {
+		$log->info('voice: reply audio could not be written to ' . $path) if $log;
+		return undef;
+	}
+	$log->info('voice: reply audio ' . $source . ' ' . length($pcm) . ' bytes in '
+		. (&subs::rightNow() - $started) . 'ms') if $log;
 	return $id;
 }
 
@@ -364,6 +473,11 @@ sub watch_reply {
 	my ($meta, $text) = @_;
 	return unless $meta && $meta->{'chip_id'} && defined $text && length $text;
 	my $edt = $meta->{'edt'} || 'watch';
+	# The person's clock, not the log's: ts is when they started speaking. The
+	# reply line below is the end-to-end number they actually feel.
+	my $since_onset = (defined $meta->{'ts'} && $meta->{'ts'})
+		? (&subs::rightNow() - $meta->{'ts'}) . 'ms' : '-';
+	my $who = ' chip=' . $meta->{'chip_id'} . ' since_onset=' . $since_onset;
 	# The words go first and must keep their place ahead of the audio below, so
 	# this send is async only when we are on the loop (see bluetooth_sender_async:
 	# inside a fork it runs inline).
@@ -377,7 +491,10 @@ sub watch_reply {
 	# by default, writes audio_replies into the device's operator_door specs.
 	my $op = eval { decode_json &subs::embedded_operator_door($edt, $meta->{'chip_id'}) } || {};
 	my $want = $op->{'__specs'}->{'audio_replies'};
-	return if defined $want && $want eq 'off';
+	if (defined $want && $want eq 'off') {
+		$log->info('voice: reply text-only (audio replies are off)' . $who) if $log;
+		return;
+	}
 	# A device on WiFi pulls one WAV instead of receiving hundreds of BLE parts;
 	# an off-WiFi device gets the BLE stream immediately. The text above is the
 	# small, immediate half either way.
@@ -389,6 +506,7 @@ sub watch_reply {
 			edt => $edt,
 			base => $wifi->{'base'},
 		};
+		$log->info('voice: reply transport=wifi' . $who) if $log;
 		&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_wifi($args) },
 			{ name => 'watch reply wifi', fork => 1, args => $args });
 		return;
@@ -397,6 +515,7 @@ sub watch_reply {
 	# runs voice_ingest inline in the request: do all of this off the request. The
 	# child re-dials the database itself (bluetooth_sender reads it), so forking
 	# here is safe.
+	$log->info('voice: reply transport=ble' . $who) if $log;
 	my $args = { text => $text, chip_id => $meta->{'chip_id'}, edt => $edt };
 	&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_audio($args) },
 		{ name => 'watch reply audio', fork => 1, args => $args });
@@ -446,7 +565,6 @@ sub watch_reply_audio {
 sub watch_reply_stream {
 	my ($meta, $text) = @_;
 	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
-	return 0 unless $argv && $model;
 	require MIME::Base64;
 	require IPC::Open3;
 	require Symbol;
@@ -481,6 +599,33 @@ sub watch_reply_stream {
 			});
 		}
 	};
+	# No piper on this machine (the Android app runtime ships none): render the
+	# answer through the configured cloud speech model and send the same 8 kHz
+	# PCM parts. This is the case that used to leave the watch silent.
+	if (!$argv || !$model) {
+		my $started = &subs::rightNow();
+		my ($pcm, $source, $err) = &subs::reply_pcm_8k($text);
+		my $sent = 0;
+		if (defined $pcm && length $pcm) {
+			my $est_total = length $pcm;
+			my $seq = 0;
+			for (my $off = 0; $off < length $pcm; $off += 4096) {
+				my $chunk = substr($pcm, $off, 4096);
+				$send->({ type => 'say_audio', data => { seq => $seq, last => 0, rate => 8000, total => $est_total, audio => MIME::Base64::encode_base64($chunk, '') } });
+				$seq++;
+			}
+			$send->({ type => 'say_audio', data => { seq => $seq, last => 1, rate => 8000, total => $est_total, audio => '' } });
+			$sent = 1;
+			$log->info('voice: reply audio ' . $source . ' ' . length($pcm) . ' bytes in '
+				. (&subs::rightNow() - $started) . 'ms over BLE') if $log;
+		}
+		else {
+			$log->info('voice: no reply audio rendered for the watch (text only): '
+				. ($err || 'nothing rendered')) if $log;
+		}
+		close $bt if $bt;
+		return $sent;
+	}
 	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
 	# How much audio there will be, near enough: ~14 characters a second of
 	# speech, 8 kHz mono s16 is 16000 bytes a second. The watch uses it to decide

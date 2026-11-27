@@ -411,7 +411,7 @@ sub action_10415 {
 		my ($c, $result) = @_;
 		$result ||= { ok => 0, error => 'the job did not finish' };
 		&crew::queue_done($job_id);
-		&crew::job_store($job_id, $result) if $result->{'ok'};
+		&crew::job_store($job_id, $result) if $result->{'ok'} && &crew::job_caches($kind);
 		$log->info('crew job ' . $kind . ' ' . $job_id . ($result->{'ok'}
 			? ' done'
 			: ' failed: ' . substr($result->{'error'} || 'no reason', 0, 160)));

@@ -797,6 +797,67 @@ sub ai_text_to_media {
 	return (undef, undef, "the model answered without $kind");
 }
 
+# The request an OpenAI-compatible /audio/speech endpoint expects. Kept apart
+# from the call so the shape can be tested without a provider or a key: the
+# voice reply asks for a WAV, but the transcode accepts whatever it sends.
+# Returns (provider, real model, url, key setting, payload) or ().
+sub ai_text_to_speech_spec {
+	my ($model, $text, $opts) = @_;
+	$opts ||= {};
+	return () unless defined $model && length $model;
+	return () unless defined $text && length $text;
+	my ($provider, $real) = ('openai', $model);
+	if ($model =~ /^([a-z]+):(.+)$/) { ($provider, $real) = ($1, $2); }
+	my %endpoint = (
+		openai => 'https://api.openai.com/v1/audio/speech',
+		groq   => 'https://api.groq.com/openai/v1/audio/speech',
+	);
+	return () unless $endpoint{$provider};
+	my %key = ( openai => 'openai_key', groq => 'groq_key' );
+	# Groq retired the PlayAI speech model in favour of Orpheus. A house that
+	# still carries text_to_audio_assistant = groq:playai-tts (the value the Plat
+	# page wrote) keeps its spoken replies by asking for the current model; the
+	# log names the model that actually spoke.
+	my $voice_default = ($provider eq 'groq') ? 'hannah' : 'alloy';
+	if ($provider eq 'groq' && $real eq 'playai-tts') {
+		$real = 'canopylabs/orpheus-v1-english';
+		$voice_default = 'hannah';
+	}
+	# a provider names its own voices; the caller may override for one reply
+	my $voice = $opts->{'voice'} || $voice_default;
+	my $payload = {
+		model           => $real,
+		input           => $text,
+		voice           => $voice,
+		response_format => ($opts->{'format'} || 'wav'),
+	};
+	return ($provider, $real, $endpoint{$provider}, $key{$provider}, $payload);
+}
+
+# Text -> spoken audio through that endpoint. Returns (bytes, mime, error) so a
+# caller can fall back (no key, no credit, provider down) without guessing.
+# Used where the machine has no local piper: the Android app runtime, by
+# design, runs no glibc binary and ships no python, so a reply there would
+# otherwise be text only.
+sub ai_text_to_speech_result {
+	my ($text, $model, $opts) = @_;
+	$opts ||= {};
+	my ($provider, $real, $url, $key_setting, $payload) = &ai_text_to_speech_spec($model, $text, $opts);
+	return (undef, undef, 'no speech model is set (Configure, Plat, Audio)') unless $url;
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ $key_setting ] });
+	my $key = eval { &subs::note_decrypter(&subs::suds_grabber(), $settings->{$key_setting}) } || $settings->{$key_setting};
+	return (undef, undef, "no $provider key is set (Configure, Plat, Provider access)") unless defined $key && length $key;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 6, inactivity_timeout => 20, request_timeout => 25);
+	my $tx = $ua->post($url => { 'Authorization' => 'Bearer ' . $key } => json => $payload);
+	return (undef, undef, 'could not reach ' . $provider . ': ' . $tx->error->{'message'}) if $tx->error;
+	my $res = $tx->res;
+	return (undef, undef, 'the speech model answered ' . $res->code . ': ' . substr(($res->body || ''), 0, 200))
+		unless $res->is_success;
+	my $bytes = $res->body;
+	return (undef, undef, 'the speech model returned nothing') unless defined $bytes && length $bytes;
+	return ($bytes, $res->headers->content_type || 'audio/wav', undef);
+}
+
 # Google Veo, the video-generation job: submit a prompt, poll the long-running
 # operation until it is done, then fetch the file it names. Returns
 # ($bytes, $mime, $error), the same shape as the other generators.

@@ -57,12 +57,37 @@ What remains is operational, not transcription accuracy: R5–R8 below.
   The other fifteen languages stay on whisper by design.
 - **OEM is a live-microphone service only.** It can never take a file: the watch, deck and IVR
   roles must name a file engine.
-- **8 kHz live stream; 16 kHz file only when WiFi carries it.** The MTU experiment is deferred
-  (requesting 512 disturbed the watch display); without it, BLE-only streaming cannot keep up.
+- **8 kHz live stream; 16 kHz file only when WiFi carries it.** The MTU was measured on
+  2026-11-27: the watch/phone link negotiates **512** (the Android bridge requests it and the
+  watch grants it), so a notify carries 509 bytes and the 4 KB stream parts fit in about 11
+  notifies each. The old "deferred" note came from the Android display contention during the
+  request, not from a 23-byte ceiling. The desktop bridge now reads BlueZ's
+  `GattCharacteristic1.MTU` so its status is the negotiated value too. A link that really
+  settles at 23 is now visible rather than hidden behind a reported 512.
 - **Memos come from the file; commands take whichever transcript arrives first.**
 - **sherpa is a separate process** (`jawn-asr`), not inference inside the audio callback.
 
 ## Remaining operational work
+
+### 2026-11-27 — the 30–40 s round trip, measured
+
+- **`/watch/voice` no longer ingests inline.** It sends `voice_recv` at once (the receipt the
+  BLE path already sent), returns `ok`, and runs whisper + the Guide in a child. The watch's
+  POST timeout is 4 s, so the old inline path timed out on every clip, marked the homebase
+  down for 20 s and re-shipped the clip over BLE; that is the 30–40 s the person felt.
+- **One timing ledger line per stage** in `voice_ingest` and `watch_reply`:
+  `voice: timing stage=asr|brain|command ... since_onset=... since_arrival=...`, plus
+  `voice: reply transport=wifi|ble`. One spoken command now answers "where did the time go?".
+- **Reply audio on a machine without piper.** The watch's homebase was the phone (app runtime),
+  which has no piper binary (the dependency step skips it by design) and no python. The reply
+  paths now ask the Crew for a peer with piper (`say.render`, gated on the `piper` tool) and
+  use the 8 kHz PCM it returns, so the house voice stays the house voice; the cloud speech
+  model configured for `text_to_audio_assistant` (`groq:playai-tts`, mapped to
+  `canopylabs/orpheus-v1-english` because Groq retired PlayAI) is the last resort. Piper stays
+  first on a desktop.
+- **The WiFi reply no longer probes the device's board server** when the clip itself arrived
+  over WiFi: the source address proves the device is reachable, so the reply is served over
+  WiFi immediately. The probe remains for the BLE path.
 
 ### R1 — Vendor sherpa and prove it (the gate) — **done 2026-11-27**
 
