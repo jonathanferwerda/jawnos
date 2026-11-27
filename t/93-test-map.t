@@ -140,6 +140,17 @@ subtest 'an unclaimed change fails safe' => sub {
 	unlike($out, qr/"full":1/, 'and that is not the full suite');
 };
 
+subtest 'a deleted test does not select itself' => sub {
+	my $ghost = join('/', 't', 'a-test-that-is-gone' . '.t');
+	my ($out, $rc) = run_tests_for('--files', $ghost, '--json');
+	is($rc, 0, 'the mapper runs');
+	like($out, qr/"changed":\["\Q$ghost\E"\]/, 'the deleted test is reported');
+	unlike($out, qr/"tests":\[[^\]]*\Q$ghost\E/, 'but it is not in the run list');
+	unlike($out, qr/"unmapped":\[[^\]]*\Q$ghost\E/,
+		'and it does not force the full suite');
+	like($out, qr/"full":0/, 'an empty selection, not the whole suite');
+};
+
 subtest 'every test is reachable' => sub {
 	my ($out, $rc) = run_tests_for('--all', '--json');
 	is($rc, 0, '--all runs');

@@ -169,8 +169,8 @@ our $run = 0;
 my $plat = read_file("$repo/templates/configure/plat_setting_list.html.ep");
 like($plat, qr/\[\s*'transcription_ivr',\s*'Transcription · screened calls',\s*'audio'/,
 	'the Plat page has a row for screened calls');
-like($plat, qr/\$setting eq 'transcription_ivr'.*whisper_available/,
-	'and offers whisper.cpp to that row, the engine a live call can use');
+like($plat, qr/my \$whisper_local = \(\$cap eq 'audio'\)/,
+	'and every transcription row, the screened call included, offers whisper.cpp');
 
 my $pane = read_file("$repo/templates/apps/phone.html.ep");
 like($pane, qr/id="phone_ivr_transcription"/, 'the IVR pane has the transcription select');

@@ -5,6 +5,23 @@ picked up cold. Design rationale lives in `docs/voice-inputs.md`; this file is t
 of work. Everything below assumes the house rules in `AGENTS.md` (worktree per task,
 `tests_for.pl --staged --run` before a commit, `land_enqueue.pl --wait` to land).
 
+## Status: complete — 2026-11-27
+
+The transcription engine is **whisper.cpp**: local on a laptop or tablet, or a house
+peer's through the `whisper.transcribe` Crew job on a phone. The Guide and the soft
+keyboard can also name **Android on-device (OEM)**, a live-microphone service the
+manager never runs. Every transcription row offers whisper — this machine or another —
+including the watch and deck rows; the live rows also offer OEM.
+
+The 20M streaming sherpa-onnx model was **shelved on accuracy**. On 170 clips (50 real
+LibriSpeech utterances, 60 house-voice commands, 30 noisy, 30 at 8 kHz) it measured
+23.6% WER on real speech and 56.9% on clean commands, against whisper tiny 5.9% / 7.1%
+and base 2.5% / 5.7%; on clips under 4 s it was 64.8%. It was not faster on
+clip-length audio (RTF 0.13 on real clips, the same as tiny). The `jawn-asr` engine and
+its version/ABI gate remain in the tree for a future model, but no role offers it.
+
+What remains is operational, not transcription accuracy: R5–R8 below.
+
 ## Where it stands
 
 | Landed | What it did |
@@ -22,8 +39,9 @@ of work. Everything below assumes the house rules in `AGENTS.md` (worktree per t
 
 ## Frozen decisions — do not re-litigate
 
-- **Streaming primary, whisper fallback.** English-only streaming is accepted; the other fifteen
-  languages stay on whisper.
+- **Whisper is the engine.** The 20M streaming sherpa model is shelved on accuracy (see Status);
+  the engine binary and its version/ABI gate stay for a future model, but no role offers it.
+  The other fifteen languages stay on whisper by design.
 - **OEM is a live-microphone service only.** It can never take a file: the watch, deck and IVR
   roles must name a file engine.
 - **8 kHz live stream; 16 kHz file only when WiFi carries it.** The MTU experiment is deferred
@@ -31,7 +49,7 @@ of work. Everything below assumes the house rules in `AGENTS.md` (worktree per t
 - **Memos come from the file; commands take whichever transcript arrives first.**
 - **sherpa is a separate process** (`jawn-asr`), not inference inside the audio callback.
 
-## Remaining work, in order
+## Remaining operational work
 
 ### R1 — Vendor sherpa and prove it (the gate) — **done 2026-11-27**
 
@@ -70,30 +88,13 @@ first word on 1.wav and 8k.wav and "BROFFALS" for "BROTHELS".
 Risk: the `extern "C"` struct layouts in `engine/src/sherpa.rs` are transcribed from the v2.0.3
 `c-api.h`. A different sherpa version needs that header re-checked, not assumed compatible.
 
-### R2 — `local:sherpa` as a service — **done 2026-11-27**
+### R2 — `local:sherpa` as a service — **shelved 2026-11-27**
 
-`transcribe_local_engine('local:sherpa')` now returns `sherpa_local_transcribe`, which pipes the
-clip through `nice -n 19 ffmpeg` (any container to raw s16le/16 kHz/mono) into the staged `jawn-asr
---pcm-stdin`. `sherpa_available()` is the binary being executable plus a model directory with
-`tokens.txt` and one each of `encoder*.onnx`, `decoder*.onnx`, `joiner*.onnx`; it caches for 60 s
-like `whisper_available`. The binary is `$JAWNOS_SHERPA_BIN` when executable, else the staged
-`perl/audio/jawn-asr` found from this tree (the audio engine's own root, with `jawn-asr` in place
-of `jawn-audio`). The model defaults to
-`~/.local/share/jawnos/sherpa/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17`, overridden by
-`$JAWNOS_SHERPA_MODEL_DIR`. The Plat transcription rows offer it under “This machine” only when
-it is available. `ai_transcribe_test` reports its readiness.
+Implemented, benchmarked and reverted: see Status. The service code (the `sherpa_*` subs, the
+Loader entries, the Plat option and its test) was removed; the engine and its ABI gate stay. If a
+future model is evaluated, this is the shape to bring back, but whisper is the engine for now.
 
-Because the bundled model is English, a role naming sherpa with a non-English `$lang` returns
-nothing *without starting the binary*; `whisper_transcribe` falls through to the role's fallback
-and then to the usual whisper last resort. A sherpa clip is never handed to the whisper
-`whisper.transcribe` Crew job. `whisper_stream_model` still accepts only `local:whisper.cpp` (or
-the legacy `local:vosk`): the screened-call gateway runs `scripts/whisper_stream.py`, so
-`transcription_ivr` is never offered sherpa and a role naming it gets the existing “cannot read a
-call on this gateway; using the base model” note.
-
-Tests: `t/474-sherpa-service.t`; help: `help::platform`.
-
-### R3 — Wire the engine to the audio
+### R3 — Wire the engine to the audio — **not pursued (sherpa shelved)**
 
 - **Phone:** the BLE stream decodes to PCM and is pushed through the six `jawn_audio_pushed_*`
   exports (`engine/src/pushed.rs:392`); add the JNI declarations in `JawnAudioEngineJni.cpp` and
@@ -103,7 +104,7 @@ Tests: `t/474-sherpa-service.t`; help: `help::platform`.
   the screened call's `jawn_call_in.monitor` is the source there.
 - Done when a pushed clip and the IVR monitor each produce partial lines in the log.
 
-### R4 — Surface partials
+### R4 — Surface partials — **not pursued (sherpa shelved)**
 
 `Domain/Ble2.pm` transcribes every N parts as they arrive instead of only on `last`, and sends a
 `voice_partial` message; the phone's transcript pane already renders partials (`public/js/manager/phone.js:1735`).
@@ -147,4 +148,5 @@ Prose-only changes (this file) run no test. Never bare `prove -l t`.
 - Engine: `engine/src/pushed.rs`, `engine/src/sherpa.rs`, `engine/src/bin/jawn_asr.rs`,
   `engine/build.rs`, `scripts/build_engine.pl`, `docs/engine-asr.md`.
 - App: `JawnSpeech.java`, `JawnImeService.java`, `JawnAudioEngineJni.cpp` (JNI, R3).
-- Tests that claim this work: `t/179`, `t/468`, `t/469`, `t/470`, `t/471`, `t/472`, `t/473`.
+- Tests that claim this work: `t/179`, `t/468`, `t/469`, `t/470`, `t/471`, `t/472`, `t/473`;
+  the engine's version/ABI gate is `t/332`.

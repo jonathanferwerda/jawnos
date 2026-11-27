@@ -142,11 +142,6 @@ sub ai_transcribe_test {
 	if (&transcription_service_is_client($model)) {
 		return (1, 'the phone recogniser runs on the device, not here');
 	}
-	if ($model eq 'local:sherpa') {
-		return &sherpa_available()
-			? (1, 'sherpa-onnx is ready on this machine (English only)')
-			: (0, 'sherpa-onnx is not installed on this machine');
-	}
 	if ($model eq 'local:whisper.cpp' || $model eq 'local:vosk') {
 		return &whisper_available()
 			? (1, 'whisper.cpp is ready on this machine')
@@ -518,129 +513,6 @@ sub whisper_local_transcribe {
 	return $text;
 }
 
-# --- sherpa-onnx: the streaming recogniser --------------------------------
-# jawn-asr is a separate staged binary (docs/engine-asr.md). It reads raw
-# little-endian signed 16-bit mono at 16 kHz from --pcm-stdin, so ffmpeg does
-# the container decode and the rate conversion first. The bundled model is
-# English; another language is never sent to it here, because English-ish text
-# is worse than falling through to whisper.
-sub sherpa_bin {
-	my $env = $ENV{'JAWNOS_SHERPA_BIN'};
-	return $env if defined $env && length $env && -x $env;
-	# Resolve the staged sibling from this tree, the same way the audio engine's
-	# own path is found - not from the process's working directory.
-	require JawnOS::Audio::Engine;
-	my $audio = &JawnOS::Audio::Engine::audio_engine_binary();
-	return '' unless defined $audio && length $audio;
-	(my $asr = $audio) =~ s/jawn-audio\z/jawn-asr/;
-	return -x $asr ? $asr : '';
-}
-
-sub sherpa_model_dir {
-	my $dir = $ENV{'JAWNOS_SHERPA_MODEL_DIR'};
-	return $dir if defined $dir && length $dir;
-	return &subs::home('~/.local/share/jawnos/sherpa/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
-}
-
-sub sherpa_model_present {
-	# jawn-asr discovers encoder*, decoder*, joiner* and tokens.txt; the
-	# directory is a model only when all four are there.
-	my ($dir) = @_;
-	return 0 unless defined $dir && length $dir && -d $dir;
-	return 0 unless -f($dir . '/tokens.txt');
-	opendir(my $dh, $dir) or return 0;
-	my @names = readdir $dh;
-	closedir $dh;
-	my %seen;
-	foreach my $name (@names) {
-		next unless $name =~ /\.onnx\z/ && -f($dir . '/' . $name);
-		$seen{'encoder'} = 1 if $name =~ /^encoder/;
-		$seen{'decoder'} = 1 if $name =~ /^decoder/;
-		$seen{'joiner'}  = 1 if $name =~ /^joiner/;
-	}
-	return ($seen{'encoder'} && $seen{'decoder'} && $seen{'joiner'}) ? 1 : 0;
-}
-
-# The Plat page and the Test button ask this; one probe a minute is enough, the
-# same rule whisper_available follows.
-our $sherpa_probe;
-sub sherpa_available {
-	my $now = time;
-	return $sherpa_probe->{'ok'} if $sherpa_probe && $now - $sherpa_probe->{'at'} < 60;
-	my $ok = (length &sherpa_bin() && &sherpa_model_present(&sherpa_model_dir())) ? 1 : 0;
-	$sherpa_probe = { at => $now, ok => $ok };
-	return $ok;
-}
-
-sub sherpa_language_ok {
-	# The bundled model is English. An unset language and 'auto' mean the
-	# caller has not chosen one, which is the keyboard's English case.
-	my ($lang) = @_;
-	return 1 unless defined $lang && length $lang;
-	$lang = lc $lang;
-	return 1 if $lang eq 'auto' || $lang eq 'en' || $lang =~ /^en-/;
-	return 0;
-}
-
-sub sherpa_final_text {
-	# jawn-asr prints one JSON object per result and the last carries
-	# "final":true; that line is the whole take. A run that ended without one
-	# still has a last result, so its text is used rather than the raw JSON.
-	my ($stdout) = @_;
-	return '' unless defined $stdout && length $stdout;
-	my ($final, $last_text, $last_line);
-	foreach my $line (split /\n/, $stdout) {
-		$line =~ s/^\s+|\s+$//g;
-		next unless length $line;
-		$last_line = $line;
-		my $obj = eval { &decode_json($line) };
-		next unless ref $obj eq 'HASH' && exists $obj->{'text'};
-		$last_text = $obj->{'text'} // '';
-		$final = $last_text if $obj->{'final'};
-	}
-	my $text = defined $final ? $final : (defined $last_text ? $last_text : ($last_line // ''));
-	$text =~ s/^\s+|\s+$//g;
-	return $text;
-}
-
-sub sherpa_local_transcribe {
-	# A file clip through the staged recogniser. ffmpeg decodes any container to
-	# the raw 16 kHz mono the streamer reads; both stages yield with nice 19, as
-	# the whisper path does, so a call's prompts keep the CPU. A non-English
-	# language answers here with nothing - the caller then falls through to the
-	# role's next choice - and the binary is never asked.
-	my ($raw, $lang) = @_;
-	return '' unless defined $raw && length $raw;
-	return '' unless &sherpa_language_ok($lang);
-	my $bin = &sherpa_bin();
-	my $dir = &sherpa_model_dir();
-	return '' unless length $bin && &sherpa_model_present($dir);
-	require IPC::Open3;
-	require Symbol;
-	my $cmd = sprintf(
-		'nice -n 19 ffmpeg -nostdin -loglevel error -i - -f s16le -acodec pcm_s16le -ar 16000 -ac 1 - | nice -n 19 %s --model-dir %s --pcm-stdin 2>/dev/null',
-		&subs::shell_quote($bin), &subs::shell_quote($dir)
-	);
-	my ($in, $out, $err);
-	$err = Symbol::gensym();
-	my $pid = IPC::Open3::open3($in, $out, $err, 'sh', '-c', $cmd);
-	return '' unless $pid;
-	binmode($in);
-	print {$in} $raw;
-	close($in);
-	my $stdout = do { local $/; <$out> // '' };
-	close($out);
-	close($err);
-	waitpid($pid, 0);
-	my $text = &sherpa_final_text($stdout);
-	return '' unless length $text;
-	if (&subs::voice_silence_hallucination($text)) {
-		$log->info('voice: dropping a stock silence transcript ("' . $text . '")') if $log;
-		return '';
-	}
-	return $text;
-}
-
 sub transcribe_local_engine {
 	# The local engine a role value names, as a coderef, or undef for a cloud
 	# model. An older settings row may still say local:vosk; that engine is
@@ -649,7 +521,6 @@ sub transcribe_local_engine {
 	$value = '' unless defined $value;
 	$value = 'local:whisper.cpp' if $value eq 'local:vosk';
 	return \&whisper_local_transcribe if $value eq 'local:whisper.cpp';
-	return \&sherpa_local_transcribe if $value eq 'local:sherpa';
 	return undef;
 }
 
@@ -717,10 +588,7 @@ sub whisper_stream_model {
 	$base = &whisper_model_file('tiny') unless length $base;
 	$base = &whisper_models_dir() unless length $base;
 	foreach my $value (@named) {
-		# Only whisper.cpp can read a live call here: scripts/whisper_stream.py is
-		# the reader. A role naming local:sherpa is not a gateway engine, so it gets
-		# the note below rather than being silently accepted.
-		next unless $value eq 'local:whisper.cpp' || $value eq 'local:vosk';
+		next unless &transcribe_local_engine($value);
 		return ($base, '');
 	}
 	return ($base, '') unless @named;
@@ -752,20 +620,10 @@ sub whisper_transcribe {
 		my $local = &transcribe_local_engine($engine);
 		my $text;
 		if ($local) {
-			if ($engine eq 'local:sherpa') {
-				# sherpa runs on this machine only - there is no sherpa Crew job to
-				# dispatch to - and a non-English clip is the role's next choice, never
-				# this engine. An unavailable or unusable sherpa therefore falls through
-				# the loop to the fallback and then to the whisper last resort below.
-				$text = (&sherpa_available() && &sherpa_language_ok($lang))
-					? $local->($raw, $lang) : '';
-			}
-			else {
-				# The role names this machine; if the engine is not installed here, the
-				# house's own engine is the next best thing (the fallback model below is
-				# still tried when no peer answers).
-				$text = &whisper_available() ? $local->($raw, $lang) : &whisper_peer_transcribe($raw, $lang);
-			}
+			# The role names this machine; if the engine is not installed here, the
+			# house's own engine is the next best thing (the fallback model below is
+			# still tried when no peer answers).
+			$text = &whisper_available() ? $local->($raw, $lang) : &whisper_peer_transcribe($raw, $lang);
 		}
 		else {
 			$text = &ai_transcribe_cloud($engine, $raw, $lang);

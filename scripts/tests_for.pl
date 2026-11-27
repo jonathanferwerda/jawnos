@@ -226,6 +226,13 @@ sub not_tested {
 my (%selected, %path_tests, %path_app, @unmapped, @ignored);
 for my $path (@changed) {
 	if ($path =~ m{^t/([^/]+)\.t$}) {
+		# A deleted test cannot run. It selects nothing, and it does not force
+		# the full suite either: a source left uncovered by its removal is
+		# caught by t/99 (an untested file fails the push).
+		if (!-e "$root/$path") {
+			$path_tests{$path} = '(deleted)';
+			next;
+		}
 		# a test's own edit selects that test
 		$selected{"t/$1.t"} = 1;
 		$path_tests{$path} = [ "t/$1.t" ];

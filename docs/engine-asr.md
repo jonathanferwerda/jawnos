@@ -1,5 +1,11 @@
 # `jawn-asr` — the streaming recogniser
 
+> **Not currently offered as a transcription role.** The 20M streaming model was
+> shelved on accuracy (23.6% WER on real speech, 56.9% on house commands, against
+> whisper tiny's 5.9% / 7.1%); whisper.cpp is the house engine
+> (`docs/transcription-roadmap.md`). The binary and its version/ABI gate remain for a
+> future model.
+
 `jawn-asr` is a second binary in the engine crate. It runs sherpa-onnx's
 streaming transducer through the public C API and prints one JSON object per
 result:

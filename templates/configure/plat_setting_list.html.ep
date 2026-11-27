@@ -108,7 +108,12 @@
 			They come back on their own after a while, or once the account is topped up.</p>
 	<% } %>
 	<div class="cfg-card">
-		<% foreach my $r ( @roles ) {
+		<% # One probe for the page: every transcription row offers the free engine,
+		   # locally or on a house peer, so the watch/deck clips a phone ingests still
+		   # have a real choice. A generation role (audio-gen) is not a transcription.
+		   my $whisper_local_page = &subs::whisper_available();
+		   my $whisper_house_page = $whisper_local_page ? 0 : &subs::whisper_house_available();
+		   foreach my $r ( @roles ) {
 			my ($setting, $label, $cap) = @{$r};
 			my $current = $role_settings->{$setting} // '';
 			# Vosk is gone; a stored value names the same local engine, whisper.cpp.
@@ -147,26 +152,17 @@
 					push @role_models, { %{$m}, group => $provider->{'label'} };
 				}
 			}
-			# whisper.cpp is a transcription choice like any other: it answers offline and
-			# costs nothing, so it belongs in both the model and fallback lists. It is
-			# offered when this machine has it, or when a house machine that advertises
-			# it can run the Crew's whisper.transcribe job (a phone cannot run the
-			# wheel, but the house can).
-			my $whisper_local = ($setting eq 'transcription_assistant' || $setting eq 'transcription_ivr') && &subs::whisper_available();
-			my $whisper_house = ($setting eq 'transcription_assistant' || $setting eq 'transcription_ivr') && !$whisper_local && &subs::whisper_house_available();
+			# whisper.cpp is a transcription choice on every transcription row: the
+			# shared one, the keyboard and Guide, the watch and deck clips, and the
+			# screened call. It answers offline and costs nothing. A phone cannot run
+			# the wheel, but a house machine that advertises it can run the Crew's
+			# whisper.transcribe job, so the row is a real choice there too.
+			my $whisper_local = ($cap eq 'audio') ? $whisper_local_page : 0;
+			my $whisper_house = ($cap eq 'audio') ? $whisper_house_page : 0;
 			my $whisper_here = ($whisper_local || $whisper_house) ? 1 : 0;
 			if ($whisper_here) {
 				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0,
 					group => ($whisper_local ? 'This machine' : 'Another machine'), caps => ['audio'] };
-			}
-			# sherpa-onnx is a file engine this machine alone runs, and its bundled
-			# model is English. The screened-call gateway reads a live call with
-			# whisper_stream.py, not jawn-asr, so it is never offered to
-			# transcription_ivr: a call there stays on whisper.cpp.
-			my $sherpa_here = ($cap eq 'audio' && $setting ne 'transcription_ivr' && &subs::sherpa_available()) ? 1 : 0;
-			if ($sherpa_here) {
-				push @role_models, { value => 'local:sherpa', name => 'sherpa-onnx', paid => 0,
-					group => 'This machine', caps => ['audio'] };
 			}
 			# The phone recogniser hears the phone microphone, so it can answer
 			# only for a surface the phone itself is speaking to. A clip from the
@@ -204,11 +200,6 @@
 						<% if ($whisper_here) { %>
 							<optgroup label="<%= $whisper_local ? 'This machine' : 'Another machine' %>">
 								<option value="local:whisper.cpp" data-thinks="0" <% if ($current eq 'local:whisper.cpp') { %>selected="selected"<% $shown = 1; } %>>whisper.cpp · <%= $whisper_local ? 'this machine' : 'another machine' %> · free</option>
-							</optgroup>
-						<% } %>
-						<% if ($sherpa_here) { %>
-							<optgroup label="This machine">
-								<option value="local:sherpa" data-thinks="0" <% if ($current eq 'local:sherpa') { %>selected="selected"<% $shown = 1; } %>>sherpa-onnx · this machine · free</option>
 							</optgroup>
 						<% } %>
 						<% if ($oem_here) { %>

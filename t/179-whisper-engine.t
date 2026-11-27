@@ -201,6 +201,10 @@ my $plat = read_file("$repo/templates/configure/plat_setting_list.html.ep");
 like($plat, qr/value="local:whisper\.cpp"/, 'the transcription role offers whisper.cpp');
 like($plat, qr/&subs::whisper_house_available\(\)/, 'when this machine has it, or a house machine does');
 like($plat, qr/Another machine/, 'and labels a peer\'s engine as another machine');
+like($plat, qr/my \$whisper_local = \(\$cap eq 'audio'\)/,
+	'every transcription row offers whisper, not only the shared one and the call');
+unlike($plat, qr/\$setting eq 'transcription_assistant' \|\| \$setting eq 'transcription_ivr'/,
+	'the old two-row whisper restriction is gone');
 
 unlike($plat, qr/value="local:vosk"/, 'and no longer offers Vosk');
 
@@ -251,6 +255,43 @@ is(subs::transcription_role_for('keyboard'), 'transcription_assistant',
 	is(subs::whisper_transcribe('RIFF', 'en', 'teletype'), 'heard', 'the deck clip is transcribed');
 	is($asked[0], 'transcription_teletype', 'through the deck own row');
 	&subs::setting_setter({ app => 'mail', setting => 'transcription_teletype', value => '' });
+}
+
+# A watch or deck clip on a phone has no local engine: the house's whisper
+# answers through the same whisper.transcribe job. An installed engine answers
+# locally instead.
+foreach my $surface (qw(watch teletype)) {
+	{
+		local *subs::ai_role_models = sub { ('local:whisper.cpp', '') };
+		local *subs::whisper_available = sub { 0 };
+		local *crew::dispatch = sub {
+			return { ok => 1, result => { text => "the peer heard the $surface clip" } };
+		};
+		is(subs::whisper_transcribe('RIFF-' . $surface, 'en', $surface),
+			"the peer heard the $surface clip",
+			"a $surface clip on a machine without the engine uses the house peer");
+	}
+	{
+		local *subs::ai_role_models = sub { ('local:whisper.cpp', '') };
+		local *subs::whisper_available = sub { 1 };
+		local *subs::whisper_local_transcribe = sub { "the local engine heard the $surface clip" };
+		is(subs::whisper_transcribe('RIFF-' . $surface, 'en', $surface),
+			"the local engine heard the $surface clip",
+			"a $surface clip uses this machine's engine when it is installed");
+	}
+}
+
+# The Guide and the soft keyboard can name either the phone recogniser or the
+# free engine; the saved choice is the service the role resolves to.
+foreach my $surface (qw(keyboard guide)) {
+	my $role = 'transcription_' . $surface;
+	&subs::setting_setter({ app => 'mail', setting => $role, value => 'android:oem' });
+	is(subs::transcription_service_for($surface), 'android:oem',
+		"$surface can name the phone recogniser");
+	&subs::setting_setter({ app => 'mail', setting => $role, value => 'local:whisper.cpp' });
+	is(subs::transcription_service_for($surface), 'local:whisper.cpp',
+		"$surface can name whisper.cpp");
+	&subs::setting_setter({ app => 'mail', setting => $role, value => '' });
 }
 
 # The phone recogniser is named but never run by the manager: a clip that finds
