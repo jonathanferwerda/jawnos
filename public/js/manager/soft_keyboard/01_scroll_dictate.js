@@ -94,6 +94,100 @@ var jawnDictate = {
 
 var jawnDictateFieldButton = null;
 
+// ---- the phone's own recogniser -------------------------------------------
+// When the keyboard's transcription role resolves to android:oem, the app's
+// WebView is given window.JawnSpeech: start(language), stop(), available(),
+// and it posts back window.jawnSpeechState(state, detail) and
+// window.jawnSpeechResult(text, isFinal). It returns text only - there is no
+// audio clip for Plat, no punctuation pass and no clip kept - so the manager's
+// record-and-POST path stays the fallback wherever the bridge is absent (a
+// desktop browser, or the IME WebView, which is given only JawnIme). One
+// dispatcher serves the dock and the Guide because they share a page:
+// installing the two window callbacks once means a later surface cannot
+// overwrite the one already listening.
+var jawnSpeechOem = { owner: null, lang: 'en-US', restart: false };
+
+function jawnSpeechOemReady(service) {
+	// Only a role that names the app's recogniser, and only when the app says
+	// the phone has one. Anything else keeps the ordinary recorder.
+	if (service != 'android:oem') { return false; }
+	try {
+		return !!(window.JawnSpeech
+			&& typeof window.JawnSpeech.available === 'function'
+			&& window.JawnSpeech.available());
+	}
+	catch (err) { return false; }
+}
+
+function jawnSpeechOemInstall() {
+	if (window.jawnSpeechState && window.jawnSpeechResult) { return; }
+	window.jawnSpeechState = function (state, detail) {
+		var o = jawnSpeechOem.owner;
+		if (!o) { return; }
+		if (state == 'listening') { if (o.onListening) { o.onListening(); } return; }
+		if (state == 'stopped') {
+			// the app stops after each phrase; a microphone that is still on
+			// asks it for the next one, so a person can keep talking
+			if (jawnSpeechOem.owner && jawnSpeechOem.restart) {
+				try { window.JawnSpeech.start(jawnSpeechOem.lang); return; } catch (err) {}
+			}
+			if (o.onStopped) { o.onStopped(); }
+			return;
+		}
+		if (state == 'error') {
+			// the phone could not hear (permission, network, no speech, busy...):
+			// hand this press to the recorder instead of leaving it dead
+			jawnSpeechOem.owner = null;
+			jawnSpeechOem.restart = false;
+			if (o.onError) { o.onError(detail || 'unavailable'); }
+		}
+	};
+	window.jawnSpeechResult = function (text, isFinal) {
+		var o = jawnSpeechOem.owner;
+		if (!o || !isFinal) { return; }
+		// only the final phrase is written into the field; an interim one is
+		// not text the person has finished saying
+		if (o.onFinal) { o.onFinal(String(text == null ? '' : text)); }
+	};
+}
+
+function jawnSpeechOemListening() { return !!jawnSpeechOem.owner; }
+
+function jawnSpeechOemStart(owner) {
+	owner = owner || {};
+	// one microphone at a time: a second surface replaces the first
+	if (jawnSpeechOem.owner && jawnSpeechOem.owner !== owner) { jawnSpeechOemStop(); }
+	jawnSpeechOemInstall();
+	jawnSpeechOem.owner = owner;
+	jawnSpeechOem.lang = owner.lang || 'en-US';
+	jawnSpeechOem.restart = !!owner.restart;
+	try { window.JawnSpeech.start(jawnSpeechOem.lang); }
+	catch (err) {
+		// a bridge that throws leaves the caller to use the recorder
+		jawnSpeechOem.owner = null;
+		jawnSpeechOem.restart = false;
+		return false;
+	}
+	return true;
+}
+
+function jawnSpeechOemStop(owner) {
+	if (owner && jawnSpeechOem.owner !== owner) { return; }
+	var o = jawnSpeechOem.owner;
+	jawnSpeechOem.owner = null;
+	jawnSpeechOem.restart = false;
+	try { if (window.JawnSpeech && typeof window.JawnSpeech.stop === 'function') { window.JawnSpeech.stop(); } } catch (err) {}
+	if (o && o.onStopped) { o.onStopped(); }
+}
+
+// The service the dock's role resolved to on the server. The IME renders the
+// same attribute but has no window.JawnSpeech, so jawnSpeechOemReady is false
+// there and the recorder below still answers the press.
+function softKbTranscriptionService() {
+	var el = document.getElementById('jawn_soft_keyboard');
+	return (el && el.getAttribute('data-transcribe-service')) || '';
+}
+
 function softKbDictateHint(text) {
 	$('#jawn_soft_keyboard .soft_kb_title').text(text || '');
 	// a rich editor's microphone is not in the dock, so the state it shows has to
@@ -216,6 +310,7 @@ function softKbDictateRelease() {
 function softKbDictateStop() {
 	jawnSoftListening = false;
 	jawnDictate.session++;
+	if (jawnSpeechOemListening()) { jawnSpeechOemStop(); }
 	softKbDictateCut();
 	softKbDictateRelease();
 	jawnDictate.target = null;
@@ -385,9 +480,10 @@ function softKbDictationAppend(target, text) {
 	softKbInsert(sep + text, target, true);
 }
 
-function softKbDictateToggle() {
-	if (jawnSoftListening) { softKbDictateStop(); return; }
-	if (!jawnSoftField && !jawnSoftIme) { softKbDictateHint(softKbLabel('Tap a field first')); return; }
+// The ordinary recorder: a short clip per phrase, posted to /manager/dictate
+// and transcribed by the house's role. It is unchanged, and it is the answer
+// whenever the phone's recogniser is absent or cannot start.
+function softKbDictateBrowserStart() {
 	if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
 		softKbDictateUnavailable();
 		return;
@@ -435,6 +531,61 @@ function softKbDictateToggle() {
 		softKbMicState();
 		softKbDictateHint(softKbLabel('I could not reach the microphone'));
 	});
+}
+
+// The phone's recogniser, when the keyboard's role names it and the app gave
+// this WebView the bridge. It returns text only - no clip is recorded, so no
+// audio reaches Plat and no punctuation pass runs - and each final phrase joins
+// the field through softKbDictationAppend, the same path the recorder's own
+// transcript uses. The app stops after every phrase; restart keeps the
+// microphone open until the person presses Stop.
+function softKbDictateOemStart() {
+	softKbLayoutsToggle(false);
+	jawnSoftListening = true;
+	var session = ++jawnDictate.session;
+	var target = jawnSoftIme ? null : jawnSoftField;
+	jawnDictate.target = target;
+	jawnDictate.lang = String(softKbLayout().lang || 'en-US');
+	softKbMicState();
+	softKbDictateHint(softKbLabel('Listening…'));
+	var owner = {
+		lang: jawnDictate.lang,
+		restart: true,
+		onListening: function () {
+			if (session != jawnDictate.session || !jawnSoftListening) { return; }
+			softKbDictateHint(softKbLabel('Listening…'));
+		},
+		onFinal: function (text) {
+			if (session != jawnDictate.session) { return; }
+			softKbDictationAppend(target, text);
+			if (jawnSoftListening) { softKbDictateHint(softKbLabel('Listening…')); }
+		},
+		onStopped: function () {
+			if (session != jawnDictate.session) { return; }
+			if (jawnSoftListening) { softKbDictateHint(softKbLabel('Listening…')); }
+			else { softKbMicState(); softKbTitleUpdate(); }
+		},
+		onError: function () {
+			if (session != jawnDictate.session) { return; }
+			// the phone declined the microphone or could not hear: the same
+			// press continues through the recorder, never doing nothing
+			jawnSoftListening = false;
+			softKbMicState();
+			softKbDictateBrowserStart();
+		}
+	};
+	if (!jawnSpeechOemStart(owner)) {
+		jawnSoftListening = false;
+		softKbMicState();
+		softKbDictateBrowserStart();
+	}
+}
+
+function softKbDictateToggle() {
+	if (jawnSoftListening) { softKbDictateStop(); return; }
+	if (!jawnSoftField && !jawnSoftIme) { softKbDictateHint(softKbLabel('Tap a field first')); return; }
+	if (jawnSpeechOemReady(softKbTranscriptionService())) { softKbDictateOemStart(); return; }
+	softKbDictateBrowserStart();
 }
 
 // Dictation aimed at a rich text editor's contenteditable, from the microphone

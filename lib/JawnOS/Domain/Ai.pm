@@ -545,6 +545,20 @@ sub transcription_role_for {
 	return (defined $chosen && length $chosen) ? $role : 'transcription_assistant';
 }
 
+# The concrete service a surface's transcription role resolves to: the role its
+# own row names (or the shared role), read through ai_role_models so the caller
+# sees the model value ('android:oem', 'local:whisper.cpp', a cloud model) and
+# never the role's name. The page uses it to decide whether the phone's own
+# recogniser should answer a microphone press; the primary is the chosen
+# service, and the fallback stands in only when no primary is set.
+sub transcription_service_for {
+	my ($consumer) = @_;
+	my $role = &transcription_role_for($consumer);
+	my ($primary, $fallback) = &ai_role_models($role);
+	return $primary if defined $primary && length $primary;
+	return defined $fallback ? $fallback : '';
+}
+
 # The phone recogniser is a service the house can name but never run: the app
 # holds the microphone, not this process. It is offered only for the surfaces
 # the phone itself speaks to, and a clip that still finds it in a role is

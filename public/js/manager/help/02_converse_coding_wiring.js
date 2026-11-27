@@ -53,18 +53,51 @@ function jawnClipSend(blob, opts) {
 
 function helpListenToggle(onText) {
 	if (jawnClipListening()) { jawnClipStop(); return; }
+	if (typeof jawnSpeechOemListening === 'function' && jawnSpeechOemListening()) { jawnSpeechOemStop(); return; }
 	helpShowChat(true);
-	jawnClipListen({
-		talking: jawnos_help_talking,
-		owner: '#help',
-		selfWords: jawnos_help_talking ? helpLastWords() : '',
-		onEcho: function () { if (jawnos_help_talking) { helpConversationListen(); } },
-		onText: onText || function (text) { $('#help_question').val(text); },
-		status: function (msg) { helpChatAdd('step', msg); },
-		onFail: function (reason) { if (jawnos_help_talking && reason !== 'microphone' && reason !== 'no microphone') { helpConversationListen(); } },
-		onstart: function () { $('#help_ask').text('Stop'); },
-		onend: function () { $('#help_ask').text('Send'); }
-	});
+	var fill = onText || function (text) { $('#help_question').val(text); };
+	var self_words = jawnos_help_talking ? helpLastWords() : '';
+	// The recorder path, unchanged: used when the Guide's role is not the
+	// phone's recogniser, and whenever that recogniser cannot start.
+	var listen_browser = function () {
+		jawnClipListen({
+			talking: jawnos_help_talking,
+			owner: '#help',
+			selfWords: self_words,
+			onEcho: function () { if (jawnos_help_talking) { helpConversationListen(); } },
+			onText: fill,
+			status: function (msg) { helpChatAdd('step', msg); },
+			onFail: function (reason) { if (jawnos_help_talking && reason !== 'microphone' && reason !== 'no microphone') { helpConversationListen(); } },
+			onstart: function () { $('#help_ask').text('Stop'); },
+			onend: function () { $('#help_ask').text('Send'); }
+		});
+	};
+	var service = $('#help_question').attr('data-transcribe-service') || '';
+	if (typeof jawnSpeechOemReady === 'function' && jawnSpeechOemReady(service)) {
+		// The phone's recogniser returns text only: no audio clip for Plat, no
+		// punctuation pass and no clip kept. The final phrase reaches the same
+		// callback the recorder's transcript uses.
+		var owner = {
+			lang: String(window.jawnos_lang_code || 'en-US'),
+			restart: false,
+			onListening: function () { $('#help_ask').text('Stop'); },
+			onStopped: function () { $('#help_ask').text('Send'); },
+			onFinal: function (text) {
+				jawnSpeechOemStop(owner);
+				var verdict = self_words ? jawnEchoCheck(text, self_words) : { echo: false, text: text };
+				if (verdict.echo) { if (jawnos_help_talking) { helpConversationListen(); } return; }
+				fill(verdict.text);
+			},
+			onError: function () {
+				// the phone could not hear: finish this press with the recorder
+				$('#help_ask').text('Send');
+				listen_browser();
+			}
+		};
+		if (jawnSpeechOemStart(owner)) { $('#help_ask').text('Stop'); return; }
+		$('#help_ask').text('Send');
+	}
+	listen_browser();
 }
 
 // ---- conversation mode ----------------------------------------------------
