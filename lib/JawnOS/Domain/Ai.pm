@@ -14,10 +14,11 @@ use Data::Dumper;
 use Date::Parse;
 use Digest::SHA qw(sha256_hex);
 use Encode qw(encode_utf8);
-use Fcntl qw(:flock);
+use Errno qw(EEXIST);
+use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
 use File::Copy;
 use File::Find;
-use File::Path;
+use File::Path qw(make_path);
 use File::Slurp;
 use IPC::Open2;
 use JSON::PP ();
@@ -857,10 +858,44 @@ sub voice_clip_fresh {
 	# and still keeps the file as a fallback, so the same clip can legitimately
 	# arrive twice (an ack lost, a link that died mid-stream); a second pass would
 	# run the person's command twice. Keyed by the watch's own clip stamp.
+	#
+	# The claim is a marker file, not process memory: the BLE ingest runs in a
+	# forked worker while /watch/voice runs in a request worker, so a map here
+	# would see only its own process. O_CREAT|O_EXCL makes the create the race -
+	# exactly one process wins it - and a marker older than the same 300 s window
+	# the map used is pruned by mtime. The directory sits with the house's other
+	# runtime markers under ~/.president, reached through subs::home() so a HOME
+	# override lands in the same place whisper-want's marker does.
 	my ($chip_id, $ts) = @_;
 	return 1 unless $chip_id && $ts;
 	my $key = $chip_id . '|' . $ts;
 	my $now = time();
+	my $dir = &subs::home('~/.president/voice-seen');
+	eval { make_path($dir) } unless -d $dir;
+	if (-d $dir && opendir(my $dh, $dir)) {
+		# A marker past the window is no longer a duplicate: forget it, as the
+		# in-memory sweep did.
+		foreach my $name (readdir $dh) {
+			next if $name eq '.' || $name eq '..';
+			my $path = $dir . '/' . $name;
+			my $mtime = (stat($path))[9] || 0;
+			unlink $path if $now - $mtime > 300;
+		}
+		closedir $dh;
+		my $file = $dir . '/' . &subs::path_name($key) . '.seen';
+		my $fh;
+		if (sysopen($fh, $file, O_CREAT | O_EXCL | O_WRONLY, 0600)) {
+			close($fh);
+			return 1;
+		}
+		if ($!{EEXIST}) {
+			$log->info('voice: clip ' . $key . ' already handled; ignoring the duplicate');
+			return 0;
+		}
+		# A marker that cannot be written (a read-only home, a full disk) must not
+		# drop the clip: fall back to this process's map and say why.
+		$log->error('voice: could not claim clip ' . $key . ' (' . $! . '); using memory');
+	}
 	delete $gb::voice_seen->{$_} for grep { $now - $gb::voice_seen->{$_} > 300 } keys %{ $gb::voice_seen || {} };
 	if ($gb::voice_seen->{$key}) {
 		$log->info('voice: clip ' . $key . ' already handled; ignoring the duplicate');
@@ -1094,7 +1129,8 @@ sub voice_brain {
 
 sub voice_ingest {
 	# Audio -> text -> action. The single entry both the WiFi route and the BLE
-	# bridge funnel into, so the two transports behave identically.
+	# bridge funnel into; the caller says whether its bytes are the whole-clip file
+	# or the stream, because which copy is the truth depends on what was recorded.
 	my ($raw, $meta) = @_;
 	$meta ||= {};
 	# The watch stamps the clip with its own clock in epoch SECONDS
@@ -1108,10 +1144,32 @@ sub voice_ingest {
 		$meta->{'ts_watch'} = 0 + $meta->{'ts'};
 		$meta->{'ts'} = $meta->{'ts_watch'} * 1000;
 	}
+	# Which copy of the clip is the truth differs by what was recorded. A memo has
+	# two copies in flight (the always-on stream and the whole-clip file the watch
+	# keeps as a fallback), and only the file is complete enough to be the
+	# transcript: a streamed memo is deferred here, before whisper, before an ack,
+	# so the file is the one that is filed. The trade a person must know: a memo
+	# whose file never ships is not filed at all - but the watch retries the file,
+	# and the stream no longer acks a memo, so nothing is deleted before it lands.
+	my $mode   = $meta->{'voice'} || '';
+	my $source = $meta->{'source'} || 'file';
+	$meta->{'source'} = $source;
+	if ($mode eq $VOICE_NOTE_MODE && $source eq 'stream') {
+		$log->info('voice: memo streamed; waiting for the whole-clip file');
+		return { status => 'deferred' };
+	}
+	# A command is the opposite: whichever copy arrives first wins. Claim the clip
+	# once here, before paying for whisper - the same clip over both transports (a
+	# WiFi file after a BLE stream, or the reverse) would otherwise run the
+	# person's command twice. A memo is not claimed: its file still follows the
+	# deferred stream above and must be allowed through.
+	if ($mode ne $VOICE_NOTE_MODE
+		&& !&subs::voice_clip_fresh($meta->{'chip_id'}, $meta->{'ts'})) {
+		return { status => 'duplicate' };
+	}
 	my $text = &subs::whisper_transcribe($raw, undef, $meta->{'edt'} || 'watch');
 	return { status => 'silence' } unless $text;
 	$log->info('voice: heard "' . $text . '"');
-	my $mode = $meta->{'voice'} || '';
 	# The watch's Rec button records a memo, not a command: file it in Notes and
 	# stop. It is the one path that turns speech into a note now.
 	if ($mode eq $VOICE_NOTE_MODE) {

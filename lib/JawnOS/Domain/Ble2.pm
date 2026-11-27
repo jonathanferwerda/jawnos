@@ -44,6 +44,9 @@ our $database;
 our $device;
 our $gb;
 our $log;
+# The memo mode is declared and initialised in Ai.pm (the ingest); the stream
+# gate below preloads that module before reading it (subs::preload).
+our $VOICE_NOTE_MODE;
 
 sub ble_message_processor {
 	my ($data, $mac) = @_;
@@ -264,11 +267,13 @@ sub ble_message_processor {
 		# wire. The same ingest the WiFi route runs, so both transports agree.
 		my $b64 = $msg->{'data'};
 		my $raw = $b64 ? eval { decode_base64 $b64 } : undef;
-		if ($raw && &subs::voice_clip_fresh($msg->{'chip_id'}, $msg->{'ts'})) {
+		if ($raw) {
 			# Tell the watch the clip arrived whole, at once: the watch holds the file
 			# and retries it until this lands, so the ack must come off the reassembly
 			# and not wait on whisper (seconds). voice_done follows after the file is
-			# transcribed, and it is what deletes the watch's copy.
+			# transcribed, and it is what deletes the watch's copy. For a memo this is
+			# its only receipt: the stream withholds voice_recv, so the file's arrival
+			# is what stops the retry and the file's transcript is what is filed.
 			&subs::bluetooth_sender_async({
 				intent => 'com.jawn.president.bt.connect',
 				chip_id => $msg->{'chip_id'},
@@ -281,7 +286,7 @@ sub ble_message_processor {
 			# database itself (see database_grabber).
 			my ($edt, $chip_id, $ts) = ($msg->{'edt'} || 'watch', $msg->{'chip_id'}, $msg->{'ts'});
 			&subs::subprocessor(sub {
-				&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id, ts => $ts, voice => $msg->{'voice'} });
+				&subs::voice_ingest($raw, { edt => $edt, chip_id => $chip_id, ts => $ts, voice => $msg->{'voice'}, source => 'file' });
 			}, { name => 'voice ingest' });
 		}
 		return;
@@ -315,18 +320,32 @@ sub ble_message_processor {
 			if ($msg->{'last'}) {
 				my $data = $rec->{'data'};
 				delete $gb::voice_rx->{$key};
-				if (length($data) > 100 && &subs::voice_clip_fresh($chip_id, $ts)) {
+				if (length($data) > 100) {
 					my $wav = &subs::adpcm_wav_wrap($data, $rec->{'rate'});
 					$log->info('BLE streamed clip for ' . $chip_id . ': ' . length($data) . ' encoded bytes');
-					&subs::bluetooth_sender_async({
-						intent => 'com.jawn.president.bt.connect',
-						chip_id => $chip_id,
-						edt => $rec->{'edt'},
-						message => { type => 'voice_recv', ts => $ts }
-					});
+					# A memo's stream is not the truth (the whole-clip file is), so it must
+					# not tell the watch the clip arrived: voice_recv sets voice_acked_ts,
+					# which the whole-clip retry also watches, and a memo whose file still
+					# has to ship would stop being retried. A memo is confirmed when its
+					# file lands, below. A command is the opposite - whichever copy arrives
+					# first wins - so its stream confirms at once and need not ship the file.
+					# The mode constant lives with the ingest in Ai.pm. Load that module
+					# only if this process has not loaded it yet: if it is loaded (by any
+					# path) the constant is already defined, and re-requiring it under
+					# its module name would redefine every sub - in a test, overwriting
+					# the very stubs observing this call.
+					&subs::preload('voice_ingest') unless defined $VOICE_NOTE_MODE;
+					if (($rec->{'voice'} // '') ne $VOICE_NOTE_MODE) {
+						&subs::bluetooth_sender_async({
+							intent => 'com.jawn.president.bt.connect',
+							chip_id => $chip_id,
+							edt => $rec->{'edt'},
+							message => { type => 'voice_recv', ts => $ts }
+						});
+					}
 					my ($edt, $voice) = ($rec->{'edt'}, $rec->{'voice'});
 					&subs::subprocessor(sub {
-						&subs::voice_ingest($wav, { edt => $edt, chip_id => $chip_id, ts => $ts, voice => $voice });
+						&subs::voice_ingest($wav, { edt => $edt, chip_id => $chip_id, ts => $ts, voice => $voice, source => 'stream' });
 					}, { name => 'voice ingest' });
 				}
 			}
