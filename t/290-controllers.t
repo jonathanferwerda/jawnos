@@ -34,14 +34,14 @@ ok($routes =~ m{/manager/controllers/storage}, 'the storage route');
 ok($routes =~ m{/manager/controllers/roms}, 'the roms route');
 ok($routes =~ m{/manager/controllers/card}, 'the card choice route');
 
-foreach my $id (54001 .. 54015) {
+foreach my $id (54001 .. 54017) {
 	like($routes, qr/\[\Q$id\E,\s*'\w+',\s*'\/manager\/controllers[^']*',\s*'action_\Q$id\E'\]/,
 		"row $id names action_$id");
 }
 
 my $controller = slurp('lib/JawnOS/Controller/manager_controllers.pm');
 like($controller, qr/^package Manager;/m, 'the controller is in package Manager');
-foreach my $id (54001 .. 54015) {
+foreach my $id (54001 .. 54017) {
 	like($controller, qr/^sub action_\Q$id\E\b/m, "action_$id is defined");
 }
 
@@ -185,7 +185,13 @@ like($controller, qr/sub _controller_console_root/, 'the controller shelf has a 
 like($controller, qr/sub _controller_rel_path_ok/, 'a dropped path is checked');
 like($controller, qr/game_system_for_paths/, 'the system comes from the games map');
 like($controller, qr/req->upload\('file'\)/, 'the file arrives as an upload');
-like($controller, qr/inactivity_timeout\(3600\)/, 'the upload waits for a slow transfer');
+like($controller, qr/sub _controller_upload_job_dir/, 'a drop is staged under a job');
+like($controller, qr/sub _controller_transfer_job/, 'a detached job moves the staged bytes');
+like($routes, qr{/manager/controllers/roms/upload_start}, 'the start route');
+like($routes, qr{/manager/controllers/roms/upload_status}, 'the status route');
+like($controllers_js, qr{/manager/controllers/roms/upload_start}, 'the page starts the transfer');
+like($controllers_js, qr{/manager/controllers/roms/upload_status}, 'and polls it');
+like($controller, qr/release_listeners/, 'the transfer does not hold the web port');
 like($body, qr/id="controllers_drop"/, 'the ROMs section takes a drop');
 like($controllers_js, qr/function controllerDropGroups/, 'the page groups a drop');
 like($controllers_js, qr/function controllerDropDir/, 'and walks a dropped folder');

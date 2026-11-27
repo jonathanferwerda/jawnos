@@ -931,16 +931,144 @@ sub action_54014 {
 	});
 }
 
+# ---- a drop is staged, then moved off the request ----------------------------
+# A ROM can be large and the controller's link can be slow, so the request that
+# carries the bytes only stages them on this machine and returns. A detached job
+# moves the staged files to the controller and writes its progress to a status
+# file the page polls. Holding the request open for the transfer stalled the web
+# port and made the watchdog restart the tree.
+
+sub _controller_upload_root {
+	my $dir = &subs::home('~/.president/controller_uploads');
+	eval { File::Path::make_path($dir) } unless -d $dir;
+	return -d $dir ? $dir : '';
+}
+
+sub _controller_upload_job_ok {
+	my $job = shift // '';
+	return ($job =~ /^[A-Za-z0-9_-]{8,64}$/) ? $job : '';
+}
+
+sub _controller_upload_job_dir {
+	my $job = &_controller_upload_job_ok($_[0]);
+	return '' unless length $job;
+	my $root = &_controller_upload_root();
+	return '' unless length $root;
+	return $root . '/' . $job;
+}
+
+sub _controller_upload_meta_read {
+	my ($jobdir) = @_;
+	my $path = $jobdir . '/job.json';
+	return {} unless -f $path;
+	my $raw = '';
+	if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh; }
+	my $meta = eval { decode_json($raw) };
+	return ref $meta eq 'HASH' ? $meta : {};
+}
+
+sub _controller_upload_meta_write {
+	my ($jobdir, $meta) = @_;
+	my $path = $jobdir . '/job.json';
+	my $tmp = $path . '.' . $$ . '.tmp';
+	return 0 unless open(my $fh, '>', $tmp);
+	print {$fh} encode_json($meta);
+	close $fh;
+	return rename($tmp, $path) ? 1 : 0;
+}
+
+sub _controller_upload_status_read {
+	my ($jobdir) = @_;
+	my $path = $jobdir . '/status.json';
+	return { state => 'idle', done => 0, total => 0 } unless -f $path;
+	my $raw = '';
+	if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh; }
+	my $status = eval { decode_json($raw) };
+	return ref $status eq 'HASH' ? $status : { state => 'idle', done => 0, total => 0 };
+}
+
+sub _controller_upload_status_write {
+	my ($jobdir, $status) = @_;
+	my $path = $jobdir . '/status.json';
+	my $tmp = $path . '.' . $$ . '.tmp';
+	return 0 unless open(my $fh, '>', $tmp);
+	print {$fh} encode_json($status);
+	close $fh;
+	return rename($tmp, $path) ? 1 : 0;
+}
+
+sub _controller_upload_sweep {
+	my ($root) = @_;
+	return unless defined $root && length $root && opendir(my $dh, $root);
+	my @old = grep {
+		!/^\./ && -d "$root/$_" && (time - ((stat("$root/$_"))[9] // 0)) > 2 * 86400
+	} readdir $dh;
+	closedir $dh;
+	foreach my $dir (@old) { system('rm', '-rf', '--', "$root/$dir"); }
+}
+
+# Move a staged job to the controller. Runs in the detached child, so it may
+# take as long as the card and the radio need.
+sub _controller_transfer_job {
+	my $job = shift;
+	my $jobdir = &_controller_upload_job_dir($job);
+	my $meta = &_controller_upload_meta_read($jobdir);
+	my @paths = ref $meta->{'files'} eq 'ARRAY' ? @{ $meta->{'files'} } : ();
+	my $total = scalar @paths;
+	unless ($total) {
+		&_controller_upload_status_write($jobdir, { state => 'failed', done => 0, total => 0, error => 'Nothing was staged.' });
+		return;
+	}
+	my $uuid = $meta->{'uuid'} || '';
+	my ($device, $machine) = &_controller_resolve($uuid);
+	unless ($device || $uuid eq 'local') {
+		&_controller_upload_status_write($jobdir, { state => 'failed', done => 0, total => $total, error => 'no controller' });
+		return;
+	}
+	my $is_this = &_controller_is_this($uuid, $device, $machine);
+	my $root = &_controller_console_root($is_this, $machine);
+	unless (($root->{'kind'} // '') ne 'none') {
+		&_controller_upload_status_write($jobdir, { state => 'failed', done => 0, total => $total, error => $root->{'error'} });
+		return;
+	}
+	my $system = $meta->{'system'} || '';
+	my $game = $meta->{'game'} || '';
+	my $dir = $root->{'path'} . '/' . $system . (length $game ? '/' . $game : '');
+	my $spec = $root->{'kind'} eq 'remote'
+		? ($root->{'target'}{'user'} . '@' . $root->{'target'}{'host'})
+		: '';
+	my $done = 0;
+	&_controller_upload_status_write($jobdir, { state => 'running', done => 0, total => $total });
+	foreach my $rel (@paths) {
+		my $src = $jobdir . '/files/' . $rel;
+		my $dest = $dir . '/' . $rel;
+		(my $parent = $dest) =~ s{/[^/]+$}{};
+		my $ok = 0;
+		if ($root->{'kind'} eq 'local') {
+			File::Path::make_path($parent) unless -d $parent;
+			$ok = ((system('cp', '--', $src, $dest) == 0 && -f $dest) ? 1 : 0);
+		}
+		else {
+			$ok = (&_controller_remote_mkdir($root->{'target'}, $parent)
+				&& &_controller_scp_run($root->{'target'}, $src, $spec . ':' . $dest)->{'ok'}
+				&& &_controller_ssh_run($root->{'target'}, 'test -f ' . &_controller_shell_quote($dest))->{'ok'}) ? 1 : 0;
+		}
+		unless ($ok) {
+			&_controller_upload_status_write($jobdir, { state => 'failed', done => $done, total => $total, error => 'The file was not written: ' . $rel });
+			return;
+		}
+		$done++;
+		&_controller_upload_status_write($jobdir, { state => 'running', done => $done, total => $total });
+	}
+	&_controller_upload_status_write($jobdir, { state => 'done', done => $done, total => $total });
+	system('rm', '-rf', '--', $jobdir . '/files');
+}
+
 # POST /manager/controllers/roms/upload
-# One file of a dropped game. A folder game keeps its inner paths under its own
-# name; a single file lands beside its system. The Games shelf scans ~/roms, so
-# a file written there is a card the controller can launch.
+# Stage one file of a drop on this machine and return at once. The system and
+# game are carried with the staged job; nothing slow happens here.
 sub action_54015 {
 	my $c = shift;
-	# The file is written to the controller over ssh while this request is open;
-	# a slow card or radio outlasts the default idle timer, which would close the
-	# connection and orphan the transfer. The request waits like a flash does.
-	$c->inactivity_timeout(3600);
 	&app_schema_ensure();
 	unless (&_controller_house_pass($c)) {
 		return $c->render(json => { ok => 0, error => 'not allowed' });
@@ -949,6 +1077,10 @@ sub action_54015 {
 	my ($device, $machine) = &_controller_resolve($uuid);
 	unless ($device || $uuid eq 'local') {
 		return $c->render(json => { ok => 0, error => 'no controller' });
+	}
+	my $job = &_controller_upload_job_ok($c->param('job'));
+	unless (length $job) {
+		return $c->render(json => { ok => 0, error => 'bad job' });
 	}
 	my $system = $c->param('system') // '';
 	my $systems = &subs::game_systems();
@@ -967,45 +1099,105 @@ sub action_54015 {
 	unless ($upload && $upload->size) {
 		return $c->render(json => { ok => 0, error => 'No file arrived.' });
 	}
-	my $is_this = &_controller_is_this($uuid, $device, $machine);
-	my $root = &_controller_console_root($is_this, $machine);
-	unless (($root->{'kind'} // '') ne 'none') {
-		return $c->render(json => { ok => 0, error => $root->{'error'} });
+	my $jobdir = &_controller_upload_job_dir($job);
+	unless (length $jobdir) {
+		return $c->render(json => { ok => 0, error => 'The staging folder is not available.' });
 	}
-	my $dir = $root->{'path'} . '/' . $system . (length $game ? '/' . $game : '');
-	my $dest = $dir . '/' . $path;
-	(my $parent = $dest) =~ s{/[^/]+$}{};
+	&_controller_upload_sweep(&_controller_upload_root());
+	my $staged = $jobdir . '/files/' . $path;
+	(my $parent = $staged) =~ s{/[^/]+$}{};
+	File::Path::make_path($parent) unless -d $parent;
 	my ($source, $temp) = &_controller_upload_source($upload);
 	unless (defined $source) {
 		return $c->render(json => { ok => 0, error => 'The upload could not be read.' });
 	}
-	my $ok = 0;
-	if ($root->{'kind'} eq 'local') {
-		File::Path::make_path($parent) unless -d $parent;
-		$ok = ((system('cp', '--', $source, $dest) == 0 && -f $dest) ? 1 : 0);
-	}
-	else {
-		my $target = $root->{'target'};
-		unless (&_controller_remote_mkdir($target, $parent)) {
-			unlink $temp if defined $temp;
-			return $c->render(json => { ok => 0, error => 'The controller folder could not be made.' });
-		}
-		my $spec = $target->{'user'} . '@' . $target->{'host'};
-		$ok = (&_controller_scp_run($target, $source, $spec . ':' . $dest)->{'ok'}
-			&& &_controller_ssh_run($target, 'test -f ' . &_controller_shell_quote($dest))->{'ok'}) ? 1 : 0;
-	}
+	my $ok = ((system('cp', '--', $source, $staged) == 0 && -f $staged) ? 1 : 0);
 	unlink $temp if defined $temp;
 	unless ($ok) {
-		return $c->render(json => { ok => 0, error => 'The file was not written.' });
+		return $c->render(json => { ok => 0, error => 'The file could not be staged.' });
 	}
-	$log->info('controller rom upload: ' . $system . '/' . (length $game ? $game . '/' : '') . $path . ($root->{'kind'} eq 'remote' ? ' (ssh)' : ''));
+	my $meta = &_controller_upload_meta_read($jobdir);
+	$meta->{'uuid'} = $uuid;
+	$meta->{'system'} = $system;
+	$meta->{'game'} = $game;
+	$meta->{'files'} = [] unless ref $meta->{'files'} eq 'ARRAY';
+	push @{ $meta->{'files'} }, $path unless grep { $_ eq $path } @{ $meta->{'files'} };
+	&_controller_upload_meta_write($jobdir, $meta);
+	$c->render(json => {
+		ok => 1, staged => 1, job => $job, path => $path,
+		system => $system, label => &subs::game_system_label($system),
+	});
+}
+
+# POST /manager/controllers/roms/upload_start
+# Hand the staged job to a detached child and answer at once, so a slow card
+# never holds the request that carried the bytes.
+sub action_54016 {
+	my $c = shift;
+	&app_schema_ensure();
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	my $job = &_controller_upload_job_ok($c->param('job'));
+	unless (length $job) {
+		return $c->render(json => { ok => 0, error => 'bad job' });
+	}
+	my $jobdir = &_controller_upload_job_dir($job);
+	unless (length $jobdir && -d $jobdir) {
+		return $c->render(json => { ok => 0, error => 'That drop is not here.' });
+	}
+	my $status = &_controller_upload_status_read($jobdir);
+	my $state = $status->{'state'} // 'idle';
+	if ($state =~ /^(?:queued|running|done)$/) {
+		return $c->render(json => { ok => 1, job => $job, state => $state, done => ($status->{'done'} // 0) + 0, total => ($status->{'total'} // 0) + 0 });
+	}
+	my $meta = &_controller_upload_meta_read($jobdir);
+	my $files = ref $meta->{'files'} eq 'ARRAY' ? $meta->{'files'} : [];
+	unless (@{$files}) {
+		return $c->render(json => { ok => 0, error => 'Nothing was staged.' });
+	}
+	&_controller_upload_status_write($jobdir, { state => 'queued', done => 0, total => scalar @{$files} });
+	my $pid = fork();
+	unless (defined $pid) {
+		return $c->render(json => { ok => 0, error => 'The transfer could not start.' });
+	}
+	if ($pid) {
+		return $c->render(json => { ok => 1, job => $job, state => 'queued', done => 0, total => scalar @{$files} });
+	}
+	# The child must not hold the web port open for the transfer.
+	POSIX::setsid();
+	require JawnOS::Platform::Process;
+	eval { JawnOS::Platform::Process::release_listeners() };
+	open(STDIN, '<', '/dev/null');
+	open(STDOUT, '>', $jobdir . '/log.txt');
+	open(STDERR, '>&', \*STDOUT);
+	eval { &_controller_transfer_job($job) };
+	POSIX::_exit(0);
+}
+
+# GET /manager/controllers/roms/upload_status
+# What the page polls while the detached transfer runs.
+sub action_54017 {
+	my $c = shift;
+	&app_schema_ensure();
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	my $job = &_controller_upload_job_ok($c->param('job'));
+	unless (length $job) {
+		return $c->render(json => { ok => 0, error => 'bad job' });
+	}
+	my $jobdir = &_controller_upload_job_dir($job);
+	my $status = (length $jobdir && -d $jobdir)
+		? &_controller_upload_status_read($jobdir)
+		: { state => 'idle', done => 0, total => 0 };
 	$c->render(json => {
 		ok => 1,
-		system => $system,
-		label => &subs::game_system_label($system),
-		game => $game,
-		path => $path,
-		remote => ($root->{'kind'} eq 'remote' ? 1 : 0),
+		job => $job,
+		state => ($status->{'state'} // 'idle'),
+		done => ($status->{'done'} // 0) + 0,
+		total => ($status->{'total'} // 0) + 0,
+		(defined $status->{'error'} ? (error => $status->{'error'}) : ()),
 	});
 }
 

@@ -865,23 +865,80 @@ function controllerDropGroups(groups) {
 
 function controllerDropUpload(group, system, label, uuid, done) {
 	var files = group.files || [];
+	var name = group.game || controllerT('the games');
+	var job = 'j' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 	var index = 0;
-	function one() {
-		if (index >= files.length) {
-			var name = group.game || controllerT('the games');
-			controllerDropBusy(controllerT('Added {0} to {1}. The Games shelf will refresh.', name, label || system), false);
+	function start() {
+		$.ajax({
+			url: '/manager/controllers/roms/upload_start',
+			type: 'POST',
+			data: { uuid: uuid, job: job, timestamp: Date.now() },
+			dataType: 'json',
+			success: function(response) {
+				if (!response || !response.ok) {
+					controllerDropBusy((response && response.error) ? String(response.error) : controllerT('The file was not written.'), true);
+					done();
+					return;
+				}
+				poll(0);
+			},
+			error: function() {
+				controllerDropBusy(controllerT('The file was not written.'), true);
+				done();
+			}
+		});
+	}
+	function poll(count) {
+		if (count > 2400) {
+			controllerDropBusy(controllerT('The transfer is taking too long.'), true);
 			done();
+			return;
+		}
+		$.ajax({
+			url: '/manager/controllers/roms/upload_status',
+			type: 'GET',
+			data: { job: job, timestamp: Date.now() },
+			dataType: 'json',
+			success: function(response) {
+				if (!response || !response.ok) {
+					controllerDropBusy(controllerT('The file was not written.'), true);
+					done();
+					return;
+				}
+				if (response.state === 'done') {
+					controllerDropBusy(controllerT('Added {0} to {1}. The Games shelf will refresh.', name, label || system), false);
+					done();
+					return;
+				}
+				if (response.state === 'failed') {
+					controllerDropBusy(response.error ? String(response.error) : controllerT('The file was not written.'), true);
+					done();
+					return;
+				}
+				if (response.total) {
+					controllerDropBusy(controllerT('Adding {0} of {1}...', response.done || 0, response.total), false);
+				}
+				setTimeout(function() { poll(count + 1); }, 1500);
+			},
+			error: function() { setTimeout(function() { poll(count + 1); }, 3000); }
+		});
+	}
+	function uploadOne() {
+		if (index >= files.length) {
+			controllerDropBusy(controllerT('Adding {0} to {1}...', name, label || system), false);
+			start();
 			return;
 		}
 		var entry = files[index++];
 		var form = new FormData();
 		form.append('uuid', uuid);
+		form.append('job', job);
 		form.append('system', system);
 		form.append('game', group.game || '');
 		form.append('path', entry.path);
 		form.append('timestamp', Date.now());
 		form.append('file', entry.file, entry.file.name);
-		controllerDropBusy(controllerT('Adding {0}...', entry.path), false);
+		controllerDropBusy(controllerT('Uploading {0}...', entry.path), false);
 		$.ajax({
 			url: '/manager/controllers/roms/upload',
 			type: 'POST',
@@ -895,7 +952,7 @@ function controllerDropUpload(group, system, label, uuid, done) {
 					done();
 					return;
 				}
-				one();
+				uploadOne();
 			},
 			error: function() {
 				controllerDropBusy(controllerT('The file was not written.'), true);
@@ -903,7 +960,7 @@ function controllerDropUpload(group, system, label, uuid, done) {
 			}
 		});
 	}
-	one();
+	uploadOne();
 }
 
 // ---- adding a controller ---------------------------------------------------
