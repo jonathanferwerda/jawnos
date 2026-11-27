@@ -645,8 +645,9 @@ static void audio_button(lv_event_t * e) {
 
     if (btn == recbtn1) {
         if (code == LV_EVENT_PRESSED) {
-            if (isPlaying) return; // Prevent conflicts during execution
-            
+            if (isPlaying || isRecording) return; // one capture at a time
+
+            rec_is_note = true;
             rec_clip_ts = timestamp_maker();
             isRecording = true;
             lv_label_set_text(btn_label, "Recording...");
@@ -658,9 +659,32 @@ static void audio_button(lv_event_t * e) {
             xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 4096, NULL, 2, NULL, 1);
 
         } else if (code == LV_EVENT_RELEASED) {
-            if (isRecording) {
+            if (isRecording && rec_is_note) {
                 isRecording = false; 
                 lv_label_set_text(btn_label, "Rec");
+            }
+        }
+    }
+    else if (btn == combtn) {
+        // push-to-talk: the clip is shipped as if the wake word had been said,
+        // so the server runs a recognised command and sends anything else to the
+        // Guide. It records for exactly as long as the button is held.
+        if (code == LV_EVENT_PRESSED) {
+            if (isPlaying || isRecording) return;
+
+            rec_is_note = false;
+            rec_clip_ts = timestamp_maker();
+            isRecording = true;
+            comRecording = true;                 // orange ring + keep the screen awake
+            voiceWakeHoldUntil = millis() + 15000;
+            lv_label_set_text(btn_label, "Listening...");
+            rec_clip_wav = "/com.wav";           // not a memo: Play still plays Rec
+            xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 4096, NULL, 2, NULL, 1);
+
+        } else if (code == LV_EVENT_RELEASED) {
+            if (isRecording && !rec_is_note) {
+                isRecording = false;
+                lv_label_set_text(btn_label, "Com");
             }
         }
     }
@@ -750,7 +774,7 @@ void finalize_wav_sizes(const char *song_name, uint32_t raw_pcm_bytes, uint32_t 
 // Keep the Rec folder to REC_NOTE_LIMIT memos. Names are epoch seconds, so the
 // oldest sort first; everything past the limit goes, except the memo just
 // recorded (a wrong clock must not delete the note being shipped).
-static void rec_note_prune() {
+static void rec_note_prune(const String &keep) {
     File dir = FFat.open("/recordings");
     if (!dir || !dir.isDirectory()) { if (dir) { dir.close(); } return; }
     long names[64];
@@ -777,43 +801,64 @@ static void rec_note_prune() {
     }
     for (int i = 0; i < n - REC_NOTE_LIMIT; i++) {
         String path = "/recordings/" + String(names[i]) + ".wav";
-        if (path == rec_clip_wav) { continue; }
+        if (path == keep) { continue; }
         Serial.printf("[rec] prune %s\n", path.c_str());
         FFat.remove(path.c_str());
     }
 }
 
-// The Rec memo's shipping task: compress the 16 kHz clip to the 8 kHz IMA ADPCM
-// the server reads natively, then hand it over tagged "note". It runs off the
-// microphone task so the TLS/BLE send never sits on the mic's small stack.
+// The manual clip's shipping task: compress the 16 kHz clip to the 8 kHz IMA
+// ADPCM the server reads natively, then hand it over. A Rec clip is tagged
+// "note" and filed in Notes; a Com clip is tagged "command", so the server
+// reads it as a wake-word capture (command first, then the Guide). It runs off
+// the microphone task so the TLS/BLE send never sits on the mic's small stack.
 static void rec_voice_ship_task(void *pv) {
     (void)pv;
-    long ts = rec_clip_ts;
-    String ship_path = rec_clip_wav;
-    if (voice_compress_clip(ship_path, "/rec.adpcm", true)) { ship_path = "/rec.adpcm"; }
-    bool ok = voice_ship_clip(ship_path, ts, REC_NOTE_MODE);
-    Serial.printf("[rec] voice note ts=%ld %s\n", ts, ok ? "shipped" : "NOT shipped");
-    if (ship_path == "/rec.adpcm" && FFat.exists("/rec.adpcm")) { FFat.remove("/rec.adpcm"); }
+    bool note = rec_ship_is_note;
+    long ts = rec_ship_ts;
+    String src = rec_ship_path;
+    String packed = note ? "/rec.adpcm" : "/com.adpcm";
+    const char *mode = note ? REC_NOTE_MODE : COMMAND_MODE;
+    // the Com clip holds the screen on while it is sent and waits for the Guide
+    if (!note) { voiceShipping = true; }
+    String ship_path = src;
+    if (voice_compress_clip(src, packed, true)) { ship_path = packed; }
+    bool ok = voice_ship_clip(ship_path, ts, mode);
+    Serial.printf("[%s] clip ts=%ld %s\n", note ? "rec" : "com", ts, ok ? "shipped" : "NOT shipped");
+    if (!note) {
+        voiceShipping = false;
+        if (ok) { voiceAwaitingSince = millis(); voiceAwaitingReply = true; }
+    }
+    if (ship_path == packed && FFat.exists(packed.c_str())) { FFat.remove(packed.c_str()); }
     vTaskDelete(NULL);
 }
 
 // FreeRTOS background task handling the microphone pipeline data stream
 void micCaptureTask(void *pvParameters) {
+    // Snapshot the press's own choices: a later press must not retag or
+    // overwrite the clip this task is still finishing.
+    String clip_path = rec_clip_wav;
+    long clip_ts = rec_clip_ts;
+    bool note = rec_is_note;
+
     AudioInputIf *mic = watch.getAudioInput();
     if (!mic || !mic->open(MIC_I2S_BITS_PER_SAMPLE, 1, MIC_I2S_SAMPLE_RATE)) {
         Serial.println("[Recorder] microphone open failed");
         isRecording = false;
+        if (!note) { comRecording = false; voiceWakeHoldUntil = 0; }
         vTaskDelete(NULL);
     }
 
-    if (!create_wav_header_on_flash(WAV_FILE_PATH.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
+    if (!create_wav_header_on_flash(clip_path.c_str(), MIC_I2S_SAMPLE_RATE, MIC_I2S_BITS_PER_SAMPLE)) {
         isRecording = false;
+        if (!note) { comRecording = false; voiceWakeHoldUntil = 0; }
         vTaskDelete(NULL);
     }
 
-    File audio_file = FFat.open(WAV_FILE_PATH.c_str(), FILE_APPEND);
+    File audio_file = FFat.open(clip_path.c_str(), FILE_APPEND);
     if (!audio_file) {
         isRecording = false;
+        if (!note) { comRecording = false; voiceWakeHoldUntil = 0; }
         vTaskDelete(NULL);
     }
 
@@ -847,13 +892,23 @@ void micCaptureTask(void *pvParameters) {
                   spent ? (unsigned)((uint64_t)bytes_written_total * 1000 / spent) : 0);
 
     // Patch structural sizing tags so whisper.cpp can process it cleanly
-    finalize_wav_sizes(WAV_FILE_PATH.c_str(), bytes_written_total, MIC_I2S_SAMPLE_RATE);
+    finalize_wav_sizes(clip_path.c_str(), bytes_written_total, MIC_I2S_SAMPLE_RATE);
 
-    // A Rec clip is a voice memo for the Notes app. Keep the folder to its limit
-    // and ship the clip tagged as a note; a tap too short to carry speech is not
-    // worth a transcription. The send runs in its own task (see above).
+    // A Com capture is over: put its ring out and let the ship task keep the
+    // screen on through the send and the Guide's answer.
+    if (!note) { comRecording = false; voiceWakeHoldUntil = 0; }
+
+    // Hand the shipping task this clip's own choices, so a later press cannot
+    // retag it.
+    rec_ship_is_note = note;
+    rec_ship_ts = clip_ts;
+    rec_ship_path = clip_path;
+
+    // A Rec clip is a voice memo for the Notes app: keep the folder to its limit.
+    // A tap too short to carry speech is not worth a transcription. The send runs
+    // in its own task (see above).
     if (bytes_written_total > 1600) {
-        rec_note_prune();
+        if (note) { rec_note_prune(clip_path); }
         if (xTaskCreatePinnedToCore(rec_voice_ship_task, "RecShip", 12288, NULL, 1, NULL, 0) != pdPASS) {
             Serial.println("[rec] could not start the ship task");
         }

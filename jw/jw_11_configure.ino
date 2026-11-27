@@ -38,7 +38,7 @@ void clock_writer() {
 
   playbtn1 = lv_btn_create(lv_scr_act());
   lv_obj_set_size(playbtn1, 50, 40);
-  lv_obj_set_pos(playbtn1, 60, 136 );
+  lv_obj_set_pos(playbtn1, 130, 136 );
   lv_obj_add_event_cb(playbtn1, audio_button, LV_EVENT_ALL, NULL);
   lv_obj_set_style_bg_color(playbtn1, lv_color_hex(0x5df796), LV_PART_MAIN);
 
@@ -46,22 +46,17 @@ void clock_writer() {
   lv_label_set_text(label_play, "Play");
   lv_obj_center(label_play);
 
-  wigi_btn = lv_btn_create(lv_scr_act());
-  lv_obj_add_event_cb(wigi_btn, wigi_button, LV_EVENT_CLICKED, NULL);
-  lv_obj_set_pos(wigi_btn, 130, 136 );
-  lv_obj_set_size(wigi_btn, 50, 40 );
-  lv_obj_set_style_bg_color(wigi_btn, lv_color_hex(0x27de16), LV_PART_MAIN);
+  // push-to-talk: hold Com and speak; it records until release and ships the
+  // clip as if the wake word had been said (command first, then the Guide)
+  combtn = lv_btn_create(lv_scr_act());
+  lv_obj_set_size(combtn, 50, 40);
+  lv_obj_set_pos(combtn, 60, 136 );
+  lv_obj_add_event_cb(combtn, audio_button, LV_EVENT_ALL, NULL);
+  lv_obj_set_style_bg_color(combtn, lv_color_hex(0xff8000), LV_PART_MAIN);
 
-  lv_obj_t *l2;
-  lv_color_t t2;
-  t2 = lv_color_make(0,0,0);
-  lv_obj_set_style_text_color(wigi_btn, t2, LV_PART_MAIN);
-  l2 = lv_label_create(wigi_btn);
-  lv_label_set_text(l2, "Wigi");
-  lv_obj_center(l2);
-  // the clock room carries the wigi indicator now; time_writer keeps it honest
-  wigi_count_label = l2;
-  update_wigi_indicator();
+  lv_obj_t * label_com = lv_label_create(combtn);
+  lv_label_set_text(label_com, "Com");
+  lv_obj_center(label_com);
 
   delay(5);
   lastMillis = lastMillis - 1000;

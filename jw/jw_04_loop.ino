@@ -387,7 +387,7 @@ void jawn_loop() {
   }
   // a clip being heard or waiting to go needs the bridge: bring the radio up on
   // demand (a glance did not), so the payload has somewhere to go
-  if ((voiceRecording || voiceShipping) && bt_enabled && !ble_radio_up && ble_restore_at == 0) {
+  if ((voiceRecording || voiceShipping || comRecording) && bt_enabled && !ble_radio_up && ble_restore_at == 0) {
     ble_restore_at = millis();
   }
   // the server said the clip was transcribed and filed: drop the watch's local
@@ -408,7 +408,7 @@ void jawn_loop() {
   wrist_look_monitor();   // hold a glance while the arm is up, drop it when it falls
   // a spoken command keeps the watch awake until it is captured: without this the
   // screen timeout could doze us mid-sentence and the clip would be lost
-  if (voiceRecording || voiceShipping
+  if (voiceRecording || voiceShipping || comRecording
       || (voiceWakeHoldUntil && (int32_t)(millis() - voiceWakeHoldUntil) < 0)) {
     buttonMillis = millis();
   }
@@ -426,9 +426,10 @@ void jawn_loop() {
   // the orange ring: shown for exactly as long as a command is being heard
   {
     static bool voice_border_on = false;
-    if (voiceRecording != voice_border_on) {
-      voice_border_on = voiceRecording;
-      voice_border_show(voice_border_on);
+    bool want_border = voiceRecording || comRecording;
+    if (want_border != voice_border_on) {
+      voice_border_on = want_border;
+      voice_border_show(want_border);
     }
   }
   // a guide associate reply: draw the words, then hear them - the parts arrive

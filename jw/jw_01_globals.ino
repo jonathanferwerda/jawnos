@@ -126,6 +126,10 @@ static volatile bool voiceOneShot = false;   // a serial "voice" capture, not th
 // then, so a spoken command is not cut short by the watch dozing (the tilt-wake
 // delay the user asked for).
 static volatile bool voiceRecording = false;
+// The Com button records a push-to-talk command with the manual recorder, so it
+// needs its own flag: the hands-free listener's cleanup sets voiceRecording
+// false when it hands the mic over, and must not put the Com ring out.
+static volatile bool comRecording = false;
 // True from the moment a clip starts shipping until the server acks it: the send
 // is hundreds of paced notifications, and the screen's short look would doze (and
 // light-sleep, which drops the radio) part-way through - exactly how a spoken
@@ -170,11 +174,22 @@ static String VOICE_ADPCM_PATH = "/voice.adpcm";
 // folder keeps at most REC_NOTE_LIMIT memos: a quick jot is useful, and a full
 // flash is a worn watch.
 #define REC_NOTE_MODE "note"
+// A Com clip is a push-to-talk command: the server reads it as if the wake word
+// had already been said (command first, then the Guide), so it ships with this
+// non-vad tag.
+#define COMMAND_MODE "command"
 #define REC_NOTE_LIMIT 10
 // The memo's own epoch (seconds) and the file it was written to, set at the
 // press and handed to the shipping task when the capture stops.
 static volatile long rec_clip_ts = 0;
 static String rec_clip_wav;
+// Which button started the capture: true for Rec (a note), false for Com (a
+// command). Snapshot at the press and again for the ship task, so a later press
+// cannot retag a clip already being recorded or sent.
+static volatile bool rec_is_note = true;
+static volatile bool rec_ship_is_note = true;
+static volatile long rec_ship_ts = 0;
+static String rec_ship_path;
 // Set when the saved config says BLE should be on. Starting the BLE stack from
 // setup() crashes the watch, so the start is deferred to loop() once the rest of
 // the boot (display, LVGL, WiFi) has settled.
@@ -487,6 +502,7 @@ lv_obj_t * notification_btn;
 lv_obj_t * wigi_btn;
 lv_obj_t * recbtn1;
 lv_obj_t *playbtn1;
+lv_obj_t * combtn;
 
 int notification_view = 0;
 int notification_viewing = 0;

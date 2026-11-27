@@ -434,11 +434,17 @@ void watch_face_maker()
   face_apgw = face_label_maker(130, 160, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 100);
 }
 
+// The Wigi count last drawn, so a 1 Hz poll does not rewrite an unchanged label.
+static int wigi_shown = -1;
+
 void display_exit( void ) {
   lv_obj_clean ( lv_scr_act() ); // Clean objects from current screen.
   lv_obj_invalidate( lv_scr_act() ); // Invalidate objects for redraw.
   face_forget();
   wigi_count_label = nullptr;   // the Wigi button died with lv_obj_clean
+  wigi_btn = nullptr;           // and so did the button itself
+  wigi_shown = -1;              // a rebuilt button starts from its own label
+  combtn = nullptr;             // the clock row's buttons are rebuilt on return
   // ... and so did the bottom row and the room's buttons
   btn1 = btn2 = btn3 = btn4 = btn5 = btn6 = nullptr;
   for (int i = 0; i < ROOM_BUTTON_SLOTS; i++) { room_button_obj[i] = nullptr; }
@@ -496,20 +502,25 @@ void time_writer(char * situation) {
       if (face_steps && stepCounter == true) {
         lv_label_set_text_fmt(face_steps, "%u", (unsigned)steps);
       }
-      update_wigi_indicator();
     }
   }
 }
 
 // The room views used to carry a red LED and a count for taps that could not be
 // delivered; they crowded the buttons down there, so the indicator lives on the
-// clock room's Wigi button instead: the count rides in its label and the button
-// turns red while anything is waiting.
+// Net page's Wigi button instead: the count rides in its label and the button
+// turns red while anything is waiting. `wigi_shown` keeps a 1 Hz poll from
+// rewriting (and redrawing) the same label, and is reset when the button is
+// rebuilt.
 void update_wigi_indicator() {
   if (!wigi_count_label) {
     return;
   }
   int pending = wigi.length();
+  if (pending == wigi_shown) {
+    return;
+  }
+  wigi_shown = pending;
   if (pending > 0) {
     lv_label_set_text_fmt(wigi_count_label, "Wigi %d", pending);
     if (wigi_btn) {
@@ -556,6 +567,14 @@ void ip_writer() {
       lv_obj_set_style_text_color(face_bt, lv_color_hex(bt_colours[state]), LV_PART_MAIN);
     }
     label_set_if_changed(face_bt, bt_line);
+  }
+  // The Wigi button lives on the Net page, whose per-second tick is here (the
+  // clock's time_writer does not run off the clock room). Throttled, and
+  // update_wigi_indicator skips an unchanged count.
+  static uint32_t wigi_at = 0;
+  if (wigi_count_label && millis() - wigi_at >= 1000) {
+    wigi_at = millis();
+    update_wigi_indicator();
   }
   if (!face_ip) {
     return;

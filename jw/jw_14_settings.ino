@@ -92,7 +92,7 @@ void net_room() {
   
   display_exit();
   // who the bridge is; ip_writer() keeps this line fresh from here on
-  face_bt = face_label_maker(20, 80, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 200);
+  face_bt = face_label_maker(20, 125, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 200);
   ip_writer();
   lv_obj_t * wifi_button = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(wifi_button, wifi_control, LV_EVENT_CLICKED, NULL);
@@ -151,6 +151,24 @@ void net_room() {
   lwi3 = lv_label_create(bt_button);
   lv_label_set_text(lwi3, "BT");
   lv_obj_center(lwi3);
+
+  // the Wigi button: taps that could not be delivered wait behind it. It sits
+  // under the BT button, where the radio it depends on is switched.
+  wigi_btn = lv_btn_create(lv_scr_act());
+  lv_obj_add_event_cb(wigi_btn, wigi_button, LV_EVENT_CLICKED, NULL);
+  lv_obj_set_pos(wigi_btn, 185, 75 );
+  lv_obj_set_size(wigi_btn, 50, 40 );
+  lv_obj_set_style_bg_color(wigi_btn, lv_color_hex(0x27de16), LV_PART_MAIN);
+
+  lv_obj_t *lwi5;
+  lv_color_t twi5;
+  twi5 = lv_color_make(0,0,0);
+  lv_obj_set_style_text_color(wigi_btn, twi5, LV_PART_MAIN);
+  lwi5 = lv_label_create(wigi_btn);
+  lv_label_set_text(lwi5, "Wigi");
+  lv_obj_center(lwi5);
+  wigi_count_label = lwi5;
+  update_wigi_indicator();
 
   lv_obj_t * tilt_button = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(tilt_button, tilt_wake_control, LV_EVENT_CLICKED, NULL);

@@ -1,8 +1,10 @@
-# tests-for: lib/JawnOS/Domain/Ai.pm lib/JawnOS/Domain/Loader.pm jw/jw_01_globals.ino jw/jw_07_house_audio.ino jw/jw_08_voice.ino jw/jw_09_voice_ship.ino
+# tests-for: lib/JawnOS/Domain/Ai.pm lib/JawnOS/Domain/Loader.pm jw/jw_01_globals.ino jw/jw_04_loop.ino jw/jw_06_net_face.ino jw/jw_07_house_audio.ino jw/jw_08_voice.ino jw/jw_09_voice_ship.ino jw/jw_11_configure.ino jw/jw_14_settings.ino
 # covers:    The watch's Rec button files a spoken memo in Notes and keeps the ten
-#           most recent per device; a recognised start/stop command still runs,
-#           and anything else addressed goes to the Guide without becoming a
-#           note; the firmware ships the memo tagged "note" and prunes the folder.
+#           most recent per device; the Com button records a push-to-talk command
+#           whose clip is read as a wake-word capture (command first, then the
+#           Guide); the Wigi and Play buttons moved on the clock and Net pages;
+#           the firmware ships a Rec clip tagged "note" and a Com clip tagged
+#           "command", and prunes the recording folder.
 
 use strict;
 use warnings;
@@ -208,17 +210,49 @@ is(scalar(@guided), 0, 'and is not sent to the Guide');
 my $room_note = $db->query("select uuid from notes where text = ?", 'the room is quiet')->hash;
 ok(!$room_note, 'and is not a note');
 
+# The Com button tags its clip "command", which is the wake-word path without the
+# on-device phrase: command first, then the Guide.
+reset_observers();
+$main::WHISPER = 'start email test';
+$main::BRAIN   = undef;
+my $com_cmd = &subs::voice_ingest('raw', { voice => 'command', chip_id => 'watch-chip', ts => 1_700_000_120_000 });
+is($com_cmd->{'status'}, 'done', 'a Com clip runs a recognised command');
+is_deeply(\@applied, ['email test'], 'and toggles the app');
+is(scalar(@guided), 0, 'a Com command does not go to the Guide');
+
+reset_observers();
+$main::WHISPER = 'what is the weather';
+$main::BRAIN   = undef;
+my $com_guide = &subs::voice_ingest('raw', { voice => 'command', chip_id => 'watch-chip', ts => 1_700_000_130_000 });
+is($com_guide->{'status'}, 'guide', 'a Com clip that is not a command goes to the Guide');
+is_deeply(\@guided, ['what is the weather'], 'with the spoken words');
+my $com_note = $db->query("select uuid from notes where text = ?", 'what is the weather')->hash;
+ok(!$com_note, 'and is not a note');
+
 # --------------------------------------------------- the firmware wiring
 my $globals = read_file('jw/jw_01_globals.ino');
 like($globals, qr/#define\s+REC_NOTE_MODE\s+"note"/, 'the watch tags a Rec clip as a note');
-like($globals, qr/#define\s+REC_NOTE_LIMIT\s+10/, 'and keeps ten of them');
+like($globals, qr/#define\s+COMMAND_MODE\s+"command"/, 'and a Com clip as a command');
+like($globals, qr/#define\s+REC_NOTE_LIMIT\s+10/, 'and keeps ten memos');
 
 my $audio = read_file('jw/jw_07_house_audio.ino');
-like($audio, qr/rec_clip_ts\s*=\s*timestamp_maker\(\)/, 'the press stamps the memo at its onset');
-like($audio, qr/rec_voice_ship_task/, 'the capture ships the memo from its own task');
-like($audio, qr/voice_ship_clip\(ship_path,\s*ts,\s*REC_NOTE_MODE\)/, 'shipped as a note, not a command');
-like($audio, qr/rec_note_prune\(\)/, 'the recording folder is pruned after a capture');
+like($audio, qr/rec_is_note\s*=\s*false/, 'the Com press records a command');
+like($audio, qr/rec_clip_wav\s*=\s*"\/com\.wav"/, 'to its own temp clip');
+like($audio, qr/const char \*mode = note \? REC_NOTE_MODE : COMMAND_MODE/, 'a Rec clip ships as note, a Com clip as command');
+like($audio, qr/voice_ship_clip\(ship_path, ts, mode\)/, 'the ship carries the clip kind');
+like($audio, qr/rec_note_prune\(clip_path\)/, 'only a Rec capture prunes the memo folder');
 like($audio, qr/n\s*-\s*REC_NOTE_LIMIT/, 'the prune keeps the limit');
+
+my $clock = read_file('jw/jw_11_configure.ino');
+like($clock, qr/lv_obj_set_pos\(playbtn1, 130, 136 \)/, 'Play moved to the old Wigi slot');
+like($clock, qr/lv_obj_set_pos\(combtn, 60, 136 \)/, 'Com sits where Play was');
+unlike($clock, qr/wigi_btn = lv_btn_create/, 'the clock page no longer builds the Wigi button');
+
+my $net = read_file('jw/jw_14_settings.ino');
+like($net, qr/lv_obj_set_pos\(wigi_btn, 185, 75 \)/, 'the Wigi button sits under BT on the Net page');
+
+my $loop = read_file('jw/jw_04_loop.ino');
+like($loop, qr/voiceRecording \|\| comRecording/, 'a Com capture shows the listening ring');
 
 my $voice = read_file('jw/jw_08_voice.ino');
 like($voice, qr/voice_compress_clip\(const String &in_path, const String &out_path, bool fold_half\)/,
