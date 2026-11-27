@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Ai.pm perl/crew.pl scripts/jawnos_deps.pl scripts/whisper_tool.py templates/configure/plat_setting_list.html.ep
+# tests-for: lib/JawnOS/Domain/Ai.pm perl/crew.pl perl/jobs.pl scripts/jawnos_deps.pl scripts/whisper_tool.py templates/configure/plat_setting_list.html.ep
 # covers:    whisper.cpp is the one local transcription engine the role can name
 #           (local:whisper.cpp); the desktop wheel and the Termux native build,
 #           their wrappers, the model chooser, a stored local:vosk read as
@@ -329,6 +329,18 @@ unlike($deps, qr{sub install_vosk}, 'the Vosk installer is gone');
 		like($full, qr/supplies every module and tool/,
 			'while a full install still honors the runtime marker');
 	}
+}
+
+# ------------------------------------------------------------ the warm server's session
+# The native server converts an upload with `ffmpeg -i`, which reads stdin; in
+# the manager's PTY that is a controlling-terminal read and SIGTTIN stops the
+# whole process group, the job loop included, so the server froze and was never
+# reaped. The fork detaches into its own session and gives it /dev/null stdin.
+{
+	my $jobs = read_file("$repo/perl/jobs.pl");
+	like($jobs, qr/POSIX::setsid\(\);/, 'the warm server forks into its own session');
+	like($jobs, qr{open\(STDIN, '<', '/dev/null'\)},
+		'and its stdin is /dev/null, not the manager\'s terminal');
 }
 
 # ------------------------------------------------------------ the warm-server upload

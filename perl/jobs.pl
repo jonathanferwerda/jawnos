@@ -408,6 +408,14 @@ sub job_whisper_server {
 			open($log_fh, '>>', $log);
 			my $pid = fork();
 			if (defined $pid && $pid == 0) {
+				# A warm server converts an upload with `ffmpeg -i`, which reads stdin
+				# to watch for 'q'. Inheriting the manager's PTY made that a read of
+				# the controlling terminal; SIGTTIN stops the whole process group,
+				# and this job loop is in it, so it froze before it could reap or
+				# restart the server (seen on the phone/tablet). Its own session and
+				# /dev/null stdin leave no terminal to read.
+				POSIX::setsid();
+				open(STDIN, '<', '/dev/null');
 				open(STDOUT, '>&', $log_fh) if $log_fh;
 				open(STDERR, '>&', $log_fh) if $log_fh;
 				my @argv = &subs::whisper_launch_argv($bin);
