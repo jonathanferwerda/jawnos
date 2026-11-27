@@ -268,6 +268,58 @@ void wifi_server() {
   }
 }
 
+// A real light sleep must be entered with the WiFi stack, the web server and
+// mDNS down. Left up, esp_light_sleep_start() hangs in its critical section
+// after a while and the RTC watchdog resets the watch (reason 7, last "ls
+// woke"/"ls nap"). The deck sleeps this way; the watch kept the link.
+static bool wifi_slept_down = false;
+
+void wifi_down_for_nap() {
+  if (WiFi.status() != WL_CONNECTED && !webserver_enabled && !jawnos_mdns_up) {
+    return;
+  }
+  if (webserver_enabled) {
+    server.stop();
+    webserver_enabled = false;
+  }
+  if (jawnos_mdns_up) {
+    MDNS.end();
+    jawnos_mdns_up = false;
+  }
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  wifi_slept_down = true;
+}
+
+void wifi_wake_from_nap() {
+  if (!wifi_slept_down) {
+    return;
+  }
+  wifi_slept_down = false;
+  if (!wifi_enabled || ssid.length() == 0) {
+    return;
+  }
+  WiFi.mode(wifi_ap_enabled ? WIFI_AP_STA : WIFI_STA);
+  if (wifi_ap_enabled) {
+    accesspoint_start();
+  }
+  // begin() is asynchronous; loop() starts the server and mDNS once the link is
+  // up, so the screen wake is not held for the join.
+  WiFi.begin(ssid.c_str(), password.c_str());
+  wifi_restore_pending = true;
+}
+
+void wifi_restore_tick() {
+  if (wifi_restore_pending && WiFi.status() == WL_CONNECTED) {
+    wifi_restore_pending = false;
+    if (!wifi_ap_enabled) {
+      server.begin();
+      webserver_enabled = true;
+    }
+    jawnos_mdns_start();
+  }
+}
+
 void homebasePing() {
   if (wifi_enabled == true && buttoned_before) {
     String https = https_request(

@@ -415,6 +415,7 @@ void stop_ble_transfer() {
   if (ble_radio_up == false && !ble_start_running) {
     return;
   }
+  crumb("ble wait");
   // a bring-up task may still be in flight; let it land before tearing the stack
   // down, or the two race on the server/characteristic pointers
   for (int i = 0; ble_start_running && i < 300; i++) {
@@ -430,6 +431,7 @@ void stop_ble_transfer() {
   // that skipped the restore read as "the user turned BLE off", so the radio was
   // never brought back. The preference is left alone; only the button changes it.
   if (pServer) {
+    crumb("ble disc");
     // Close the link before tearing the stack down. Deinit used to run while a
     // disconnect event was still in flight, and BLEServer's callback then
     // walked characteristics that no longer existed (LoadProhibited panic),
@@ -461,6 +463,7 @@ void stop_ble_transfer() {
   // 'false' keeps the controller's memory pool: BLEDevice::init refuses to come
   // back once btMemRelease has run (btMemReleased() guards it), and this radio is
   // rebuilt on every wake. deinit still deletes the server object itself.
+  crumb("ble deinit");
   BLEDevice::deinit(false); 
   // deinit() deleted the server and its characteristics: the pointers and the
   // connected flag are now lies, and anything checking only them would write
@@ -473,6 +476,7 @@ void stop_ble_transfer() {
   // the teardown blocks the loop for a moment; repaint so the pause cannot
   // leave half-drawn frames behind
   lv_obj_invalidate(lv_scr_act());
+  crumb("ble done");
 }
 
 // The bring-up blocks the loop for a few hundred ms (the controller setup makes

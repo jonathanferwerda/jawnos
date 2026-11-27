@@ -121,6 +121,13 @@ void configRestore() {
     else {
       lightSleep = false;
     }
+    String dg = (const char *)conf["diag"];
+    if (dg == "on") {
+      diagMode = true;
+    }
+    else {
+      diagMode = false;
+    }
 
     String pd = (const char *)conf["step_counter"];
     if (pd == "on") {
@@ -261,6 +268,89 @@ void appendFile(fs::FS &fs, const char * path, const char * message) {
   }
 
   file.close();
+}
+
+// A light-sleep crash reboots with no host on the USB, so the boot banner and
+// the panic dump go nowhere. Record them to FFat instead: the reason this boot
+// happened, the sleep/wake cause, and the last breadcrumb (with its heap). The
+// Set room's Diag toggle decides whether a boot writes one.
+static void diagRecordBoot() {
+  if (!diagMode) {
+    return;
+  }
+  struct tm t = {};
+  watch.rtc.getDateTime(&t);
+  const char *last = "(?)";
+  const char *phase = "(?)";
+  uint32_t heap = (uint32_t)ESP.getFreeHeap();
+  uint32_t naps = 0;
+  if (crumb_magic == CRUMB_MAGIC) {
+    if (crumb_tag[crumb_head][0]) {
+      last = crumb_tag[crumb_head];
+    }
+    heap = crumb_heap[crumb_head];
+    naps = nap_count;
+    switch (nap_phase) {
+      case 11: phase = "arm-gpio";   break;
+      case 12: phase = "arm-timer";  break;
+      case 13: phase = "sleep";      break;
+      case 2: phase = "post-sleep";  break;
+      case 3: phase = "cause";       break;
+      case 4: phase = "sensor";      break;
+      case 5: phase = "sensor-done"; break;
+      case 6: phase = "wrist";       break;
+      case 7: phase = "crown";       break;
+      case 8: phase = "notify";      break;
+      case 9: phase = "exit";        break;
+      default: phase = "loop";       break;
+    }
+  }
+  char line[200];
+  snprintf(line, sizeof(line),
+           "[diag] %04d-%02d-%02d %02d:%02d:%02d reason=%d wake=%d last=%s nap=%u phase=%s free=%u\n",
+           t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+           t.tm_hour, t.tm_min, t.tm_sec,
+           (int)esp_reset_reason(), (int)esp_sleep_get_wakeup_cause(),
+           last, (unsigned)naps, phase, (unsigned)heap);
+  // a short history, not an unbounded log: start over once it fills
+  File f = FFat.open(DIAG_PATH, FILE_APPEND);
+  if (!f) {
+    return;
+  }
+  if (f.size() > DIAG_MAX_BYTES) {
+    f.close();
+    deleteFile(FFat, DIAG_PATH);
+    f = FFat.open(DIAG_PATH, FILE_APPEND);
+    if (!f) {
+      return;
+    }
+  }
+  f.print(line);
+  f.close();
+  Serial.print(line);
+}
+
+// The `diag` console command: dump what the boots recorded. Printed in chunks:
+// one huge Serial.print has wedged the USB console before.
+static void diagDump() {
+  File f = FFat.open(DIAG_PATH, "r");
+  if (!f) {
+    Serial.println("[diag] none");
+    return;
+  }
+  Serial.printf("[diag] %u bytes\n", (unsigned)f.size());
+  char buf[256];
+  while (f.available()) {
+    int k = f.read((uint8_t *)buf, sizeof(buf) - 1);
+    if (k <= 0) {
+      break;
+    }
+    buf[k] = '\0';
+    Serial.print(buf);
+    delay(2);
+  }
+  Serial.println("[diag] end");
+  f.close();
 }
 
 void createDir(fs::FS &fs, const char * path){

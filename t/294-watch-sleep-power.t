@@ -1,4 +1,4 @@
-# tests-for: jw/jw_01_globals.ino jw/jw_03_setup.ino jw/jw_04_loop.ino jw/jw_05_loop2.ino jw/jw_06_net_face.ino jw/jw_11_configure.ino jw/jw_13_serial_lowpower.ino jw/jw_14_settings.ino jw/jw_15_config_files.ino
+# tests-for: jw/jw_01_globals.ino jw/jw_03_setup.ino jw/jw_04_loop.ino jw/jw_05_loop2.ino jw/jw_06_net_face.ino jw/jw_11_configure.ino jw/jw_13_serial_lowpower.ino jw/jw_14_settings.ino jw/jw_15_config_files.ino jw/jw_02_ble.ino jw/jw_07_house_audio.ino
 # covers:    The watch actually sleeps when Sleep is on, and the awake screen
 #            stops polling what does not change. A connected BLE bridge used to
 #            keep the watch out of the real light sleep for as long as the bridge
@@ -33,6 +33,8 @@ my $jw_doze    = read_file("$root/jw/jw_11_configure.ino");
 my $jw_sleep   = read_file("$root/jw/jw_13_serial_lowpower.ino");
 my $jw_save    = read_file("$root/jw/jw_14_settings.ino");
 my $jw_config  = read_file("$root/jw/jw_15_config_files.ino");
+my $jw_ble     = read_file("$root/jw/jw_02_ble.ino");
+my $jw_house   = read_file("$root/jw/jw_07_house_audio.ino");
 
 # --- a live bridge delays the sleep, it does not cancel it -------------------
 like( $jw_sleep, qr/const bool want_sleep = lightSleep && !watch\.isUsbIn\(\);/,
@@ -169,5 +171,62 @@ like( $ipw, qr/label_set_if_changed\(face_ip, bufIP\);/,
 	'the address labels go through the compare-first helper' );
 like( $ipw, qr/if \(state != bt_state\) \{/,
 	'and the BT colour is only restyled when the radio state changes' );
+
+# --- the diagnostic boot record survives an unplugged light sleep -------------
+# A real light sleep runs with the cable out, so the boot banner and the panic
+# dump have no host. Diag persists the reset reason and the last breadcrumb to
+# FFat, and the Set room's toggle arms it (the console can set it too).
+like( $jw_globals, qr/static bool diagMode = false;/, 'a diagnostic mode exists' );
+like( $jw_doze, qr/configure_button\("Delete", configDeleteButton, 10, 138, 105, 42/,
+	'Delete is half width, leaving room for a neighbour' );
+like( $jw_doze, qr/configure_button\("Diag", diag_toggle, 125, 138, 105, 42/,
+	'with the Diag toggle beside it' );
+like( $jw_save, qr/conf\["diag"\] = diagMode \? "on" : "off";/, 'the toggle is saved' );
+like( $jw_config, qr/String dg = \(const char \*\)conf\["diag"\];/, 'and restored' );
+like( $jw_setup, qr/diagRecordBoot\(\);/, 'a boot records its reason' );
+like( $jw_config, qr/esp_reset_reason\(\)/, 'the record carries the reset reason' );
+like( $jw_config, qr/esp_sleep_get_wakeup_cause\(\)/, 'and the sleep/wake cause' );
+like( $jw_config, qr/crumb_tag\[crumb_head\]/, 'and the last breadcrumb' );
+like( $jw_sleep, qr/line == "diag" \|\| line == "diag dump"/, 'the console can dump it' );
+like( $jw_sleep, qr/diagMode = \(line == "diag on"\);/, 'and set it' );
+
+# --- the finer crumbs locate a watchdog reset in the sleep path --------------
+# reason 7 with "ls enter" said the reset was somewhere in the entry block; each
+# step now marks itself, and the BLE teardown and the room fetch mark theirs,
+# so the next reset names the call it died in.
+like( $jw_sleep, qr/crumb\("ls pmu"\);/, 'the sleep entry marks the PMU read' );
+like( $jw_sleep, qr/crumb\("ls ext1"\);/, 'and the EXT1 arm' );
+like( $jw_sleep, qr/crumb\("ls sensor"\);/, 'and the sensor drain' );
+like( $jw_sleep, qr/crumb\("ls ble"\);/, 'and the BLE teardown it is about to run' );
+like( $jw_sleep, qr/crumb\("ls irq"\);/, 'and the PMU IRQ mask' );
+like( $jw_sleep, qr/crumb\("ls nap"\);/, 'and the first nap' );
+like( $jw_sleep, qr/crumb\("ls woke"\);/, 'and its return' );
+like( $jw_ble, qr/crumb\("ble wait"\);/, 'the teardown marks the bring-up wait' );
+like( $jw_ble, qr/crumb\("ble disc"\);/, 'and the disconnect handshake' );
+like( $jw_ble, qr/crumb\("ble deinit"\);/, 'and the deinit' );
+like( $jw_ble, qr/crumb\("ble done"\);/, 'and its completion' );
+like( $jw_house, qr/crumb\("p0 ask"\);/, 'the room fetch marks its start' );
+like( $jw_house, qr/crumb\("p1 got"\);/, 'its answer' );
+like( $jw_house, qr/crumb\("p2 done"\);/, 'and its end' );
+
+# --- the nap loop reports its phase and pass count ---------------------------
+# A watchdog in the nap loop leaves the one-shot "ls woke" as the last crumb;
+# the RTC phase and count say which step it died on and how many naps it ran.
+like( $jw_sleep, qr/nap_phase = 13;/, 'the nap loop marks the entry into the sleep' );
+like( $jw_sleep, qr/Armed last/, 'and the timer is armed last, so it cannot expire during the pin setup' );
+like( $jw_sleep, qr/nap_count\+\+;/, 'and counts each nap' );
+like( $jw_sleep, qr/nap_phase = 4;/, 'the sensor sample phase is marked' );
+like( $jw_sleep, qr/nap_phase = 6;/, 'and the wrist poll' );
+like( $jw_config, qr/nap=%u phase=%s/, 'the boot record carries the phase and count' );
+
+# --- a real light sleep stops WiFi, the web server and mDNS first -------------
+# Leaving them up hung esp_light_sleep_start() and the RTC watchdog reset the
+# watch (reason 7, last "ls woke"); the deck already slept this way.
+like( $jw_sleep, qr/wifi_down_for_nap\(\);/, 'the nap stops the network before sleeping' );
+like( $jw_sleep, qr/wifi_wake_from_nap\(\);/, 'and brings it back on the way out' );
+like( $jw_net, qr/WiFi\.mode\(WIFI_OFF\);/, 'WiFi is switched off, not just disconnected' );
+like( $jw_net, qr/MDNS\.end\(\);/, 'and mDNS is ended' );
+like( $jw_net, qr/wifi_restore_pending && WiFi\.status\(\) == WL_CONNECTED/, 'the restore finishes non-blocking' );
+like( $jw_loop, qr/wifi_restore_tick\(\);/, 'the awake loop finishes the restore' );
 
 done_testing();

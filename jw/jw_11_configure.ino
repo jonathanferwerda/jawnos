@@ -217,7 +217,11 @@ void setting_room() {
                        lv_color_hex(voiceCaptureEnabled ? 0x5afcdd : 0xb0b0b0));
       configure_button("Save", configSaveButton, 10, 92, 105, 42, lv_color_hex(0x61b3ff));
       configure_button("Restore", configRestoreButton, 125, 92, 105, 42, lv_color_hex(0xffca38));
-      configure_button("Delete", configDeleteButton, 10, 138, 220, 42, lv_color_hex(0xde2716));
+      // half width, with the diagnostic toggle beside it: a boot that crashed in
+      // an unplugged light sleep can only be read back on the next boot
+      configure_button("Delete", configDeleteButton, 10, 138, 105, 42, lv_color_hex(0xde2716));
+      configure_button("Diag", diag_toggle, 125, 138, 105, 42,
+                       lv_color_hex(diagMode ? 0x5afcdd : 0xb0b0b0));
       break;
   }
   full_refresh();
@@ -247,6 +251,20 @@ static void lightSleep_toggle(lv_event_t *e) {
     lv_obj_set_style_bg_color(sleep_button, lv_color_hex(0x5afcdd), LV_PART_MAIN);
     lightSleep = true;
   }
+}
+
+static void diag_toggle(lv_event_t *e) {
+  lv_obj_t *diag_button = lv_event_get_target_obj(e);
+
+  if (diagMode == true) {
+    lv_obj_set_style_bg_color(diag_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
+    diagMode = false;
+  }
+  else {
+    lv_obj_set_style_bg_color(diag_button, lv_color_hex(0x5afcdd), LV_PART_MAIN);
+    diagMode = true;
+  }
+  configSave();
 }
 
 static void configSaveButton(lv_event_t *e) {

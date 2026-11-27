@@ -180,10 +180,12 @@ static void house_task(void *pvParameters) {
 // one to two second TLS round trip, which used to freeze the screen every time
 // the room was opened. It is fetched on core 0 now and applied from loop().
 static void president_fetch_task(void *pvParameters) {
+  crumb("p0 ask");
   String req = "https://" + homebaseIP + "/watch?room=" + String(president_fetch_room);
   Serial.print("[president] asking ");
   Serial.println(req);
   String watchRequest = https_request(req);
+  crumb("p1 got");
   if (watchRequest != "failure") {
     if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
       president_payload = std::move(watchRequest);   // no second 25 KB copy
@@ -198,6 +200,7 @@ static void president_fetch_task(void *pvParameters) {
     writeFile(FFat, "/bootreport.txt", "failure");
   }
   president_fetch_running = false;
+  crumb("p2 done");
   vTaskDelete(NULL);
 }
 

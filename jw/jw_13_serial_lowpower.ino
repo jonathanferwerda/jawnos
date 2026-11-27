@@ -166,6 +166,18 @@ static void tilt_serial_command(String line) {
   else if (line == "crumb") {
     crumbs_dump();
   }
+  else if (line == "diag" || line == "diag dump") {
+    diagDump();
+  }
+  else if (line == "diag on" || line == "diag off") {
+    diagMode = (line == "diag on");
+    configSave();
+    Serial.printf("[diag] %s\n", diagMode ? "on" : "off");
+  }
+  else if (line == "diag clear") {
+    deleteFile(FFat, DIAG_PATH);
+    Serial.println("[diag] cleared");
+  }
   else if (line == "tiltlog on") {
     tilt_log_flush();
     deleteFile(FFat, TILT_LOG_PATH);
@@ -462,17 +474,20 @@ void lowPowerEnergyHandler()
     // a latched PMU event keeps PMU_INT pulled low, and EXT1 would read that as
     // "the crown is being held" and bounce straight back out of the sleep
     watch.pmic.irq().readStatus();
+    crumb("ls pmu");
     // the pin is pulled up in the digital domain, but the RTC pad has its own
     // pull state that has to be set for the wake to be seen
     rtc_gpio_pullup_en((gpio_num_t)PMU_INT);
     uint64_t wakeup_pin = _BV(PMU_INT);
     esp_sleep_enable_ext1_wakeup((wakeup_pin), ESP_EXT1_WAKEUP_ALL_LOW);
+    crumb("ls ext1");
     // the sensor line is active high and level triggered, so it cannot ride
     // EXT1's one level setting along with the crown's active-low PMU_INT; the
     // GPIO wake configures the pin on its own. Any tilt/tap/step already
     // latched is drained first, so the sleep does not bounce back up on a
     // stale event.
     watch.loopSensor();
+    crumb("ls sensor");
     // The sensor line is deliberately NOT a wake source: this board's sensor
     // interrupt pin is the one that crash-looped the radio when wired up (see
     // settingSensor), and a raise only needs a sample every 100 ms, which the
@@ -489,7 +504,9 @@ void lowPowerEnergyHandler()
       notify_us = (int64_t)wakeup_time * 1000000LL;
     }
     bool temp_bt_enabled = bt_enabled;
+    crumb("ls ble");
     stop_ble_transfer();
+    wifi_down_for_nap();
     // Only the crown may wake the chip from here: with the battery and charger
     // IRQs enabled, any VBUS or charge event would assert the PMU line and
     // bounce the chip out of light sleep. This is the masking the library's own
@@ -497,6 +514,7 @@ void lowPowerEnergyHandler()
     watch.pmic.irq().disable(AXP2101Irq::IRQ_ALL_MASK);
     watch.pmic.irq().enable(AXP2101Irq::IRQ_PEKEY_SHORT_PRESS | AXP2101Irq::IRQ_PEKEY_LONG_PRESS);
     watch.pmic.irq().clearStatus();
+    crumb("ls irq");
 
     // Only the crown (EXT1) and the nap timer wake the chip. While the wrist
     // raise is on the naps stay short, so a stall in here is a bug, not a long
@@ -506,6 +524,9 @@ void lowPowerEnergyHandler()
     bool wdt_here = tiltWake && (esp_task_wdt_add(NULL) == ESP_OK);
     bool wrist_wake = false;
     bool ext1_warned = false;
+    bool nap_marked = false;
+    nap_phase = 0;
+    nap_count = 0;
     uint32_t last_real_nap = millis();
     uint32_t sleep_began = millis();
     esp_sleep_wakeup_cause_t wakeup_reason = ESP_SLEEP_WAKEUP_UNDEFINED;
@@ -548,6 +569,7 @@ void lowPowerEnergyHandler()
         remaining_us = notify_us - (int64_t)(millis() - sleep_began) * 1000LL;
         if (remaining_us <= 0) {
           wakeup_reason = ESP_SLEEP_WAKEUP_TIMER;
+          nap_phase = 8;
           break;                  // the notification is due
         }
       }
@@ -565,9 +587,7 @@ void lowPowerEnergyHandler()
           nap_us = poll_us;
         }
       }
-      if (nap_us > 0) {
-        esp_sleep_enable_timer_wakeup((uint64_t)nap_us);
-      }
+      nap_phase = 11;
       rtc_gpio_pullup_en((gpio_num_t)PMU_INT);
       rtc_gpio_pulldown_dis((gpio_num_t)PMU_INT);
       esp_err_t ext1_arm = esp_sleep_enable_ext1_wakeup(_BV(PMU_INT), ESP_EXT1_WAKEUP_ALL_LOW);
@@ -579,11 +599,30 @@ void lowPowerEnergyHandler()
         ext1_warned = true;
       }
       uint32_t nap_began = millis();
+      nap_count++;
+      if (!nap_marked) {
+        crumb("ls nap");
+      }
+      nap_phase = 12;
+      if (nap_us > 0) {
+        // Armed last, immediately before the sleep. The 40-100 ms countdown
+        // used to start before the RTC-pin and EXT1 setup above, and a nap
+        // that expired in that window was lost: the watch then slept with only
+        // the crown armed and the watchdog reset it (reason 7, last "ls woke").
+        esp_sleep_enable_timer_wakeup((uint64_t)nap_us);
+      }
+      nap_phase = 13;
       esp_light_sleep_start();
+      nap_phase = 2;
+      if (!nap_marked) {
+        crumb("ls woke");
+        nap_marked = true;
+      }
       if (millis() - nap_began > 50) {
         last_real_nap = millis();
       }
       wakeup_reason = esp_sleep_get_wakeup_cause();
+      nap_phase = 3;
       // The cause names one source; read the PMU too, so a press the EXT1
       // wakeup missed is still caught before the decision (2026-10-10).
       if (wakeup_reason != ESP_SLEEP_WAKEUP_EXT1 && crown_irq_pending()) {
@@ -594,6 +633,7 @@ void lowPowerEnergyHandler()
       if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
         // the press was meant for the sleep; read the status once more so the
         // awake path does not handle the same click as a fresh one
+        nap_phase = 7;
         watch.pmic.irq().readStatus();
         crumb("ls crown");
         break;                    // the crown
@@ -601,26 +641,32 @@ void lowPowerEnergyHandler()
       if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER && tiltWake) {
         // a nap, not the notification (that is checked at the top): sample the
         // wrist and sink back down
+        nap_phase = 4;
         watch.loopSensor();
+        nap_phase = 5;
         // The nap paces the sampling here, but wristPoll's throttle is the same
         // 100 ms as the nap: a nap that returned a hair early failed `now -
         // wrist_last_sample < interval` and skipped its sample, so the arm's
         // turn could fall between two of them. The pose log replays a look on
         // every sample while the wrist missed it -- so take this nap's sample.
         wrist_last_sample = 0;
+        nap_phase = 6;
         if (wristPoll()) {
           wrist_wake = true;
           tilt_log_marker("ls raise", (long)(wrist_lz * 10));
           crumb("ls raise");
+          nap_phase = 9;
           break;
         }
         continue;
       }
+      nap_phase = 9;
       break;                      // the notification timer, or a refused sleep
     }
     if (wdt_here) {
       esp_task_wdt_delete(NULL);
     }
+    wifi_wake_from_nap();
     Serial.println("right after sleep");
     crumb("ls exit");
     // the awake watch wants the whole event set back (charger, battery, key)

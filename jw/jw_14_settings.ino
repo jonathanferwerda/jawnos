@@ -270,6 +270,9 @@ void configSave() {
     // the key silently disappeared from the saved picture
     conf["lightsleep"] = "off";
   }
+  // the diagnostic toggle rides with the rest of the picture, so the next boot
+  // knows whether to record its reason to /diag.txt
+  conf["diag"] = diagMode ? "on" : "off";
   if (wifi_ap_enabled == true) {
     conf["wifi_ap_enabled"] = "on";
   }
@@ -431,6 +434,7 @@ void configDefaults() {
   loraChatBroadcaster = false;
   loraChatReceiver = false;
   lightSleep = false;
+  diagMode = false;
   stepCounter = true;
   tiltWake = true;
   voiceCaptureEnabled = false;

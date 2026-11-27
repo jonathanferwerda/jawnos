@@ -481,6 +481,9 @@ void jawn_setup() {
     configRestoreBackup();
     configRestore();
   }
+  // With Diag on, record this boot before anything else runs: the reason and
+  // the last breadcrumb belong to the reset that happened with no console.
+  diagRecordBoot();
   // the radio came up in continuous receive before the saved setting was known;
   // park it if LoRa receive is off, which is the default
   radio_follow_receive();

@@ -50,6 +50,13 @@ ESP32Time rtc;
 int screenRotation = 0;
 // Flag used to indicate whether to use light sleep, currently unavailable
 static bool lightSleep = false;
+// Diagnostic mode: persist why each boot happened (reset reason, sleep/wake
+// cause and the last breadcrumb) to FFat. A light-sleep crash runs with the
+// cable out, so its boot banner and panic dump have no host; this is the record
+// that survives to the next boot. The Set room's Diag toggle drives it.
+static bool diagMode = false;
+#define DIAG_PATH "/diag.txt"
+#define DIAG_MAX_BYTES 6000
 double wakeup_time = 0;
 // Flag used for acceleration interrupt status
 static bool sportsIrq = false;
@@ -89,6 +96,9 @@ static bool sleepRequested = false;
 // back up" (the doze) from "go to sleep" (the face is already on)
 static volatile bool dozing = false;
 static bool webserver_enabled;// = true;
+// Set when a light-sleep nap stopped WiFi; loop() restarts the server and mDNS
+// once the link is back, so the wake is not held for the join.
+static bool wifi_restore_pending = false;
 static bool wifi_ap_enabled = false;
 static bool wifi_enabled = false;
 // Set when the panel hands us network credentials over BLE: the watch cannot
@@ -311,6 +321,12 @@ static RTC_NOINIT_ATTR uint8_t crumb_head;
 static RTC_NOINIT_ATTR char crumb_tag[CRUMB_RING][20];
 static RTC_NOINIT_ATTR uint32_t crumb_heap[CRUMB_RING];
 static RTC_NOINIT_ATTR uint8_t crumb_core[CRUMB_RING];
+// The nap loop passes every ~100 ms, so a crumb per pass would flood the ring.
+// Keep the last phase and the pass count in RTC_NOINIT and report them in the
+// boot record: a watchdog reset then names the step it died on and how many
+// naps it survived.
+static RTC_NOINIT_ATTR uint8_t nap_phase;
+static RTC_NOINIT_ATTR uint32_t nap_count;
 
 static void crumb(const char *tag) {
   crumb_magic = CRUMB_MAGIC;
@@ -347,6 +363,13 @@ static void radio_follow_receive(bool force = false);
 static void tilt_serial_poll();
 static void tilt_dbg_stream();
 static void tilt_wake_control(lv_event_t *e);
+static void diag_toggle(lv_event_t *e);
+static void diagRecordBoot();
+static void diagDump();
+void wifi_down_for_nap();
+void wifi_wake_from_nap();
+void wifi_restore_tick();
+void accesspoint_start();
 static bool room_has_buttons(int r);
 static void screen_gesture(lv_event_t *e);
 static void ble_push_steps(bool force);

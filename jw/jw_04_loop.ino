@@ -365,6 +365,8 @@ void jawn_loop() {
     ble_flush_wigi();
     ble_push_steps(false);   // recover the steps taken while the link was down
   }
+  // A nap stops WiFi; once the link is back, restart the server and mDNS.
+  wifi_restore_tick();
   // the panel handed us network credentials over BLE: join now (this is the
   // same blocking join the watch's Net-room WiFi button runs)
   if (wifi_join_requested) {
