@@ -185,6 +185,7 @@ like($controller, qr/sub _controller_console_root/, 'the controller shelf has a 
 like($controller, qr/sub _controller_rel_path_ok/, 'a dropped path is checked');
 like($controller, qr/game_system_for_paths/, 'the system comes from the games map');
 like($controller, qr/req->upload\('file'\)/, 'the file arrives as an upload');
+like($controller, qr/inactivity_timeout\(3600\)/, 'the upload waits for a slow transfer');
 like($body, qr/id="controllers_drop"/, 'the ROMs section takes a drop');
 like($controllers_js, qr/function controllerDropGroups/, 'the page groups a drop');
 like($controllers_js, qr/function controllerDropDir/, 'and walks a dropped folder');

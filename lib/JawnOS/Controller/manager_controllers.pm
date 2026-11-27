@@ -937,6 +937,10 @@ sub action_54014 {
 # a file written there is a card the controller can launch.
 sub action_54015 {
 	my $c = shift;
+	# The file is written to the controller over ssh while this request is open;
+	# a slow card or radio outlasts the default idle timer, which would close the
+	# connection and orphan the transfer. The request waits like a flash does.
+	$c->inactivity_timeout(3600);
 	&app_schema_ensure();
 	unless (&_controller_house_pass($c)) {
 		return $c->render(json => { ok => 0, error => 'not allowed' });
