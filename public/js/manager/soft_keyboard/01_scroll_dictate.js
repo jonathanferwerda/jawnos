@@ -101,7 +101,7 @@ var jawnDictateFieldButton = null;
 // window.jawnSpeechResult(text, isFinal). It returns text only - there is no
 // audio clip for Plat, no punctuation pass and no clip kept - so the manager's
 // record-and-POST path stays the fallback wherever the bridge is absent (a
-// desktop browser, or the IME WebView, which is given only JawnIme). One
+// desktop browser, or an app build older than the input method's bridge). One
 // dispatcher serves the dock and the Guide because they share a page:
 // installing the two window callbacks once means a later surface cannot
 // overwrite the one already listening.
@@ -180,9 +180,10 @@ function jawnSpeechOemStop(owner) {
 	if (o && o.onStopped) { o.onStopped(); }
 }
 
-// The service the dock's role resolved to on the server. The IME renders the
-// same attribute but has no window.JawnSpeech, so jawnSpeechOemReady is false
-// there and the recorder below still answers the press.
+// The service the dock's role resolved to on the server. The input method
+// renders the same attribute and carries the same bridge, so the recogniser can
+// answer there too; a build without it leaves jawnSpeechOemReady false and the
+// recorder below still answers the press.
 function softKbTranscriptionService() {
 	var el = document.getElementById('jawn_soft_keyboard');
 	return (el && el.getAttribute('data-transcribe-service')) || '';
