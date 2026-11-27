@@ -400,8 +400,9 @@ sub job_whisper_server {
 		my $up = $probe ? 1 : 0;
 		close $probe if $probe;
 		my $bin   = &subs::whisper_server_bin();
-		my $model = &subs::whisper_model_file('tiny');
-		$model = &subs::whisper_model_file('base') unless length $model && -e $model;
+		# base is the local default; tiny only stands in when base is not installed.
+		my $model = &subs::whisper_model_file('base');
+		$model = &subs::whisper_model_file('tiny') unless length $model && -e $model;
 		if (!$up && !$server_pid && $recent && -x $bin && -e $model) {
 			my $log = &subs::home('~/whisper-server.log');
 			my $log_fh;

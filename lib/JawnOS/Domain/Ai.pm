@@ -197,8 +197,8 @@ sub voice_silence_hallucination {
 # machine, never a service offered to the network.
 sub whisper_server_port { return 8178; }
 
-# The warm server is started by demand, not at boot: it holds the model (147 MB
-# at ggml-tiny on a 1.8 GB handheld) and a machine that takes no dictation and
+# The warm server is started by demand, not at boot: it holds the model (base,
+# a 148 MB file and more resident) and a machine that takes no dictation and
 # no call should not pay for it. Every transcription request touches this
 # marker; President.pl's own loop starts the server while the marker is fresh
 # and stops the one it started after ten quiet minutes. Returns the marker's
@@ -219,9 +219,10 @@ sub whisper_server_wanted {
 # A whisper server outlives the tree that started it: its loop is killed with the
 # restart and the process stays, reparented to init (PPid 1). Nothing would ever
 # stop it, and the demand logic in President.pl would keep it as "already up" and
-# hold the model for good - 147 MB at ggml-tiny on a machine that may never
-# transcribe again. Stop those once, when that loop starts, and only those: a
-# server a person started by hand has a shell for a parent and is left alone.
+# hold the model for good - base, a 148 MB file and more resident, on a machine
+# that may never transcribe again. Stop those once, when that loop starts, and
+# only those: a server a person started by hand has a shell for a parent and is
+# left alone.
 sub whisper_server_stop_orphans {
 	my $port = &whisper_server_port();
 	my $stopped = 0;
@@ -310,13 +311,13 @@ sub whisper_cli_transcribe {
 	require IPC::Open3;
 	require Symbol;
 	my $bin   = &whisper_cli_bin();
-	# A command is a handful of words against a tiny vocabulary, so the fast tiny
-	# model is plenty and a clip gets through much sooner, especially on the
-	# phone; base is the fallback when tiny is not installed. A caller that knows
-	# its clip needs more (a screened call's name) names the model it wants.
-	my $model = ($wanted && -e $wanted) ? $wanted : &whisper_model_file('tiny');
+	# base is the default: on a house command it heard "kitchen lights" where tiny
+	# dropped a word ("Kirch and light"), and the roughly doubled time is the
+	# accuracy the house asked for. tiny is the fallback when base is not
+	# installed; a caller that knows its clip needs a named model still passes it.
+	my $model = ($wanted && -e $wanted) ? $wanted : &whisper_model_file('base');
 	if (!defined $wanted && (!length $model || !-e $model)) {
-		$model = &whisper_model_file('base');
+		$model = &whisper_model_file('tiny');
 	}
 	return '' unless $bin && length $model && -e $model;
 	my $language = (defined $lang && $lang =~ /^[a-z]{2,3}$/ && $lang ne 'auto') ? ' -l ' . $lang : '';
@@ -431,19 +432,20 @@ sub whisper_server_bin {
 	return '';
 }
 
-# Android's app runtime mounts its own data directory noexec, so an ELF copied
-# into $PREFIX or ~/.local/share cannot be exec'd at all ("Permission denied",
+# Android's app data directory is mounted noexec, so an ELF copied into
+# $PREFIX or ~/.local/share cannot be exec'd at all ("Permission denied",
 # even with 0755). The system linker can still map it. Termux papers over the
 # same mount with termux-exec; the app runtime has no such shim, so the tree
-# asks the linker itself. JAWNOS_ANDROID_LINKER forces the answer for a test
-# (an empty value turns it off); elsewhere the app runtime is detected.
+# asks the linker itself. Any package's data dir is the same mount, so the test
+# is the path, not the package name. JAWNOS_ANDROID_LINKER forces the answer for
+# a test (an empty value turns it off) and skips the path check.
 sub _whisper_android_linker {
+	my ($bin) = @_;
 	my $forced = $ENV{'JAWNOS_ANDROID_LINKER'};
 	return $forced if defined $forced;
 	return '' unless -e '/system/bin/linker64';
-	my $prefix = $ENV{'PREFIX'} // '';
-	return '/system/bin/linker64' if $prefix =~ m{^/data/(?:data|user/\d+)/com\.jawnos/};
-	return '';
+	return '' unless defined $bin && $bin =~ m{^/data/(?:data|user/\d+)/};
+	return '/system/bin/linker64';
 }
 
 sub whisper_launch_argv {
@@ -465,7 +467,7 @@ sub whisper_launch_argv {
 		return ('sh', $bin) if $first !~ m{^#!} || $first =~ m{^#!.*\b(?:ba|da)?sh\b};
 		return ($bin);
 	}
-	my $linker = &_whisper_android_linker();
+	my $linker = &_whisper_android_linker($bin);
 	return ($linker, $bin) if length $linker;
 	return ($bin);
 }
@@ -710,17 +712,15 @@ sub whisper_transcribe {
 
 sub whisper_name_transcribe {
 	# The one thing a screened call leaves is who called, and the words are a
-	# handful over a narrowband 8 kHz link. The warm server (ggml-tiny, model
-	# already loaded) hears an 8 s clip in about 9 s; the one-shot CLI at base
-	# took 27 s and held ~3 of 4 ARM cores for most of it, starving the Piper
-	# voice still playing the call's remaining prompts. So the warm server is
-	# asked first. It is tiny, and tiny once read one such clip as "Listen
-	# strong." where base read "This is John." - through ffmpeg, sox and miniaudio
-	# alike - so when the server is down or says nothing usable the accurate base
-	# model and the CLI are the fallback, even at that cost. What comes back is
-	# the words as heard; the caller is filed under name_from_transcript of them,
-	# and the raw line is kept beside it because a surname over this link is
-	# often only close. '' when nobody spoke.
+	# handful over a narrowband 8 kHz link. The warm server is asked first: its
+	# model is already loaded, so the clip skips the one-shot CLI's load. The
+	# local default is base - tiny once read such a clip as "Listen strong." where
+	# base read "This is John.", through ffmpeg, sox and miniaudio alike - and
+	# when the server is down or says nothing usable the niced CLI at base is the
+	# fallback, even at the cost of holding the CPU while Piper plays the call's
+	# remaining prompts. What comes back is the words as heard; the caller is
+	# filed under name_from_transcript of them, and the raw line is kept beside it
+	# because a surname over this link is often only close. '' when nobody spoke.
 	my ($raw, $lang) = @_;
 	return '' unless defined $raw && length $raw;
 	my $text = &whisper_server_transcribe($raw, $lang || 'auto');

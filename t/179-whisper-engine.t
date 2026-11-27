@@ -114,6 +114,37 @@ is(ref(subs::transcribe_local_engine('local:vosk')), 'CODE',
 	'a stored local:vosk is read as whisper.cpp');
 is(subs::transcribe_local_engine('groq:whisper-large-v3'), undef, 'a cloud model is not local');
 
+# ------------------------------------------------------------ the local model default
+# base is the local default: on a house command it heard "kitchen lights" where
+# tiny dropped a word ("Kirch and light"). tiny answers when base is not installed.
+{
+	my $ffmpeg = `command -v ffmpeg 2>/dev/null`;
+	chomp $ffmpeg;
+	write_file("$root/models/ggml-base.bin", 'base');
+	write_file("$root/models/ggml-tiny.bin", 'tiny');
+	SKIP: {
+		skip 'no ffmpeg on PATH', 4 unless length $ffmpeg;
+		my $dir  = "$tmp/model-probe";
+		my $args = "$dir/args";
+		make_path($dir);
+		my $fake = "$dir/whisper-cli";
+		write_file($fake, "#!/bin/sh\nprintf '%s\\n' \"\$@\" > '$args'\ncat >/dev/null\necho base probe\n");
+		chmod 0755, $fake;
+		local $ENV{'JAWNOS_WHISPER_CLI'} = $fake;
+		local $ENV{'JAWNOS_WHISPER_MODELS'} = "$root/models";
+		is(subs::whisper_cli_transcribe('RIFF-probe', 'en'), 'base probe',
+			'the CLI path runs the engine and returns its text');
+		like(read_file($args), qr{-m\s+\Q$root\E/models/ggml-base\.bin},
+			'base is the model it runs by default');
+		unlink "$root/models/ggml-base.bin";
+		is(subs::whisper_cli_transcribe('RIFF-probe', 'en'), 'base probe',
+			'and the clip still transcribes without base');
+		like(read_file($args), qr{-m\s+\Q$root\E/models/ggml-tiny\.bin},
+			'with tiny as the fallback');
+		write_file("$root/models/ggml-base.bin", 'base');
+	}
+}
+
 # The transcription role naming the old engine is what the Guide, dictation and
 # the screened call all read: it must reach whisper.cpp without an edit.
 &subs::setting_setter({ app => 'mail', setting => 'transcription_assistant', value => 'local:vosk' });
@@ -341,6 +372,8 @@ unlike($deps, qr{sub install_vosk}, 'the Vosk installer is gone');
 	like($jobs, qr/POSIX::setsid\(\);/, 'the warm server forks into its own session');
 	like($jobs, qr{open\(STDIN, '<', '/dev/null'\)},
 		'and its stdin is /dev/null, not the manager\'s terminal');
+	ok(index($jobs, "whisper_model_file('base')") < index($jobs, "whisper_model_file('tiny')"),
+		'and it loads base before tiny');
 }
 
 # ------------------------------------------------------------ the warm-server upload

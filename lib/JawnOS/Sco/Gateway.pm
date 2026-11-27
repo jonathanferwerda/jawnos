@@ -1312,15 +1312,15 @@ sub _start_transcript {
 	}
 	# A gateway that is armed is a gateway expecting a call, and this one keeps
 	# the warm server up for as long as it is armed (President.pl's loop starts it
-	# while the demand marker is fresh). That costs the model - 147 MB at
-	# ggml-tiny on the Gou - on exactly the machine that needs a call answered
-	# without a model load in the middle of it. A machine that is not a gateway
-	# never arms, so its server still starts on the first transcription and lets
-	# the model go after ten quiet minutes.
+	# while the demand marker is fresh). That costs the model - base, a 148 MB file
+	# and more resident, on the Gou - on exactly the machine that needs a call
+	# answered without a model load in the middle of it. A machine that is not a
+	# gateway never arms, so its server still starts on the first transcription and
+	# lets the model go after ten quiet minutes.
 	#
-	# The name a screened call is filed under does not come through here: it takes
-	# base and the one-shot CLI (Ai.pm's whisper_name_transcribe), so a warm
-	# server does not make that transcript arrive.
+	# The name a screened call is filed under is asked of that same warm server
+	# first (Ai.pm's whisper_name_transcribe), so an armed gateway answers it
+	# without a second model load.
 	eval { &subs::whisper_server_wanted(1) };
 	my $python   = eval { &subs::whisper_python() } || '';
 	# The screened call's transcription role names which service reads it. Only

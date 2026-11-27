@@ -698,8 +698,8 @@ sub manager_starter() {
 
 	# The warm whisper.cpp server keeps the speech model loaded, so a clip skips
 	# the per-call model load the one-shot CLI pays - but a machine that takes no
-	# dictation and no call should not pay for the model either: at ggml-tiny it
-	# is 147 MB resident, measured on the Gou's 1.8 GB. So the server is started
+	# dictation and no call should not pay for the model either: base is a 148 MB
+	# file and more resident, measured on the Gou's 1.8 GB. So the server is started
 	# by demand. Any transcription request touches ~/.president/whisper-want
 	# (subs::whisper_server_wanted); this loop starts the server while that marker
 	# is fresh and stops the one it started once the house has been quiet for ten
