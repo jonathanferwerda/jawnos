@@ -695,6 +695,217 @@ function controllerRomCopy(button) {
 	});
 }
 
+// ---- dropping a game onto the controller ----------------------------------
+// A dropped file or folder goes into the controller's own ~/roms/<system>/,
+// which is what its Games shelf scans. The system is asked of the server once
+// per drop (the suffix map and the folder-name hint live there), then each file
+// is posted; the server writes it locally or over ssh.
+$(document).on('dragover', '#controllers_drop', function(e) {
+	if (e.preventDefault) { e.preventDefault(); }
+	$(this).addClass('controller_drop_over');
+});
+$(document).on('dragleave', '#controllers_drop', function(e) {
+	if (e.preventDefault) { e.preventDefault(); }
+	$(this).removeClass('controller_drop_over');
+});
+$(document).on('drop', '#controllers_drop', function(e) {
+	if (e.preventDefault) { e.preventDefault(); }
+	$(this).removeClass('controller_drop_over');
+	var event = e.originalEvent || e;
+	controllerDropHandle(event.dataTransfer);
+});
+$(document).on('click', '#controllers_drop', function() {
+	$('#controllers_drop_files').trigger('click');
+});
+$(document).on('change', '#controllers_drop_files', function() {
+	var files = this.files || [];
+	var groups = [];
+	for (var i = 0; i < files.length; i++) {
+		groups.push({ game: '', files: [{ file: files[i], path: files[i].name }] });
+	}
+	this.value = '';
+	controllerDropGroups(groups);
+});
+
+function controllerDropBusy(text, bad) {
+	controllerStatus('controllers_roms_status', text, bad);
+}
+
+function controllerDropHandle(dataTransfer) {
+	if (!controllerSelection || !controllerSelection.uuid) {
+		controllerDropBusy(controllerT('Select a controller first.'), true);
+		return;
+	}
+	var dt = dataTransfer;
+	var entries = [];
+	if (dt && dt.items && dt.items.length) {
+		for (var i = 0; i < dt.items.length; i++) {
+			var item = dt.items[i];
+			if (!item || item.kind !== 'file') { continue; }
+			var entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+			if (entry) { entries.push(entry); }
+		}
+	}
+	if (!entries.length) {
+		var files = (dt && dt.files) || [];
+		var flat = [];
+		for (var j = 0; j < files.length; j++) {
+			flat.push({ game: '', files: [{ file: files[j], path: files[j].name }] });
+		}
+		controllerDropGroups(flat);
+		return;
+	}
+	var groups = [];
+	var pending = entries.length;
+	function settle() {
+		pending--;
+		if (pending <= 0) { controllerDropGroups(groups); }
+	}
+	for (var k = 0; k < entries.length; k++) {
+		controllerDropEntry(entries[k], groups, settle);
+	}
+}
+
+function controllerDropEntry(entry, groups, done) {
+	if (!entry) { done(); return; }
+	if (entry.isDirectory) {
+		var files = [];
+		controllerDropDir(entry, '', files, function() {
+			groups.push({ game: entry.name, files: files });
+			done();
+		});
+		return;
+	}
+	if (entry.isFile) {
+		entry.file(function(file) {
+			groups.push({ game: '', files: [{ file: file, path: file.name }] });
+			done();
+		}, function() { done(); });
+		return;
+	}
+	done();
+}
+
+function controllerDropDir(dir, prefix, out, done) {
+	var reader = dir.createReader();
+	var all = [];
+	function read() {
+		reader.readEntries(function(batch) {
+			if (batch && batch.length) {
+				for (var i = 0; i < batch.length; i++) { all.push(batch[i]); }
+				read();
+				return;
+			}
+			var j = 0;
+			function next() {
+				if (j >= all.length) { done(); return; }
+				var child = all[j++];
+				if (!child) { next(); return; }
+				if (child.isDirectory) {
+					controllerDropDir(child, prefix + child.name + '/', out, next);
+					return;
+				}
+				child.file(function(file) {
+					out.push({ file: file, path: prefix + (file.name || child.name) });
+					next();
+				}, function() { next(); });
+			}
+			next();
+		}, function() { done(); });
+	}
+	read();
+}
+
+function controllerDropGroups(groups) {
+	if (!controllerSelection || !controllerSelection.uuid) {
+		controllerDropBusy(controllerT('Select a controller first.'), true);
+		return;
+	}
+	groups = groups || [];
+	if (!groups.length) {
+		controllerDropBusy(controllerT('Nothing to add.'), true);
+		return;
+	}
+	var index = 0;
+	function nextGroup() {
+		if (index >= groups.length) {
+			controllerDropBusy(controllerT('Added. The controller\'s Games shelf will refresh.'), false);
+			controllerRomsLoad();
+			return;
+		}
+		var group = groups[index++];
+		if (!group.files || !group.files.length) { nextGroup(); return; }
+		var names = [];
+		for (var i = 0; i < group.files.length; i++) { names.push(group.files[i].path); }
+		var uuid = controllerSelection.uuid;
+		var title = group.game || controllerT('this game');
+		controllerDropBusy(controllerT('Working out what {0} is...', title), false);
+		$.ajax({
+			url: '/manager/controllers/roms/detect',
+			type: 'POST',
+			data: { uuid: uuid, game: group.game || '', names: JSON.stringify(names), timestamp: Date.now() },
+			dataType: 'json',
+			success: function(response) {
+				if (!response || !response.ok) {
+					controllerDropBusy((response && response.error) ? String(response.error) : controllerT('I could not tell which system that is.'), true);
+					nextGroup();
+					return;
+				}
+				if (response.container) { group.game = ''; }
+				controllerDropUpload(group, response.system, response.label || '', uuid, nextGroup);
+			},
+			error: function() {
+				controllerDropBusy(controllerT('I could not tell which system that is.'), true);
+				nextGroup();
+			}
+		});
+	}
+	nextGroup();
+}
+
+function controllerDropUpload(group, system, label, uuid, done) {
+	var files = group.files || [];
+	var index = 0;
+	function one() {
+		if (index >= files.length) {
+			var name = group.game || controllerT('the games');
+			controllerDropBusy(controllerT('Added {0} to {1}. The Games shelf will refresh.', name, label || system), false);
+			done();
+			return;
+		}
+		var entry = files[index++];
+		var form = new FormData();
+		form.append('uuid', uuid);
+		form.append('system', system);
+		form.append('game', group.game || '');
+		form.append('path', entry.path);
+		form.append('timestamp', Date.now());
+		form.append('file', entry.file, entry.file.name);
+		controllerDropBusy(controllerT('Adding {0}...', entry.path), false);
+		$.ajax({
+			url: '/manager/controllers/roms/upload',
+			type: 'POST',
+			data: form,
+			processData: false,
+			contentType: false,
+			dataType: 'json',
+			success: function(response) {
+				if (!response || !response.ok) {
+					controllerDropBusy((response && response.error) ? String(response.error) : controllerT('The file was not written.'), true);
+					done();
+					return;
+				}
+				one();
+			},
+			error: function() {
+				controllerDropBusy(controllerT('The file was not written.'), true);
+				done();
+			}
+		});
+	}
+	one();
+}
+
 // ---- adding a controller ---------------------------------------------------
 $(document).on('click', '#controller_add_button', function() {
 	controllerRequest();

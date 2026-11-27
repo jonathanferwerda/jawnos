@@ -1062,8 +1062,14 @@ sub action_44004 {
 }
 
 # GET /manager/games/library
+# `revision=1` answers only the shelf's change marker, so an open page can poll
+# it without a scan; the page reloads itself when the marker moves.
 sub action_44005 {
 	my $c = shift;
+	if ($c->param('revision')) {
+		my $revision = eval { &subs::game_revision() };
+		return $c->render(json => { ok => 1, revision => (defined $revision ? $revision : '0') });
+	}
 	$c->render(json => eval { &subs::game_library() } || { ok => 0, games => [], systems => [] });
 }
 

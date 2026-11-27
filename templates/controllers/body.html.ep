@@ -90,6 +90,10 @@
 	<div class="controller_section">
 		<h2><%= &subs::ui('ROMs') %></h2>
 		<p class="controller_note"><%= &subs::ui('Copy a game between this computer and the controller. A game already on the other side is left alone and says so.') %></p>
+		<div id="controllers_drop" class="controller_drop" tabindex="0" role="button" aria-label="<%= &subs::ui('Drop a game file or folder here to put it on the controller') %>">
+			<span class="controller_drop_hint"><%= &subs::ui('Drop a game file or folder here, or click to choose a file.') %></span>
+		</div>
+		<input type="file" id="controllers_drop_files" multiple hidden>
 		<div class="controller_toolbar">
 			<button type="button" id="controllers_refresh_button" disabled><%= &subs::ui('Refresh') %></button>
 			<div id="controllers_roms_status" class="controller_status" aria-live="polite"></div>

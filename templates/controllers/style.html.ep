@@ -52,6 +52,9 @@
 	#controllers_app .controller_folder_present .controller_folder_state { color: var(--accent); opacity: 1; }
 	#controllers_app .controller_folder_missing .controller_folder_state { opacity: .5; }
 	#controllers_app .controller_roms { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+	#controllers_app .controller_drop { border: 2px dashed var(--line); border-radius: 8px; padding: 14px 10px; text-align: center; font-size: 13px; opacity: .8; margin: 0 0 10px; cursor: var(--jawnos-cursor-pointer, pointer); }
+	#controllers_app .controller_drop.controller_drop_over { border-color: var(--accent); opacity: 1; background: var(--panel); }
+	#controllers_app .controller_drop_hint { pointer-events: none; }
 	#controllers_app .controller_roms_col { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 10px; min-width: 0; }
 	#controllers_app .controller_roms_title { font-size: 13px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; opacity: .78; }
 	#controllers_app .controller_rom_row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }

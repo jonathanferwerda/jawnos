@@ -839,6 +839,173 @@ sub action_54008 {
 }
 
 # ---------------------------------------------------------------------------
+# Dropping a game onto a controller (54014-54015). The controller's own Games
+# shelf reads ~/roms, so a dropped file is written under a system folder there.
+# The page asks what the drop is before it sends a byte, then posts each file;
+# the same helpers that reach the SD card over ssh write the ROM.
+
+# Where the controller's own shelf lives. A peer's is a relative path, so ssh
+# resolves it against that login's home and no home directory is guessed; this
+# machine's is absolute.
+sub _controller_console_root {
+	my ($is_this, $machine) = @_;
+	return { kind => 'local', path => &subs::home('~/roms') } if $is_this;
+	my $target = &_controller_ssh_target($machine);
+	return { kind => 'none', error => 'Name the controller\'s address in Storage, then try again.' } unless $target;
+	return { kind => 'remote', path => 'roms', target => $target };
+}
+
+# A path inside a game folder: relative, no empty or dot component, no `..`.
+# Spaces and non-ASCII letters are ordinary (a ROM is often named in its
+# language); control characters and a hidden component are not.
+sub _controller_rel_path_ok {
+	my $path = shift // '';
+	return 0 unless length $path && length($path) <= 1024;
+	return 0 if $path =~ m{^/} || $path =~ m{(^|/)\.\.(/|$)} || $path =~ /[\x00-\x1f]/;
+	foreach my $part (split m{/}, $path) {
+		return 0 if $part eq '' || $part eq '.' || $part =~ /^\./;
+	}
+	return 1;
+}
+
+sub _controller_game_name_ok {
+	my $name = shift // '';
+	return 0 unless length $name && length($name) <= 255;
+	return 0 if $name =~ m{/} || $name =~ /\.\./ || $name =~ /^\./ || $name =~ /[\x00-\x1f]/;
+	return 1;
+}
+
+# A local path for the uploaded bytes. A spooled upload already has one; a small
+# in-memory asset is written to a private temp file, which the caller removes.
+sub _controller_upload_source {
+	my $upload = shift;
+	my $asset = $upload ? $upload->asset : undef;
+	return (undef, undef) unless $asset;
+	if ($asset->isa('Mojo::Asset::File')) {
+		my $path = $asset->path;
+		return ($path, undef) if defined $path && length $path && -f $path;
+	}
+	my ($fh, $tmp) = File::Temp::tempfile('controller_rom_upload_XXXXXXXX', TMPDIR => 1, UNLINK => 0);
+	return (undef, undef) unless $fh;
+	binmode $fh;
+	print {$fh} $asset->slurp;
+	close $fh;
+	chmod 0600, $tmp;
+	return ($tmp, $tmp);
+}
+
+# POST /manager/controllers/roms/detect
+# What a dropped file or folder is, before it is written. Detection is by name:
+# the suffix for a file, the folder's own name when it names a system, and the
+# files inside for a folder. A suffix that names more than one system (a disc
+# image or an archive) is refused with the folder-name hint.
+sub action_54014 {
+	my $c = shift;
+	&app_schema_ensure();
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	my $uuid = $c->param('uuid') || '';
+	my ($device, $machine) = &_controller_resolve($uuid);
+	unless ($device || $uuid eq 'local') {
+		return $c->render(json => { ok => 0, error => 'no controller' });
+	}
+	my $game = $c->param('game') // '';
+	my $names = eval { decode_json($c->param('names') // '[]') };
+	$names = [] unless ref $names eq 'ARRAY';
+	my $system = &subs::game_system_for_paths($game, $names);
+	unless (defined $system && length $system) {
+		return $c->render(json => {
+			ok => 0,
+			ambiguous => 1,
+			error => 'I could not tell which system that is. Drop a folder named after the system (for example gb or psx).',
+		});
+	}
+	my $systems = &subs::game_systems();
+	my $container = (length $game && ref $systems eq 'HASH' && $systems->{$game}) ? 1 : 0;
+	$c->render(json => {
+		ok => 1,
+		system => $system,
+		label => &subs::game_system_label($system),
+		container => $container,
+	});
+}
+
+# POST /manager/controllers/roms/upload
+# One file of a dropped game. A folder game keeps its inner paths under its own
+# name; a single file lands beside its system. The Games shelf scans ~/roms, so
+# a file written there is a card the controller can launch.
+sub action_54015 {
+	my $c = shift;
+	&app_schema_ensure();
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	my $uuid = $c->param('uuid') || '';
+	my ($device, $machine) = &_controller_resolve($uuid);
+	unless ($device || $uuid eq 'local') {
+		return $c->render(json => { ok => 0, error => 'no controller' });
+	}
+	my $system = $c->param('system') // '';
+	my $systems = &subs::game_systems();
+	unless ($system =~ /^[A-Za-z0-9_]+$/ && ref $systems eq 'HASH' && $systems->{$system}) {
+		return $c->render(json => { ok => 0, error => 'That is not a game system.' });
+	}
+	my $game = $c->param('game') // '';
+	unless ($game eq '' || &_controller_game_name_ok($game)) {
+		return $c->render(json => { ok => 0, error => 'bad game name' });
+	}
+	my $path = $c->param('path') // '';
+	unless (&_controller_rel_path_ok($path)) {
+		return $c->render(json => { ok => 0, error => 'bad path' });
+	}
+	my $upload = $c->req->upload('file');
+	unless ($upload && $upload->size) {
+		return $c->render(json => { ok => 0, error => 'No file arrived.' });
+	}
+	my $is_this = &_controller_is_this($uuid, $device, $machine);
+	my $root = &_controller_console_root($is_this, $machine);
+	unless (($root->{'kind'} // '') ne 'none') {
+		return $c->render(json => { ok => 0, error => $root->{'error'} });
+	}
+	my $dir = $root->{'path'} . '/' . $system . (length $game ? '/' . $game : '');
+	my $dest = $dir . '/' . $path;
+	(my $parent = $dest) =~ s{/[^/]+$}{};
+	my ($source, $temp) = &_controller_upload_source($upload);
+	unless (defined $source) {
+		return $c->render(json => { ok => 0, error => 'The upload could not be read.' });
+	}
+	my $ok = 0;
+	if ($root->{'kind'} eq 'local') {
+		File::Path::make_path($parent) unless -d $parent;
+		$ok = ((system('cp', '--', $source, $dest) == 0 && -f $dest) ? 1 : 0);
+	}
+	else {
+		my $target = $root->{'target'};
+		unless (&_controller_remote_mkdir($target, $parent)) {
+			unlink $temp if defined $temp;
+			return $c->render(json => { ok => 0, error => 'The controller folder could not be made.' });
+		}
+		my $spec = $target->{'user'} . '@' . $target->{'host'};
+		$ok = (&_controller_scp_run($target, $source, $spec . ':' . $dest)->{'ok'}
+			&& &_controller_ssh_run($target, 'test -f ' . &_controller_shell_quote($dest))->{'ok'}) ? 1 : 0;
+	}
+	unlink $temp if defined $temp;
+	unless ($ok) {
+		return $c->render(json => { ok => 0, error => 'The file was not written.' });
+	}
+	$log->info('controller rom upload: ' . $system . '/' . (length $game ? $game . '/' : '') . $path . ($root->{'kind'} eq 'remote' ? ' (ssh)' : ''));
+	$c->render(json => {
+		ok => 1,
+		system => $system,
+		label => &subs::game_system_label($system),
+		game => $game,
+		path => $path,
+		remote => ($root->{'kind'} eq 'remote' ? 1 : 0),
+	});
+}
+
+# ---------------------------------------------------------------------------
 # The Controllers app's New button (54009-54010). The provisioner lives in
 # scripts/gou_provision.pl and owns the device fingerprint: these actions only
 # decide who may ask and pass the person's choices through as an argv list.

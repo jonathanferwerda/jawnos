@@ -59,6 +59,20 @@ sub game_system_label {
 	return &JawnOS::Games::system_label($_[0]);
 }
 
+# What a dropped file or folder is, from its name and suffix. The controller
+# upload asks this once per drop, before a byte is written.
+sub game_system_for_paths {
+	require JawnOS::Games;
+	return &JawnOS::Games::system_for_paths($_[0], $_[1]);
+}
+
+# The shelf's change marker: the root and its system folders' mtimes. The Games
+# page polls it so a game dropped from another machine appears by itself.
+sub game_revision {
+	require JawnOS::Games;
+	return &JawnOS::Games::revision(&game_root());
+}
+
 sub game_core_path {
 	require JawnOS::Games;
 	return &JawnOS::Games::core_path($_[0]);

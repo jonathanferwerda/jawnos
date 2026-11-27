@@ -188,6 +188,12 @@ sub startup {
 	# slow way.
 	$self->types->type(wasm => 'application/wasm');
 
+	# A ROM is not a form field: a dropped game can be a disc image or a zip, so
+	# the request cap the rest of the manager lives under (Mojo's 16 MB) is
+	# raised for the whole app. The upload route still refuses a file it cannot
+	# name a system for, and every write is behind the house pass.
+	$self->max_request_size(4 * 1024 * 1024 * 1024);
+
 	require JawnOS::Routes;
 	JawnOS::Routes->register($self, $r);
 

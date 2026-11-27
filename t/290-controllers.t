@@ -34,14 +34,14 @@ ok($routes =~ m{/manager/controllers/storage}, 'the storage route');
 ok($routes =~ m{/manager/controllers/roms}, 'the roms route');
 ok($routes =~ m{/manager/controllers/card}, 'the card choice route');
 
-foreach my $id (54001 .. 54011) {
+foreach my $id (54001 .. 54015) {
 	like($routes, qr/\[\Q$id\E,\s*'\w+',\s*'\/manager\/controllers[^']*',\s*'action_\Q$id\E'\]/,
 		"row $id names action_$id");
 }
 
 my $controller = slurp('lib/JawnOS/Controller/manager_controllers.pm');
 like($controller, qr/^package Manager;/m, 'the controller is in package Manager');
-foreach my $id (54001 .. 54011) {
+foreach my $id (54001 .. 54015) {
 	like($controller, qr/^sub action_\Q$id\E\b/m, "action_$id is defined");
 }
 
@@ -174,6 +174,24 @@ like($controller, qr/address => \$address/, 'the storage save answers with the a
 like($controllers_js, qr/id="controllers_address"/, 'Storage asks for the controller address');
 like($controllers_js, qr/address: address/, 'the save carries the address');
 
+# Dropping a game writes it into the controller's own ~/roms/<system>/, which
+# is what its Games shelf scans. The detect route names the system first; the
+# upload route writes each file locally or over ssh.
+like($routes, qr{/manager/controllers/roms/detect}, 'the detect route');
+like($routes, qr{/manager/controllers/roms/upload}, 'the upload route');
+like($controller, qr/sub action_54014/, 'detect is an action');
+like($controller, qr/sub action_54015/, 'upload is an action');
+like($controller, qr/sub _controller_console_root/, 'the controller shelf has a root');
+like($controller, qr/sub _controller_rel_path_ok/, 'a dropped path is checked');
+like($controller, qr/game_system_for_paths/, 'the system comes from the games map');
+like($controller, qr/req->upload\('file'\)/, 'the file arrives as an upload');
+like($body, qr/id="controllers_drop"/, 'the ROMs section takes a drop');
+like($controllers_js, qr/function controllerDropGroups/, 'the page groups a drop');
+like($controllers_js, qr/function controllerDropDir/, 'and walks a dropped folder');
+like($controllers_js, qr{/manager/controllers/roms/upload}, 'each file is posted');
+like($controllers_js, qr{/manager/controllers/roms/detect}, 'after the system is named');
+like(slurp('lib/JawnOS.pm'), qr/max_request_size/, 'a ROM upload is not capped at the form limit');
+
 my $names = slurp('lib/JawnOS/Routes.pm');
 like($names, qr/\bmanager_controllers\b/, 'the module is registered in @NAMES');
 
@@ -200,6 +218,7 @@ like($labels, qr/\bcontrollers\s*=>\s*\{\s*icon/, 'the app has a known-app row')
 my $help = slurp('perl/help/topics_apps.pl');
 like($help, qr/\$topic\{'controllers'\}/, 'the help topic is registered as controllers');
 like($help, qr/read over SSH/, 'the help says a peer card is read over SSH');
+like($help, qr/Drop a game file or folder/, 'the help explains dropping a game');
 
 # Every template the topic claims must exist, or t/11 would fail for the wrong reason.
 my ($topic_block) = $help =~ /(\$topic\{'controllers'\}\s*=\s*\{.*?\n\t+\};)/s;

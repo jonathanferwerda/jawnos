@@ -461,5 +461,24 @@
 			})
 			.catch(function () { });
 	}
+	/* Another machine, a USB stick or the house can put a game in ~/roms while
+	   this shelf is open. The revision is the root and system folders' mtime, so
+	   a cheap poll reloads the shelf when a game arrives, without a scan. */
+	var shelfRevision = null;
+	function shelfPoll() {
+		fetch('/manager/games/library?revision=1', { credentials: 'same-origin' })
+			.then(function (answer) { return answer.json(); })
+			.then(function (answer) {
+				if (!answer || !answer.ok) { return; }
+				if (shelfRevision === null) { shelfRevision = answer.revision; return; }
+				if (answer.revision !== shelfRevision) {
+					shelfRevision = answer.revision;
+					if (!busy) { location.reload(); }
+				}
+			})
+			.catch(function () { });
+	}
+	shelfPoll();
+	setInterval(shelfPoll, 4000);
 })();
 </script>

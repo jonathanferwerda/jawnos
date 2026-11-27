@@ -96,6 +96,69 @@ sub system_label {
 	return length $label ? $label : 'Games';
 }
 
+# The system a dropped game belongs to, from its suffix. Only suffixes that
+# name one system are here: a disc image or an archive is deliberately absent,
+# since `.iso`, `.cue`, `.chd` and `.zip` can each be a PlayStation, a Saturn or
+# a Dreamcast game. A folder named after a system is the person's own answer
+# and wins over every suffix.
+our %EXTENSION_SYSTEM = (
+	nes => 'nes',
+	smc => 'snes', sfc => 'snes', fig => 'snes', swc => 'snes',
+	gb => 'gb', gbc => 'gbc', gba => 'gba',
+	z64 => 'n64', n64 => 'n64', v64 => 'n64', ndd => 'n64',
+	'32x' => 'sega32x', sms => 'mastersystem', gg => 'gamegear',
+	md => 'megadrive', gen => 'megadrive', smd => 'megadrive',
+	pce => 'pcengine', sgx => 'pcengine',
+	ngp => 'ngp', ngc => 'ngpc', col => 'coleco',
+	a26 => 'atari2600', a52 => 'atari5200', a78 => 'atari7800', lnx => 'atarilynx',
+	exe => 'dos', com => 'dos', bat => 'dos', conf => 'dos',
+	gdi => 'dreamcast', rvz => 'gc', gcm => 'gc', cso => 'psp', pbp => 'psp',
+);
+
+# What one dropped game is. A folder that names a system is a system folder
+# and its files belong directly under it; otherwise every recognised suffix is
+# a vote, and a tie (or no vote at all) is "cannot tell", never a guess.
+sub system_for_paths {
+	my ($folder, $paths) = @_;
+	$folder = '' unless defined $folder;
+	$paths = [] unless ref $paths eq 'ARRAY';
+	return $folder if length $folder && $SYSTEM{$folder};
+	my %vote;
+	foreach my $path (@{$paths}) {
+		next unless defined $path && length $path;
+		my ($base) = $path =~ m{([^/]+)$};
+		next unless defined $base;
+		my ($suffix) = $base =~ /\.([^.]+)$/;
+		next unless defined $suffix;
+		my $system = $EXTENSION_SYSTEM{lc $suffix};
+		next unless defined $system && $SYSTEM{$system};
+		$vote{$system}++;
+	}
+	return undef unless keys %vote;
+	my @ranked = sort { $vote{$b} <=> $vote{$a} || $a cmp $b } keys %vote;
+	return undef if @ranked > 1 && $vote{$ranked[0]} == $vote{$ranked[1]};
+	return $ranked[0];
+}
+
+# A cheap "has the shelf changed" answer: the root and every system folder's
+# mtime. Adding or removing a game touches its system folder, so an open Games
+# page can poll this without walking the ROMs.
+sub revision {
+	my ($root) = @_;
+	$root = '' unless defined $root;
+	my @root_stat = stat($root);
+	return '0' unless @root_stat;
+	my @parts = ($root_stat[9] // 0);
+	if (opendir(my $dh, $root)) {
+		foreach my $dir (sort grep { !/^\./ && -d "$root/$_" } readdir $dh) {
+			my @stat = stat("$root/$dir");
+			push @parts, $dir, ($stat[9] // 0);
+		}
+		closedir $dh;
+	}
+	return join(':', @parts);
+}
+
 sub core_for {
 	my ($system) = @_;
 	return undef unless defined $system && $SYSTEM{$system} && $SYSTEM{$system}->{'core'};

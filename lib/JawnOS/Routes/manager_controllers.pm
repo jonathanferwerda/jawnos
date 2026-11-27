@@ -18,6 +18,8 @@ sub routes {
 	[54011, 'post', '/manager/controllers/card',      'action_54011'],
 	[54012, 'get',  '/manager/controllers/new/flash/status', 'action_54012'],
 	[54013, 'post', '/manager/controllers/new/flash/cancel', 'action_54013'],
+	[54014, 'post', '/manager/controllers/roms/detect', 'action_54014'],
+	[54015, 'post', '/manager/controllers/roms/upload', 'action_54015'],
 	);
 }
 
