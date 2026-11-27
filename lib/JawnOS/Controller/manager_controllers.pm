@@ -10,6 +10,7 @@ use utf8;
 use Cwd ();
 use File::Path ();
 use File::Temp ();
+use MIME::Base64 ();
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw(url_escape);
 use POSIX ();
@@ -266,6 +267,159 @@ sub _controller_is_this {
 	return ($theirs eq $mine) ? 1 : 0;
 }
 
+# ---- a peer controller over ssh -------------------------------------------
+#
+# A controller that is not this computer is still reachable: its own sshd, with
+# the same key-only login the Terminal app uses. The manager runs as the person,
+# so ssh reads that person's default identity; nothing secret is stored in a
+# tracked file. The address lives in remote_machines.ip as `host`, or
+# `host:port` when the sshd is not on 22. An empty address is the whole of "not
+# wired yet", and the page says so instead of drawing an empty shelf.
+sub _controller_ssh_target {
+	my ($machine) = @_;
+	return undef unless ref $machine eq 'HASH';
+	my $host = $machine->{'ip'} // '';
+	$host =~ s/^\s+|\s+$//g;
+	my $port = 22;
+	if ($host =~ /^(.+):(\d{1,5})$/) { ($host, $port) = ($1, $2 + 0); }
+	$host =~ s/^\[|\]$//g;
+	return undef unless $host =~ /^[A-Za-z0-9._\-]{1,255}$/;
+	return undef unless $port > 0 && $port < 65536;
+	my $user = getpwuid($<) // '';
+	$user = '' unless $user =~ /^[A-Za-z0-9._\-]{1,64}$/;
+	return { host => $host, port => $port, user => $user };
+}
+
+# A path for the remote shell: single-quoted, with a literal quote escaped so a
+# game name cannot become two commands.
+sub _controller_shell_quote {
+	my $text = shift // '';
+	return "''" unless length $text;
+	$text =~ s/'/'"'"'/g;
+	return "'$text'";
+}
+
+# One ssh round trip. BatchMode keeps a missing key a fast refusal instead of a
+# password prompt hanging the worker; LogLevel=ERROR keeps the first-connect
+# host-key note out of the stdout a listing is parsed from.
+sub _controller_ssh_run {
+	my ($target, $command, $warranty) = @_;
+	return { ok => 0, error => 'no controller address' } unless ref $target eq 'HASH' && length($target->{'host'} // '');
+	my @argv = (
+		'ssh', '-p', $target->{'port'},
+		'-o', 'BatchMode=yes',
+		'-o', 'StrictHostKeyChecking=accept-new',
+		'-o', 'LogLevel=ERROR',
+		'-o', 'ConnectTimeout=8',
+		'-o', 'ServerAliveInterval=15',
+		(($target->{'user'} // '') ne '' ? $target->{'user'} . '@' : '') . $target->{'host'},
+		$command,
+	);
+	my $run = eval {
+		&subs::subprocessor_command(\@argv, {
+			name => 'controller ssh',
+			stdout => 'capture',
+			stderr => 'stdout',
+			warranty => (defined $warranty && length $warranty ? $warranty : '30s'),
+		});
+	};
+	unless (ref $run eq 'HASH' && $run->{'pid'}) {
+		return { ok => 0, error => 'the controller could not be reached' };
+	}
+	return {
+		ok => ($run->{'ok'} ? 1 : 0),
+		output => ($run->{'output'} // ''),
+		timed_out => ($run->{'timed_out'} ? 1 : 0),
+	};
+}
+
+# A directory on a peer: its direct child folders, each with the number of files
+# under it, which is the size the shelf compares games by. The path is base64 so
+# a space or a quote in the mount point cannot break the remote shell, and the
+# script is written with no single quote so it can be wrapped in one.
+sub _controller_remote_list {
+	my ($target, $root) = @_;
+	return { ok => 0, error => 'no archive_dir' } unless defined $root && length $root;
+	my $b64 = MIME::Base64::encode_base64($root, '');
+	my $script = q{use MIME::Base64;$r=decode_base64($ARGV[0]);opendir(my $d,$r)or exit 1;while(my $e=readdir($d)){next if $e=~/^\./;my $p="$r/$e";next unless -d $p;print "$e\t"._w($p)."\n"}sub _w{my($c)=@_;my $n=0;opendir(my $h,$c)or return 0;while(my $x=readdir($h)){next if $x=~/^\./;my $y="$c/$x";if(-d $y&&!-l $y){$n+=_w($y)}elsif(-f $y){$n++}}closedir($h);return $n}};
+	my $run = &_controller_ssh_run($target, "perl -MMIME::Base64 -e '$script' $b64");
+	unless ($run->{'ok'}) {
+		my $said = $run->{'output'} // '';
+		my $error = ($said =~ /Permission denied|publickey/i)
+			? 'the controller did not accept this computer\'s SSH key'
+			: ($run->{'timed_out'} ? 'the controller did not answer in time' : 'the controller\'s card could not be read');
+		return { ok => 0, error => $error };
+	}
+	my @items;
+	foreach my $line (split /\n/, $run->{'output'}) {
+		next unless $line =~ /^(.*?)\t(\d+)$/;
+		push @items, { name => $1, size => $2 + 0, game => $1 };
+	}
+	return { ok => 1, items => [ sort { $a->{'name'} cmp $b->{'name'} } @items ] };
+}
+
+# The Games folder on a peer's card. Unlike the local root this does not probe a
+# mount: the mount is on the peer, and ssh is the probe.
+sub _controller_remote_rom_root {
+	my ($machine) = @_;
+	my $root = &_controller_archive_dir($machine ? $machine->{'archive_dir'} : '');
+	return '' unless length $root;
+	return $root . '/' . &_controller_rom_folder();
+}
+
+sub _controller_remote_mkdir {
+	my ($target, $path) = @_;
+	return 0 unless defined $path && length $path;
+	return &_controller_ssh_run($target, 'mkdir -p ' . &_controller_shell_quote($path))->{'ok'} ? 1 : 0;
+}
+
+sub _controller_remote_remove {
+	my ($target, $path) = @_;
+	return 0 unless defined $path && length $path;
+	return &_controller_ssh_run($target, 'rm -rf -- ' . &_controller_shell_quote($path))->{'ok'} ? 1 : 0;
+}
+
+# scp with the same target the ssh helpers use. Every path is one argv, so the
+# remote shell never sees it and a space in a game name is just a space.
+sub _controller_scp_run {
+	my ($target, @paths) = @_;
+	return { ok => 0, error => 'no controller address' } unless ref $target eq 'HASH' && length($target->{'host'} // '');
+	my @argv = (
+		'scp', '-r', '-p', '-P', $target->{'port'},
+		'-o', 'BatchMode=yes',
+		'-o', 'StrictHostKeyChecking=accept-new',
+		'-o', 'LogLevel=ERROR',
+		'-o', 'ConnectTimeout=8',
+		@paths,
+	);
+	my $run = eval {
+		&subs::subprocessor_command(\@argv, {
+			name => 'controller scp',
+			stdout => 'capture',
+			stderr => 'stdout',
+			warranty => '900s',
+		});
+	};
+	unless (ref $run eq 'HASH' && $run->{'pid'}) {
+		return { ok => 0, error => 'the copy could not start' };
+	}
+	return { ok => ($run->{'ok'} ? 1 : 0), output => ($run->{'output'} // ''), timed_out => ($run->{'timed_out'} ? 1 : 0) };
+}
+
+sub _controller_rom_list_local {
+	my $dir = shift;
+	my @items;
+	if (opendir my $dh, $dir) {
+		foreach my $name (sort grep { $_ !~ /^\./ } readdir $dh) {
+			my $path = $dir . '/' . $name;
+			next unless -d $path;
+			push @items, { name => $name, size => &_controller_rom_files($path), game => $name };
+		}
+		closedir $dh;
+	}
+	return \@items;
+}
+
 # The root a game folder sits under: this machine's own shelf, or the Games
 # folder on the controller's drive. An empty string means there is no such
 # root to read.
@@ -329,6 +483,9 @@ sub action_54005 {
 		backup_dir => (length $dir ? $dir . '/Backups' : ''),
 		folders => $folders,
 		present => (($is_this && length $dir && &subs::archive_card_mounted($dir)) ? 1 : 0),
+		address => ($machine->{'ip'} // ''),
+		remote => ($is_this ? 0 : 1),
+		ssh_ready => ((!$is_this && &_controller_ssh_target($machine)) ? 1 : 0),
 		card => &_controller_card_finding($device, $machine, $key),
 	});
 }
@@ -414,6 +571,18 @@ sub action_54006 {
 	my $archive = ($c->param('archive') // '') eq '1' ? '1' : '0';
 	my $quota = $c->param('backup_quota');
 	$quota = 10 unless defined $quota && $quota =~ /^\d{1,3}$/ && $quota <= 100;
+	# The address another computer uses to reach this controller's sshd. It is
+	# optional: a controller plugged into this computer needs none. The field is
+	# only written when the page sent it, so an older page cannot erase a
+	# synced address by saving the rest of the card.
+	my $has_address = defined $c->param('address');
+	my $address = $c->param('address') // '';
+	$address =~ s/^\s+|\s+$//g;
+	$address = '' unless $address =~ /^[A-Za-z0-9._\-]{1,255}(?::\d{1,5})?$/;
+	if ($address =~ /:(\d{1,5})$/) {
+		my $ssh_port = $1 + 0;
+		$address = '' unless $ssh_port > 0 && $ssh_port < 65536;
+	}
 	# An install that has not run the migration yet keeps the old two-column
 	# write; the next boot adds backup_quota and this starts persisting it.
 	my $has_quota = eval { &subs::db_query('select 1 from pragma_table_info(?) where name = ?', 'remote_machines', 'backup_quota')->hashes->[0] ? 1 : 0 } || 0;
@@ -422,6 +591,7 @@ sub action_54006 {
 		my $where = $machine->{'uuid'} ? { uuid => $machine->{'uuid'} } : { signatorial => $machine->{'signatorial'} };
 		my $set = { archive_dir => $dir, archive => $archive, server_time => $now };
 		$set->{'backup_quota'} = $quota if $has_quota;
+		$set->{'ip'} = $address if $has_address;
 		&subs::db_update('remote_machines', $set, $where);
 	}
 	else {
@@ -432,6 +602,7 @@ sub action_54006 {
 			uuid => $key,
 			signatorial => $signatorial,
 			hostname => ($device && $device->{'name'}) || '',
+			ip => $address,
 			archive_dir => $dir,
 			archive => $archive,
 			timestamp => $now,
@@ -459,6 +630,7 @@ sub action_54006 {
 		archive => ($archive eq '1' ? 1 : 0),
 		backup_quota => $quota + 0,
 		created => \@created,
+		address => $address,
 		present => (($is_this && length $dir && &subs::archive_card_mounted($dir)) ? 1 : 0),
 	});
 }
@@ -473,25 +645,30 @@ sub action_54007 {
 	unless ($device || $uuid eq 'local') {
 		return $c->render(json => { ok => 0, error => 'no controller' });
 	}
-	# A peer's shelf is not mounted here, so say so instead of drawing an empty
-	# list that would read as "no games".
-	unless (&_controller_is_this($uuid, $device, $machine)) {
-		return $c->render(json => { ok => 0, error => 'remote not wired yet' });
+	# The eMMC column is this computer's own shelf, so it is always local: pushing
+	# a game to a controller starts from the ROMs on this desk. Only the SD column
+	# belongs to the selected controller, and a controller that is not this
+	# computer is read over ssh rather than a mount.
+	if ($where eq 'sd' && !&_controller_is_this($uuid, $device, $machine)) {
+		my $target = &_controller_ssh_target($machine);
+		unless ($target) {
+			return $c->render(json => { ok => 0, error => 'Name the controller\'s address in Storage, then try again.' });
+		}
+		my $dir = &_controller_remote_rom_root($machine);
+		unless (length $dir) {
+			return $c->render(json => { ok => 0, error => 'no archive_dir' });
+		}
+		my $answer = &_controller_remote_list($target, $dir);
+		unless ($answer->{'ok'}) {
+			return $c->render(json => { ok => 0, error => ($answer->{'error'} || 'the controller\'s card could not be read') });
+		}
+		return $c->render(json => { ok => 1, where => $where, dir => $dir, items => $answer->{'items'}, remote => 1 });
 	}
 	my $dir = &_controller_rom_root($where, $machine);
 	unless (length $dir) {
 		return $c->render(json => { ok => 0, error => 'no archive_dir' });
 	}
-	my @items;
-	if (opendir my $dh, $dir) {
-		foreach my $name (sort grep { $_ !~ /^\./ } readdir $dh) {
-			my $path = $dir . '/' . $name;
-			next unless -d $path;
-			push @items, { name => $name, size => &_controller_rom_files($path), game => $name };
-		}
-		closedir $dh;
-	}
-	$c->render(json => { ok => 1, where => $where, dir => $dir, items => \@items });
+	$c->render(json => { ok => 1, where => $where, dir => $dir, items => &_controller_rom_list_local($dir) });
 }
 
 # POST /manager/controllers/roms/copy
@@ -510,33 +687,63 @@ sub action_54008 {
 	unless ($device || $uuid eq 'local') {
 		return $c->render(json => { ok => 0, error => 'no controller' });
 	}
-	unless (&_controller_is_this($uuid, $device, $machine)) {
-		return $c->render(json => { ok => 0, error => 'remote not wired yet' });
-	}
 	# The name is one entry under a root this action chose, never a path.
 	unless (length $name && $name !~ m{/} && $name !~ /\.\./ && $name !~ /^\./) {
 		return $c->render(json => { ok => 0, error => 'bad name' });
 	}
-	unless ($from =~ /^(?:emmc|sd)$/ && $to =~ /^(?:emmc|sd)$/) {
+	unless ($from =~ /^(?:emmc|sd)$/ && $to =~ /^(?:emmc|sd)$/ && $from ne $to) {
 		return $c->render(json => { ok => 0, error => 'bad location' });
 	}
-	my $source_dir = &_controller_rom_root($from, $machine);
-	my $dest_dir = &_controller_rom_root($to, $machine);
-	unless (length $source_dir && length $dest_dir) {
-		return $c->render(json => { ok => 0, error => 'no archive_dir' });
+	my $is_this = &_controller_is_this($uuid, $device, $machine);
+	my $remote_from = (!$is_this && $from eq 'sd') ? 1 : 0;
+	my $remote_to   = (!$is_this && $to   eq 'sd') ? 1 : 0;
+	my $target;
+	if ($remote_from || $remote_to) {
+		$target = &_controller_ssh_target($machine);
+		unless ($target) {
+			return $c->render(json => { ok => 0, error => 'Name the controller\'s address in Storage, then try again.' });
+		}
 	}
-	# A drive that is not mounted is never invented: the folders on it are made
-	# only when the mount is there, which is the same rule the storage save uses.
-	if ($to eq 'sd' && !&subs::archive_card_mounted(&_controller_archive_dir($machine->{'archive_dir'}))) {
-		return $c->render(json => { ok => 0, error => 'no archive_dir' });
+	my $sd_dir = &_controller_archive_dir($machine->{'archive_dir'});
+	# eMMC is this computer's own shelf whether or not the controller is here; SD
+	# is the selected controller's card, mounted here when this machine holds it
+	# and reached over ssh when it does not.
+	my $source_dir;
+	if ($from eq 'emmc') {
+		$source_dir = &subs::home('~/roms');
+	}
+	else {
+		return $c->render(json => { ok => 0, error => 'no archive_dir' }) unless length $sd_dir;
+		return $c->render(json => { ok => 0, error => 'no archive_dir' }) if (!$remote_from && !&subs::archive_card_mounted($sd_dir));
+		$source_dir = $sd_dir . '/' . &_controller_rom_folder();
+	}
+	my $dest_dir;
+	if ($to eq 'emmc') {
+		$dest_dir = &subs::home('~/roms');
+	}
+	else {
+		return $c->render(json => { ok => 0, error => 'no archive_dir' }) unless length $sd_dir;
+		return $c->render(json => { ok => 0, error => 'no archive_dir' }) if (!$remote_to && !&subs::archive_card_mounted($sd_dir));
+		$dest_dir = $sd_dir . '/' . &_controller_rom_folder();
 	}
 	my $source = $source_dir . '/' . $name;
-	my $is_file = (-f $source) ? 1 : 0;
-	unless ($is_file || -d $source) {
-		return $c->render(json => { ok => 0, error => 'missing' });
+
+	# Whether the source is one file or a game folder, read the same way on
+	# either side. A ROM sold as one file still becomes a game folder on the
+	# shelf: the folder is the name without its extension and the file goes
+	# inside.
+	my $is_file;
+	if ($remote_from) {
+		if (&_controller_ssh_run($target, 'test -d ' . &_controller_shell_quote($source))->{'ok'}) { $is_file = 0; }
+		elsif (&_controller_ssh_run($target, 'test -f ' . &_controller_shell_quote($source))->{'ok'}) { $is_file = 1; }
+		else { return $c->render(json => { ok => 0, error => 'missing' }); }
 	}
-	# A ROM sold as one file is still one game folder on the shelf: the folder
-	# is the name without its extension and the file goes inside.
+	else {
+		$is_file = (-f $source) ? 1 : 0;
+		unless ($is_file || -d $source) {
+			return $c->render(json => { ok => 0, error => 'missing' });
+		}
+	}
 	my $game = $name;
 	my $wrapped = 0;
 	if ($is_file) {
@@ -545,32 +752,79 @@ sub action_54008 {
 		$wrapped = 1;
 	}
 	my $dest = $dest_dir . '/' . $game;
-	if (-e $dest) {
+	# The destination is checked before anything is written and is never
+	# overwritten, on either side of the wire.
+	my $exists = $remote_to
+		? &_controller_ssh_run($target, 'test -e ' . &_controller_shell_quote($dest))->{'ok'}
+		: (-e $dest ? 1 : 0);
+	if ($exists) {
 		return $c->render(json => { ok => 0, error => 'exists' });
 	}
-	Mojo::File->new($dest_dir)->make_path unless -d $dest_dir;
-	my $copied;
-	if ($is_file) {
-		my $target = $dest . '/' . $name;
-		$copied = ((mkdir($dest) && system('cp', '-a', '--', $source, $target) == 0 && -f $target) ? 1 : 0);
+	if ($remote_to) {
+		unless (&_controller_remote_mkdir($target, $dest_dir)) {
+			return $c->render(json => { ok => 0, error => 'copy failed' });
+		}
 	}
 	else {
-		$copied = ((system('cp', '-a', '--', $source, $dest) == 0 && -d $dest) ? 1 : 0);
+		Mojo::File->new($dest_dir)->make_path unless -d $dest_dir;
+	}
+
+	my $spec = $target ? ($target->{'user'} . '@' . $target->{'host'}) : '';
+	my $copied = 0;
+	if (!$remote_from && !$remote_to) {
+		if ($is_file) {
+			my $place = $dest . '/' . $name;
+			$copied = ((mkdir($dest) && system('cp', '-a', '--', $source, $place) == 0 && -f $place) ? 1 : 0);
+		}
+		else {
+			$copied = ((system('cp', '-a', '--', $source, $dest) == 0 && -d $dest) ? 1 : 0);
+		}
+	}
+	elsif (!$remote_from && $remote_to) {
+		# Push from this computer's shelf onto the controller's card.
+		if ($is_file) {
+			$copied = 1 if &_controller_remote_mkdir($target, $dest)
+				&& &_controller_scp_run($target, $source, $spec . ':' . $dest . '/' . $name)->{'ok'}
+				&& &_controller_ssh_run($target, 'test -f ' . &_controller_shell_quote($dest . '/' . $name))->{'ok'};
+		}
+		else {
+			$copied = 1 if &_controller_scp_run($target, $source, $spec . ':' . $dest_dir . '/')->{'ok'}
+				&& &_controller_ssh_run($target, 'test -d ' . &_controller_shell_quote($dest))->{'ok'};
+		}
+	}
+	else {
+		# Pull the controller's card back onto this computer's shelf.
+		if ($is_file) {
+			mkdir $dest unless -d $dest;
+			$copied = 1 if &_controller_scp_run($target, $spec . ':' . $source, $dest . '/' . $name)->{'ok'}
+				&& -f ($dest . '/' . $name);
+		}
+		else {
+			Mojo::File->new($dest_dir)->make_path unless -d $dest_dir;
+			$copied = 1 if &_controller_scp_run($target, $spec . ':' . $source, $dest_dir . '/')->{'ok'}
+				&& -d $dest;
+		}
 	}
 	unless ($copied) {
 		# A refused copy can leave a partial directory behind, and a retry would
 		# then answer 'exists' with no way through.
-		system('rm', '-rf', '--', $dest);
-		$log->info('controller roms copy failed: ' . $name . ' ' . $from . ' -> ' . $to);
+		if ($remote_to) { &_controller_remote_remove($target, $dest); }
+		else { system('rm', '-rf', '--', $dest); }
+		$log->info('controller roms copy failed: ' . $name . ' ' . $from . ' -> ' . $to . ($remote_from || $remote_to ? ' (ssh)' : ''));
 		return $c->render(json => { ok => 0, error => 'copy failed' });
 	}
 	my $moved = 0;
 	if ($move) {
-		$moved = $is_file
-			? (unlink($source) ? 1 : 0)
-			: ((system('rm', '-rf', '--', $source) == 0) ? 1 : 0);
+		if ($remote_from) {
+			$moved = &_controller_ssh_run($target, ($is_file ? 'rm -f ' : 'rm -rf ') . '-- ' . &_controller_shell_quote($source))->{'ok'} ? 1 : 0;
+		}
+		else {
+			$moved = $is_file
+				? (unlink($source) ? 1 : 0)
+				: ((system('rm', '-rf', '--', $source) == 0) ? 1 : 0);
+		}
 	}
-	$log->info('controller roms ' . ($move ? 'move' : 'copy') . ': ' . $name . ' ' . $from . ' -> ' . $to . ($wrapped ? ' (wrapped)' : ''));
+	$log->info('controller roms ' . ($move ? 'move' : 'copy') . ': ' . $name . ' ' . $from . ' -> ' . $to . ($wrapped ? ' (wrapped)' : '') . ($remote_from || $remote_to ? ' (ssh)' : ''));
 	$c->render(json => {
 		ok => 1,
 		name => $name,
@@ -580,6 +834,7 @@ sub action_54008 {
 		wrapped => $wrapped,
 		move => $move,
 		moved => $moved,
+		remote => (($remote_from || $remote_to) ? 1 : 0),
 	});
 }
 
