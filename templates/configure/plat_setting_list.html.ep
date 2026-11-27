@@ -12,6 +12,13 @@
 		[ 'chatbot_model',           'Pen chat (default)',   'chat' ],
 		[ 'coding_assistant',        'Coding (self-healing)', 'chat' ],
 		[ 'transcription_assistant', 'Transcription (speech in)', 'audio' ],
+		# One row per surface that speaks. A surface with no row of its own
+		# follows the shared choice above; the phone recogniser is offered only
+		# where the phone itself holds the microphone (the live rows, 1).
+		[ 'transcription_keyboard', 'Transcription · keyboard dictation', 'audio', 1 ],
+		[ 'transcription_guide',    'Transcription · Help guide',         'audio', 1 ],
+		[ 'transcription_watch',    'Transcription · T-Watch clips',      'audio' ],
+		[ 'transcription_teletype', 'Transcription · T-Deck clips',       'audio' ],
 	);
 	my $role_settings = &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @roles ] });
 	my $catalogue = &subs::ai_model_catalogue();
@@ -151,6 +158,16 @@
 				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0,
 					group => ($whisper_local ? 'This machine' : 'Another machine'), caps => ['audio'] };
 			}
+			# The phone recogniser hears the phone microphone, so it can answer
+			# only for a surface the phone itself is speaking to. A clip from the
+			# watch or the deck has no microphone here: its role has to name a
+			# service that can take a file.
+			my $live = ($r->[3] || 0) ? 1 : 0;
+			my $oem_here = ($live && $setting ne 'transcription_assistant') ? 1 : 0;
+			if ($oem_here) {
+				push @role_models, { value => 'android:oem', name => 'Android on-device', paid => 0,
+					group => 'This phone', caps => ['audio'] };
+			}
 		%>
 			<div class="ai_role" setting="<%= $setting %>"<% if ($cap eq 'chat') { %> data-qualify="1"<% } %>>
 				<div class="cfg-row">
@@ -177,6 +194,11 @@
 						<% if ($whisper_here) { %>
 							<optgroup label="<%= $whisper_local ? 'This machine' : 'Another machine' %>">
 								<option value="local:whisper.cpp" data-thinks="0" <% if ($current eq 'local:whisper.cpp') { %>selected="selected"<% $shown = 1; } %>>whisper.cpp · <%= $whisper_local ? 'this machine' : 'another machine' %> · free</option>
+							</optgroup>
+						<% } %>
+						<% if ($oem_here) { %>
+							<optgroup label="This phone">
+								<option value="android:oem" data-thinks="0" <% if ($current eq 'android:oem') { %>selected="selected"<% $shown = 1; } %>>Android on-device · this phone · free</option>
 							</optgroup>
 						<% } %>
 						<%# a model already chosen that does not fit, or is paid and stood down, is kept so it is not silently dropped %>

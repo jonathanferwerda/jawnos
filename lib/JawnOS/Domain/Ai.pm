@@ -138,6 +138,9 @@ sub ai_transcribe_test {
 	$model = '' unless defined $model;
 	$model =~ s/^\s+|\s+$//g;
 	return (0, 'Pick a model first.') unless length $model;
+	if (&transcription_service_is_client($model)) {
+		return (1, 'the phone recogniser runs on the device, not here');
+	}
 	if ($model eq 'local:whisper.cpp' || $model eq 'local:vosk') {
 		return &whisper_available()
 			? (1, 'whisper.cpp is ready on this machine')
@@ -520,6 +523,32 @@ sub transcribe_local_engine {
 	return undef;
 }
 
+# Which transcription service answers which surface. A consumer names what is
+# speaking - keyboard, guide, watch, teletype - and its own role
+# (transcription_<consumer>) wins once the Plat page has set one. A surface with
+# no row of its own reads the shared transcription_assistant row, so a house
+# that has never opened the new rows behaves exactly as it did.
+sub transcription_role_for {
+	my ($consumer) = @_;
+	$consumer = '' unless defined $consumer;
+	$consumer = lc $consumer;
+	$consumer =~ s/[^a-z0-9_]//g;
+	$consumer = substr($consumer, 0, 24);
+	return 'transcription_assistant' unless length $consumer;
+	my $role = 'transcription_' . $consumer;
+	my $chosen = &subs::setting_grabber({ app => 'mail', setting => $role });
+	return (defined $chosen && length $chosen) ? $role : 'transcription_assistant';
+}
+
+# The phone recogniser is a service the house can name but never run: the app
+# holds the microphone, not this process. It is offered only for the surfaces
+# the phone itself speaks to, and a clip that still finds it in a role is
+# skipped rather than posted to a provider that does not exist.
+sub transcription_service_is_client {
+	my ($service) = @_;
+	return (defined $service && $service eq 'android:oem') ? 1 : 0;
+}
+
 sub whisper_transcribe {
 	# Speech -> text. The transcription role names a primary and a fallback,
 	# tried in that order; either may be the local engine (whisper.cpp) or a
@@ -528,15 +557,20 @@ sub whisper_transcribe {
 	# Raw audio bytes in (any container ffmpeg reads), the transcript out. ''
 	# on any failure or on a stock silence line, so a caller only has to check
 	# for text. $lang is the keyboard layout's language ('fr', 'hi', ...);
-	# 'auto' lets the engine decide.
-	my ($raw, $lang) = @_;
+	# 'auto' lets the engine decide. $consumer names what is speaking
+	# (keyboard, guide, watch, teletype); its own role is read when the Plat
+	# page has set one, otherwise the shared transcription role answers.
+	my ($raw, $lang, $consumer) = @_;
 	return '' unless $raw;
-	my ($primary, $fallback) = &ai_role_models('transcription_assistant');
+	my $role = &transcription_role_for($consumer);
+	my ($primary, $fallback) = &ai_role_models($role);
 	my @order = grep { defined && length } ($primary, $fallback);
 	my %seen;
 	foreach my $m (@order) {
 		my $engine = ($m eq 'local:vosk') ? 'local:whisper.cpp' : $m;
 		next if $seen{$engine}++;
+		# a service only the app can run: this clip goes to the next choice
+		next if &transcription_service_is_client($engine);
 		my $local = &transcribe_local_engine($engine);
 		my $text;
 		if ($local) {
@@ -1025,7 +1059,7 @@ sub voice_ingest {
 		$meta->{'ts_watch'} = 0 + $meta->{'ts'};
 		$meta->{'ts'} = $meta->{'ts_watch'} * 1000;
 	}
-	my $text = &subs::whisper_transcribe($raw);
+	my $text = &subs::whisper_transcribe($raw, undef, $meta->{'edt'} || 'watch');
 	return { status => 'silence' } unless $text;
 	$log->info('voice: heard "' . $text . '"');
 	my $mode = $meta->{'voice'} || '';

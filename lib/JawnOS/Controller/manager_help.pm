@@ -183,7 +183,7 @@ sub action_34775 {
 	# Whisper runs locally and is bounded, but a clip still takes seconds; the
 	# worker is free while the child transcribes it.
 	&subs::render_in_subprocess($c, sub {
-		return &subs::whisper_transcribe($raw);
+		return &subs::whisper_transcribe($raw, undef, 'guide');
 	}, sub {
 		my ($c, $text) = @_;
 		if (!defined $text || !length $text) {

@@ -186,4 +186,59 @@ SKIP: {
 	is($? >> 8, 0, 'the streamer parses its arguments');
 }
 
+# ------------------------------------------------------------ per-surface roles
+# A surface row wins once the Plat page sets it; an unset row follows the shared
+# transcription choice, so a house that never opened the new rows is unchanged.
+&subs::setting_setter({ app => 'mail', setting => 'transcription_assistant', value => 'local:whisper.cpp' });
+is(subs::transcription_role_for('keyboard'), 'transcription_assistant',
+	'a surface with no row of its own follows the shared role');
+&subs::setting_setter({ app => 'mail', setting => 'transcription_keyboard', value => '@cf/openai/whisper' });
+is(subs::transcription_role_for('keyboard'), 'transcription_keyboard',
+	'a surface that has a row of its own reads it');
+is(subs::transcription_role_for('Keyboard!!'), 'transcription_keyboard',
+	'a noisy name is reduced to the same role');
+is(subs::transcription_role_for(''), 'transcription_assistant', 'no surface is the shared role');
+is(subs::transcription_role_for('../../etc/passwd'), 'transcription_assistant',
+	'a name that is not a surface never becomes a setting key');
+&subs::setting_setter({ app => 'mail', setting => 'transcription_keyboard', value => '' });
+is(subs::transcription_role_for('keyboard'), 'transcription_assistant',
+	'clearing a surface row hands it back to the shared role');
+
+# The consumer names the role the transcription reads.
+&subs::setting_setter({ app => 'mail', setting => 'transcription_teletype', value => 'local:whisper.cpp' });
+{
+	my @asked;
+	local *subs::ai_role_models = sub { push @asked, $_[0]; return ('local:whisper.cpp', '') };
+	local *subs::whisper_local_transcribe = sub { return 'heard' };
+	is(subs::whisper_transcribe('RIFF', 'en', 'teletype'), 'heard', 'the deck clip is transcribed');
+	is($asked[0], 'transcription_teletype', 'through the deck own row');
+	&subs::setting_setter({ app => 'mail', setting => 'transcription_teletype', value => '' });
+}
+
+# The phone recogniser is named but never run by the manager: a clip that finds
+# it in a role moves on to the next service instead of posting anywhere.
+{
+	local *subs::ai_role_models = sub { ('android:oem', 'local:whisper.cpp') };
+	local *subs::ai_transcribe_cloud = sub { die 'must not post audio to a client service' };
+	local *subs::whisper_available = sub { 1 };
+	local *subs::whisper_local_transcribe = sub { return 'the fallback heard this' };
+	local *subs::transcription_service_is_client = sub { $_[0] eq 'android:oem' ? 1 : 0 };
+	is(subs::whisper_transcribe('RIFF', 'en', 'keyboard'), 'the fallback heard this',
+		'a clip skips the phone recogniser and uses the fallback');
+}
+
+ok(subs::transcription_service_is_client('android:oem'), 'the phone recogniser is a client service');
+ok(!subs::transcription_service_is_client('local:whisper.cpp'), 'the local engine is not');
+is((subs::ai_transcribe_test('android:oem'))[0], 1, 'its Test explains that it runs on the device');
+
+# ------------------------------------------------------------ the Plat rows
+like($plat, qr/transcription_keyboard/, 'the Plat page has a keyboard transcription row');
+like($plat, qr/transcription_guide/, 'and a Guide row');
+like($plat, qr/transcription_watch/, 'and a watch row');
+like($plat, qr/transcription_teletype/, 'and a T-Deck row');
+like($plat, qr/value="android:oem"/, 'the phone recogniser is offered');
+like($plat, qr/\$live && \$setting ne 'transcription_assistant'/, 'only for the live surfaces');
+like(read_file("$repo/perl/help/topics_functions.pl"), qr/Transcription has a row per surface/,
+	'and the help topic says so');
+
 done_testing();

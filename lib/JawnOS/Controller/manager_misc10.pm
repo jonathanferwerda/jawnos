@@ -700,7 +700,7 @@ sub action_34739 {
 	my $punctuate = $c->param('punctuate');
 	my $do_punctuate = !(defined $punctuate && $punctuate eq '0');
 	&subs::render_in_subprocess($c, sub {
-		my $text = &subs::whisper_transcribe($raw, $lang);
+		my $text = &subs::whisper_transcribe($raw, $lang, 'keyboard');
 		return { error => 'unreadable' } unless defined $text && length $text;
 		my $raw_text = $text;
 		my $fixed;
