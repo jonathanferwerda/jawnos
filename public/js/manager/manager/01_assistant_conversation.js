@@ -29,8 +29,21 @@ function assistantConversationEnd(panel) {
 	if (!assistantTalking(panel)) { return; }
 	panel.removeAttr('talking');
 	if (typeof jawn_clip !== 'undefined' && jawn_clip.owner && jawn_clip.owner === panel[0]) { jawnClipStop(true); }
+	// the phone's own recogniser, if this panel's turn was on it, stops too
+	if (typeof jawnSpeechOemStop === 'function') {
+		var oem = panel.data('oem_owner');
+		if (oem) { jawnSpeechOemStop(oem); panel.removeData('oem_owner'); }
+	}
 	assistantButtonLabel(panel);
 	assistantChatAdd(panel, 'guide', 'Alright — I will be here.');
+}
+
+// The service the associate's composer resolved to on the server
+// (transcription_guide, or the shared role). android:oem means the phone's own
+// recogniser may answer the microphone instead of the recorder.
+function assistantTranscriptionService(panel) {
+	var box = panel.find('.assistant_question');
+	return (box && box.attr) ? (box.attr('data-transcribe-service') || '') : '';
 }
 
 function assistantConversationListen(panel, spoken) {
@@ -38,21 +51,55 @@ function assistantConversationListen(panel, spoken) {
 	var begin = function () {
 		setTimeout(function () {
 			if (!assistantTalking(panel)) { return; }
-			if (typeof jawnClipListen !== 'function') { return; }
-			jawnClipListen({
-				talking: true,
-				owner: panel[0],
-				selfWords: assistantLastWords(panel),
-				status: function (msg) { assistantChatAdd(panel, 'step', msg); },
-				onText: function (text) { assistantConversationHeard(panel, text); },
-				onEcho: function () { assistantConversationListen(panel); },
-				onFail: function (reason) {
-					if (!assistantTalking(panel)) { return; }
-					// a deaf microphone ends it; anything else just listens again
-					if (reason === 'microphone' || reason === 'no microphone') { assistantConversationEnd(panel); return; }
-					assistantConversationListen(panel);
-				}
-			});
+			// The recorder path, unchanged: used when the Guide's role is not the
+			// phone's recogniser, and whenever that recogniser cannot start.
+			var listen_browser = function () {
+				if (typeof jawnClipListen !== 'function') { return; }
+				jawnClipListen({
+					talking: true,
+					owner: panel[0],
+					selfWords: assistantLastWords(panel),
+					status: function (msg) { assistantChatAdd(panel, 'step', msg); },
+					onText: function (text) { assistantConversationHeard(panel, text); },
+					onEcho: function () { assistantConversationListen(panel); },
+					onFail: function (reason) {
+						if (!assistantTalking(panel)) { return; }
+						// a deaf microphone ends it; anything else just listens again
+						if (reason === 'microphone' || reason === 'no microphone') { assistantConversationEnd(panel); return; }
+						assistantConversationListen(panel);
+					}
+				});
+			};
+			var service = assistantTranscriptionService(panel);
+			if (typeof jawnSpeechOemReady === 'function' && jawnSpeechOemReady(service)) {
+				// The phone's recogniser returns text only: no audio clip for Plat,
+				// no punctuation pass and no clip kept. The final phrase reaches the
+				// same callback the recorder's transcript uses.
+				var owner = {
+					lang: String(window.jawnos_lang_code || 'en-US'),
+					restart: false,
+					onFinal: function (text) {
+						jawnSpeechOemStop(owner);
+						panel.removeData('oem_owner');
+						var self_words = assistantLastWords(panel);
+						var verdict = (self_words && typeof jawnEchoCheck === 'function')
+							? jawnEchoCheck(text, self_words)
+							: { echo: false, text: text };
+						if (verdict.echo) { if (assistantTalking(panel)) { assistantConversationListen(panel); } return; }
+						assistantConversationHeard(panel, verdict.text);
+					},
+					onError: function () {
+						// the phone could not hear: finish this turn with the recorder
+						if (!assistantTalking(panel)) { return; }
+						panel.removeData('oem_owner');
+						listen_browser();
+					}
+				};
+				panel.data('oem_owner', owner);
+				if (jawnSpeechOemStart(owner)) { return; }
+				panel.removeData('oem_owner');
+			}
+			listen_browser();
 		}, 350);
 	};
 	if (spoken && spoken.done) {
