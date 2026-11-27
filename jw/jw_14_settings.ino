@@ -92,7 +92,11 @@ void net_room() {
   
   display_exit();
   // who the bridge is; ip_writer() keeps this line fresh from here on
-  face_bt = face_label_maker(20, 125, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 200);
+  // beside the Wigi button, directly under the switch row: a long bridge name
+  // wraps to a second line rather than running under the button or trailing dots
+  face_bt = face_label_maker(10, 75, &lv_font_montserrat_16, lv_color_hex(0xFFFFFF), 165);
+  lv_label_set_long_mode(face_bt, LV_LABEL_LONG_WRAP);
+  lv_obj_set_height(face_bt, 44);
   ip_writer();
   lv_obj_t * wifi_button = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(wifi_button, wifi_control, LV_EVENT_CLICKED, NULL);

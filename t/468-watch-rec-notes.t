@@ -250,6 +250,9 @@ unlike($clock, qr/wigi_btn = lv_btn_create/, 'the clock page no longer builds th
 
 my $net = read_file('jw/jw_14_settings.ino');
 like($net, qr/lv_obj_set_pos\(wigi_btn, 185, 75 \)/, 'the Wigi button sits under BT on the Net page');
+like($net, qr/face_bt = face_label_maker\(10, 75, [^\n]*165\)/, 'the Bluetooth line sits beside the Wigi button');
+like($net, qr/lv_label_set_long_mode\(face_bt, LV_LABEL_LONG_WRAP\)/, 'a long bridge name wraps to a second line');
+like($net, qr/lv_obj_set_height\(face_bt, 44\)/, 'the wrapped Bluetooth line stops above the addresses');
 
 my $loop = read_file('jw/jw_04_loop.ino');
 like($loop, qr/voiceRecording \|\| comRecording/, 'a Com capture shows the listening ring');
