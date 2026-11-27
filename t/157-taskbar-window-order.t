@@ -81,6 +81,17 @@ ok($win_check >= 0 && $pin_check >= 0 && $win_check < $pin_check,
 like($events, qr/if \(win\.length\) \{\s*jawnosTaskbarContextOpen\(e\.clientX, e\.clientY, win\.attr\('app'\), null, bar, win\.attr\('timestamp'\) \|\| ''\);\s*return;/s,
 	'the parked button opens the window menu with its own stamp');
 
+# --- a closed app pin reads the bar's own pin list --------------------------
+# The dock keeps a separate list, so asking it would read an app pinned to the
+# bar as absent and offer to add it again.
+like($events, qr/function jawnosTaskbarPinBuild\(pin\)/, 'a closed app pin has its own menu');
+like($events, qr/var pinned = jawnosTaskbarAppPinned\(app\);/, 'its row reads whether the bar already carries the app');
+like($events, qr/\.text\(pinned \? 'Unpin from taskbar' : 'Pin to taskbar'\)/,
+	'an app already on the bar offers Unpin, not Add');
+like($events, qr/jawnosTaskbarContextPlace\(jawnosTaskbarPinBuild\(pin\), e\.clientX, e\.clientY\)/,
+	'the closed pin opens that menu at the pointer');
+unlike($events, qr/jawnosDockAppMenu/, 'a taskbar pin no longer asks the dock whether it is added');
+
 # --- a tile drags without answering as a press ------------------------------
 like($edit, qr/function jawnosTaskbarWindowDragInit\(\)/, 'the window list is made sortable');
 like($edit, qr/items: '> \.window_toggle'/, 'only the window tiles are dragged');

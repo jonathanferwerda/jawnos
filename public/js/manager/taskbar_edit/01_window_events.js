@@ -48,7 +48,7 @@ function jawnosWindowContextBuild(app, timestamp) {
 	context.append('<div class="taskbar_context_label">Taskbar</div>');
 	var pinned = jawnosTaskbarAppPinned(app);
 	context.append('<div class="taskbar_context_selection" act="pin_app" app="' + app + '">' + (pinned ? 'Unpin from taskbar' : 'Pin to taskbar') + '</div>');
-	// The dock shows the same pin: one list feeds both bars.
+	// The row acts on the bar's own pin list; the dock keeps a separate one.
 	return context;
 }
 
@@ -56,13 +56,33 @@ function jawnosTaskbarContextOpen(x, y, app, widget, bar, timestamp) {
 	jawnosTaskbarContextClose();
 	var context = app ? jawnosWindowContextBuild(app, timestamp)
 		: (widget ? jawnosTaskbarWidgetContextBuild(widget, bar) : jawnosTaskbarContextBuild(bar));
+	jawnosTaskbarContextPlace(context, x, y);
+}
+
+// Put a built menu at the pointer, kept on screen. The bar's own menu, a
+// widget's, a window's and a closed pin's all come through here.
+function jawnosTaskbarContextPlace(context, x, y) {
 	$('body').append(context);
-	// keep it on screen
 	var w = context.outerWidth();
 	var h = context.outerHeight();
 	var left = Math.max(4, Math.min(x, $(window).width() - w - 4));
 	var top = Math.max(4, Math.min(y, $(window).height() - h - 4));
 	context.css({ left: left + 'px', top: top + 'px' });
+}
+
+// A closed app pin is a launcher, not a window: its menu is the bar's own pin
+// toggle. It must not ask the dock whether the app is there - the dock keeps a
+// separate list, so an app pinned to the bar would read as absent and the row
+// would offer to add it again.
+function jawnosTaskbarPinBuild(pin) {
+	var app = pin.attr('app');
+	var pinned = jawnosTaskbarAppPinned(app);
+	var context = $('<div class="taskbar_context"></div>');
+	context.append($('<div class="taskbar_context_label"></div>').text(pin.attr('hint') || app));
+	context.append($('<div class="taskbar_context_selection"></div>')
+		.attr('act', 'pin_app').attr('app', app)
+		.text(pinned ? 'Unpin from taskbar' : 'Pin to taskbar'));
+	return context;
 }
 
 $(document).on('contextmenu', '.jawnos_taskbar', function (e) {
@@ -84,14 +104,11 @@ $(document).on('contextmenu', '.jawnos_taskbar', function (e) {
 		jawnosTaskbarContextOpen(e.clientX, e.clientY, win.attr('app'), null, bar, win.attr('timestamp') || '');
 		return;
 	}
-	// A closed app pin is a launcher: its menu is the dock's add/remove.
+	// A closed app pin is a launcher: its own menu toggles the bar's pin.
 	var pin = $(e.target).closest('.taskbar_app_pin');
-	if (pin.length && typeof jawnosDockAppMenu == 'function') {
-		jawnosDockAppMenu(e.clientX, e.clientY, {
-			app: pin.attr('app'),
-			hint: pin.attr('hint'),
-			src: pin.find('img').attr('src') || ''
-		});
+	if (pin.length) {
+		jawnosTaskbarContextClose();
+		jawnosTaskbarContextPlace(jawnosTaskbarPinBuild(pin), e.clientX, e.clientY);
 		return;
 	}
 	jawnosTaskbarContextOpen(e.clientX, e.clientY, null, null, bar, '');
