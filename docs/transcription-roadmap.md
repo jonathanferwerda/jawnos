@@ -33,7 +33,7 @@ of work. Everything below assumes the house rules in `AGENTS.md` (worktree per t
 
 ## Remaining work, in order
 
-### R1 — Vendor sherpa and prove it (the gate)
+### R1 — Vendor sherpa and prove it (the gate) — **done 2026-11-27**
 
 Nothing downstream is trustworthy until the binary links and transcribes. Network is available
 from this shell.
@@ -56,6 +56,16 @@ Done when: real text comes back, and the run's wall time and maximum RSS are rec
 S922X is roughly 3x slower than this laptop). Then `SHERPA_ONNX_LIB_DIR=… perl
 scripts/build_engine.pl --features sherpa` and run `perl/audio/jawn-asr` to prove the `$ORIGIN`
 rpath finds its siblings.
+
+**Result (this laptop, x86-64):** 6.6 s of audio in **0.86 s** wall (RTF 0.13) and **86 MiB**
+peak RSS, model load included; at the S922X's ~3x that is still under realtime. The staged
+`perl/audio/jawn-asr` ran with no `LD_LIBRARY_PATH`, so the `$ORIGIN` rpath finds its siblings.
+
+The proof also found and fixed a real defect: **the opening words of every clip were dropped**
+(nothing preceded the take, and the streaming front-end needs silence there). `jawn-asr` now
+feeds `lead_silence` (0.5 s) and `tail_silence` (0.8 s), the same padding sherpa's own CLI uses.
+On the three test WAVs it matches that CLI word for word, including the CLI's own miss of the
+first word on 1.wav and 8k.wav and "BROFFALS" for "BROTHELS".
 
 Risk: the `extern "C"` struct layouts in `engine/src/sherpa.rs` are transcribed from the v2.0.3
 `c-api.h`. A different sherpa version needs that header re-checked, not assumed compatible.

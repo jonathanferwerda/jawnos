@@ -213,6 +213,35 @@ pub fn wav_samples(path: &Path) -> Result<(Vec<f32>, i32), String> {
     Ok((audio.mono(), rate))
 }
 
+/// The streaming model's front-end drops the opening of a take unless silence
+/// precedes it; sherpa's own CLI prepends this much. Without it the first words
+/// of every clip never reach the decoder (docs/engine-asr.md).
+pub const LEAD_SILENCE_SECONDS: f32 = 0.5;
+
+/// The same after the last sample, or the final phoneme is clipped. The CLI's
+/// own tail is 0.8 s.
+pub const TAIL_SILENCE_SECONDS: f32 = 0.8;
+
+/// Silence to feed before a take at `rate`, so its opening words are kept.
+pub fn lead_silence(rate: i32) -> Vec<f32> {
+    silence(rate, LEAD_SILENCE_SECONDS)
+}
+
+/// Silence to feed after a take at `rate`, so its last word is not clipped.
+pub fn tail_silence(rate: i32) -> Vec<f32> {
+    silence(rate, TAIL_SILENCE_SECONDS)
+}
+
+fn silence(rate: i32, seconds: f32) -> Vec<f32> {
+    let seconds = if seconds.is_finite() && seconds > 0.0 {
+        seconds
+    } else {
+        0.0
+    };
+    let rate = rate.max(0) as f32;
+    vec![0.0f32; (seconds * rate).round() as usize]
+}
+
 /// One output line, exactly `{"text":"…","final":true|false}`.
 ///
 /// Text is UTF-8 from the recogniser; quotes, backslashes and control
@@ -430,5 +459,19 @@ mod tests {
         let error = wav_samples(&path).expect_err("refuse");
         assert!(error.contains("notes.txt"), "{error}");
         assert!(error.contains("RIFF"), "{error}");
+    }
+
+    #[test]
+    fn the_stream_is_padded_at_both_ends() {
+        // Half a second in front and 0.8 s behind: the streaming front-end
+        // drops the opening words and clips the last one without them.
+        assert_eq!(lead_silence(16_000).len(), 8_000);
+        assert_eq!(lead_silence(8_000).len(), 4_000);
+        assert_eq!(tail_silence(16_000).len(), 12_800);
+        assert!(lead_silence(16_000).iter().all(|sample| *sample == 0.0));
+        assert!(tail_silence(16_000).iter().all(|sample| *sample == 0.0));
+        // A nonsense rate must not ask for a huge or negative pad.
+        assert!(lead_silence(-1).is_empty());
+        assert!(tail_silence(0).is_empty());
     }
 }

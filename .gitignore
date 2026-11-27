@@ -87,7 +87,7 @@ perl/sco/sco_helper
 # --- The audio engine: built per machine by scripts/build_engine.pl ---
 # --- (it needs a Rust toolchain, and the engine is optional), so engine/ is ---
 # --- tracked and the staged binary and Cargo's scratch dir are not. ---
-/perl/audio/jawn-audio
+/perl/audio/
 /engine/target/
 
 # Agent worktrees: one per task, never tracked (docs/AGENTS-concurrency.md).

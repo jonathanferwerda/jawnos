@@ -76,6 +76,14 @@ tokens.txt
 full-precision file, which is what the model page's int8 recipe uses. A
 missing file is a sentence naming it, not a crash.
 
+## Padding
+
+The stream gets **0.5 s of silence in front of the take and 0.8 s after it**.
+The streaming front-end drops the opening words without the lead — sherpa's own
+CLI prepends the same half second — and clips the final phoneme without the
+tail. The pure helpers and their unit tests live in `engine/src/asr_args.rs`
+(`lead_silence`, `tail_silence`); `jawn_asr.rs` feeds both.
+
 ## Proof commands
 
 ### 1. The default build and suite (no libraries, no network)

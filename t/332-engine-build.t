@@ -442,4 +442,18 @@ SKIP: {
 		'while --check still answers missing' );
 }
 
+# --- the recogniser pads a take, or its first words are lost ---------------
+# The streaming front-end drops the opening of a take unless silence precedes
+# it, and clips the last phoneme without a tail. The pure helpers and their
+# unit tests live in asr_args.rs; this pins the binary to actually use them.
+{
+	open( my $asr_fh, '<', "$root/engine/src/bin/jawn_asr.rs" ) or die "jawn_asr.rs: $!";
+	local $/;
+	my $asr = <$asr_fh>;
+	close $asr_fh;
+
+	like( $asr, qr/asr_args::lead_silence\(/, 'the file and stdin paths prepend silence' );
+	like( $asr, qr/asr_args::tail_silence\(/, 'and append it, so the last word is not clipped' );
+}
+
 done_testing();

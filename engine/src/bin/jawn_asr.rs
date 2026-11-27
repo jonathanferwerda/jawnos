@@ -53,6 +53,9 @@ fn transcribe_file<W: Write>(
 ) -> Result<(), String> {
     let (samples, rate) = wav_samples(path)?;
     let stream = recognizer.stream()?;
+    // A short run of silence in front, or the model drops the opening words.
+    let lead = asr_args::lead_silence(rate);
+    stream.accept_at(rate, &lead);
     let mut last = String::new();
     let mut wrote = false;
 
@@ -78,7 +81,11 @@ fn transcribe_file<W: Write>(
         }
     }
 
-    // The tail is decoded only after the input is known to be complete.
+    // The tail is decoded only after the input is known to be complete, but
+    // the model still needs a little silence after the last sample to finish
+    // the final word.
+    let tail = asr_args::tail_silence(rate);
+    stream.accept_at(rate, &tail);
     stream.input_finished();
     stream.decode_ready();
     let text = stream.text();
@@ -90,6 +97,9 @@ fn transcribe_file<W: Write>(
 
 fn transcribe_stdin<W: Write>(recognizer: &Recognizer, out: &mut W) -> Result<(), String> {
     let stream = recognizer.stream()?;
+    // `--pcm-stdin` is raw 16 kHz: the same leading silence, once, before the
+    // first block, so a live command's opening words are not dropped.
+    stream.accept_16k(&asr_args::lead_silence(asr_args::SAMPLE_RATE));
     let stdin = io::stdin();
     let mut stdin = stdin.lock();
     let mut bytes = vec![0u8; CHUNK * 2];
@@ -143,6 +153,7 @@ fn transcribe_stdin<W: Write>(recognizer: &Recognizer, out: &mut W) -> Result<()
         }
     }
 
+    stream.accept_16k(&asr_args::tail_silence(asr_args::SAMPLE_RATE));
     stream.input_finished();
     stream.decode_ready();
     let text = stream.text();
