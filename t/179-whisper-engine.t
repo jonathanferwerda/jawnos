@@ -61,6 +61,18 @@ is(subs::whisper_server_bin(), "$root/whisper-server", 'and the warm server');
 is(subs::whisper_streamer(), "$repo/scripts/whisper_stream.py", 'the live reader is the repo script');
 
 ok(subs::whisper_available(), 'streamer + model + interpreter + command is an install');
+
+# The file engine is the command and a model; the IVR's Python streamer is not
+# part of it. The app runtime on a phone/tablet has no python3 and still works.
+{
+	local $ENV{'JAWNOS_WHISPER_STREAMER'} = '/no/such/streamer.py';
+	local $ENV{'PATH'} = '/nonexistent';
+	$subs::whisper_probe = undef;
+	ok(subs::whisper_available(),
+		'a command and a model are available without the IVR reader or Python');
+}
+$subs::whisper_probe = undef;
+
 unlink "$root/models/ggml-base.bin";
 unlink "$root/models/ggml-tiny.bin";
 $subs::whisper_probe = undef;

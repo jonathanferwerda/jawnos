@@ -613,9 +613,11 @@ bash ./models/download-ggml-model.sh base
 # pywhispercpp wheel, the base and tiny models, and the whisper-cli/
 # whisper-server wrappers under ~/.local/share/jawnos/whisper with no cmake and
 # no sudo. On Termux it builds whisper.cpp natively (static, no OpenMP) and
-# installs the same wrappers and models, so the phone/tablet transcribes on its
-# own. Either way Configure -> Plat offers "whisper.cpp · this machine" for
-# Transcription; a hand-built whisper.cpp in ~/whisper.cpp is still found.
+# installs the same wrappers and models. The phone/tablet app runtime has no
+# compiler, so the prebuilt arm64 binaries are installed there; either way the
+# device transcribes on its own. Configure -> Plat offers "whisper.cpp · this
+# machine" for Transcription; a hand-built whisper.cpp in ~/whisper.cpp is still
+# found.
 perl scripts/jawnos_deps.pl --extras-only --install
 
 sudo cpanm --notest --force Mojolicious::Lite \

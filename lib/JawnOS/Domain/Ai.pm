@@ -440,16 +440,15 @@ our $whisper_probe;
 # machine's own engine and never dispatch the same clip onward.
 our $whisper_no_peer = 0;
 sub whisper_available {
+	# The file engine is the command and a model. The Python streamer is the
+	# screened-call reader's, not this path's: the app runtime on a phone/tablet
+	# has no Python, and it still transcribes a clip. A gateway that cannot start
+	# the reader says so when it tries.
 	my $now = time;
 	return $whisper_probe->{'ok'} if $whisper_probe && $now - $whisper_probe->{'at'} < 60;
-	my $ok = 0;
-	my $streamer = &whisper_streamer();
 	my $model = &whisper_model_file('base');
 	$model = &whisper_model_file('tiny') unless length $model;
-	if (-f $streamer && length &whisper_python() && length $model
-		&& (length &whisper_cli_bin() || length &whisper_server_bin())) {
-		$ok = 1;
-	}
+	my $ok = (length $model && (length &whisper_cli_bin() || length &whisper_server_bin())) ? 1 : 0;
 	$whisper_probe = { at => $now, ok => $ok };
 	return $ok;
 }

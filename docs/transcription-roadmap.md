@@ -14,12 +14,15 @@ can also name **Android on-device (OEM)**, a live-microphone service the manager
 never runs. Every transcription row offers whisper — this machine or another —
 including the watch and deck rows; the live rows also offer OEM.
 
-The phone/tablet install is `jawnos_deps.pl`'s Termux path: whisper.cpp v1.7.4 is
-compiled static (no OpenMP) with the device's clang, so it needs only
-libc/libm/libdl; a `JAWNOS_WHISPER_PREBUILT` directory can stand in for the compile.
-The CLI wrapper reads the WAV the tree pipes to `--file -`, and the manager converts
-the browser's webm to 16 kHz WAV before the warm-server POST because the native
-server reads WAV only.
+The phone/tablet run the app runtime (`com.jawnos`): it has no compiler, so the
+prebuilt arm64 whisper.cpp v1.7.4 binaries (static, no OpenMP, only libc/libm/libdl)
+and the models are installed under `~/.local/share/jawnos/whisper`. A Termux install
+can build them with `jawnos_deps.pl` instead, and `JAWNOS_WHISPER_PREBUILT` stages a
+copy on either. The file engine needs only the CLI/server and a model; the Python
+streamer is the live-call reader's, so the app runtime (no Python) still transcribes a
+clip. The CLI wrapper reads the WAV the tree pipes to `--file -`, and the manager
+converts the browser's webm to 16 kHz WAV before the warm-server POST because the
+native server reads WAV only.
 
 The 20M streaming sherpa-onnx model was **shelved on accuracy**. On 170 clips (50 real
 LibriSpeech utterances, 60 house-voice commands, 30 noisy, 30 at 8 kHz) it measured
