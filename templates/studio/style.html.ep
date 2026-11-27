@@ -61,7 +61,9 @@
 		right: auto;
 		bottom: auto;
 		width: 100%;
-		max-height: 300px;
+		/* The tiles are drawn with `zoom`, so the box they sit in grows with the
+		   same value; a fixed cap here would clip a bigger pedal's face. */
+		max-height: min(calc(344px * var(--studio-pedal-zoom, 1)), 80vh);
 		z-index: 3;
 		border-top: 2px solid var(--line);
 		border-bottom: 2px solid var(--line);
@@ -421,7 +423,11 @@
 		padding: 0;
 		box-sizing: border-box;
 		transform: translateX(-50%);
-		object-fit: contain;
+		/* The two hand-drawn stomp images have different canvases (132x80 pressed
+		   against 161x107 depressed). `contain` centred each one on its own, so the
+		   switch appeared to slide sideways on every press; `fill` pins both to the
+		   same box so the switch stays where it is. */
+		object-fit: fill;
 		border-radius: 11px;
 		cursor: var(--jawnos-cursor-pointer, pointer);
 		z-index: 7;
@@ -1460,11 +1466,18 @@
 	}
 	.studio_track_fx,
 	.studio_track_automation,
-	.studio_track_monitor,
-	.studio_track_delete {
+	.studio_track_monitor {
 		font-size: 10px;
 		padding: 0 3px;
 		flex: 0 0 auto;
+	}
+	/* FX and Monitor are the two presses a track reaches for first, so they get a
+	   little more room than Auto; Auto sits on its own line under them. */
+	.studio_track_fx,
+	.studio_track_monitor {
+		font-size: 12px;
+		padding: 2px 8px;
+		min-height: 22px;
 	}
 	.studio_track_automation[aria-pressed="true"],
 	.studio_track_monitor[aria-pressed="true"] {
@@ -2180,6 +2193,17 @@
 	}
 	.studio_menu_row:hover {
 		background: var(--accent-soft, var(--panel-2));
+	}
+	/* The track menu's Delete is set apart from Channel out, so a press meant for
+	   the routing picker cannot land on it. It arms on the first press and turns
+	   red, like the board's own Delete; a second press removes the track. */
+	.studio_track_menu .studio_menu_row[data-studio-track-action="delete"] {
+		margin-top: 10px;
+	}
+	.studio_track_menu .studio_menu_row.studio_menu_delete_armed {
+		background: var(--runway-bad, #b3453f);
+		border: 1px solid var(--runway-bad, #b3453f);
+		color: #fff;
 	}
 	.studio_menu_row[disabled] {
 		opacity: .45;

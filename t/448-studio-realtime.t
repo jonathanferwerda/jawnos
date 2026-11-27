@@ -55,6 +55,19 @@ like($fields // '', qr/studioApplyPedals\(\);[\s\S]*?studioRackRenderAll\(\);/,
 like($fields // '', qr/studioSaver\(\);/,
 	'the outside-rack path still saves the song');
 
+# --- the sync field lists every division when it is opened ------------------
+# A datalist filters by the field's own value, so a field reading 1/8t hid the
+# longer spans. Opening it clears the value (without committing it) and leaving
+# an abandoned edit puts the old value back.
+like($controls, qr/\$\(document\)\.on\('pointerdown focus', '\.studio_pedal_text'/,
+	'a sync field is emptied when it is opened');
+like($controls, qr/input\.attr\('data-sync-open', '1'\)\.attr\('data-sync-value', String\(input\.val\(\) \|\| ''\)\)/,
+	'and the value it showed is remembered');
+like($controls, qr/on\('blur', '\.studio_pedal_text'/,
+	'closing the field settles the choice');
+like($controls, qr/if \(!valid\) \{ input\.val\(previous\); return; \}/,
+	'an abandoned edit puts the old division back');
+
 # --- the Up/Down tools re-arm the Listen ------------------------------------
 my ($move) = $rack =~ /^function studioRackMove\(ch, name, delta, chain\) \{(.*?)^\}/ms;
 ok(defined $move, 'studioRackMove is one function');

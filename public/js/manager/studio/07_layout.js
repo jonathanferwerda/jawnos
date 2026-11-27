@@ -1191,10 +1191,9 @@ function studioSyncTrackList(song) {
 
 function studioRemoveTrack(ch, quiet) {
 	ch = String(ch);
-	if (studioTrackNumbers().length <= 1) {
-		$('.studio_track_delete[channel="' + ch + '"]').attr('armed', 'no').css('background-color', '');
-		return;
-	}
+	// A song keeps at least one track; the menu's armed Delete simply does nothing
+	// when this is the last one.
+	if (studioTrackNumbers().length <= 1) { return; }
 	var media = mixer[ch] && mixer[ch].media;
 	if (media && media.rec) {
 		$.each(media.rec, function (i, recorder) {
@@ -1272,22 +1271,6 @@ function studioRemoveTrack(ch, quiet) {
 
 $(document).on('click', '#studio_add_track', function () { studioAddTrack(); });
 
-$(document).on('click', '.studio_track_delete', function () {
-	var button = $(this);
-	if (button.attr('armed') != 'yes') {
-		button.attr('armed', 'yes').css({ 'background-color': 'red' });
-		clearTimeout(button.data('studioDeleteTimer'));
-		button.data('studioDeleteTimer', setTimeout(function () {
-			button.attr('armed', 'no').css({ 'background-color': '' });
-		}, 2000));
-		return;
-	}
-	studioRemoveTrack(button.attr('channel'));
-	// The board sat under this row; it follows the track that is selected now,
-	// or closes when none is left.
-	if (typeof studioPedalboardFollow === 'function') { studioPedalboardFollow(); }
-});
-
 // A narrow track panel clips its actions row, so a press and hold (or a
 // right-click with a mouse) offers the commands that do not fit: the channel's
 // input and output pickers, and Delete.
@@ -1299,13 +1282,15 @@ function studioTrackPanelMenu(ch, at) {
 		.attr('data-y', at.y);
 	$('<div class="studio_menu_head"></div>').text(studioLayoutText('Track') + ' ' + ch).appendTo(menu);
 	var row = function (action, label) {
-		$('<button type="button" class="studio_menu_row"></button>')
+		return $('<button type="button" class="studio_menu_row"></button>')
 			.attr('data-studio-track-action', action)
 			.text(studioLayoutText(label))
 			.appendTo(menu);
 	};
 	row('input', 'Channel in');
 	row('output', 'Channel out');
+	// The CSS sets Delete apart from the routing rows; the press handler below
+	// arms it red on the first press and removes the track on the second.
 	row('delete', 'Delete track');
 	studioPanelMenuPlace(menu, at.x, at.y);
 }
@@ -1323,16 +1308,30 @@ $(document).on('click', '.studio_track_menu .studio_menu_row', function () {
 	var ch = menu.attr('data-channel');
 	var at = { x: Number(menu.attr('data-x')) || 0, y: Number(menu.attr('data-y')) || 0 };
 	var action = row.attr('data-studio-track-action');
-	$('.studio_menu').remove();
-	if (!ch) { return; }
-	if (action === 'input' || action === 'output') {
-		if (typeof channelSelect === 'function') { channelSelect(ch, action, at); }
-	}
-	else if (action === 'delete') {
+	if (!ch) { $('.studio_menu').remove(); return; }
+	// Delete is armed, not immediate: the first press turns the row red and keeps
+	// the menu open, so a second press has to be meant. It disarms on its own.
+	if (action === 'delete') {
+		if (row.attr('data-armed') !== 'yes') {
+			row.attr('data-armed', 'yes').addClass('studio_menu_delete_armed')
+				.text(studioLayoutText('Delete track?'));
+			clearTimeout(menu.data('studioDeleteTimer'));
+			menu.data('studioDeleteTimer', setTimeout(function () {
+				row.attr('data-armed', 'no').removeClass('studio_menu_delete_armed')
+					.text(studioLayoutText('Delete track'));
+			}, 3000));
+			return;
+		}
+		$('.studio_menu').remove();
 		studioRemoveTrack(ch);
 		// The board may have been sitting under this row; it follows the new
 		// selection, or closes when none is left.
 		if (typeof studioPedalboardFollow === 'function') { studioPedalboardFollow(); }
+		return;
+	}
+	$('.studio_menu').remove();
+	if (action === 'input' || action === 'output') {
+		if (typeof channelSelect === 'function') { channelSelect(ch, action, at); }
 	}
 });
 
@@ -2467,7 +2466,7 @@ function studioRemoteInterceptClick(event) {
 		// target's next state poll.
 		return;
 	}
-	if (el.closest('#studio_track_monitor, .studio_jack, .studio_cord, .studio_track_automation, .studio_track_delete').length) { stop(); return; }
+	if (el.closest('#studio_track_monitor, .studio_jack, .studio_cord, .studio_track_automation').length) { stop(); return; }
 	if (el.closest('#studio_drums .studio_drums_voice, #studio_drums .studio_drums_step, #studio_drums .studio_drums_lamp, #studio_drums .studio_drums_key, #studio_drums_save_loop, #studio_drums_bar_add, #studio_drums_bar_remove, #studio_drums_beat_add, #studio_drums_beat_remove').length) { stop(); return; }
 	var arm = el.closest('.armed');
 	if (arm.length) {

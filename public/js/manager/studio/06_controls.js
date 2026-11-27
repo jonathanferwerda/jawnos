@@ -492,6 +492,10 @@ $(document).on('click', '#studio_bpm', function() {
 // a division yet and must not jump the effect to a whole note.
 $(document).on('input change', '.studio_pedal_text', function (event) {
 	var input = $(this);
+	// Opening the field empties it so the datalist lists every division. A
+	// change event fired by that empty value is not a person turning sync off;
+	// the blur handler settles the real value.
+	if (event.type === 'change' && input.attr('data-sync-open') === '1') { return; }
 	var row = input.closest('.studio_rack_tile');
 	if (!row.length || typeof studioInsertControl !== 'function') { return; }
 	if (event.type === 'input') {
@@ -502,6 +506,36 @@ $(document).on('input change', '.studio_pedal_text', function (event) {
 		if (!complete) { return; }
 	}
 	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val(), row.attr('chain'));
+});
+
+// A datalist filters its choices by the field's current value, so a Sync field
+// already reading 1/8t offered only that one division and a longer span could
+// not be picked. Empty the field while it is open (no input event, so the value
+// is not committed) to list every division again; if the person types nothing
+// valid, put the old value back on the way out.
+$(document).on('pointerdown focus', '.studio_pedal_text', function () {
+	var input = $(this);
+	if (input.attr('data-sync-open') === '1') { return; }
+	input.attr('data-sync-open', '1').attr('data-sync-value', String(input.val() || ''));
+	input.val('');
+});
+
+$(document).on('blur', '.studio_pedal_text', function () {
+	var input = $(this);
+	if (input.attr('data-sync-open') !== '1') { return; }
+	var previous = String(input.attr('data-sync-value') || '');
+	input.removeAttr('data-sync-open').removeAttr('data-sync-value');
+	var now = String(input.val() || '').trim();
+	var valid = now === '' || now.toLowerCase() === 'off'
+		|| (typeof studioTempoDivision === 'function' && studioTempoDivision(now) !== null)
+		|| (typeof studioTempoManualMs === 'function' && studioTempoManualMs(now) !== null);
+	if (!valid) { input.val(previous); return; }
+	// A choice made in the datalist may have had its change event suppressed
+	// above; settle it here, once, from the value the field was left showing.
+	var row = input.closest('.studio_rack_tile');
+	if (row.length && typeof studioInsertControl === 'function' && now !== previous) {
+		studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val(), row.attr('chain'));
+	}
 });
 
 // A rack knob that names a synced time control is applied through the shelf

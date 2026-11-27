@@ -70,8 +70,8 @@ like($layout,
 	qr/click',\s*'\.studio_track_panel,\s*\.channel,\s*\.studio_track_colour'[\s\S]*?studioPedalboardFollow\(\)/,
 	'a click on a track panel, a strip or a colour swatch moves the board');
 like($layout,
-	qr/studioRemoveTrack\(\s*button\.attr\(\s*'channel'\s*\)\s*\);[\s\S]*?studioPedalboardFollow\(\)/,
-	'a deleted track leaves the board following the new selection');
+	qr/studioRemoveTrack\(\s*ch\s*\);\s*\n?\s*\/\/ The board may have been sitting[\s\S]*?studioPedalboardFollow\(\)\s*;/,
+	'a track deleted from the panel menu leaves the board following the new selection');
 like($layout,
 	qr/function\s+studioRemoteSelectTrack[\s\S]*?studioSelectedChannel\s*=\s*ch;[\s\S]*?studioPedalboardFollow\(\)/,
 	'a remote select moves the board with the selection');
@@ -96,6 +96,12 @@ like($style,
 like($style,
 	qr/#studio_pedalboard_rack\s*\{[^}]*overflow-x:\s*auto/s,
 	'the rack keeps its horizontal scroll');
+like($style,
+	qr/#pedalboard\.studio_board_inline\s*\{[^}]*max-height:\s*min\(calc\(344px \* var\(--studio-pedal-zoom, 1\)\), 80vh\)/s,
+	'the inline board grows with the pedal size, so a bigger tile is not clipped');
+like($style,
+	qr/\.studio_pedal_foot\s*\{[^}]*object-fit:\s*fill/s,
+	'the stomp is pinned to its box, so swapping its artwork does not slide it');
 like($style, qr/#pedalboard\s*\{[^}]*position:\s*absolute/s,
 	'the bottom-sheet rule stays for the moment before the reparent');
 

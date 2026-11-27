@@ -7,8 +7,8 @@
 // selected track's chain as the stompbox tiles it holds, in signal order. Drag
 // a tile to reorder it, press its lamp or stomp to bypass it, and use the small
 // tools on the tile for Up, Down and X. A track's panel never lists effects, so
-// choosing one can never cramp its FX/Monitor/Auto/Delete row. The song keeps
-// the order and the on/off state in the channel's `fx` records (see
+// choosing one can never cramp its FX/Monitor line or the Auto line under it. The
+// song keeps the order and the on/off state in the channel's `fx` records (see
 // studioSaver / studioRetriever).
 //
 // A channel has two chains: In is before the recording (the take is wet) and

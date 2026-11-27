@@ -89,8 +89,8 @@ is(scalar @stomp, 2, 'both the shelf and the drawn palette loops carry the stomp
 unlike($markup, qr/<button[^>]*class="studio_pedal_foot/,
 	'the old CSS-drawn footswitch button is gone');
 
-like($style, qr/\.studio_pedal_foot\s*\{[^}]*object-fit:\s*contain/s,
-	'the stomp artwork is contained, not cropped');
+like($style, qr/\.studio_pedal_foot\s*\{[^}]*object-fit:\s*fill/s,
+	'the stomp fills its fixed box, so its two artworks do not shift it sideways');
 like($style, qr/\.studio_pedal_foot\s*\{[^}]*transform:\s*translateX\(-50%\)/s,
 	'and centred at the foot of the case');
 like($style, qr/\.pedal_controls\s*\{[^}]*bottom:\s*40px/s,

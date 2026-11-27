@@ -270,11 +270,14 @@ like($help, qr/the drum machine sits beside it/, 'help puts the drums beside the
 # --- dynamic tracks: Add track, Delete twice, cap 32 ------------------------
 like($markup, qr/id="studio_add_track"/, 'the Add track control exists');
 like($markup, qr/title="[^"]*32[^"]*"/, 'the Add track title states the 32-track cap');
-like($markup, qr/class="studio_track_delete hover"/, 'each track has a delete control');
-like($markup, qr/class="studio_track_delete hover"[^\n]*armed="no"/, 'delete starts unarmed');
-like($layout, qr/button\.attr\('armed'\) != 'yes'/, 'the first delete press only arms the button');
+unlike($markup, qr/class="studio_track_delete/, 'the panel no longer carries its own Delete button');
+like($layout, qr/row\('delete', 'Delete track'\)/, 'Delete lives in the track panel menu');
+like($layout, qr/data-armed'\) !== 'yes'/, 'the first delete press only arms the menu row');
+like($layout, qr/studio_menu_delete_armed/, 'the armed row turns red');
 like($layout, qr/studioDeleteTimer/, 'the delete confirmation expires like the house destructive controls');
-like($layout, qr/studioRemoveTrack/, 'the second press removes the track');
+like($layout, qr/studioRemoveTrack\(ch\)/, 'the second press removes the track');
+like($style, qr/\.studio_track_menu \.studio_menu_row\[data-studio-track-action="delete"\]\s*\{[^}]*margin-top:\s*10px/s,
+	'Delete is set apart from Channel out');
 like($layout, qr/STUDIO_MAX_TRACKS = 32/, 'the layout cap matches the engine');
 like($layout, qr/studioChannelEngine\(ch\)/, 'a new track creates its engine channel');
 like($layout, qr/studioSaveTrackCount/, 'the track count is persisted');
@@ -318,7 +321,11 @@ for my $action (qw(studio_rack_led studio_rack_bypass studio_rack_up studio_rack
 
 # --- the track panel never bleeds over the canvas ---------------------------
 like($markup, qr/class="studio_track_line studio_track_actions"/,
-	'FX, Auto and Delete have their own line under the volume');
+	'FX and Monitor have their own line under the volume, with Auto on the next');
+my @action_lines = $markup =~ /class="studio_track_line studio_track_actions"/g;
+is(scalar(@action_lines), 2, 'two action lines: FX and Monitor, then Auto');
+like($style, qr/\.studio_track_fx,\s*\n\s*\.studio_track_monitor\s*\{[^}]*font-size:\s*12px/s,
+	'FX and Monitor are a little bigger than the other panel buttons');
 like($style, qr/\.studio_track_panel\s*\{[^}]*overflow:\s*hidden/s,
 	'the track panel clips its own content');
 like($style, qr/\.studio_track_actions\s*\{[^}]*overflow:\s*hidden/s,
@@ -391,7 +398,8 @@ like($help, qr/'Arrange the panels'/, 'help names the Arrange control');
 like($help, qr/Every panel window is its own scroll box/, 'help explains the scroll rule');
 like($help, qr/the master rack is the strips\\' last strip on the right/, 'help puts the master strip at the far right');
 like($help, qr/'Show automation for this track'/, 'help names the automation toggle');
-like($help, qr/'Delete this track'/, 'help names the per-track delete');
+like($help, qr/Delete track, which asks twice and turns red on the first press/,
+	'help names the track menu\'s two-press Delete');
 like($help, qr/'Open the pedalboard for this track'/, 'help names the FX button');
 like($help, qr/'Close the pedalboard'/, 'help names the pedalboard close');
 like($help, qr/'Tap to select; press and hold for channel in, out and delete'/,

@@ -323,10 +323,11 @@
 						<div class="studio_track_line studio_track_actions">
 							<button class="studio_track_fx hover" channel="<%= $ch %>" hint="<%= &subs::ui('Open the pedalboard for this track') %>"><%= &subs::ui('FX') %></button>
 							<button class="studio_track_monitor hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Hear this track\'s live input through the monitor; one track at a time') %>"><%= &subs::ui('Monitor') %></button>
-							<button class="studio_track_automation hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Show automation for this track') %>"><%= &subs::ui('Auto') %></button>
-							<button class="studio_track_delete hover" channel="<%= $ch %>" armed="no" hint="<%= &subs::ui('Delete this track') %>"><%= &subs::ui('Delete') %></button>
 						</div>
-						<div class="studio_track_line studio_track_metre_line">
+						<div class="studio_track_line studio_track_actions">
+							<button class="studio_track_automation hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Show automation for this track') %>"><%= &subs::ui('Auto') %></button>
+							<%# The level metre shares Auto's line, so the panel still fits a 90px
+							   track without clipping the metre below the taller FX/Monitor row. %>
 							<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
 						</div>
 					</div>
