@@ -5094,6 +5094,9 @@ function musicPicturePlace() {
 	var v = $('#video');
 	if (v.length && v.attr('type') == 'video' && v.attr('theatre_mode') != 'on') {
 		v.attr('style', v.attr(musicPictureBig() ? 'big_style' : 'thumb_style'));
+		// the dress replaces the whole style attribute, which is also where the
+		// enhancement keeps its CSS variables; put them back after the move
+		musicVideoEnhanceApply();
 	}
 }
 
@@ -5318,6 +5321,10 @@ function theatreModeOn() {
 	$('#video').show();
 	var bs = $('#video').attr('big_style');
 	$('#video').attr('style', bs);
+	// the theatre's dress is the whole style attribute: the enhancement's CSS
+	// variables live there too, so re-apply them or the saved preset shows on
+	// the next Audio drawer open instead of here
+	musicVideoEnhanceApply();
 	$('#music').css({'background-color':'black'});
 	$('#video').attr('theatre_mode', 'on');
 	if ($('#video').attr('type') == 'audio') {
@@ -5357,9 +5364,12 @@ function theatreModeOff() {
 		// Clear theatre_mode first: musicPictureBig reads it, and while it was
 		// still 'on' the check called the theatre itself big and re-applied
 		// big_style, so leaving the theatre never shrank the picture back
-		$('#video').attr('theatre_mode', 'off'); 
+		$('#video').attr('theatre_mode', 'off');
 		var style = $('#video').attr(musicPictureBig() ? 'big_style' : 'thumb_style');
 		$('#video').attr('style', style);
+		// leaving the theatre rewrites the style too; keep the enhancement's
+		// variables on the new dress
+		musicVideoEnhanceApply();
 	}
 	else {
 		$('#video').hide();

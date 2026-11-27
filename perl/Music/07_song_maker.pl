@@ -129,12 +129,17 @@ sub music_flush_information($ctx) {
 sub music_row_new($path, $ctx, $archive_row, $noise) {
 	my @t = split '/', $path;
 	my $base = $t[-1];
-	my $stem = $base;
+	# An encrypted file is still the media it wraps: a trailing .enc is not
+	# part of its name or its kind. Without this every .mp3.enc was typed as a
+	# video and took the theatre and subtitle path instead of the audio one.
+	my $media = $base;
+	$media =~ s/\.enc$//i;
 	# do not let a capture from an earlier match become the extension: in this
 	# loop no match used to leave $1 holding the caller's directory capture,
 	# which then made every video look like audio
 	my $extension = '';
-	if ($stem =~ s/(\.mp3$|\.m4a$|\.wav$|\.flac$)//gi) { $extension = $1; }
+	if ($media =~ s/(\.mp3$|\.m4a$|\.wav$|\.flac$)//gi) { $extension = $1; }
+	my $stem = $media;
 	my $type;
 	if ($archive_row) { $type = ($archive_row->{'type'} eq 'video') ? 'video' : 'audio'; }
 	elsif ($extension) { $type = 'audio'; }

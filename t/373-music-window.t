@@ -210,6 +210,30 @@ my $help_js   = read_file("$root/public/js/manager/help/01_music_speech.js");
 		'the same path on another machine is a different track');
 }
 
+# --------------------------------------- an encrypted file is still its media
+# The extension decides audio or video, and a video takes the theatre and
+# subtitle path. A .enc suffix is the wrapper, not the kind: foo.mp3.enc is a
+# song and foo.mp4.enc is a film.
+{
+	my $ctx = { tree => {} };
+	my @cases = (
+		[ 'Show/Episode 1.mp3.enc',  'audio', 'an encrypted mp3 is audio' ],
+		[ 'Show/Episode 1.m4a.enc',  'audio', 'an encrypted m4a is audio' ],
+		[ 'Show/Episode 1.wav.enc',  'audio', 'an encrypted wav is audio' ],
+		[ 'Show/Episode 1.flac.enc', 'audio', 'an encrypted flac is audio' ],
+		[ 'Show/Episode 1.mp3',      'audio', 'a plain mp3 is audio' ],
+		[ 'Show/Episode 1.mp4.enc',  'video', 'an encrypted mp4 is video' ],
+		[ 'Show/Episode 1.webm.enc', 'video', 'an encrypted webm is video' ],
+		[ 'Show/Episode 1.mp4',      'video', 'a plain mp4 is video' ],
+	);
+	foreach my $case ( @cases ) {
+		my $f = &Manager::music_row_new($case->[0], $ctx, undef, {});
+		is($f->{'type'}, $case->[1], $case->[2]);
+	}
+	my $song = &Manager::music_row_new('Show/Episode 1.mp3.enc', $ctx, undef, {});
+	is($song->{'track'}, 'Episode 1', 'the .enc wrapper is not part of the label');
+}
+
 # Only the drawn window is probed. 200 local tracks, one window: ffprobe runs
 # for the rows that are drawn, not for the queue.
 {
@@ -289,6 +313,27 @@ ok(defined $theatre, 'theatreModeOn is found');
 like($theatre // '', qr/musicCurrentEntry\(\)/, 'the theatre cover reads the queue entry');
 like($theatre // '', qr/entry\.thumb/, 'and uses its thumb');
 unlike($theatre // '', qr/\$\(\x27\.playing\x27\)/, 'not the mounted row');
+
+# The picture's dress is applied by replacing its whole style attribute, and the
+# enhancement keeps its CSS variables there too. Each place that swaps the dress
+# must ask for the enhancement again, or the saved preset does nothing until the
+# Audio drawer is opened (which re-applies it).
+my ($theatre_off) = $js =~ /(function theatreModeOff\(\)\s*\{.*?\n\}\n)/s;
+my ($picture_place) = $js =~ /(function musicPicturePlace\(\)\s*\{.*?\n\})/s;
+ok(defined $theatre_off, 'theatreModeOff is found');
+ok(defined $picture_place, 'musicPicturePlace is found');
+foreach my $case (
+	[ 'theatreModeOn',     $theatre ],
+	[ 'theatreModeOff',    $theatre_off ],
+	[ 'musicPicturePlace', $picture_place ],
+) {
+	my ($name, $fn) = @{$case};
+	next unless defined $fn;
+	my $style_at = index($fn, "attr('style'");
+	my $apply_at = index($fn, 'musicVideoEnhanceApply()');
+	ok($style_at >= 0, "$name replaces the picture's style");
+	ok($apply_at > $style_at, "$name re-applies the enhancement after it");
+}
 
 my ($appointment) = $js =~ /(function musicAppointmentWriter\(type,mute\)\s*\{.*?\n\}\n)/s;
 ok(defined $appointment, 'musicAppointmentWriter is found');
