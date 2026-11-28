@@ -146,7 +146,7 @@ my %NONCODE = (
 	'lintian-overrides' => 'config',
 	# images, audio and the vendored bitmap font format
 	svg => 'assets', png => 'assets', jpg => 'assets', webp => 'assets',
-	mp3 => 'assets', vlw => 'assets', xcf => 'assets', ico => 'assets',
+	mp3 => 'assets', wav => 'assets', vlw => 'assets', xcf => 'assets', ico => 'assets',
 	wasm => 'assets',
 	# the boot splash theme (its .script is not a shell script)
 	plymouth => 'theme', script => 'theme',
