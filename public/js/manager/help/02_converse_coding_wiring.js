@@ -168,7 +168,10 @@ function helpConversationListen() {
 			if (jawnos_help_coding) { helpCodingRun(q); return; }
 			helpAgentStep(0);
 		});
-	}, 350);
+		// Zero, not 350 ms: the person starts talking as the answer lands, and
+		// the phone's recogniser needs its own warm-up before the first words.
+		// Waiting here put that warm-up on top of a dead second.
+	}, 0);
 }
 
 $(document).on('click', '#help_converse', function () {

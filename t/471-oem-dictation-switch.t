@@ -155,6 +155,11 @@ like($ime_js, qr/function softKbDictationImeFinal\(text\)[\s\S]*?softKbImeSend\(
 	'and its final phrase replaces the guess with the finished words');
 like($ime_js, qr/function softKbImePartialReset\(\)[\s\S]*?softKbImePartialClear\(\)/,
 	'stopping a phrase takes the guess out of the field');
+like($kb_js, qr/function jawnSpeechOemWarmup\(\)/,
+	'the recogniser learns a warm-up time per device');
+like($kb_js, qr/jawn_oem_ready_ms/, 'and keeps the average in this device\'s storage');
+like($help_js, qr/\}, 0\);/, 'the Guide reopens the mic without a dead second');
+unlike($help_js, qr/\}, 350\);/, 'and no longer waits 350 ms before listening');
 
 # The Guide: same decision, and the recorder stays the fallback.
 like($help_js, qr/jawnSpeechOemReady\(service\)/, 'the Guide decides from its rendered service');

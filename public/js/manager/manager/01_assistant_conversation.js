@@ -80,9 +80,10 @@ function assistantConversationListen(panel, spoken) {
 					restart: false,
 					onPartial: function (text) {
 						if (!text) { return; }
-						// The mic opens only after the reply's estimated speech has
-						// run out, so interim words here are the person's, not the
-						// associate's own voice; the final still echo-checks.
+						// While the house voice is speaking, its own words are not
+						// the person's; the window ends when the voice is expected
+						// to, and the final still echo-checks.
+						if (Date.now() < (panel.data('speak_until') || 0)) { return; }
 						var box = panel.find('.assistant_question');
 						if (box && box.length) { box.val(text); }
 					},
@@ -108,17 +109,29 @@ function assistantConversationListen(panel, spoken) {
 				panel.removeData('oem_owner');
 			}
 			listen_browser();
-		}, 350);
+		}, 0);
 	};
 	if (spoken && spoken.done) {
-		// the reply is being said aloud: hold the mic until the voice is done
+		// The house speaks in a fork of its own, so the page cannot hear it
+		// finish; waiting the whole estimate kept the mic shut for a second or
+		// more after the voice had stopped. Open it just before the voice is
+		// expected to end, less the recogniser's own measured warm-up, so it is
+		// already listening when the person starts. The interim fill stays
+		// hidden until the voice is over; the final still echo-checks.
+		panel.data('speak_until', Infinity);
 		spoken.done(function (r) {
 			var secs = parseFloat((r && r.seconds) || 0) || 0;
-			setTimeout(function () { if (assistantTalking(panel)) { begin(); } }, Math.min(30000, 1000 * secs));
+			var warm = (typeof jawnSpeechOemWarmup === 'function') ? jawnSpeechOemWarmup() : 250;
+			panel.data('speak_until', Date.now() + Math.max(0, 1000 * secs - warm));
+			var lead = Math.max(0, 1000 * secs - warm - 350);
+			if (lead > 0) {
+				setTimeout(function () { if (assistantTalking(panel)) { begin(); } }, lead);
+			}
+			else { begin(); }
 		});
-		spoken.fail(function () { begin(); });
+		spoken.fail(function () { panel.data('speak_until', 0); begin(); });
 	}
-	else { begin(); }
+	else { panel.data('speak_until', 0); begin(); }
 }
 
 // the panel's own last words, so a conversation's mic can tell the speaker from

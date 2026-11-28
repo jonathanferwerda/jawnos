@@ -54,6 +54,12 @@ like($assoc, qr/jawnEchoCheck\(text, self_words\)/,
 	'the OEM text is checked for the Guide\'s own spoken reply, like the recorder path');
 like($assoc, qr/jawnSpeechOemStop\(oem\)/,
 	'ending the conversation stops the associate\'s OEM turn');
+like($assoc, qr/speak_until/,
+	'the interim fill is hidden while the house voice is speaking');
+like($assoc, qr/jawnSpeechOemWarmup/, 'the mic opens early by the device\'s warm-up');
+unlike($assoc, qr/Math\.min\(30000, 1000 \* secs\)/,
+	'the mic no longer waits out the whole speech estimate');
+unlike($assoc, qr/\}, 350\);/, 'and no fixed second is added before it opens');
 
 # One dispatcher, not two: the associate must reuse the callbacks installed by
 # the soft keyboard, and installing a second pair would clobber the first.

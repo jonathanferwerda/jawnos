@@ -105,7 +105,31 @@ var jawnDictateFieldButton = null;
 // dispatcher serves the dock and the Guide because they share a page:
 // installing the two window callbacks once means a later surface cannot
 // overwrite the one already listening.
-var jawnSpeechOem = { owner: null, lang: 'en-US', restart: false };
+var jawnSpeechOem = { owner: null, lang: 'en-US', restart: false, t0: 0, readyMs: 0, firstMs: 0 };
+
+function jawnSpeechOemNow() {
+	return (window.performance && typeof performance.now === 'function') ? performance.now() : Date.now();
+}
+
+// The average wait this device's recogniser takes, kept with this WebView so a
+// device learns its own: ready() is the call-to-engine-ready time, first() is
+// call-to-first-words (which includes the person's own speech onset, so it is
+// the diagnostic, not the schedule). A conversation opens the mic `ready` early,
+// so the engine is warm by the time the house voice stops.
+function jawnSpeechOemAverage(key, ms) {
+	var prior = 0;
+	try { prior = parseFloat(localStorage.getItem(key)) || 0; } catch (err) {}
+	if (ms == null) { return (prior > 0 && prior < 5000) ? prior : 0; }
+	if (!(ms > 0) || ms > 5000) { return prior; }
+	var avg = prior > 0 ? (prior * 0.7 + ms * 0.3) : ms;
+	try { localStorage.setItem(key, String(Math.round(avg))); } catch (err) {}
+	return avg;
+}
+
+function jawnSpeechOemWarmup() {
+	var v = jawnSpeechOemAverage('jawn_oem_ready_ms', null);
+	return v > 0 ? v : 250;
+}
 
 function jawnSpeechOemReady(service) {
 	// Only a role that names the app's recogniser, and only when the app says
@@ -124,11 +148,29 @@ function jawnSpeechOemInstall() {
 	window.jawnSpeechState = function (state, detail) {
 		var o = jawnSpeechOem.owner;
 		if (!o) { return; }
-		if (state == 'listening') { if (o.onListening) { o.onListening(); } return; }
+		if (state == 'listening') {
+			// the app posts one 'listening' as the call leaves and the engine's
+			// own ready callback after it; only the later one is the warm-up
+			if (jawnSpeechOem.t0 && !jawnSpeechOem.readyMs) {
+				var warm = jawnSpeechOemNow() - jawnSpeechOem.t0;
+				if (warm > 30) {
+					jawnSpeechOem.readyMs = warm;
+					var warm_avg = jawnSpeechOemAverage('jawn_oem_ready_ms', warm);
+					if (window.console && console.log) {
+						console.log('[oem] ready in ' + Math.round(warm) + 'ms (avg ' + Math.round(warm_avg) + 'ms)');
+					}
+				}
+			}
+			if (o.onListening) { o.onListening(); }
+			return;
+		}
 		if (state == 'stopped') {
 			// the app stops after each phrase; a microphone that is still on
 			// asks it for the next one, so a person can keep talking
 			if (jawnSpeechOem.owner && jawnSpeechOem.restart) {
+				jawnSpeechOem.t0 = jawnSpeechOemNow();
+				jawnSpeechOem.readyMs = 0;
+				jawnSpeechOem.firstMs = 0;
 				try { window.JawnSpeech.start(jawnSpeechOem.lang); return; } catch (err) {}
 			}
 			if (o.onStopped) { o.onStopped(); }
@@ -146,6 +188,14 @@ function jawnSpeechOemInstall() {
 		var o = jawnSpeechOem.owner;
 		if (!o) { return; }
 		var words = String(text == null ? '' : text);
+		if (jawnSpeechOem.t0 && !jawnSpeechOem.firstMs) {
+			jawnSpeechOem.firstMs = jawnSpeechOemNow() - jawnSpeechOem.t0;
+			var first_avg = jawnSpeechOemAverage('jawn_oem_first_ms', jawnSpeechOem.firstMs);
+			if (window.console && console.log) {
+				console.log('[oem] first words in ' + Math.round(jawnSpeechOem.firstMs)
+					+ 'ms (avg ' + Math.round(first_avg) + 'ms)');
+			}
+		}
 		// An interim guess fills the surface while the person is still talking;
 		// the final one replaces it and is the only text that is committed.
 		if (isFinal) {
@@ -167,6 +217,9 @@ function jawnSpeechOemStart(owner) {
 	jawnSpeechOem.owner = owner;
 	jawnSpeechOem.lang = owner.lang || 'en-US';
 	jawnSpeechOem.restart = !!owner.restart;
+	jawnSpeechOem.t0 = jawnSpeechOemNow();
+	jawnSpeechOem.readyMs = 0;
+	jawnSpeechOem.firstMs = 0;
 	try { window.JawnSpeech.start(jawnSpeechOem.lang); }
 	catch (err) {
 		// a bridge that throws leaves the caller to use the recorder
