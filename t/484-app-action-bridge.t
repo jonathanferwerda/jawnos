@@ -114,8 +114,14 @@ my $write = Manager::app_action_execute($c,
 	{ action => 'app', app => 'market', do => 'add_item', params => { text => 'milk' } },
 	{ voice => 1, scope_app => 'market' });
 ok($write->{'confirm'}, 'a voice write is proposed, not run');
+ok($write->{'staged'}, 'the voice proposal is held for the next answer');
 is($calls, 0, 'the route is not called while the write waits');
 like($write->{'speech'}, qr/shopping list/, 'the proposal says what it would do');
+like($write->{'speech'}, qr/Say yes to confirm/, 'the proposal tells the person how to confirm');
+
+my $held = Manager::app_action_pending_take({});
+ok($held && $held->{'do'} eq 'add_item', 'the held action can be taken');
+ok(!Manager::app_action_pending_take({}), 'and it is gone after the take');
 
 $write = Manager::app_action_execute($c,
 	{ action => 'app', app => 'market', do => 'add_item', params => { text => 'milk' }, confirmed => 1 },
@@ -129,6 +135,15 @@ ok($write->{'ok'}, 'the screen may confirm a write');
 is($calls, 1, 'the route runs once after confirmation');
 is($last_text, 'milk', 'the declared text reaches the route');
 is($write->{'speech'}, 'Added milk to the shopping list.', 'the write speech reports the item');
+
+# A resume is the only voice path that confirms: the held token runs the action.
+$calls = 0;
+my $resumed = Manager::app_action_execute($c,
+	{ action => 'app', app => 'market', do => 'add_item', params => { text => 'bread' } },
+	{ voice => 1, resume => 1, scope_app => 'market' });
+ok($resumed->{'ok'}, 'a resumed voice write runs');
+is($calls, 1, 'the route runs once on resume');
+is($last_text, 'bread', 'the held parameter reaches the route');
 
 $confirm_setting = 'off';
 $calls = 0;
@@ -247,10 +262,14 @@ local *subs::ai_role_thinking_effective = sub { 'off' };
 local *subs::guide_resolve_action = sub { return $_[0] };
 local *subs::controller_builder = sub { return undef };
 local *subs::watch_reply = sub { push @replied, $_[1]; return 1 };
+my @voice_opts;
 local *Manager::app_action_execute = sub {
+	my ($c, $action, $opts) = @_;
+	push @voice_opts, $opts;
 	return { ok => 1, speech => 'Added milk to the shopping list.' };
 };
 my $voice = subs::voice_brain('add milk to the shopping list', { chip_id => 'watch-test', ts => &subs::rightNow() });
+is($voice_opts[0]{'chip_id'}, 'watch-test', 'the staging turn names the speaking chip');
 ok($voice && $voice->{'handled'}, 'voice_brain claims a declared app action');
 is($voice->{'action'}, 'app', 'the turn is recorded as the app bridge');
 is($replied[0] // '', 'Added milk to the shopping list.', 'the app result is spoken back');
@@ -262,5 +281,105 @@ local *Manager::app_action_execute = sub {
 $voice = subs::voice_brain('add milk to the shopping list', { chip_id => 'watch-test', ts => &subs::rightNow() });
 ok($voice && $voice->{'handled'}, 'a proposed write still claims the turn');
 like($replied[0] // '', qr/Confirm it/, 'the confirmation question is spoken');
+
+
+# ------------------------------------------------------------ the held write
+# A presented proposal belongs to the watch that heard it, not the house: the
+# key is the chip, so another watch's "yes" cannot confirm it. It is short-lived
+# and taken exactly once.
+{
+	my $now = subs::rightNow();
+	local *subs::rightNow = sub { $now };
+	my $id = Manager::app_action_pending_store({ chip_id => 'chip-a' },
+		{ app => 'market', do => 'add_item', params => { text => 'milk' }, scope_app => 'market' });
+	ok($id, 'a pending write is stored for chip A');
+	ok(!Manager::app_action_pending_take({ chip_id => 'chip-b' }),
+		'a different watch cannot take it');
+	$now += 200000;
+	ok(!Manager::app_action_pending_take({ chip_id => 'chip-a' }),
+		'an expired pending is ignored');
+}
+
+{
+	my $now = subs::rightNow();
+	local *subs::rightNow = sub { $now };
+	Manager::app_action_pending_store({ chip_id => 'chip-t' },
+		{ app => 'market', do => 'add_item', params => { text => 'eggs' }, scope_app => 'market' });
+	my $got = Manager::app_action_pending_take({ chip_id => 'chip-t' });
+	ok($got && $got->{'do'} eq 'add_item' && $got->{'params'}->{'text'} eq 'eggs',
+		'the speaking watch takes the stored action');
+	ok(!Manager::app_action_pending_take({ chip_id => 'chip-t' }),
+		'a taken pending is gone');
+	Manager::app_action_pending_store({ chip_id => 'chip-p' },
+		{ app => 'market', do => 'add_item', params => { text => 'x' }, scope_app => 'market' });
+	ok(Manager::app_action_pending_peek({ chip_id => 'chip-p' }),
+		'a peek sees the held write without taking it');
+	ok(Manager::app_action_pending_take({ chip_id => 'chip-p' }),
+		'the peeked write is still there to take');
+}
+
+# The classifier reads whole words, not substrings.
+is(subs::voice_confirmation_kind('Yes.'), 'yes', 'a punctuated yes reads as yes');
+is(subs::voice_confirmation_kind('go ahead'), 'yes', 'a phrase yes reads as yes');
+is(subs::voice_confirmation_kind('yesterday'), '', 'a word containing yes does not');
+is(subs::voice_confirmation_kind("Don't."), 'no', 'a punctuated refusal reads as no');
+is(subs::voice_confirmation_kind('what is the weather'), '', 'an unrelated answer is neither');
+
+# The next utterance from the same watch resumes; another watch, a no, or an
+# unrelated phrase does not.
+{
+	no warnings 'redefine';
+	my @resumed;
+	@replied = ();
+	local *Manager::app_action_execute = sub {
+		my ($ctl, $action, $opts) = @_;
+		push @resumed, { action => $action, opts => $opts };
+		return { ok => 1, speech => 'Added milk to the shopping list.' };
+	};
+	local *subs::evaluation_model_call_role = sub {
+		return ('{"action":"say","text":"Noted."}', undef);
+	};
+
+	Manager::app_action_pending_store({ chip_id => 'watch-a' },
+		{ app => 'market', do => 'add_item', params => { text => 'milk' }, scope_app => 'market' });
+	my $v = subs::voice_brain('yes', { chip_id => 'watch-a' });
+	ok($v && $v->{'handled'} && $v->{'resumed'}, 'a yes from the same watch resumes the write');
+	is(scalar @resumed, 1, 'the held write runs');
+	is($resumed[0]{'action'}{'app'}, 'market', 'the held app is used');
+	is($resumed[0]{'action'}{'do'}, 'add_item', 'the held do is used');
+	is($resumed[0]{'action'}{'params'}{'text'}, 'milk', 'the held parameter is used');
+	ok($resumed[0]{'opts'}{'resume'}, 'the executor is asked to resume');
+	is($replied[0] // '', 'Added milk to the shopping list.', 'the resumed result is spoken');
+
+	@resumed = ();
+	@replied = ();
+	Manager::app_action_pending_store({ chip_id => 'watch-a' },
+		{ app => 'market', do => 'add_item', params => { text => 'milk' }, scope_app => 'market' });
+	$v = subs::voice_brain('yes', { chip_id => 'watch-b' });
+	is(scalar @resumed, 0, 'a yes from another watch does not run it');
+	ok($v && $v->{'handled'}, 'the other watch still gets a normal answer');
+	ok(Manager::app_action_pending_take({ chip_id => 'watch-a' }),
+		'the write is still held for its own watch');
+
+	@resumed = ();
+	@replied = ();
+	Manager::app_action_pending_store({ chip_id => 'watch-c' },
+		{ app => 'market', do => 'add_item', params => { text => 'milk' }, scope_app => 'market' });
+	$v = subs::voice_brain('no', { chip_id => 'watch-c' });
+	ok($v && $v->{'handled'} && $v->{'dropped'}, 'a no drops the held write');
+	is(scalar @resumed, 0, 'a no does not run it');
+	like($replied[0] // '', qr/Okay, I did not/, 'and says it did not');
+	ok(!Manager::app_action_pending_take({ chip_id => 'watch-c' }), 'the no removed it');
+
+	@resumed = ();
+	@replied = ();
+	Manager::app_action_pending_store({ chip_id => 'watch-d' },
+		{ app => 'market', do => 'add_item', params => { text => 'milk' }, scope_app => 'market' });
+	$v = subs::voice_brain('what is the weather', { chip_id => 'watch-d' });
+	is(scalar @resumed, 0, 'an unrelated answer does not run the write');
+	ok($v && $v->{'handled'}, 'the unrelated utterance is answered normally');
+	ok(!Manager::app_action_pending_take({ chip_id => 'watch-d' }),
+		'and the pending write is dropped');
+}
 
 done_testing();

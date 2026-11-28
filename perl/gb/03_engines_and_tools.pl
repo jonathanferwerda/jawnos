@@ -206,6 +206,58 @@ our @app_actions = (
 			return 'Added ' . $text . ' to the shopping list.';
 		},
 	},
+	{
+		app => 'store', do => 'find', kind => 'read',
+		method => 'get', route => '/manager/store/register/items',
+		params => { search => 'the item or word to look for' },
+		required => { search => 'what to look for' },
+		desc => 'find items and prices in the Store',
+		speech => sub {
+			my $d = (ref $_[0] eq 'HASH') ? $_[0] : {};
+			my $p = (ref $_[1] eq 'HASH') ? $_[1] : {};
+			my $items = (ref $d->{'items'} eq 'ARRAY') ? $d->{'items'} : [];
+			my $n = scalar @{$items};
+			unless ($n) {
+				my $q = ($p->{'search'} // '');
+				return $q ne '' ? 'Nothing in the Store matches "' . $q . '".' : 'Nothing in the Store matches that.';
+			}
+			my @named;
+			foreach my $it ( @{$items} ) {
+				last if @named >= 3;
+				next unless ref $it eq 'HASH';
+				my $name = ($it->{'name'} // '') ne '' ? $it->{'name'} : 'an item';
+				my $price = ($it->{'price'} // '') ne '' ? ' at ' . $it->{'price'} : '';
+				push @named, $name . $price;
+			}
+			return 'I found ' . $n . ' item' . ($n == 1 ? '' : 's')
+				. (@named ? ': ' . join(', ', @named) : '') . '.';
+		},
+	},
+	{
+		app => 'store', do => 'orders', kind => 'read',
+		method => 'get', route => '/manager/store/register/state',
+		params => {},
+		desc => 'read the open register orders',
+		speech => sub {
+			my $d = (ref $_[0] eq 'HASH') ? $_[0] : {};
+			my $orders = (ref $d->{'orders'} eq 'ARRAY') ? $d->{'orders'} : [];
+			my $n = scalar @{$orders};
+			return 'The register is clear; no orders are open.' unless $n;
+			my ($total, $priced) = (0, 0);
+			foreach my $o ( @{$orders} ) {
+				next unless ref $o eq 'HASH';
+				my $t = $o->{'totals'};
+				next unless ref $t eq 'HASH';
+				my $amount = $t->{'total'};
+				next unless defined $amount && $amount =~ /^\s*-?\d+(?:\.\d+)?\s*$/;
+				$total += $amount;
+				$priced++;
+			}
+			my $say = $n . ' order' . ($n == 1 ? ' is' : 's are') . ' open';
+			$say .= ' and ' . ($n == 1 ? 'its total is ' : 'they total ') . sprintf('%.2f', $total) if $priced;
+			return ucfirst($say) . '.';
+		},
+	},
 );
 
 # The Coding agent's tools: a closed vocabulary the model may pick from, one

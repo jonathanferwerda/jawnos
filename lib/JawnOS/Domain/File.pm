@@ -912,7 +912,7 @@ sub cache_expire_stale {
 	return 0 if defined $cache_pruned_at && ($now - $cache_pruned_at) < 600000;
 	$cache_pruned_at = $now;
 	my $cutoff = $now - 15 * 60 * 1000;
-	foreach my $context ( qw(peer_nonce app_challenge padlock_challenge command_applied button_press) ) {
+	foreach my $context ( qw(peer_nonce app_challenge padlock_challenge command_applied button_press app_action_pending) ) {
 		&subs::db_query('delete from cache where context = ? and server_time < ?', $context, $cutoff);
 	}
 	return 1;

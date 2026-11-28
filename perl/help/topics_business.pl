@@ -6,7 +6,7 @@ our %topic;
 
 $topic{'store'} = {
 		title => 'Store', category => 'apps', app => 'store',
-		verified => '2026-11-16',
+		verified => '2026-11-28',
 		templates => [ 'templates/store/store.html.ep', 'templates/store/category.html.ep', 'templates/store/item.html.ep', 'templates/store/item_selection.html.ep', 'templates/store/list.html.ep', 'templates/store/register.html.ep', 'templates/store/floor.html.ep', 'templates/store/journal.html.ep', 'templates/store/correspondence.html.ep', 'templates/store/customer.html.ep', 'templates/ribbons.html.ep', 'templates/store/printer/header.html.ep', 'templates/store/printer/receipt.html.ep', 'public/css/store.css', 'public/js/store.js', 'public/js/store/cart.js', 'public/js/store/floor.js', 'public/js/store/register.js' ],
 		controls => [ 'Crypto payment', 'Name this customer', 'Floor' ],
 		summary => 'Items, models, options, quotes, invoices and a cash register.',
@@ -25,7 +25,8 @@ $topic{'store'} = {
 			'The Print button opens the sheet with a printer bar. A default printer chosen in Dev prints at once; with no default the bar asks which CUPS queue, and Save to PDF makes the same sheet as a file. The register\'s Receipt button uses the same bar.',
 			'The movement dropdown uses the house\'s own words: Selling (an income movement) is what this house has available, and Buying (an expense movement) is a purchase the house makes. The stored movement values are unchanged, so existing quotes, invoices and reports keep working.',
 			'Recording a payment against a document updates its balance and closes it when the balance reaches zero. Every payment also writes a receipt of its own: it prints the invoice as it stood after that payment, so the revised balance is on it, together with the payment just made and the message the house sets under Receipt message in Configure - Store. The invoice paper and the receipt paper are filed together on the receipt, invoice first; the receipt is kept on the app named by Payment paper app in Configure - Store, or on the income transaction\'s own app when that is blank. A document row also carries a wallet icon when the house has a crypto wallet: it opens the crypto payment panel, which shows the coin, the amount for the balance, the invoice\'s own receiving address and a QR (see Crypto wallets and rates).',
-			'A visitor who asks for a ticket sees the privacy notice before the form and must acknowledge it; the acknowledgement is stored with the request. The standalone storefront and the public homepage both link to the full privacy policy at the foot of the page; a Store opened in a desk window does not repeat it. The policy names the controller, the data processed, the legal basis, retention, the cookies and local storage used, and how to exercise a data right.'
+			'A visitor who asks for a ticket sees the privacy notice before the form and must acknowledge it; the acknowledgement is stored with the request. The standalone storefront and the public homepage both link to the full privacy policy at the foot of the page; a Store opened in a desk window does not repeat it. The policy names the controller, the data processed, the legal basis, retention, the cookies and local storage used, and how to exercise a data right.',
+			'You can ask the Guide by voice to look up an item\'s price or to read the open register orders, and it answers from the Store\'s own search and register.'
 		],
 		steps => [
 			'Open Store and add the items you sell, each with its models and options and their prices.',

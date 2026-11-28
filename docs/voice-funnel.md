@@ -120,6 +120,10 @@ summary. The registry is `@gb::app_actions` in
   one folder.
 - `market` / `add_item` (write) — `POST /manager/market/item_add`: `text`,
   `list`, `vendor`.
+- `store` / `find` (read) — `GET /manager/store/register/items`: find items and
+  prices by `search`.
+- `store` / `orders` (read) — `GET /manager/store/register/state`: the open
+  register orders and their total.
 
 The gates are in code, not only in the prompt:
 
@@ -142,26 +146,48 @@ The action is the app's own controller action, called on a synthetic request
 built from the declared parameters (and the caller's session cookie, when there
 is one). The bridge never writes straight to a table.
 
+### A spoken write is held for the next answer
+
+A voice turn cannot certify its own confirmation, so a write that needs one is
+held in the machine-local `cache` table, keyed by the speaking watch's
+`chip_id` (else the device uuid), for two minutes. The reply asks the person to
+say yes. The next utterance from that same watch is taken first, before the
+fast resolvers or the model:
+
+- **yes** (`yes`, `yeah`, `sure`, `ok`, `do it`, `go ahead`, `confirm`, …) —
+  resume the held action and speak the result;
+- **no** (`no`, `nope`, `cancel`, `don't`, `stop`) — drop it and say so;
+- anything else, another watch, or an expired row — drop it and continue
+  normally, so a later "yes" cannot confirm a proposal the person moved on
+  from.
+
+The cache row is never synced between machines, and the executor re-validates
+the registry, visibility, parameters and scope when it resumes. With the
+Confirmation Requirement off a write still runs at once.
+
 Not done yet: the full Guide window is not offered `app` (it is `voice_only`);
-a proposed write has no promotion UI or later "yes" on the watch; and the rest
-of the audit's gaps (history/visit, store, camera, window control) still need
-their declarations. To add an action, add one entry to `@gb::app_actions` and a
-test to `t/484-app-action-bridge.t`.
+history/visit, camera and window control still need a route or a resolver that
+fits the same shape (camera has no server route today). To add an action, add
+one entry to `@gb::app_actions` and a test to `t/484-app-action-bridge.t`
+(read/execute) or `t/487-store-actions.t` (a read family's speech).
 
 ## Files
 
 - `lib/JawnOS/Domain/VoiceFunnel.pm` — catalogue, matcher, router, identity,
   weather, app action lines.
 - `lib/JawnOS/Domain/Ai.pm` — fast path, scoped prompt, `find`/`stop`/`app`
-  branches.
+  branches, and `voice_confirmation_kind` for the held write's yes/no.
 - `lib/JawnOS/Manager/Part29.pm` — `app_action_execute`: the registry gate,
-  visibility, confirmation, route lookup and JSON dispatch.
+  visibility, confirmation, route lookup and JSON dispatch; the held-write
+  `app_action_pending_store`/`take`.
 - `lib/JawnOS/Routes.pm` — `table`/`lookup`, the one route table the server and
   the bridge share.
 - `perl/gb/03_engines_and_tools.pl` — `@gb::app_actions` and the `app` tool.
 - `perl/help.pl` — `app_actions`, `app_action_find`, `app_action_lines`.
 - `lib/JawnOS/Manager/Part28.pm` — self-app fallback for `measure`.
-- `perl/help/topics_features.pl` — the Voice topic mentions the funnel and the
-  bridge.
-- `t/483-voice-funnel.t`, `t/484-app-action-bridge.t` — matcher, scope, router
-  contract, identity, weather, the action gates and the voice wiring.
+- `perl/help/topics_features.pl`, `perl/help/topics_business.pl` — the Voice
+  topic mentions the funnel, the bridge and the held write; the Store topic
+  names its voice lookups.
+- `t/483-voice-funnel.t`, `t/484-app-action-bridge.t`, `t/487-store-actions.t`
+  — matcher, scope, router contract, identity, weather, the action gates, the
+  held write and the Store family.

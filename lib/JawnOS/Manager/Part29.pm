@@ -499,6 +499,73 @@ sub guide_verb_execute($c, $action) {
 	return 'unknown primitive: ' . $prim;
 }
 
+# ---- a spoken write held for the next answer -------------------------------
+# A voice turn cannot prove the person answered: "yes" a moment later is a
+# different clip, and only the watch that heard the proposal knows it was asked.
+# So a spoken write that needs confirmation is held, machine-locally, keyed to
+# the speaker (its chip, or the device uuid when the watch has none). The next
+# utterance from that same speaker may confirm it; another watch cannot. The
+# row lives in the cache, which is never synced, and it is short-lived: an old
+# proposal is not a question the person still has in mind.
+my $app_action_pending_ttl = 120000;
+
+sub _app_action_pending_speaker($opts) {
+	$opts ||= {};
+	my $chip = defined $opts->{'chip_id'} ? $opts->{'chip_id'} : '';
+	return $chip if length $chip;
+	return $subs::request_device_uuid
+		if defined $subs::request_device_uuid && length $subs::request_device_uuid;
+	return defined $subs::device ? $subs::device : '';
+}
+
+sub _app_action_pending_key($speaker) {
+	$speaker = '' unless defined $speaker;
+	return substr(md5_sum('app_action_pending|' . $speaker), 0, 24);
+}
+
+# Hold one action for the speaker. Returns the opaque id reported as `staged`.
+sub app_action_pending_store($opts, $payload) {
+	my $speaker = _app_action_pending_speaker($opts);
+	my $key = _app_action_pending_key($speaker);
+	my %row = %{ $payload || {} };
+	$row{'speaker'} = $speaker;
+	$row{'at'} = &subs::rightNow();
+	&subs::cache_set({
+		app => '__president', context => 'app_action_pending',
+		subcontext => $key, warranty => '-2m',
+	}, \%row);
+	return $key;
+}
+
+# Does the speaker have a live held write? Asking is not taking: the answer to
+# a house question has to be recognized as addressed even when the capture mode
+# still requires a wake phrase for a new command.
+sub app_action_pending_peek($opts) {
+	my $speaker = _app_action_pending_speaker($opts);
+	my $key = _app_action_pending_key($speaker);
+	my $row = eval { &subs::cache_get({
+		app => '__president', context => 'app_action_pending', subcontext => $key,
+	}) };
+	return 0 unless ref $row eq 'HASH';
+	return 0 unless ($row->{'speaker'} // '') eq $speaker;
+	return 0 if &subs::rightNow() - ($row->{'at'} // 0) > $app_action_pending_ttl;
+	return 1;
+}
+
+# Read and remove the speaker's pending action. An expired row is removed and
+# reported as nothing, so a stale "yes" cannot revive it.
+sub app_action_pending_take($opts) {
+	my $speaker = _app_action_pending_speaker($opts);
+	my $key = _app_action_pending_key($speaker);
+	my $where = { app => '__president', context => 'app_action_pending', subcontext => $key };
+	my $row = eval { &subs::cache_get($where) };
+	&subs::cache_delete($where);
+	return undef unless ref $row eq 'HASH';
+	return undef unless ($row->{'speaker'} // '') eq $speaker;
+	return undef if &subs::rightNow() - ($row->{'at'} // 0) > $app_action_pending_ttl;
+	return $row;
+}
+
 # ---- the app-action bridge -------------------------------------------------
 # One declared action of an app, run through the app's own route. The registry
 # (@gb::app_actions) is the whole vocabulary: an app, a "do", a method, a
@@ -548,9 +615,10 @@ sub app_action_execute($c, $action, $opts) {
 			unless length($vals{$k} // '');
 	}
 	# The Confirmation Requirement, the same setting the Guide's appointment
-	# writes use. A read runs. A write waits for a confirmation from the screen;
-	# by voice it runs only when the requirement is off, because "confirmed" from
-	# a one-shot voice turn cannot prove the person answered.
+	# writes use. A read runs. A write waits for a confirmation from the screen.
+	# A voice turn can never certify itself: it either holds the action for the
+	# next utterance (`voice`) or runs it when that next turn resumes (`resume`).
+	# With the requirement off, it runs at once.
 	my $confirm = &subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' });
 	my $auto = (defined $confirm && $confirm eq 'off');
 	my $confirmed = 0;
@@ -558,11 +626,24 @@ sub app_action_execute($c, $action, $opts) {
 		my $flag = $action->{'confirmed'};
 		$confirmed = ($flag && $flag !~ /^(?:0|no|false)$/i) ? 1 : 0;
 	}
-	if (($entry->{'kind'} // 'read') ne 'read' && !$auto && !$confirmed) {
-		return {
-			ok => 0, confirm => 1,
-			speech => ($entry->{'confirm'} || ('I can ' . $entry->{'desc'} . '. Confirm that and I will.')),
-		};
+	if (($entry->{'kind'} // 'read') ne 'read' && !$auto && !$confirmed && !$opts->{'resume'}) {
+		my $question = $entry->{'confirm'} || ('I can ' . $entry->{'desc'} . '. Confirm that and I will.');
+		$question =~ s/\s+$//;
+		$question .= '.' unless $question =~ /[.!?]$/;
+		# A voice turn has no follow-up of its own: hold the action for the next
+		# utterance from this watch. The browser has a screen and the same
+		# confirm gate it always had, so it only proposes.
+		if ($opts->{'voice'}) {
+			my $staged = app_action_pending_store($opts, {
+				app => $entry->{'app'}, do => $entry->{'do'},
+				params => { %vals }, scope_app => $scope,
+			});
+			return {
+				ok => 0, confirm => 1, staged => $staged,
+				speech => $question . ' Say yes to confirm.',
+			};
+		}
+		return { ok => 0, confirm => 1, speech => $question };
 	}
 	# The app's own route, from the server's own route table.
 	my $route = eval {

@@ -1292,6 +1292,28 @@ sub json_from_model {
 	return $parsed;
 }
 
+sub voice_confirmation_kind {
+	# Which answer an utterance is to a question the Guide just asked: 'yes',
+	# 'no', or '' for something else. Matching is on whole words after the
+	# transcript is lowercased and its punctuation turned into spaces, so "yes"
+	# does not match "yesterday" while "Yes." and "don't." still read plainly.
+	my ($text) = @_;
+	$text = '' unless defined $text;
+	$text = lc $text;
+	$text =~ s/\x{2018}|\x{2019}/'/g;
+	$text =~ s/[^\p{L}\p{N}'\s]+/ /g;
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return '' unless length $text;
+	my $padded = ' ' . $text . ' ';
+	my @yes = ('yes', 'yeah', 'yep', 'sure', 'ok', 'okay',
+		'do it', 'go ahead', 'please do', 'confirm');
+	my @no = ('no', 'nope', 'cancel', "don't", 'do not', 'stop');
+	return 'yes' if grep { $padded =~ / \Q$_\E / } @yes;
+	return 'no' if grep { $padded =~ / \Q$_\E / } @no;
+	return '';
+}
+
 sub voice_brain {
 	# The voice assistant's brain: an utterance addressed to us that is not a
 	# plain start/stop command goes to the guide's action vocabulary, so a spoken
@@ -1323,6 +1345,42 @@ sub voice_brain {
 			&subs::say_it($speech);
 		}
 	};
+	# A write proposed on an earlier turn rides on the next utterance from the
+	# watch that heard it - and only that watch. A spoken "yes" runs it now; "no"
+	# drops it; anything else drops it too, so an unrelated answer cannot confirm
+	# a proposal the person has moved on from. The take removes the row either
+	# way; this is the only path that confirms a voice write.
+	{
+		my $pending = eval { &Manager::app_action_pending_take({ chip_id => ($meta->{'chip_id'} // '') }) };
+		if (ref $pending eq 'HASH') {
+			my $kind = &subs::voice_confirmation_kind($text);
+			if ($kind eq 'yes') {
+				my $r = eval { &Manager::app_action_execute(&subs::controller_builder(), {
+					action => 'app', app => $pending->{'app'}, do => $pending->{'do'},
+					params => ($pending->{'params'} || {}),
+				}, {
+					voice => 1, resume => 1,
+					chip_id => ($meta->{'chip_id'} // ''),
+					scope_app => ($pending->{'scope_app'} // ''),
+				}) } || {};
+				my $speech = $r->{'speech'} || $r->{'error'} || '';
+				if (length $speech) {
+					$reply->($speech);
+					$log->info('voice: brain resumed the held app write "' . $speech . '"');
+					return { handled => 1, action => 'app', said => $speech,
+						app_action => $r, resumed => 1 };
+				}
+				return undef;
+			}
+			if ($kind eq 'no') {
+				my $speech = 'Okay, I did not do it.';
+				$reply->($speech);
+				$log->info('voice: brain dropped the held app write (no)');
+				return { handled => 1, action => 'app', said => $speech, dropped => 1 };
+			}
+			$log->info('voice: brain dropped the held app write (not an answer)');
+		}
+	}
 	# A few data questions need no model at all. Weather is the first: the
 	# answer is read from the same forecast the Weather app shows, so a spoken
 	# "what's the weather" is fast even before a Guide model is configured.
@@ -1459,6 +1517,9 @@ sub voice_brain {
 	if ($a eq 'app') {
 		my $r = eval { &Manager::app_action_execute(&subs::controller_builder(), $action, {
 			voice => 1,
+			# The held write is keyed to the watch that heard the proposal, so the
+			# staging turn must name the same chip the next turn will present.
+			chip_id => ($meta->{'chip_id'} // ''),
 			scope_app => ($scope && $scope->{'ok'}) ? ($scope->{'app'} // '') : '',
 		}) } || {};
 		my $speech = $r->{'speech'} || $r->{'error'} || '';
@@ -1629,6 +1690,10 @@ sub voice_ingest {
 	my $wake_optional = ($mode ne '' && $mode ne 'vad');
 	my $cmd = &subs::voice_command_parse($text, $wake_optional);
 	my $addressed = $wake_optional || (($cmd->{'status'} || '') ne 'no_wake');
+	# A held write is the house's own question, so its answer is addressed even
+	# in a capture mode that still asks for a wake phrase on a new command. The
+	# brain takes and clears it; here we only decide whether to hand it the text.
+	$addressed ||= eval { &Manager::app_action_pending_peek({ chip_id => ($meta->{'chip_id'} // '') }) } ? 1 : 0;
 	if (($cmd->{'status'} || '') eq 'ok') {
 		# Match the target against the apps the system actually knows (the settings
 		# table), not the static known_appts list - the user's apps (breakfast,

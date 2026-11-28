@@ -9,6 +9,8 @@ use strict;
 use warnings;
 
 our %SUB = (
+	'_app_action_pending_key'                => 'JawnOS/Manager/Part29.pm',
+	'_app_action_pending_speaker'            => 'JawnOS/Manager/Part29.pm',
 	'_guide_fill'                            => 'JawnOS/Manager/Part29.pm',
 	'accounting_journal_report'              => 'JawnOS/Manager/Part19.pm',
 	'accounting_moves'                       => 'JawnOS/Manager/Part18.pm',
@@ -38,6 +40,9 @@ our %SUB = (
 	'allocation_duration_add'                => 'JawnOS/Manager/Part15.pm',
 	'app_access_mode'                        => 'JawnOS/Manager/Part30.pm',
 	'app_action_execute'                     => 'JawnOS/Manager/Part29.pm',
+	'app_action_pending_peek'                => 'JawnOS/Manager/Part29.pm',
+	'app_action_pending_store'               => 'JawnOS/Manager/Part29.pm',
+	'app_action_pending_take'                => 'JawnOS/Manager/Part29.pm',
 	'app_draft_uuid'                         => 'JawnOS/Manager/Part21.pm',
 	'app_gate_shadow_log'                    => 'JawnOS/Manager/Part33.pm',
 	'app_icon_url'                           => 'JawnOS/Manager/Part22.pm',
