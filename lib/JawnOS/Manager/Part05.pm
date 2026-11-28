@@ -111,6 +111,18 @@ sub appointment_writer($c,$app) {
 	# the insert/update below, like remote_address and source_chip_id above.
 	my $quiet_child = $app->{'quiet_child'};
 	delete $app->{'quiet_child'};
+	# A caller that already put this movement on the wire - the decoder's
+	# every-machine command, the NFC tag's request relay - says so, and a row that
+	# arrived on the relay carries the relay's own control keys. Neither is a
+	# column, and neither may be sent again: that is the second write this writer
+	# would otherwise add to a press already distributed.
+	my $already_relayed = $app->{'relayed'};
+	delete $app->{'relayed'};
+	my $from_relay = 0;
+	foreach my $relay_key (qw(dissemination source_signatorial relay_from relay_id remoted remote_uuid)) {
+		$from_relay = 1 if defined $app->{$relay_key} && length $app->{$relay_key};
+		delete $app->{$relay_key};
+	}
 	my $timestamp = $app->{'timestamp'};
 	my $server_time = $app->{'server_time'};
 	# A stop may name its own length. The stop branch below measures the session
@@ -480,13 +492,43 @@ sub appointment_writer($c,$app) {
 	# has run, throttled by a Minion lock so a burst is one run, not many
 	&subs::evaluation_run_trigger($app->{'app'}, $app) unless $quiet_child;
 
-	if (1 == 1 && $app->{'app'}) {
-		my $params = Mojo::Parameters->new(%{$app});
-		$params = $params->to_string;
-		my $url = '/manager/appointment/writer';# . $params;
-		#&subs::subprocessor(sub {
-		#	&remote_relay_request($c, { dissemination => 'yes', url => $url, params => $app, type => 'post', override => 'manual' });
-		#});
+	# Tell the other machines about the row now, not only at the next sync. A
+	# request-based writer (manager_reset, the NFC tag, the decoder's command)
+	# already put its action on the wire and says so; a row that arrived on the
+	# relay is already there. Everything else goes out from a controller that may
+	# have no browser behind it, so give it a request shape the relay can read.
+	if (($app->{'app'} || '') ne '' && !$already_relayed && !$from_relay) {
+		my %relay_row = map { $_ => $app->{$_} }
+			grep { defined $app->{$_} && !ref $app->{$_} } keys %{$app};
+		# The peer needs the same shape the origin wrote: a finished record
+		# stays a finished record, and a child write stays quiet there too.
+		$relay_row{'completed_row'} = 1 if $completed_row;
+		$relay_row{'quiet_child'} = 1 if $quiet_child;
+		my $relay_c = $c;
+		unless (eval { $relay_c && defined $relay_c->req }) {
+			$relay_c = eval { &subs::controller_builder() } unless $relay_c;
+			if ($relay_c) {
+				eval {
+					require Mojo::Message::Request;
+					my $req = Mojo::Message::Request->new;
+					$req->method('POST');
+					$req->url->path('/manager/appointment/writer');
+					$relay_c->req($req);
+				};
+			}
+		}
+		if (eval { $relay_c && defined $relay_c->req }) {
+			&subs::subprocessor(sub {
+				Mojo::IOLoop->reset;
+				&subs::remote_relay_request($relay_c, {
+					override => 'manual',
+					url => '/manager/appointment/writer',
+					type => 'post',
+					dissemination => 'yes',
+					params => \%relay_row,
+				});
+			}, { name => 'appointment relay' });
+		}
 	}
 
 	&subs::appointment_theme_push() if (($theme_movement // '') =~ /^(?:start|stop|record)$/);

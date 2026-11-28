@@ -326,7 +326,10 @@ sub action_12622 {
 								timestamp => $timestamp,
 								uuid => $target,
 								# the tag is the person's own hand, like a press
-								source => 'nfc'
+								source => 'nfc',
+								# this request is handed to the peers below, which
+								# write the same row; the writer must not send it too
+								relayed => 'yes'
 							});
 						}
 					}
