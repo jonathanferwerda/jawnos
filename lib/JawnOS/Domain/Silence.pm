@@ -869,6 +869,37 @@ sub silence_release_all {
 	return $state;
 }
 
+# Every one of these owners has a row here, and none of them is open: the
+# session ended. A row not received at all is the opposite - the sync window
+# exists for exactly that - so it keeps the state held.
+sub silence_tick_owners_closed {
+	my ($owners) = @_;
+	return 0 unless ref $owners eq 'ARRAY' && scalar @{$owners};
+	my %want = map { $_ => 1 } grep { defined $_ && length $_ } @{$owners};
+	return 0 unless scalar keys %want == scalar @{$owners};
+	my $marks = join ',', ('?') x scalar @{$owners};
+	my $rows = eval {
+		&subs::db_query(
+			"select uuid, type, stop_seen from appointments where uuid in ($marks)",
+			@{ $owners }
+		)->hashes;
+	} || [];
+	my %closed;
+	foreach my $row ( @{$rows} ) {
+		next unless ref $row eq 'HASH';
+		my $uuid = $row->{'uuid'} // '';
+		next unless $want{$uuid};
+		# A row with no type is not enough evidence to call the session over.
+		my $type = lc($row->{'type'} // '');
+		return 0 unless length $type;
+		my $open = ($type eq 'start' || $type eq 'record')
+			&& !(defined $row->{'stop_seen'} && length $row->{'stop_seen'});
+		return 0 if $open;
+		$closed{$uuid} = 1;
+	}
+	return (scalar keys %closed == scalar @{$owners}) ? 1 : 0;
+}
+
 # The alarm worker's reconciliation. The open silent appointment is the
 # authority: while one is open, silence is on and its uuid is the owner;
 # when none is open, silence comes off. A peer whose database has not yet
@@ -963,8 +994,15 @@ sub silence_tick {
 		# the appointment (the ordinary sync pass runs about every ten minutes).
 		# Hold a young state it never saw owned long enough for that row to
 		# arrive, so a relayed silence is not dropped before it can see what
-		# owns it.
-		if (!$informed && $since && ($now - $since) < 900000) {
+		# owns it. A row that is already here and closed is not still arriving:
+		# the session is over, so release at once rather than keep the house -
+		# and a phone's Do Not Disturb - quiet for the whole sync window.
+		my $closed = 0;
+		if (!$informed && !$state->{'house'}) {
+			my $held = $state->{'owners'} || [];
+			$closed = &silence_tick_owners_closed($held) if scalar @{$held};
+		}
+		if (!$informed && !$closed && $since && ($now - $since) < 900000) {
 			return 0;
 		}
 		return 1 if &silence_release_all($informed);

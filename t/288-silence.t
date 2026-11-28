@@ -118,6 +118,18 @@ $main::SCRATCH = $scratch;
 				ref $_ eq 'HASH' && (!defined $_->{'timestamp'} || $_->{'timestamp'} <= $now)
 			} @rows;
 		}
+		# Honour the open-session clauses the reconciler binds, so a closed row
+		# is not read as an owner again. A fixture with no type is kept: older
+		# cases wrote only uuid/app.
+		if ($sql =~ /stop_seen is null/) {
+			@rows = grep { ref $_ eq 'HASH' && !(defined $_->{'stop_seen'} && length $_->{'stop_seen'}) } @rows;
+		}
+		if ($sql =~ /type in \('start','record'\)/) {
+			@rows = grep {
+				ref $_ eq 'HASH'
+					&& (!defined $_->{'type'} || $_->{'type'} eq 'start' || $_->{'type'} eq 'record')
+			} @rows;
+		}
 		if ($sql =~ /order by timestamp desc/i) {
 			@rows = sort { ($b->{'timestamp'} // 0) <=> ($a->{'timestamp'} // 0) } @rows;
 		}
@@ -624,6 +636,25 @@ ok($off_pushed, 'and tells the phone app off');
 my $peer_stop_relay = grep { ($_->{'extra'}->{'url'} // '') eq '/manager/silence/peer'
 	&& !$_->{'extra'}->{'params'}->{'active'} } @RELAY;
 ok(!$peer_stop_relay, 'but a peer never relays a release it did not witness');
+
+# A stop performed on another machine closes this machine's row, but this
+# process never watched that owner open. The row is present and closed, so the
+# session is over: a young state must not be held for the whole sync window and
+# leave the phone's Do Not Disturb on.
+reset_all();
+@QUERY_SETTINGS = ({ app => 'mirror', setting => 'silence', value => 'checked' });
+$DEVICE = 'mobile';
+@QUERY_APPOINTMENTS = ({ uuid => 'u-done', app => 'mirror', type => 'stop', stop_seen => 'yes' });
+$STORE{'__president|silence_state|all'} = encode_json({
+	active => 1, owners => ['u-done'], apps => { 'u-done' => 'mirror' },
+	since => subs::rightNow() - 1000,
+});
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is(state_hash()->{active}, 0, 'a stopped owner whose closed row has arrived releases at once');
+my $done_off = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 0 } @NATIVE;
+ok($done_off, 'and the phone is told off');
+is(scalar @RELAY, 0, 'without relaying a stop this process did not witness');
 
 # A peer that never saw the owner must not tell the house the session ended:
 # it only clears its own machine and leaves the relay to the machine that ran it.
