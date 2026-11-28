@@ -58,7 +58,16 @@ like($source, qr/\$failure = \$refused;/, 'and carries the page as the failure r
 
 # A broadcast has no per-target retry, so a refusal must at least be logged:
 # the normal channel has no other way to say the peer did not take the change.
-like($source, qr/refused the request \(' \. \$refused \. '\)/,
+like($source, qr/refused the request \(\' \. \$refused \. \'\)/,
 	'the request relay names the refusing peer and the page');
+
+# The terminal log keeps thirty entries and the address-directory relay fills
+# them within minutes, so a relay failure written only there is evicted before
+# anyone reads it. Every relay log line also goes to the manager log, which is
+# the durable surface.
+my @manager_logs = ($source =~ /\$log->info\(\$line\)/g);
+cmp_ok(scalar @manager_logs, '>=', 3, 'every relay failure also reaches the manager log');
+my @terminal_logs = ($source =~ /&subs::log_writer\(\$line\)/g);
+cmp_ok(scalar @terminal_logs, '>=', 3, 'and stays in the terminal log');
 
 done_testing();

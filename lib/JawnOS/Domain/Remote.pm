@@ -168,7 +168,12 @@ sub remote_relay_request($c, $extra_params = {}) {
 						$peer = substr($rm->{'signatorial'} || '', 0, 8) unless length $peer;
 						$peer = 'unknown peer' unless length $peer;
 						my $path = $extra_params->{'url'} || '?';
-						eval { &subs::log_writer('relay: manual delivery to ' . $peer . ' ' . $path . ' failed: ' . $failure) };
+						my $line = 'relay: manual delivery to ' . $peer . ' ' . $path . ' failed: ' . $failure;
+						eval { &subs::log_writer($line) };
+						# The terminal log keeps thirty entries and the address-directory relay
+						# fills them within minutes, so a refused relay written only there is
+						# gone before anyone looks. The manager log is the durable surface.
+						eval { $log->info($line) } if $log;
 					}
 					if (length $answered && $answered ne ($rm->{'manager'} || '')) {
 						eval { &subs::peer_manager_remember($rm, $answered) };
@@ -235,7 +240,9 @@ sub remote_relay_request($c, $extra_params = {}) {
 						my $peer = $rm->{'hostname'} || '';
 						$peer = substr($rm->{'signatorial'} || '', 0, 8) unless length $peer;
 						$peer = 'unknown peer' unless length $peer;
-						eval { &subs::log_writer('relay: ' . $peer . ' ' . $path . ' refused the request (' . $refused . ')') };
+						my $line = 'relay: ' . $peer . ' ' . $path . ' refused the request (' . $refused . ')';
+						eval { &subs::log_writer($line) };
+						eval { $log->info($line) } if $log;
 					}
 
 
@@ -320,7 +327,9 @@ sub remote_relay_request($c, $extra_params = {}) {
 							my $peer = $rm->{'hostname'} || '';
 							$peer = substr($rm->{'signatorial'} || '', 0, 8) unless length $peer;
 							$peer = 'unknown peer' unless length $peer;
-							eval { &subs::log_writer('relay: ' . $peer . ' ' . $path . ' refused the request (' . $refused . ')') };
+							my $line = 'relay: ' . $peer . ' ' . $path . ' refused the request (' . $refused . ')';
+							eval { &subs::log_writer($line) };
+							eval { $log->info($line) } if $log;
 						}
 						return $body if $remote_uuid && defined $body;
 					}
