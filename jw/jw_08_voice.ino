@@ -126,8 +126,11 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
     HTTPClient https;
     // The house's watch listener can answer a room fetch in five seconds when it
     // is busy; a four-second POST timed out every clip (-1) while the same port
-    // served GETs. Long enough for a busy listener, still bounded.
+    // served GETs. Long enough for a busy listener, still bounded. The connect
+    // has its own deadline (5 s by default), and that - not the read timeout - is
+    // what a listener still finishing a room render blows through.
     https.setTimeout(12000);
+    https.setConnectTimeout(12000);
     if (https.begin(client, url)) {
       https.addHeader("Content-Type", "application/octet-stream");
       int code = https.sendRequest("POST", &f, (size_t)f.size());
@@ -503,6 +506,7 @@ static bool com_stream_post(WiFiClientSecure &client, const uint8_t *data, unsig
     + "&last=" + (last ? "1" : "0");
   HTTPClient https;
   https.setTimeout(COM_STREAM_TIMEOUT_MS);
+  https.setConnectTimeout(12000);
   bool ok = false;
   if (https.begin(client, url)) {
     https.addHeader("Content-Type", "application/octet-stream");

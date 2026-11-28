@@ -46,6 +46,8 @@ like($voice, qr/\[voice\] post mode=%s heap free=%u max=%u/,
 	'the heap is on the record at the POST');
 like($voice, qr/\[voice\] com stream heap free=%u max=%u/,
 	'and at the streamed upload');
+like($voice, qr/https\.setConnectTimeout\(12000\)/,
+	'the TCP connect deadline is raised too: setTimeout does not cover a busy listener');
 unlike($voice, qr/setBufferSizes/,
 	'no setBufferSizes: the core the watch builds against has no such call');
 
