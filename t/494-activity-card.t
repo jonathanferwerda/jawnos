@@ -1,9 +1,11 @@
-# tests-for: lib/JawnOS/Domain/Activity.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ai.pm lib/JawnOS/Routes/manager_misc10.pm lib/JawnOS/Controller/manager_misc10.pm public/js/manager/voice_card.js public/js/manager/websocket/00_console_router.js public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm perl/help/topics_features.pl docs/voice-funnel.md
+# tests-for: lib/JawnOS/Domain/Activity.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ai.pm lib/JawnOS/Routes/manager_misc10.pm lib/JawnOS/Controller/manager_misc10.pm public/js/manager/voice_card.js public/js/manager/manager.js templates/manager.html.ep public/js/manager/websocket/00_console_router.js public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm perl/help/topics_features.pl docs/voice-funnel.md
 # covers:    The machine the person last touched is stamped from page activity,
 #           the newest stamp is read as the display target, and a voice reply
 #           sends a voiceCard command with the question and answer. The route
 #           writes a stamp, the card JS filters by device uuid, and the page
-#           throttles its pings.
+#           throttles its pings. The card's hide timeout is the
+#           voice_card_timeout setting (default 20, 3..300), read by the card
+#           and written from the Guide associate's configuration panel.
 
 use strict;
 use warnings;
@@ -128,5 +130,34 @@ like(read_file('perl/help/topics_features.pl'), qr/machine you last touched/,
 	'the Voice topic names the card');
 like(read_file('docs/voice-funnel.md'), qr/voice_card_show/,
 	'the funnel doc names the card');
+
+# ------------------------------------------------ the configurable hide timeout
+my $manager_tmpl = read_file('templates/manager.html.ep');
+like($manager_tmpl, qr/class="assistant_card_timeout"/,
+	'the manager template declares the voice card seconds input');
+like($manager_tmpl, qr/setting => 'voice_card_timeout'/,
+	'and reads the voice_card_timeout setting');
+like($manager_tmpl, qr/\$card_timeout = 20 unless/,
+	'defaulting it to twenty seconds');
+
+like(read_file('public/js/manager/manager.js'), qr/setting: 'voice_card_timeout'/,
+	'manager.js writes voice_card_timeout');
+like(read_file('public/js/manager/manager.js'), qr/\$\('\.assistant_card_timeout'\)\.val\(seconds\)/,
+	'and puts the clamped value back into every open panel');
+
+my $voice_card = read_file('public/js/manager/voice_card.js');
+like($voice_card, qr/function jawnVoiceCardTimeoutMs/,
+	'the card script reads its timeout from the input');
+like($voice_card, qr/seconds = 20/,
+	'falling back to twenty seconds');
+like($voice_card, qr/setTimeout\(jawnVoiceCardHide, jawnVoiceCardTimeoutMs\(\)\)/,
+	'and uses it for the auto-hide timer');
+unlike($voice_card, qr/12000/,
+	'with no hard-coded twelve-second timeout left');
+
+like(read_file('perl/help/topics_features.pl'), qr/configured number of seconds/,
+	'the Voice topic names the configured length');
+like(read_file('docs/voice-funnel.md'), qr/voice_card_timeout/,
+	'and the funnel doc names the setting');
 
 done_testing();

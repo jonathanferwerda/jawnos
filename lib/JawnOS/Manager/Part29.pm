@@ -315,6 +315,32 @@ sub guide_undo_appointment($c) {
 	return { ok => 1, app => $target->{'app'}, summary => ($rec->{'title'} || 'the last change was undone') };
 }
 
+# Make media for the Guide: an image, a sound or a video through the matching
+# agent, filed onto the appointment it names or left in the Camera pool. The
+# Guide's route and a spoken "make an image of ..." both call this, so the two
+# surfaces make the same thing and report it the same way.
+sub guide_generate_media($kind, $prompt, $app) {
+	$kind = 'image' unless defined $kind && grep { $_ eq $kind } qw/image audio video/;
+	$prompt = defined $prompt ? $prompt : '';
+	$prompt =~ s/^\s+|\s+$//g;
+	return { ok => 0, error => 'tell me what to make' } unless length $prompt;
+	$app = &subs::unformat_name($app // '');
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'text_to_image_assistant', 'text_to_audio_assistant', 'text_to_video_assistant' ] });
+	my ($url, $att) = eval {
+		&subs::generate_ai_media({
+			kind => $kind,
+			prompt => $prompt,
+			settings => $settings,
+			conversation => {},
+			mail_contact => $app,
+			unclaimed => ($app ? 0 : 1),
+		});
+	};
+	my $model = $kind eq 'image' ? $settings->{'text_to_image_assistant'} : $kind eq 'audio' ? $settings->{'text_to_audio_assistant'} : $settings->{'text_to_video_assistant'};
+	return { ok => 0, error => 'the ' . $kind . ' agent could not make that (is a ' . $kind . ' model set?)' } unless $url;
+	return { ok => 1, kind => $kind, model => $model, url => $url, app => ($app ? &subs::format_name($app) : ''), unclaimed => ($app ? 0 : 1) };
+}
+
 # Redraw an app on screen the moment a change lands: the header a window shows
 # (appointment_header) and the open detail view. appt_header_printer also re-arms
 # the app's alarms through its header worker, so a moved appointment fires at its

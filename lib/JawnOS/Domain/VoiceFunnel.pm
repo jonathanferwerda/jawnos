@@ -260,6 +260,7 @@ sub voice_funnel_verbs($t) {
 	$v{'promote'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
 	$v{'undo'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
 	$v{'play_music'} = 1 if $app =~ /music|video|gallery|studio/;
+	$v{'generate'} = 1 if $app =~ /camera|gallery|media|pen|image|audio|video/;
 	# An app with declared actions gets the bridge verb. The scoped prompt names
 	# those actions, and the executor refuses a "do" that is not among them.
 	$v{'app'} = 1 if eval { @{ &help::app_actions($t->{'app'} // '') } } ? 1 : 0;

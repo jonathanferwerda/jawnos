@@ -200,6 +200,7 @@ our %SUB = (
 	'guide_conversation_save'                => 'JawnOS/Manager/Part29.pm',
 	'guide_duration_ms'                      => 'JawnOS/Manager/Part01.pm',
 	'guide_find_target'                      => 'JawnOS/Manager/Part29.pm',
+	'guide_generate_media'                  => 'JawnOS/Manager/Part29.pm',
 	'guide_length_words'                     => 'JawnOS/Manager/Part29.pm',
 	'guide_message_warranty'                 => 'JawnOS/Manager/Part29.pm',
 	'guide_open_target'                      => 'JawnOS/Manager/Part29.pm',

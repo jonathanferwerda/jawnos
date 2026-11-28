@@ -479,6 +479,7 @@ sub guide_stage_appointment;
 sub guide_promote_staged;
 sub guide_appointment_identity;
 sub guide_find_target;
+sub guide_generate_media;
 sub guide_update_changes;
 sub guide_length_words;
 sub guide_update_summary;

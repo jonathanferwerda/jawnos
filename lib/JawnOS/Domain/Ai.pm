@@ -1447,7 +1447,7 @@ sub voice_brain {
 	}
 	my $verbs = ($scope && $scope->{'ok'} && ref $scope->{'verbs'} eq 'HASH')
 		? $scope->{'verbs'}
-		: { map { $_ => 1 } qw/say ask done measure where_when create play_music open_app close_app remote alias unalias/ };
+		: { map { $_ => 1 } qw/say ask done measure where_when create generate play_music open_app close_app remote alias unalias/ };
 	my $system = &help::actions_prompt($verbs, 0, $text) . "\n\n";
 	$system .= "Only the actions listed above exist on this turn; ignore any rule that names an action not listed.\n";
 	$system .= "This came in as a spoken command to the person's watch, transcribed on-device: "
@@ -1503,24 +1503,35 @@ sub voice_brain {
 		}) };
 		return undef unless $staged && $staged->{'staged'};
 		my $what = $staged->{'title'} || &subs::format_name($staged->{'app'}) || 'it';
+		# Say the moment in the words the person hears: the clock time, and how far
+		# ahead it is - "Staging Email Test at 5pm, in 3h 59m" - so the confirmation
+		# repeats back what is about to be saved, not just its name.
+		my @lt = localtime(($staged->{'timestamp'} // 0) / 1000);
+		my $hour = $lt[2] % 12;
+		$hour = 12 unless $hour;
+		my $ampm = $lt[2] < 12 ? 'am' : 'pm';
+		my $clock = $lt[1] ? sprintf('%d:%02d%s', $hour, $lt[1], $ampm) : ($hour . $ampm);
+		my $delta = ($staged->{'timestamp'} // 0) - &subs::rightNow();
+		my $ahead = $delta > 60000 ? (', in ' . &Manager::guide_length_words($delta)) : '';
+		my $detail = $what . ' at ' . $clock . $ahead;
 		my $confirm = &subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' });
 		if (defined $confirm && $confirm eq 'off') {
 			my $promoted = eval { &Manager::guide_promote_staged(&subs::controller_builder(), $staged->{'staged'}) };
 			if ($promoted && !$promoted->{'error'}) {
-				my $speech = 'Saved ' . $what . '.';
+				my $speech = 'Saved ' . $detail . '.';
 				$reply->($speech);
-				$log->info('voice: brain saved "' . $what . '"');
+				$log->info('voice: brain saved "' . $detail . '"');
 				return { handled => 1, action => 'create', saved => 1, said => $speech };
 			}
 		}
 		# The wrist has no screen to promote on: hold the staged id for its next
 		# "yes", the same handoff a spoken app write uses.
 		eval { &Manager::app_action_pending_store({ chip_id => ($meta->{'chip_id'} // '') }, {
-			kind => 'promote', uuid => $staged->{'staged'}, label => $what,
+			kind => 'promote', uuid => $staged->{'staged'}, label => $detail,
 		}) };
-		my $speech = 'I staged ' . $what . '. Say yes to save it.';
+		my $speech = 'Staging ' . $detail . '. Say yes to save it.';
 		$reply->($speech);
-		$log->info('voice: brain staged "' . $what . '"');
+		$log->info('voice: brain staged "' . $detail . '"');
 		return { handled => 1, action => 'create', staged => $staged->{'staged'}, said => $speech };
 	}
 	# The rest of the appointment loop. A change or a delete stages a proposal
@@ -1572,6 +1583,25 @@ sub voice_brain {
 		$reply->($speech);
 		$log->info('voice: brain undo "' . $speech . '"');
 		return { handled => 1, action => 'undo', said => $speech, undo => $r };
+	}
+	# The Guide makes media through the matching agent; a spoken "make an image
+	# of ..." runs the same helper its own route does, so generation is one path
+	# and the reply names where the file landed.
+	if ($a eq 'generate') {
+		my $kind = lc($action->{'kind'} // 'image');
+		my $r = eval { &Manager::guide_generate_media($kind, $action->{'prompt'} // '', $action->{'app'} // '') } || {};
+		if ($r->{'error'}) {
+			my $speech = 'I could not make the ' . $kind . ': ' . $r->{'error'} . '.';
+			$reply->($speech);
+			$log->info('voice: brain could not generate "' . $speech . '"');
+			return { handled => 1, action => 'generate', said => $speech, error => $r->{'error'} };
+		}
+		my $made = $r->{'kind'} // $kind;
+		my $speech = 'I made the ' . $made
+			. ($r->{'app'} ? (' and filed it on ' . $r->{'app'}) : ' and left it in the Camera pool') . '.';
+		$reply->($speech);
+		$log->info('voice: brain generated a ' . $made . ' "' . $speech . '"');
+		return { handled => 1, action => 'generate', media => $r, said => $speech };
 	}
 	# speaking verbs: answer out loud, nothing else to run
 	if ($a eq 'say' || $a eq 'ask' || $a eq 'done') {

@@ -189,6 +189,18 @@ $(document).on('change', '.assistant_speak', function() {
 	settingSetter({ app: '__president', setting: 'assistant_speech', device: 'all', value: on ? 'on' : 'off' });
 });
 
+// How long the voice card stays up, in whole seconds: one setting for the house,
+// read as the card is drawn. Every open associate follows the press, and an
+// empty or non-numeric box (or one outside 3..300) is put back to 20.
+$(document).on('change', '.assistant_card_timeout', function() {
+	var seconds = parseInt($(this).val(), 10);
+	if (isNaN(seconds)) { seconds = 20; }
+	if (seconds < 3) { seconds = 3; }
+	if (seconds > 300) { seconds = 300; }
+	$('.assistant_card_timeout').val(seconds);
+	settingSetter({ app: '__president', setting: 'voice_card_timeout', device: 'all', value: String(seconds) });
+});
+
 function assistantSpeakWanted() {
 	return $('.assistant_speak').length && $('.assistant_speak').first().is(':checked');
 }

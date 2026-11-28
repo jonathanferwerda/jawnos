@@ -213,12 +213,19 @@ whose `jawnDeviceUuid()` matches draws the card (a page with no known target
 draws it only when focused). The hook is in `voice_brain`'s reply closure, so
 every voice answer - fast resolver, Guide, held write, remote relay - is shown.
 
+The card hides itself after `voice_card_timeout` seconds - the
+`__president/voice_card_timeout` setting, twenty by default and clamped to
+3..300 - and its Hide button closes it at once. The Guide associate's
+configuration panel writes that setting.
+
 ### The spoken appointment loop
 
 `create` stages a proposal through `Manager::guide_stage_appointment` and holds
 its uuid the same way a spoken write is held. With the Confirmation Requirement
-off it promotes at once; otherwise the reply says "I staged X. Say yes to save
-it." and the next utterance from that wrist decides: yes promotes, no marks the
+off it promotes at once; otherwise the reply repeats back what will be saved -
+the app, its clock time and how far away it is ("Staging Email Test at 5pm, in
+3h 59m. Say yes to save it.") - and the next utterance from that wrist decides:
+yes promotes, no marks the
 staged row discarded, anything else drops the hold. `update` and `delete` stage
 through `Manager::guide_stage_update` / `guide_stage_delete` and hold the same
 way, so the whole loop is reachable from the wrist: make it, move it, delete it,
@@ -231,6 +238,17 @@ an undone change restores every field it moved, and `appt_toggle_checker` plus
 The clock's alarm route takes a time, so "set an alarm for 7:30" is one call
 (`action=add` with `hour`, `minute`, `days`, `label`); it used to force the next
 hour. The task, money, warehouse and inventory actions live in `09_`.
+
+### The Guide makes media
+
+`generate` is a Guide tool on the screen and a spoken verb on the wrist. Both
+call `Manager::guide_generate_media` (`lib/JawnOS/Manager/Part29.pm`), which
+normalises the kind (image, audio, video), trims the prompt, reads the three
+mail agent settings, calls `subs::generate_ai_media` and reports the model.
+A named appointment files the file onto it; no app leaves it in the Camera
+pool. The `/manager/help/generate` route is now a thin wrapper around the same
+helper, so the two surfaces cannot drift. The verb is offered to the camera,
+gallery, media, pen, image, audio and video families.
 
 ### Communications by name
 

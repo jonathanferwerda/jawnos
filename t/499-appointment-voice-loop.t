@@ -41,6 +41,9 @@ my $stage_update_result = { staged => 'u-upd', summary => 'move the dentist appo
 my $stage_delete_result = { staged => 'u-del', summary => 'delete the dentist appointment' };
 my @discarded;
 
+my $now = 1_800_000_000_000;
+local *subs::rightNow = sub { return $now };
+
 local $subs::log = bless {}, 'TestLog';
 local *subs::voice_card_show = sub { };
 local *subs::voice_funnel_enabled = sub { 0 };
@@ -63,7 +66,8 @@ local *subs::db_update = sub {
 };
 local *Manager::guide_stage_appointment = sub {
 	my ($c, $params) = @_;
-	return { staged => 'u-new', title => 'Dentist', app => 'dentist' };
+	return { staged => 'u-new', title => 'Dentist', app => 'dentist',
+		timestamp => $now + 14_340_000 };
 };
 local *Manager::guide_promote_staged = sub {
 	my ($c, $uuid) = @_;
@@ -94,7 +98,8 @@ my $v = turn('make a dentist appointment tomorrow at three');
 ok($v && $v->{'handled'}, 'create is claimed');
 is($v->{'action'}, 'create', 'the turn is a create');
 is($v->{'staged'}, 'u-new', 'the staged id is returned');
-like($replied[0] // '', qr/I staged Dentist\. Say yes to save it\./, 'create says to confirm');
+like($replied[0] // '', qr/^Staging Dentist at \d{1,2}(:\d\d)?[ap]m, in 3h 59m\. Say yes to save it\.$/,
+	'create repeats back the app, its time and how far away it is');
 ok(Manager::app_action_pending_peek({ chip_id => 'watch-loop' }),
 	'the staged appointment is held for the speaking wrist');
 
@@ -103,7 +108,8 @@ ok(Manager::app_action_pending_peek({ chip_id => 'watch-loop' }),
 $v = turn('yes');
 ok($v && $v->{'handled'} && $v->{'saved'}, 'a yes saves the held appointment');
 is_deeply(\@promoted, ['u-new'], 'the held staged uuid is promoted');
-like($replied[0] // '', qr/^Saved Dentist\./, 'and speaks the label');
+like($replied[0] // '', qr/^Saved Dentist at \d{1,2}(:\d\d)?[ap]m, in 3h 59m\.$/,
+	'and speaks the saved appointment and its time');
 ok(!Manager::app_action_pending_peek({ chip_id => 'watch-loop' }), 'the hold is gone');
 
 # another wrist's yes does not promote it
@@ -143,7 +149,8 @@ $next_action = '{"action":"create","app":"Dentist","title":"Dentist","when":"tom
 $v = turn('make a dentist appointment tomorrow at three');
 ok($v && $v->{'handled'} && $v->{'saved'}, 'with the requirement off create saves at once');
 is_deeply(\@promoted, ['u-new'], 'the staged appointment is promoted');
-like($replied[0] // '', qr/^Saved Dentist\./, 'and speaks the save');
+like($replied[0] // '', qr/^Saved Dentist at \d{1,2}(:\d\d)?[ap]m, in 3h 59m\.$/,
+	'and speaks the saved appointment and its time');
 ok(!Manager::app_action_pending_peek({ chip_id => 'watch-loop' }), 'nothing is held');
 $confirm_setting = 'on';
 

@@ -650,26 +650,8 @@ sub action_36684 {
 # POST /manager/help/generate
 sub action_36716 {
 	my $c = shift;
-	my $kind = $c->param('kind') || 'image';
-	$kind = 'image' unless grep { $_ eq $kind } qw/image audio video/;
-	my $prompt = $c->param('prompt') || '';
-	$prompt =~ s/^\s+|\s+$//g;
-	return $c->render(json => { ok => 0, error => 'tell me what to make' }) unless length $prompt;
-	my $app = &subs::unformat_name($c->param('app') || '');
-	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'text_to_image_assistant', 'text_to_audio_assistant', 'text_to_video_assistant' ] });
-	my ($url, $att) = eval {
-		&subs::generate_ai_media({
-			kind => $kind,
-			prompt => $prompt,
-			settings => $settings,
-			conversation => {},
-			mail_contact => $app,
-			unclaimed => ($app ? 0 : 1),
-		});
-	};
-	my $model = $kind eq 'image' ? $settings->{'text_to_image_assistant'} : $kind eq 'audio' ? $settings->{'text_to_audio_assistant'} : $settings->{'text_to_video_assistant'};
-	return $c->render(json => { ok => 0, error => 'the ' . $kind . ' agent could not make that (is a ' . $kind . ' model set?)' }) unless $url;
-	$c->render(json => { ok => 1, kind => $kind, model => $model, app => ($app ? &subs::format_name($app) : ''), unclaimed => ($app ? 0 : 1) });
+	my $r = &Manager::guide_generate_media($c->param('kind') || 'image', $c->param('prompt') || '', $c->param('app') || '');
+	$c->render(json => $r);
 }
 
 # GET /manager/help/staged

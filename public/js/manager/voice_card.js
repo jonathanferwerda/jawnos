@@ -5,7 +5,8 @@
 // server keeps one stamp per device (synced, so any machine can read it) and
 // sends a voiceCard command when a voice turn gets an answer; only the page
 // whose device uuid matches draws it. It is a transient toast, not the
-// screening panel: it leaves after twelve seconds.
+// screening panel: it leaves after the configured number of seconds (twenty
+// by default), or as soon as its Hide button is pressed.
 
 var jawnActivity = { at: 0 };
 
@@ -31,6 +32,18 @@ $(function () { jawnActivityPing(true); });
 
 var jawnVoiceCardTimer = null;
 
+// How long the card stays up: the Guide associate's configuration panel writes
+// voice_card_timeout (whole seconds, 3..300); an absent or invalid value is
+// twenty seconds.
+function jawnVoiceCardTimeoutMs() {
+	var input = $('.assistant_card_timeout').first();
+	var seconds = parseInt(input.length ? input.val() : '', 10);
+	if (!seconds || isNaN(seconds)) { seconds = 20; }
+	if (seconds < 3) { seconds = 3; }
+	if (seconds > 300) { seconds = 300; }
+	return seconds * 1000;
+}
+
 function jawnVoiceCardShow(data) {
 	data = data || {};
 	var target = String(data.device_uuid || '');
@@ -46,7 +59,7 @@ function jawnVoiceCardShow(data) {
 	if (!card.length) {
 		card = $('<div id="jawn_voice_card" class="jawn_voice_card"></div>');
 		card.append($('<div class="jawn_voice_card_head"></div>')
-			.append($('<button class="jawn_voice_card_close" hint="Hide"></button>').text(jawnosT('Hide'))));
+			.append($('<button class="jawn_voice_card_close" hint="Hide" aria-label="Close"></button>').attr('aria-label', jawnosT('Close')).text(jawnosT('Hide'))));
 		card.append($('<div class="jawn_voice_card_question"></div>'));
 		card.append($('<div class="jawn_voice_card_reply"></div>'));
 		$('body').append(card);
@@ -56,7 +69,7 @@ function jawnVoiceCardShow(data) {
 	card.find('.jawn_voice_card_reply').text(reply);
 	card.addClass('on');
 	if (jawnVoiceCardTimer) { clearTimeout(jawnVoiceCardTimer); }
-	jawnVoiceCardTimer = setTimeout(jawnVoiceCardHide, 12000);
+	jawnVoiceCardTimer = setTimeout(jawnVoiceCardHide, jawnVoiceCardTimeoutMs());
 }
 
 function jawnVoiceCardHide() {
