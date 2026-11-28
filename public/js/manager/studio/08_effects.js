@@ -388,7 +388,7 @@ function studioEngineParamPost(data, key) {
 // One knob of a track's insert: the track is the 0-based engine track, the
 // name is the effect's canonical prefix, and the value is the contract's units.
 function studioEngineInsertParam(ch, insertName, control, value) {
-	var track = Math.max(0, (parseInt(ch, 10) || 1) - 1);
+	var track = studioEngineTrackIndex(ch);
 	var kind = studioEffectKind(insertName);
 	control = studioEffectControlName(kind, control);
 	var name = kind + '.' + control;
@@ -401,7 +401,7 @@ function studioEngineInsertParam(ch, insertName, control, value) {
 // 1.5 s). It is the same address as studioEngineInsertParam, without the
 // mapping step.
 function studioEngineInsertParamNatural(ch, insertName, control, value) {
-	var track = Math.max(0, (parseInt(ch, 10) || 1) - 1);
+	var track = studioEngineTrackIndex(ch);
 	var kind = studioEffectKind(insertName);
 	control = studioEffectControlName(kind, control);
 	var name = kind + '.' + control;

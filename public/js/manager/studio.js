@@ -1733,6 +1733,19 @@ function studioEngineTakeInput(ch) {
 	return plug ? studioInputListenChannel(plug) : Math.min(1, Math.max(0, parseInt(ch, 10) - 1));
 }
 
+// A Studio channel's index in the running engine take. The take's plan may skip
+// channels (a browser-only track, or a send chain whose source is not in the
+// take), so `ch - 1` would address the wrong track. Use the channel list the
+// start remembered, falling back to ch-1 when no take is armed.
+function studioEngineTrackIndex(ch) {
+	if (typeof studioEngineTakeArmed !== 'undefined' && studioEngineTakeArmed
+		&& $.isArray(studioEngineTakeArmed.channels)) {
+		var at = $.inArray(String(ch), studioEngineTakeArmed.channels);
+		if (at >= 0) { return at; }
+	}
+	return Math.max(0, (parseInt(ch, 10) || 1) - 1);
+}
+
 // The engine plan for the channels the Record button can hand over. Track `i`
 // is `channels[i]`, so one WAV per track maps back to one Studio channel. A
 // channel send travels as `{from: n}` where `n` is the source's index in this

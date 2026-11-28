@@ -429,6 +429,14 @@ like($fx, qr/studioEffectIndices = \{[\s\S]*?'amp\.cabinet': 3[\s\S]*?'autotune\
 	'whole-number controls travel as their index');
 like($fx, qr/function studioEngineInsertParam\(ch, insertName, control, value\)/,
 	'a track knob has one engine sender');
+like($js, qr/function studioEngineTrackIndex\(ch\)/,
+	'one helper maps a Studio channel to the take plan index');
+like($fx, qr/var track = studioEngineTrackIndex\(ch\);/,
+	'a track insert knob addresses the take plan index');
+my $tracked = () = $fx =~ /studioEngineTrackIndex\(ch\)/g;
+is($tracked, 2, 'both the knob and its natural-unit twin use the mapping');
+like($js, qr/studioEngineTakeArmed\.channels/,
+	'the mapping follows the channels the take actually armed');
 like($fx, qr/function studioEngineMasterParam\(insertName, control, value\)/,
 	'a master knob has its own sender');
 like($fx, qr/target: 'master'/,
