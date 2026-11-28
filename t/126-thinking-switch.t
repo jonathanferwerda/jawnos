@@ -318,12 +318,14 @@ my @calls;
 	is( $asked[3][1], 'openai:whisper-1', 'the transcription model is the one tested' );
 }
 
-# The transcription Test's own handshake: whisper.cpp is judged by readiness,
-# a cloud model by the provider's answer to half a second of silence.
+# The transcription Test's own handshake: both engines are given the committed
+# known sentence, and the answer says what was heard.
 {
 	local *subs::whisper_available = sub { 1 };
+	local *subs::whisper_cli_transcribe = sub { return 'This is a test of the house voice.' };
 	my ($ok, $message) = subs::ai_transcribe_test('local:whisper.cpp');
-	is( $ok, 1, 'whisper.cpp ready here passes' );
+	is( $ok, 1, 'whisper.cpp that hears the test sentence passes' );
+	like( $message, qr/heard: This is a test/, 'and reports what it heard' );
 	local *subs::whisper_available = sub { 0 };
 	($ok, $message) = subs::ai_transcribe_test('local:whisper.cpp');
 	is( $ok, 0, 'whisper.cpp missing here fails' );
@@ -336,9 +338,9 @@ my @calls;
 		return ('', undef);
 	};
 	($ok, $message) = subs::ai_transcribe_test('openai:whisper-1');
-	is( $ok, 1, 'a 2xx with an empty transcript is a pass, because silence is not speech' );
+	is( $ok, 1, 'a 2xx with an empty transcript is a pass, but does not claim a voice' );
 	is( $asked[0][0], 'openai:whisper-1', 'the picked model is the one asked' );
-	is( substr($asked[0][1], 0, 4), 'RIFF', 'a small WAV clip is sent' );
+	is( substr($asked[0][1], 0, 4), 'RIFF', 'the committed speech clip is sent' );
 	is( $asked[0][2], 'en', 'and it is marked English' );
 
 	local *subs::ai_transcribe_cloud_result = sub { return (undef, 'the transcription model answered 401: unauthorized') };

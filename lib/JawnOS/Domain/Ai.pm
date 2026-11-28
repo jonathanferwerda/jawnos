@@ -132,10 +132,32 @@ sub ai_transcribe_cloud_result {
 	return ($d->{'text'} // '', undef);
 }
 
+# The clip the transcription Test sends: a short, known sentence rendered by
+# the house's libritts_r voice at 16 kHz mono, committed with the tree. Silence
+# only proved that a provider answered; a model that heard nothing at all read
+# as healthy. The words are the test's fixed point - the sentence and the
+# committed WAV are the same on every machine.
+sub transcription_test_wav {
+	my @paths;
+	# a unit test may load this module without Key.pm, which is where the
+	# install dir is defined; the relative path is the fallback there
+	my $install = (defined &subs::install_dir) ? &subs::install_dir() : '';
+	push @paths, "$install/public/sounds/transcribe-test.wav" if defined $install && length $install;
+	push @paths, 'public/sounds/transcribe-test.wav';
+	foreach my $path (@paths) {
+		next unless -f $path && (-s _) > 44;
+		my $bytes = eval { read_file($path, binmode => ':raw') };
+		return $bytes if defined $bytes && length $bytes;
+	}
+	return undef;
+}
+
 # The Plat panel's Test for the transcription role. A cloud model is asked to
-# transcribe half a second of silence: the transcript may rightly be empty, so a
-# 2xx is the pass and the provider's error is the failure. whisper.cpp has no
-# handshake, so its readiness on this machine is the test.
+# transcribe the committed test sentence, so the answer names what it heard and
+# a model that returns nothing is not mistaken for a working one. A 2xx with no
+# words still passes (the provider answered) but says so. whisper.cpp is run on
+# the same clip when it is installed, which proves the model file as well as the
+# binary; a machine without it is told, not silently passed.
 sub ai_transcribe_test {
 	my ($model) = @_;
 	$model = '' unless defined $model;
@@ -144,20 +166,36 @@ sub ai_transcribe_test {
 	if (&transcription_service_is_client($model)) {
 		return (1, 'the phone recogniser runs on the device, not here');
 	}
+	my $wav = &transcription_test_wav();
 	if ($model eq 'local:whisper.cpp' || $model eq 'local:vosk') {
-		return &whisper_available()
-			? (1, 'whisper.cpp is ready on this machine')
-			: (0, 'whisper.cpp is not installed on this machine');
+		return (0, 'whisper.cpp is not installed on this machine') unless &whisper_available();
+		if (defined $wav && length $wav) {
+			my $heard = &whisper_cli_transcribe($wav, 'en');
+			$heard = '' unless defined $heard;
+			$heard =~ s/^\s+|\s+$//g;
+			$heard =~ s/\s+/ /g;
+			return (1, 'whisper.cpp heard: ' . $heard) if length $heard;
+			return (0, 'whisper.cpp is installed but did not hear the test sentence');
+		}
+		return (1, 'whisper.cpp is ready on this machine');
 	}
-	my $rate = 8000;
-	my $frames = int($rate / 2);
-	my $pcm = "\x80\x00" x $frames;
-	my $wav = 'RIFF' . pack('V', 36 + length($pcm))
-		. 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, $rate, $rate * 2, 2, 16)
-		. 'data' . pack('V', length($pcm)) . $pcm;
-	my (undef, $err) = &ai_transcribe_cloud_result($model, $wav, 'en');
+	# A tree without the clip still gets the old silence probe, so the button
+	# never does nothing on a hand-trimmed install.
+	unless (defined $wav && length $wav) {
+		my $rate = 8000;
+		my $frames = int($rate / 2);
+		my $pcm = "\x80\x00" x $frames;
+		$wav = 'RIFF' . pack('V', 36 + length($pcm))
+			. 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, $rate, $rate * 2, 2, 16)
+			. 'data' . pack('V', length($pcm)) . $pcm;
+	}
+	my ($heard, $err) = &ai_transcribe_cloud_result($model, $wav, 'en');
 	return (0, $err) if $err;
-	return (1, 'the transcription model answered');
+	$heard = '' unless defined $heard;
+	$heard =~ s/^\s+|\s+$//g;
+	$heard =~ s/\s+/ /g;
+	return (1, 'the model heard: ' . $heard) if length $heard;
+	return (1, 'the transcription model answered, but heard nothing');
 }
 
 sub voice_silence_hallucination {

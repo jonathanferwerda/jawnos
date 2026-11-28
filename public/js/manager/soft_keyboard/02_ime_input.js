@@ -12,6 +12,89 @@ function softKbImeBackspace() {
 	softKbImeSync();
 }
 
+// ---- interim words inside the input method --------------------------------
+// The field belongs to another app, so the page cannot write it: the guess
+// travels through the input connection. A service with the composing bridge
+// keeps it in the composing region, so nothing is committed until the final
+// phrase; an older one gets a commit, and the next guess takes it back with
+// deleteBack. Either way the words appear as the person speaks.
+function softKbImeDelete(count) {
+	count = Math.max(0, parseInt(count, 10) || 0);
+	if (!count) { return; }
+	if (window.JawnIme && typeof window.JawnIme.deleteBack === 'function') {
+		window.JawnIme.deleteBack(count);
+		return;
+	}
+	for (var i = 0; i < count; i++) { softKbImeBackspace(); }
+}
+
+function softKbImeComposing() {
+	return !!(window.JawnIme && typeof window.JawnIme.composing === 'function');
+}
+
+function softKbImePartial(text) {
+	if (!jawnSoftIme) { return; }
+	text = String(text || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+	if (!text) { return; }
+	// the field's own words before the phrase, for the final's separator
+	if (jawnDictate.ime_base == null) { jawnDictate.ime_base = String(jawnImeText || ''); }
+	jawnDictate.ime_guess = text;
+	if (softKbImeComposing()) {
+		window.JawnIme.composing(text);
+		softKbImeSync();
+		return;
+	}
+	var prev = jawnDictate.ime_committed || '';
+	if (prev.length) { softKbImeDelete(prev.length); }
+	softKbImeSend(text);
+	jawnDictate.ime_committed = text;
+}
+
+function softKbImePartialBase() {
+	return (jawnDictate.ime_base == null) ? String(jawnImeText || '') : String(jawnDictate.ime_base);
+}
+
+function softKbImePartialClear() {
+	if (softKbImeComposing()) {
+		if (jawnDictate.ime_guess) { window.JawnIme.composing(''); softKbImeSync(); }
+	}
+	else if (jawnDictate.ime_committed) {
+		softKbImeDelete(String(jawnDictate.ime_committed).length);
+	}
+	jawnDictate.ime_guess = '';
+	jawnDictate.ime_committed = '';
+}
+
+function softKbImePartialReset() {
+	softKbImePartialClear();
+	jawnDictate.ime_base = null;
+}
+
+// The final phrase replaces the guess with the words the person finished on.
+// In composing mode commitText replaces the composing region; otherwise the
+// committed guess is taken back first, then the final is committed. The
+// separator comes from the field's text before the phrase, not from the guess.
+function softKbDictationImeFinal(text) {
+	text = String(text || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+	var base = softKbImePartialBase();
+	var sep = '';
+	var last = base.slice(-1);
+	if (base && last && !/\s/.test(last) && !/^[,.;:!?)]/.test(text)) { sep = ' '; }
+	if (!text) {
+		softKbImePartialClear();
+	}
+	else if (softKbImeComposing()) {
+		softKbImeSend(sep + text);
+	}
+	else {
+		softKbImePartialClear();
+		softKbImeSend(sep + text);
+	}
+	jawnDictate.ime_base = null;
+	jawnDictate.ime_guess = '';
+	jawnDictate.ime_committed = '';
+}
+
 // A number field holds one answer, so the calculator's operand replaces it
 // rather than being appended (the dock does this by assigning field.value).
 function softKbImeSetNumber(value) {

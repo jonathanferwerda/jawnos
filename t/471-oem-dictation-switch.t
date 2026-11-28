@@ -2,7 +2,12 @@
 # covers:    When a microphone's transcription role names android:oem, the page
 #           uses the app's own recogniser (window.JawnSpeech), fills the field
 #           with each interim guess and settles the final text through the
-#           surface's ordinary path; every other
+#           surface's ordinary path. A plain field, the upgraded rich editor
+#           (contenteditable) and the input method's field in another app all
+#           show the words as they are spoken: the editor restores its own
+#           markup and caret between guesses, and the input method writes a
+#           composing region (or a commit the next guess replaces) instead of
+#           raising a dialog. Every other
 #           value - and every WebView without the bridge - keeps the
 #           record-and-POST recorder. The concrete service is resolved from the
 #           role (transcription_keyboard / transcription_guide, or the shared
@@ -132,6 +137,24 @@ like($kb_js, qr/onPartial: function \(text\) \{[\s\S]*?softKbDictationPartial\(t
 	'the keyboard shows interim words while the person speaks');
 like($kb_js, qr/audio clip for Plat, no punctuation pass and no clip kept/,
 	'the OEM path records that it returns text only');
+like($kb_js, qr/if \(jawnSoftIme\) \{ softKbImePartial\(text\); return; \}/,
+	'the input method writes its interim words through the service');
+like($kb_js, qr/if \(jawnSoftIme\) \{[\s\S]*?softKbDictationImeFinal\(text\);[\s\S]*?return;/,
+	'the input method commits the final phrase in place of the guess');
+like($kb_js, qr/function softKbDictationPartialEditable[\s\S]*?softKbDictationAppend\(target, text\)/,
+	'the upgraded textarea editor fills as the words arrive');
+like($kb_js, qr/softKbDictateHint\(text, true\)/,
+	'an interim guess never raises the hint as a dialog');
+
+my $ime_js = read_file("$root/public/js/manager/soft_keyboard/02_ime_input.js");
+like($ime_js, qr/function softKbImePartial\(text\)[\s\S]*?JawnIme\.composing\(text\)/,
+	'the input method uses the composing region when the app has it');
+like($ime_js, qr/function softKbImePartial\(text\)[\s\S]*?softKbImeDelete\(prev\.length\)/,
+	'an app without composing gets a commit the next guess replaces');
+like($ime_js, qr/function softKbDictationImeFinal\(text\)[\s\S]*?softKbImeSend\(sep \+ text\)/,
+	'and its final phrase replaces the guess with the finished words');
+like($ime_js, qr/function softKbImePartialReset\(\)[\s\S]*?softKbImePartialClear\(\)/,
+	'stopping a phrase takes the guess out of the field');
 
 # The Guide: same decision, and the recorder stays the fallback.
 like($help_js, qr/jawnSpeechOemReady\(service\)/, 'the Guide decides from its rendered service');

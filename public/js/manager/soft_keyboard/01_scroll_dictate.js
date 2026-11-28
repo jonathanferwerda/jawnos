@@ -195,7 +195,7 @@ function softKbTranscriptionService() {
 	return (el && el.getAttribute('data-transcribe-service')) || '';
 }
 
-function softKbDictateHint(text) {
+function softKbDictateHint(text, quiet) {
 	$('#jawn_soft_keyboard .soft_kb_title').text(text || '');
 	// a rich editor's microphone is not in the dock, so the state it shows has to
 	// travel to the button that started it
@@ -209,7 +209,7 @@ function softKbDictateHint(text) {
 	// with the dock closed there is no title to read, so a failure has to be said
 	// out loud; the progress words are not failures
 	var progress = (text == softKbLabel('Listening…') || text == softKbLabel('Transcribing…') || !text);
-	if (!progress && !softKbVisible() && typeof jawnosAlert === 'function') { jawnosAlert(text); }
+	if (!quiet && !progress && !softKbVisible() && typeof jawnosAlert === 'function') { jawnosAlert(text); }
 }
 
 function softKbDictateErrorText(code) {
@@ -487,21 +487,95 @@ function softKbDictationAppend(target, text) {
 	softKbInsert(sep + text, target, true);
 }
 
+// The caret's place in a rich editor, counted in characters over its text
+// nodes, so an interim phrase can be appended where the person was typing
+// rather than at the end of the note.
+function softKbEditableOffset(el) {
+	var sel = window.getSelection ? window.getSelection() : null;
+	if (!sel || !sel.rangeCount) { return null; }
+	var range = sel.getRangeAt(0);
+	if (!el.contains(range.startContainer)) { return null; }
+	var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+	var offset = 0;
+	var node;
+	while ((node = walker.nextNode())) {
+		if (node === range.startContainer) { return offset + range.startOffset; }
+		offset += (node.nodeValue || '').length;
+	}
+	return null;
+}
+
+function softKbEditableCaret(el, offset) {
+	var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+	var seen = 0;
+	var node;
+	var last = null;
+	while ((node = walker.nextNode())) {
+		var len = (node.nodeValue || '').length;
+		if (offset <= seen + len) {
+			var range = document.createRange();
+			range.setStart(node, Math.max(0, offset - seen));
+			range.collapse(true);
+			var sel = window.getSelection();
+			sel.removeAllRanges();
+			sel.addRange(range);
+			return true;
+		}
+		seen += len;
+		last = node;
+	}
+	if (!last) { return false; }
+	var at = document.createRange();
+	at.setStart(last, (last.nodeValue || '').length);
+	at.collapse(true);
+	var end = window.getSelection();
+	end.removeAllRanges();
+	end.addRange(at);
+	return true;
+}
+
+// A rich editor keeps its words as nodes, not a value, so its snapshot is the
+// markup plus the caret's offset; restoring both puts the person back where
+// they were typing before the guess is appended.
+function softKbDictationPartialEditable(target, text) {
+	if (!jawnDictate.partial_base || !jawnDictate.partial_base.editable) {
+		jawnDictate.partial_base = {
+			editable: true,
+			html: target.innerHTML,
+			offset: softKbEditableOffset(target)
+		};
+	}
+	target.innerHTML = jawnDictate.partial_base.html;
+	try { target.focus({ preventScroll: true }); } catch (err) { try { target.focus(); } catch (err2) {} }
+	if (jawnDictate.partial_base.offset != null) { softKbEditableCaret(target, jawnDictate.partial_base.offset); }
+	else { softKbEditableCaret(target, (target.textContent || '').length); }
+	softKbDictationAppend(target, text);
+}
+
 // Interim words from the phone's recogniser, shown while the person is still
 // talking. A field is restored to the text it had before the phrase, then the
 // current guess is appended, so each partial replaces the last instead of
 // piling up; the final resets that base and goes through the ordinary append.
-// The input method has no page field, so its interim words ride the hint line
-// and the final still commits to the editor.
+// The input method's field is not in this page, so its words go through the
+// service's composing text (or a commit the next guess replaces), never a
+// dialog.
 function softKbDictationPartial(target, text) {
 	text = String(text || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
 	if (!text) { return; }
-	if (jawnSoftIme || !target || !document.contains(target) || !softKbEditable(target)
-		|| target.isContentEditable || typeof target.selectionStart != 'number') {
-		softKbDictateHint(text);
+	if (jawnSoftIme) { softKbImePartial(text); return; }
+	if (!target || !document.contains(target) || !softKbEditable(target)) {
+		softKbDictateHint(text, true);
 		return;
 	}
-	if (!jawnDictate.partial_base) {
+	if (target.isContentEditable) {
+		softKbDictationPartialEditable(target, text);
+		return;
+	}
+	if (typeof target.selectionStart != 'number') {
+		softKbDictateHint(text, true);
+		return;
+	}
+	if (!jawnDictate.partial_base || jawnDictate.partial_base.editable) {
 		jawnDictate.partial_base = {
 			value: target.value || '',
 			start: target.selectionStart,
@@ -517,7 +591,21 @@ function softKbDictationPartial(target, text) {
 function softKbDictationPartialReset(target) {
 	var base = jawnDictate.partial_base;
 	jawnDictate.partial_base = null;
-	if (!base || !target || !document.contains(target) || target.isContentEditable) { return; }
+	if (jawnSoftIme) { softKbImePartialReset(); return; }
+	if (!base || !target || !document.contains(target)) { return; }
+	if (base.editable || target.isContentEditable) {
+		if (base.html != null) {
+			target.innerHTML = base.html;
+			if (base.offset != null) {
+				try { target.focus({ preventScroll: true }); } catch (err) {}
+				softKbEditableCaret(target, base.offset);
+			}
+			// the house's editor keeps a source textarea; put back what it held
+			// before the phrase, or a save would keep interim words nobody said
+			softKbNotify(target);
+		}
+		return;
+	}
 	target.value = base.value;
 	try {
 		target.selectionStart = base.start;
@@ -608,6 +696,13 @@ function softKbDictateOemStart() {
 		},
 		onFinal: function (text) {
 			if (session != jawnDictate.session) { return; }
+			if (jawnSoftIme) {
+				// the target app's field is reached only through the service,
+				// and its composing text replaces the interim guess in place
+				softKbDictationImeFinal(text);
+				if (jawnSoftListening) { softKbDictateHint(softKbLabel('Listening…')); }
+				return;
+			}
 			softKbDictationPartialReset(target);
 			softKbDictationAppend(target, text);
 			if (jawnSoftListening) { softKbDictateHint(softKbLabel('Listening…')); }
