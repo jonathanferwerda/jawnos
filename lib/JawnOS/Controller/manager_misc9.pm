@@ -2392,15 +2392,57 @@ sub studio_take_folder {
 	return $dir;
 }
 
-# `studio-take-<epoch>-<n>.wav`, with n the first free number in that second.
-# The engine writes the file, so the name is settled before the command and
-# never comes from the request.
+our $studio_take_tracks_max = 32;
+our $studio_take_input_max  = 31;
+
+# `studio-take-<epoch>-<n>.wav`, with n the first number in that second whose
+# names are free. The engine writes the WAV, so the name is settled before the
+# command and never comes from the request.
+#
+# The names are created here, empty and exclusive, rather than only probed. A
+# multi-track take writes `-ch1` ... `-chN` and never the base, so probing the
+# base alone let a second multi-track start in the same second reuse n and
+# truncate the first take's files. Reserving the base is the lock that keeps n
+# unique for every start in that second; the derived `-chN` names are reserved
+# too, so a file the engine wrote earlier (or one left without its base) still
+# occupies its number. EEXIST moves to the next n; the caller drops whatever it
+# reserved when the take is refused or, for the multi-track base, once the
+# engine has started. Returns (error, base path, [reserved paths]).
 sub studio_take_path {
-	my ($folder, $epoch) = @_;
+	my ($folder, $epoch, $tracks) = @_;
 	$epoch = time() unless defined $epoch;
+	$tracks = 1
+		unless defined $tracks && !ref $tracks && $tracks =~ /\A\+?\d+\z/ && $tracks >= 1;
+	$tracks = $studio_take_tracks_max if $tracks > $studio_take_tracks_max;
+
 	my $take = 1;
-	$take++ while -e File::Spec->catfile($folder, "studio-take-$epoch-$take.wav");
-	return File::Spec->catfile($folder, "studio-take-$epoch-$take.wav");
+	while (1) {
+		my $base = "studio-take-$epoch-$take.wav";
+		my @names = ($base);
+		push @names, map { "studio-take-$epoch-$take-ch$_.wav" } 1 .. $tracks
+			if $tracks > 1;
+		my @reserved;
+		my $taken = 0;
+		for my $name (@names) {
+			my $path = File::Spec->catfile($folder, $name);
+			if (sysopen(my $fh, $path, O_WRONLY | O_CREAT | O_EXCL, 0666)) {
+				close $fh;
+				push @reserved, $path;
+				next;
+			}
+			if ($!{EEXIST}) {
+				$taken = 1;
+				last;
+			}
+			unlink @reserved;
+			return ("the recording folder could not reserve $name: $!", undef, undef);
+		}
+		unless ($taken) {
+			return (undef, File::Spec->catfile($folder, $base), \@reserved);
+		}
+		unlink @reserved;
+		$take++;
+	}
 }
 
 # The inserts the engine can build. `reverb2` is the web's alias for reverb and
@@ -2418,8 +2460,6 @@ our %studio_take_inserts = map { $_ => 1 } qw(
 our %studio_take_master_inserts = map { $_ => 1 } qw(
 	master_comp master_eq master_reverb master_maximizer master_limiter
 );
-our $studio_take_tracks_max = 32;
-our $studio_take_input_max  = 31;
 
 # The documented parameter shape (`docs/studio-effects.md`, "The control
 # path"): `<insert>.<control>` in lowercase, plus the strip's own `gain` and
@@ -2990,7 +3030,12 @@ sub studio_take_start {
 	return (503, { ok => 0, error => 'the recording folder could not be created' })
 		unless $ready && -d $folder;
 
-	my $path = &studio_take_path($folder);
+	# The engine writes one file per track; the base is reserved to keep the
+	# number unique and is dropped again for a multi-track take, which writes
+	# only its `-chN` files.
+	my $track_count = $plan ? scalar(@$plan) : 1;
+	my ($path_error, $path, $reserved) = &studio_take_path($folder, undef, $track_count);
+	return (503, { ok => 0, error => $path_error }) if defined $path_error;
 	my $extra;
 	$extra->{'tracks'} = $plan if $plan;
 	$extra->{'master'} = $master if @$master;
@@ -3006,6 +3051,16 @@ sub studio_take_start {
 	);
 	$answer = { ok => 0, error => 'the audio engine did not answer' }
 		unless ref $answer eq 'HASH';
+
+	# A refused take is no take: give every reserved name back, so a retry in the
+	# same second reuses the number instead of skipping it forever. A multi-
+	# track take that did start wrote its `-chN` files and not the base, so the
+	# base reservation is dropped now and the per-track files are kept.
+	if (!$answer->{'ok'}) {
+		unlink @$reserved if $reserved;
+	} elsif ($track_count > 1) {
+		unlink $path;
+	}
 
 	# The probe above can race an engine that exits between the two connections.
 	# The client says the same sentence when a connect fails, so the route still

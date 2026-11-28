@@ -14,6 +14,7 @@ use Test::More;
 use File::Slurp qw(read_file);
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
+use File::Spec ();
 use Cwd qw(abs_path getcwd);
 use IO::Socket::UNIX;
 use Mojo::JSON qw(decode_json encode_json);
@@ -420,6 +421,15 @@ sub run_sound_param {
 		{ input => 1, inserts => [qw(tone delay)] },
 	], 'each track gets its input and the armed chain');
 
+	# The engine writes one file per track, and the reservation is what makes
+	# the next start in this second see them.
+	my $multi_out = $calls[-1][0];
+	my ($multi_epoch, $multi_num) = $multi_out =~ /studio-take-(\d+)-(\d+)\.wav\z/;
+	ok(defined $multi_epoch, 'the planned take names a base');
+	ok(-e File::Spec->catfile($rec_dir, "studio-take-$multi_epoch-$multi_num-ch1.wav")
+		&& -e File::Spec->catfile($rec_dir, "studio-take-$multi_epoch-$multi_num-ch2.wav"),
+		'a multi-track start reserves the per-track files the engine writes');
+
 	my $one = run_take(tracks => '3', inserts => 'reverb');
 	is_deeply($calls[-1][3]{'tracks'}, [
 		map { { input => $_, inserts => ['reverb'] } } 0 .. 2
@@ -528,6 +538,60 @@ sub run_sound_param {
 		ok(!$refused->{'json'}{'ok'}, 'with ok false');
 	}
 	is(scalar @calls, $before, 'no malformed plan reaches the engine');
+
+	# --- the take name is reserved, not merely probed -----------------------
+	# A multi-track take writes only its `-chN` files, never the base, so
+	# probing the base alone let a second multi-track start in the same second
+	# reuse the number and truncate the first take. Every name the take will
+	# write is created exclusively before the engine is dialled, so the next
+	# start in that second sees it.
+	my $epoch = 1_700_000_000;
+	my (undef, $base1, $held1) = Manager::studio_take_path($rec_dir, $epoch, 3);
+	my (undef, $base2, $held2) = Manager::studio_take_path($rec_dir, $epoch, 3);
+	is($base1, File::Spec->catfile($rec_dir, "studio-take-$epoch-1.wav"),
+		'the first multi-track take keeps the historical base name');
+	isnt($base2, $base1,
+		'a second multi-track start in the same second gets another base');
+	is(scalar @$held1, 4, 'a three-track take reserves the base and -ch1..-ch3');
+	my @expected1 = (
+		File::Spec->catfile($rec_dir, "studio-take-$epoch-1.wav"),
+		map { File::Spec->catfile($rec_dir, "studio-take-$epoch-1-ch$_.wav") } 1 .. 3,
+	);
+	is_deeply([sort @$held1], [sort @expected1],
+		'and names every file the engine will write');
+	ok(-e $_, "the reserved name exists: $_") for @$held1;
+	unlink @$held1, @$held2;
+
+	my (undef, $single, $held_single) = Manager::studio_take_path($rec_dir, $epoch, 1);
+	is($single, File::Spec->catfile($rec_dir, "studio-take-$epoch-1.wav"),
+		'a single-track take keeps the exact historical name');
+	is_deeply($held_single, [$single], 'and reserves only that one file');
+	unlink @$held_single;
+
+	# A refused start gives its reservation back: leaving the empty names
+	# behind would make every later start in that second skip the number.
+	{
+		my $refused_dir = tempdir(CLEANUP => 1);
+		&subs::setting_setter({
+			app => 'misc', setting => 'rec_location', value => $refused_dir,
+			device => &subs::device_setter(),
+		});
+		local *JawnOS::Audio::Engine::audio_engine_record = sub {
+			push @calls, [@_];
+			return { ok => 0, error => 'the engine said no' };
+		};
+		my $refused = run_take(seconds => '5', tracks => '2');
+		ok(!$refused->{'json'}{'ok'}, 'a refused multi-track start is not a take');
+		my $out = $calls[-1][0];
+		my ($epoch2, $num) = $out =~ /studio-take-(\d+)-(\d+)\.wav\z/;
+		ok(defined $epoch2, 'the refused take was given a planned name');
+		ok(!-e File::Spec->catfile($refused_dir, "studio-take-$epoch2-$num.wav")
+			&& !-e File::Spec->catfile($refused_dir, "studio-take-$epoch2-$num-ch1.wav"),
+			'a refused start leaves no reservation behind');
+		my (undef, $again, $held) = Manager::studio_take_path($refused_dir, $epoch2, 2);
+		is($again, $out, 'the next start in that second gets the number back');
+		unlink @$held;
+	}
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
 	unlike($controller, qr/param\(\s*['"]path['"]\s*\)/, 'the controller never reads a path parameter');

@@ -19,6 +19,7 @@ no warnings 'once';
 
 use Cwd qw(abs_path);
 use FindBin;
+use File::Basename qw(basename);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
@@ -212,5 +213,65 @@ is_deeply($adopted->{'remove'}, [abs_path($engine_wav)], 'the original is queued
 unlink $_ for @{ $adopted->{'remove'} };
 ok(!-e $engine_wav, 'and is gone once the song is written');
 ok(-e $outside_wav, 'an outside file was never touched');
+
+# --- the take file route serves a -chN file and only inside the folder ------
+{
+	package TakeFileCtx;
+	sub new   { return bless { params => $_[1], status => 200 }, $_[0] }
+	sub param { return $_[0]->{'params'}{$_[1]} }
+	sub res   { return $_[0]->{'res'} ||= bless {}, 'TakeFileRes' }
+	sub reply { return $_[0]->{'reply'} ||= bless {}, 'TakeFileReply' }
+	sub render {
+		my ($self, @args) = @_;
+		while (@args) {
+			my $name  = shift @args;
+			my $value = shift @args;
+			$self->{$name} = $value;
+		}
+	}
+	package TakeFileRes;
+	sub headers { return $_[0] }
+	sub content_type {
+		my ($self, $value) = @_;
+		$self->{'content_type'} = $value if @_ > 1;
+		return $self->{'content_type'};
+	}
+	sub cache_control {
+		my ($self, $value) = @_;
+		$self->{'cache_control'} = $value if @_ > 1;
+		return $self->{'cache_control'};
+	}
+	package TakeFileReply;
+	sub file { $_[0]->{'file'} = $_[1]; return $_[0] }
+	package main;
+
+	my $serve_dir = tempdir(CLEANUP => 1);
+	my $serve_ch = File::Spec->catfile($serve_dir, 'studio-take-1700000003-1-ch2.wav');
+	write_file($serve_ch, 'RIFF-ch');
+	my $outside_dir = tempdir(CLEANUP => 1);
+	my $outside = File::Spec->catfile($outside_dir, 'studio-take-1700000003-2-ch1.wav');
+	write_file($outside, 'RIFF-outside');
+
+	local *Manager::studio_take_folder = sub { $serve_dir };
+
+	my $served = TakeFileCtx->new({ file => $serve_ch });
+	Manager::action_44045($served);
+	is($served->{'reply'}{'file'}, abs_path($serve_ch), 'a -chN take is served by its own name');
+	is($served->{'res'}{'content_type'}, 'audio/wav', 'as a WAV');
+	is($served->{'res'}{'cache_control'}, 'private, no-store', 'with no browser cache');
+	ok(!exists $served->{'json'}, 'and not as a refusal');
+
+	my $cross = TakeFileCtx->new({ file => $outside });
+	Manager::action_44045($cross);
+	is($cross->{'status'}, 404, 'a take outside the recording folder is refused');
+	ok(!exists $cross->{'reply'}{'file'}, 'and no file is handed to the reply');
+
+	my $traversal = TakeFileCtx->new({
+		file => File::Spec->catfile($serve_dir, '..', basename($outside_dir), basename($outside)),
+	});
+	Manager::action_44045($traversal);
+	is($traversal->{'status'}, 404, 'a traversal to that same name is refused');
+	ok(!exists $traversal->{'reply'}{'file'}, 'and hands back nothing');
+}
 
 done_testing();
