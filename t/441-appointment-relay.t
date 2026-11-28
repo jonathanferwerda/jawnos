@@ -30,6 +30,7 @@ my (@inserted, @updates, @pushed, @relay);
 	no warnings 'redefine';
 	no warnings 'once';
 	local *subs::rightNow = sub { return 1_700_000_500_000 };
+	local *subs::signatorial_designer = sub { return 'origin-signal' };
 	local *subs::controller_builder = sub { return RelayCtx->new };
 	local *subs::database_grabber = sub { return (undef, undef, undef) };
 	local *subs::setting_initializer = sub { return { app => $_[0], duration => 0 } };
@@ -84,6 +85,9 @@ my (@inserted, @updates, @pushed, @relay);
 	is($relay[0]{'dissemination'}, 'yes', 'as a broadcast');
 	is($relay[0]{'params'}{'uuid'}, '1700000100000-relay', 'carrying the row uuid');
 	is($relay[0]{'params'}{'app'}, 'relay_test', 'and its app');
+	is($relay[0]{'params'}{'remote_signatorial'}, 'origin-signal',
+		'and names the origin as the capture machine');
+	ok(!exists $inserted[0]{'remote_signatorial'}, 'which never reaches SQL');
 
 	# A caller that already sent the movement says so.
 	write_row(relayed => 'yes');

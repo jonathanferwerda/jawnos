@@ -119,8 +119,12 @@ sub appointment_writer($c,$app) {
 	my $already_relayed = $app->{'relayed'};
 	delete $app->{'relayed'};
 	my $from_relay = 0;
-	foreach my $relay_key (qw(dissemination source_signatorial relay_from relay_id remoted remote_uuid)) {
-		$from_relay = 1 if defined $app->{$relay_key} && length $app->{$relay_key};
+	foreach my $relay_key (qw(dissemination source_signatorial relay_from relay_id remoted remote_uuid remote_signatorial)) {
+		# remote_signatorial is a capture directive, not a relay marker: the
+		# origin names itself on the relay so a peer does not start a recorder
+		# for a row the origin already captured.
+		$from_relay = 1 if $relay_key ne 'remote_signatorial'
+			&& defined $app->{$relay_key} && length $app->{$relay_key};
 		delete $app->{$relay_key};
 	}
 	my $timestamp = $app->{'timestamp'};
@@ -504,6 +508,9 @@ sub appointment_writer($c,$app) {
 		# stays a finished record, and a child write stays quiet there too.
 		$relay_row{'completed_row'} = 1 if $completed_row;
 		$relay_row{'quiet_child'} = 1 if $quiet_child;
+		# The origin owns the capture: name it here so a peer's record branch
+		# sees $capture_here false and does not start its own recorder.
+		$relay_row{'remote_signatorial'} = &subs::signatorial_designer() || '';
 		my $relay_c = $c;
 		unless (eval { $relay_c && defined $relay_c->req }) {
 			$relay_c = eval { &subs::controller_builder() } unless $relay_c;
