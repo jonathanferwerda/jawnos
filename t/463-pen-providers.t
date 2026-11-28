@@ -67,12 +67,14 @@ my $part = read_file(repo_root() . '/lib/JawnOS/Manager/Part25.pm');
 like($part, qr/pen_model_choices\(&subs::ai_model_catalogue\('chat'\)\)/, 'the Pen section flattens the chat catalogue');
 unlike($part, qr/\$chatbot_models\s*=\s*&subs::pen_model_list\(\)/, 'the Pen section no longer hand-builds the list');
 
-# The picker template reads the shape the helper produces: value from model,
-# label from name, guarded so a row missing either cannot warn or vanish.
+# The picker template reads the shape the helper produces: the value is the
+# row's model, the label its short name (the provider is the group header), and
+# each guard keeps a row missing either from warning or vanishing.
 my $tpl = read_file(repo_root() . '/templates/mail/pen_sections.html.ep');
-like($tpl, qr/<option value="<%= \$cm->\{'model'\}/, 'the option value is the row model');
-like($tpl, qr/<%= \$cm->\{'name'\}/, 'the option label is the row name');
-like($tpl, qr/\$cm->\{'model'\} \/\/ ''/, 'a missing model key is guarded');
+like($tpl, qr/my \$mid = \$cm->\{'model'\} \/\/ ''/, 'the option value is the row model');
+like($tpl, qr/<%= \$cm->\{'short'\} \|\| \$cm->\{'name'\}/, 'the option label is the row short name');
+like($tpl, qr/<optgroup label=/, 'the rows are grouped under their provider');
+like($tpl, qr/next unless length \$mid/, 'a missing model key is guarded');
 
 # Pen's reply goes over the shared AI wire now: no hand-rolled Ollama/Cloudflare
 # request, and the unmetered contract the ledger relies on.

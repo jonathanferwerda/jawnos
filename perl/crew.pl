@@ -786,6 +786,7 @@ sub _choice_context {
 			openrouter => 'openrouter_key',
 			deepseek   => 'deepseek_key',
 			opencode   => 'opencode_key',
+			alibaba    => 'alibaba_key',
 		},
 		bucket_ok => sub {
 			my ($bucket) = @_;

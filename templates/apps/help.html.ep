@@ -160,10 +160,28 @@
 			<span style="font-weight:bold;font-size:13px;opacity:.8;">Guide</span>
 			<select id="help_model" class="help_model_select" value="<%= $selected_model %>"
 				style="max-width:210px;padding:3px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:13px;">
+				<% my $sel = defined $selected_model ? $selected_model : '';
+				   my (%hgroups, @horder);
+				   foreach my $cm ( @{$models || []} ) {
+				       my $mid = $cm->{'model'} || $cm->{'name'};
+				       next unless $mid;
+				       my $g = $cm->{'group'} || '';
+				       push @horder, $g unless exists $hgroups{$g};
+				       push @{$hgroups{$g}}, $cm;
+				   }
+				   my $hshown = 0;
+				%>
 				<option value="">Choose a model…</option>
-				<% if ($models) { foreach my $cm ( @{$models} ) { my $mid = $cm->{'model'} || $cm->{'name'}; next unless $mid; %>
-					<option value="<%= $mid %>" <% if ($selected_model eq $mid) { %>selected<% } %>><%= $cm->{'name'} || $mid %></option>
-				<% } } %>
+				<% foreach my $g ( @horder ) { %>
+					<optgroup label="<%= length($g) ? $g : 'Models' %>">
+						<% foreach my $cm ( @{$hgroups{$g}} ) { my $mid = $cm->{'model'} || $cm->{'name'}; next unless $mid; %>
+							<option value="<%= $mid %>" <% if ($sel eq $mid) { %>selected<% $hshown = 1; } %>><%= $cm->{'short'} || $cm->{'name'} || $mid %></option>
+						<% } %>
+					</optgroup>
+				<% } %>
+				<% if (length($sel) && !$hshown) { %>
+					<option value="<%= $sel %>" selected><%= $sel %> (kept — not offered here just now)</option>
+				<% } %>
 			</select>
 			<label style="display:flex;align-items:center;gap:4px;font-size:12px;opacity:.8;cursor:var(--jawnos-cursor-pointer, pointer);" hint="Switch the composer to the Coding agent, which edits and ships the JawnOS code"><input type="checkbox" id="help_coding"> Coding</label>
 			<span id="help_context" style="font-size:12px;opacity:.7;"></span>

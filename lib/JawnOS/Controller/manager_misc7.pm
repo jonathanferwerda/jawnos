@@ -652,13 +652,16 @@ sub action_26178 {
 	my $q = $c->param('q') || $c->param('search') || '';
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	# Every chat model from every configured provider, grouped by provider, for
-	# the AI tab's picker. Cached like the Help window's list: opening Search must
-	# not sit on an Ollama probe or a Cloudflare request.
+	# the AI tab's picker. Cached like the Help window's list, keyed by the provider
+	# set: opening Search must not sit on an Ollama probe or a Cloudflare request,
+	# and a provider added to the registry shows up without waiting out the cache.
 	&subs::preload('pen_model_list');
-	my $models = &subs::cache_get({ app => 'search', context => 'ai_models' });
+	my $sig = join '_', map { $_->{'id'} || '' } @{ &subs::ai_providers() };
+	my $context = 'ai_models_' . $sig;
+	my $models = &subs::cache_get({ app => 'search', context => $context });
 	unless (ref $models eq 'ARRAY') {
 		$models = &subs::ai_model_catalogue('chat');
-		&subs::cache_set({ app => 'search', context => 'ai_models', warranty => '-10m' }, $models);
+		&subs::cache_set({ app => 'search', context => $context, warranty => '-10m' }, $models);
 	}
 	my $contents = $c->render_to_string(
 		template => 'apps/search',

@@ -21,8 +21,22 @@
 			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="chatbot_conversation_delete little_thumb hover" style="vertical-align:bottom;">
 		<% } %>
 	    <select class="pen_settings" setting="chatbot_model" value="<%= $con->{'chatbot_model'} // '' %>">
-	      <% foreach my $cm ( @{$chatbot_models || []}) { %>
-	        <option value="<%= $cm->{'model'} // '' %>" <% if (($con->{'chatbot_model'} // '') eq ($cm->{'model'} // '')) { %>selected<% } %>><%= $cm->{'name'} // $cm->{'model'} // '' %><% if ($cm->{'price'}) { %> <%= $cm->{'price'} %><% } %></option>
+	      <% my (%pgroups, @porder);
+	         foreach my $cm ( @{$chatbot_models || []} ) {
+	             my $mid = $cm->{'model'} // '';
+	             next unless length $mid;
+	             my $g = $cm->{'group'} || '';
+	             push @porder, $g unless exists $pgroups{$g};
+	             push @{$pgroups{$g}}, $cm;
+	         }
+	      %>
+	      <option value="" <% if (!length($con->{'chatbot_model'} // '')) { %>selected<% } %>>— none —</option>
+	      <% foreach my $g ( @porder ) { %>
+	        <optgroup label="<%= length($g) ? $g : 'Models' %>">
+	          <% foreach my $cm ( @{$pgroups{$g}} ) { my $mid = $cm->{'model'} // ''; next unless length $mid; %>
+	            <option value="<%= $mid %>" <% if (($con->{'chatbot_model'} // '') eq $mid) { %>selected<% } %>><%= $cm->{'short'} || $cm->{'name'} || $mid %></option>
+	          <% } %>
+	        </optgroup>
 	      <% } %>
 	    </select>
 		<br>

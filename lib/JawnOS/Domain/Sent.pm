@@ -558,11 +558,13 @@ sub pen_message {
 
 # Pen's picker rows, from the shared catalogue: every chat-capable model from
 # every configured provider, peer Ollamas included. The catalogue is grouped by
-# provider and the picker wants one flat list, so a group's label rides beside
-# each model it offers. The value is the id the wire reads back - a bare Ollama
-# name, @cf/..., @device/model, or provider:model - left exactly as the
-# catalogue stamped it; the first of a repeated id wins, so a model both a
-# provider list and a peer advertises appears once.
+# provider, and each row keeps that group's label so a picker can draw the
+# provider header and list the model under it. The value is the id the wire reads
+# back - a bare Ollama name, @cf/..., @device/model, or provider:model - left
+# exactly as the catalogue stamped it; the first of a repeated id wins, so a
+# model both a provider list and a peer advertises appears once. `name` is the
+# full "provider · model" label (a flat select keeps its context), `short` the
+# model alone (a grouped one takes the provider from the header).
 sub pen_model_choices {
 	my ($catalogue) = @_;
 	return [] unless ref $catalogue eq 'ARRAY';
@@ -581,7 +583,7 @@ sub pen_model_choices {
 			my $name = $m->{'name'};
 			$name = $value unless defined $name && length $name;
 			my $full = ($label && $label ne $name) ? $label . " \x{00b7} " . $name : $name;
-			push @choices, { model => $value, name => $full };
+			push @choices, { model => $value, name => $full, short => $name, group => $label };
 		}
 	}
 	return \@choices;
@@ -678,20 +680,25 @@ sub cloudflare_model_list {
 }
 
 # The Help window's model dropdown is house-wide and normally changes only when
-# a provider adds or removes a model. It used to poll Ollama and Cloudflare
-# synchronously on every open - two network calls, one of them off the machine,
-# for a list that was almost always identical. The local cache makes the open
-# instant; an empty answer is cached too, so a machine with no providers does
-# not re-probe on every click.
+# a provider adds or removes a model. It offers every chat model from every
+# provider that can answer here (a key entered, or the models the local Ollama
+# reported), grouped by provider. The probe is cached, keyed by the provider
+# set, so adding a provider shows at once and an unchanged list opens instantly.
 sub help_model_list {
-	my $cached = &subs::cache_get({ app => 'mail', context => 'help_models' });
+	my $sig = join '_', map { $_->{'id'} || '' } @{ &subs::ai_providers() };
+	my $context = 'help_models_' . $sig;
+	my $cached = &subs::cache_get({ app => 'mail', context => $context });
 	return $cached if ref $cached eq 'ARRAY';
-	my $models = &pen_model_list();
-	$models = [] unless ref $models eq 'ARRAY';
-	my $cloud = &cloudflare_model_list();
-	push @{$models}, @{$cloud} if ref $cloud eq 'ARRAY';
-	&subs::cache_set({ app => 'mail', context => 'help_models', warranty => '-10m' }, $models);
-	return $models;
+	my $catalogue = &subs::ai_model_catalogue('chat');
+	my @ready = grep {
+		my $id = $_->{'id'} || '';
+		($id eq 'ollama' || $id =~ /^ollama:/)
+			? scalar @{ $_->{'models'} || [] }
+			: &subs::ai_provider_ready($id)
+	} @{ ref $catalogue eq 'ARRAY' ? $catalogue : [] };
+	my $choices = &pen_model_choices(\@ready);
+	&subs::cache_set({ app => 'mail', context => $context, warranty => '-10m' }, $choices);
+	return $choices;
 }
 
 1;

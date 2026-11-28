@@ -1,6 +1,7 @@
 # tests-for: lib/JawnOS/Domain/Sent.pm lib/JawnOS/Controller/manager_help.pm
-# covers:    the Help model dropdown polls Ollama and Cloudflare once, then answers from the
-#            local cache; a provider that answers nothing is an empty list, not a crash.
+# covers:    the Help model dropdown asks the shared chat catalogue once, keeps only
+#            providers that can answer, then reads the provider-keyed local cache;
+#            a provider that answers nothing is an empty group, not a crash.
 
 use strict;
 use warnings;
@@ -41,20 +42,34 @@ my @calls;
 	is_deeply(\@calls, ['get'], 'no provider is polled on a cache hit');
 }
 
-# A miss polls both providers, merges them, and stores the result for ten minutes.
+# A miss asks the shared chat catalogue, keeps only providers that can answer
+# here, flattens them to picker rows, and caches the result.
 {
 	@calls = ();
 	no warnings 'once';
 	local *subs::cache_get = sub { push @calls, 'get'; return undef };
 	my ($stored_params, $stored_data);
 	local *subs::cache_set = sub { push @calls, 'set'; ($stored_params, $stored_data) = @_ };
-	local *subs::pen_model_list = sub { push @calls, 'pen'; return [ { name => 'ollama' } ] };
-	local *subs::cloudflare_model_list = sub { push @calls, 'cloud'; return [ { name => 'cf' } ] };
+	local *subs::ai_model_catalogue = sub {
+		push @calls, 'catalogue';
+		return [
+			{ id => 'ollama', label => 'Ollama (local)', models => [ { value => 'qwen3:8b', name => 'qwen3:8b' } ] },
+			{ id => 'cloudflare', label => 'Cloudflare Workers AI', models => [ { value => '@cf/llama', name => '@cf/llama' } ] },
+			{ id => 'openai', label => 'OpenAI', models => [ { value => 'openai:gpt-4o', name => 'gpt-4o' } ] },
+		];
+	};
+	local *subs::ai_provider_ready = sub {
+		my ($id) = @_;
+		push @calls, 'ready:' . $id;
+		return ($id eq 'cloudflare') ? 1 : 0;
+	};
 	my $list = &subs::help_model_list();
-	is_deeply($list, [ { name => 'ollama' }, { name => 'cf' } ], 'both provider lists are merged');
-	is_deeply(\@calls, [ 'get', 'pen', 'cloud', 'set' ], 'a miss polls both providers and stores the result');
+	is_deeply([ map { $_->{'model'} } @{$list} ], [ 'qwen3:8b', '@cf/llama' ],
+		'only a ready provider is offered; a provider with models of its own is too');
+	is_deeply(\@calls, [ 'get', 'catalogue', 'ready:cloudflare', 'ready:openai', 'set' ],
+		'a miss asks the catalogue once and checks the keyed providers');
 	is($stored_params->{'app'}, 'mail', 'the cached list belongs to the mail app');
-	is($stored_params->{'context'}, 'help_models', 'the cached list has its own context');
+	like($stored_params->{'context'}, qr/^help_models_/, 'the cache is keyed by the provider set');
 	is($stored_params->{'warranty'}, '-10m', 'the list is kept for ten minutes');
 	is_deeply($stored_data, $list, 'the merged list is what is cached');
 }
@@ -65,10 +80,16 @@ my @calls;
 	no warnings 'once';
 	local *subs::cache_get = sub { return undef };
 	local *subs::cache_set = sub { };
-	local *subs::pen_model_list = sub { return undef };
-	local *subs::cloudflare_model_list = sub { return [ { name => 'cf' } ] };
+	local *subs::ai_model_catalogue = sub {
+		return [
+			{ id => 'ollama', label => 'Ollama (local)', models => [] },
+			{ id => 'cloudflare', label => 'Cloudflare Workers AI', models => [ { value => '@cf/cf', name => '@cf/cf' } ] },
+		];
+	};
+	local *subs::ai_provider_ready = sub { return 1 };
 	my $list = &subs::help_model_list();
-	is_deeply($list, [ { name => 'cf' } ], 'a provider with no answer becomes an empty list');
+	is_deeply([ map { $_->{'model'} } @{$list} ], [ '@cf/cf' ],
+		'a provider with no answer contributes nothing');
 }
 
 # The review prompt is built as lines. It joined its fields with a literal

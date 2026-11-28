@@ -221,10 +221,19 @@
 					<label>Fallback</label>
 					<select class="configure_input ai_role_fallback" app="mail" setting="<%= $setting %>_fallback">
 						<option value="">— none —</option>
-						<% foreach my $m ( @role_models ) {
-							my @mcaps = grep { $_ ne 'other' } @{ $m->{'caps'} };
+						<% my (%fgroups, @forder);
+						   foreach my $m ( @role_models ) {
+						       my $g = $m->{'group'} || '';
+						       push @forder, $g unless exists $fgroups{$g};
+						       push @{$fgroups{$g}}, $m;
+						   }
 						%>
-							<option value="<%= $m->{'value'} %>" <% if ($current && $m->{'value'} eq $current) { %>disabled="disabled"<% } %> <% if ($fallback eq $m->{'value'}) { %>selected="selected"<% } %>><%= $m->{'group'} %> · <%= $m->{'name'} %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
+						<% foreach my $g ( @forder ) { %>
+							<optgroup label="<%= length($g) ? $g : 'Models' %>">
+								<% foreach my $m ( @{$fgroups{$g}} ) { %>
+									<option value="<%= $m->{'value'} %>" <% if ($current && $m->{'value'} eq $current) { %>disabled="disabled"<% } %> <% if ($fallback eq $m->{'value'}) { %>selected="selected"<% } %>><%= $m->{'name'} %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
+								<% } %>
+							</optgroup>
 						<% } %>
 					</select>
 				</div>

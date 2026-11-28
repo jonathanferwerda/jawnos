@@ -784,6 +784,11 @@ sub ai_providers {
 			# The ids must match DeepSeek's API exactly; its /models lists these two
 			# (deepseek-flash is V4.1 Flash, deepseek-v4-pro the pro).
 			models => [ qw/deepseek-flash deepseek-v4-pro/ ] },
+		{ id => 'alibaba',    label => 'Alibaba (Qwen)',        keys => [ [ 'alibaba_key', 'API key' ] ],
+			# DashScope's OpenAI-compatible mode (the international site this house
+			# reaches). The ids are Model Studio's own; a chat model is reached as
+			# alibaba:<id>.
+			models => [ qw/qwen3-max qwen3-coder-plus qwen-max qwen-plus qwen-turbo qwen-long qwen3-vl-plus qwen-vl-max/ ] },
 		{ id => 'mistral',    label => 'Mistral',               keys => [ [ 'mistral_key', 'API key' ] ],
 			models => [ qw/mistral-large-latest mistral-small-latest codestral-latest/ ] },
 		{ id => 'cohere',     label => 'Cohere',                keys => [ [ 'cohere_key', 'API key' ] ],
@@ -913,7 +918,7 @@ sub ai_model_provider {
 	# a peer's own Ollama: @<device>/<model>, so a model can be picked by the
 	# machine that runs it
 	return 'ollama_remote' if $model =~ /^\@[^\/]+\/.+$/;
-	return $1 if $model =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek opencode/;
+	return $1 if $model =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek opencode alibaba/;
 	return 'ollama';
 }
 
