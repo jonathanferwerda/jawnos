@@ -128,9 +128,6 @@ sub appointment_writer($c,$app) {
 	# a stop that names its session (managerReset sends the open session's uuid) is
 	# remembered before the uuid is minted, so the stop closes exactly that row
 	my $stop_target = $app->{'uuid'};
-	# The row a stop closes owns a house-wide silence, so the stop must release
-	# that same owner rather than the stop row's own fresh uuid.
-	my $silence_owner;
 	$app->{'uuid'} = $app->{'uuid'} || &subs::random_string_creator(90);
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $init = &subs::setting_initializer($app->{'app'},$app->{'timestamp'});
@@ -262,7 +259,6 @@ sub appointment_writer($c,$app) {
 		# instead of each sweeping up every open session for the app.
 		my $stop_row = &subs::stop_target_row($app->{'app'}, $stop_target, $app->{'timestamp'});
 		return {} unless $stop_row;
-		$silence_owner = $stop_row->{'uuid'};
 		my $appts = [ $stop_row ];
 		foreach my $appt ( @{$appts} ) {
 			$app->{'type'} = 'stop';
@@ -509,15 +505,13 @@ sub appointment_writer($c,$app) {
 	eval { &subs::visibility_cache_clear(); &subs::lockdown_sweep({ force => 1 }) }
 		if !$completed_row && (($app->{'type'} || '') =~ /^(?:start|stop)$/);
 
-	# An appointment that carries the Silence box takes the whole house quiet
-	# when it starts and gives it back when it stops. The movement is the one
-	# the writer was handed: a stop may rewrite its own type for a recording.
-	# The timestamp goes along so a start written for later engages when it is
-	# due, not when it is saved.
-	if ((($theme_movement // '') eq 'start' || ($theme_movement // '') eq 'stop')
-		&& ($app->{'app'} || '') ne '') {
-		my $silence_owner_id = ($theme_movement eq 'start') ? $app->{'uuid'} : $silence_owner;
-		eval { &subs::silence_appointment_write($app->{'app'}, $theme_movement, $silence_owner_id, $c, $app->{'timestamp'}); };
+	# A start, a record or a stop settles the house's silence from the row this
+	# writer just wrote: a live start engages now and a stop releases now, not at
+	# the next five-second alarm pass. The settle reads the row, so a press that
+	# opened no session moves nothing.
+	if ((($theme_movement // '') =~ /^(?:start|stop|record)$/)
+		&& ($app->{'app'} || '') ne '' && ($app->{'uuid'} || '') ne '') {
+		eval { &subs::silence_appointment_settle($app->{'app'}, $app->{'uuid'}, $c, $app->{'timestamp'}); };
 	}
 
 	return $app;

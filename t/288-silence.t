@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Silence.pm lib/JawnOS/Controller/manager_silence.pm lib/JawnOS/Routes/manager_silence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_configure4.pm perl/hooks.pl perl/Music.pl perl/help/topics_configure.pl templates/configure/appointment_list.html.ep public/js/manager/silence.js public/js/manager/websocket/00_console_router.js perl/Reception.pl public/js/manager/manager/02_web_nfc.js perl/Alarm.pl scripts/silence_probe.pl
+# tests-for: lib/JawnOS/Domain/Silence.pm lib/JawnOS/Controller/manager_silence.pm lib/JawnOS/Routes/manager_silence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_configure4.pm perl/hooks.pl perl/Music.pl perl/help/topics_configure.pl templates/configure/appointment_list.html.ep public/js/manager/silence.js public/js/manager/websocket/00_console_router.js perl/Reception.pl public/js/manager/manager/02_web_nfc.js perl/Alarm.pl scripts/silence_probe.pl lib/JawnOS/Manager/Part14.pm
 # covers:    Silence: the house-wide state, the local mixer snapshot (with the IVR
 #            sinks kept audible), the appointment start/stop hook, the phone's
 #            forced receptionist route, the audio gates, and the browser guard.
@@ -129,6 +129,10 @@ $main::SCRATCH = $scratch;
 		# The reconciler asks only for sessions whose own timestamp is due;
 		# honour that so a scheduled row is not counted before its time.
 		my @rows = @QUERY_APPOINTMENTS;
+		if ($sql =~ /where uuid = \?/) {
+			my $want = defined $args[0] ? $args[0] : '';
+			@rows = grep { ref $_ eq 'HASH' && ($_->{'uuid'} // '') eq $want } @rows;
+		}
 		if ($sql =~ /timestamp <= \?/) {
 			my $now = $args[-1];
 			@rows = grep {
@@ -501,6 +505,33 @@ is(scalar @MUTE, 0, 'and leaves the mixer alone');
 subs::silence_appointment_write('mirror', 'start', 'u12', undef, subs::rightNow());
 is(state_hash()->{active}, 1, 'a start due now engages silence');
 
+# A writer settles the house from the row it just wrote, rather than trusting
+# the movement it was handed.
+reset_all();
+$DEVICE = 'mobile';
+$STORE{'mirror|silence|all'} = 'checked';
+@QUERY_APPOINTMENTS = ({ uuid => 'u-settle', app => 'mirror', type => 'start' });
+is(subs::silence_appointment_settle('mirror', 'u-settle', undef), 1,
+	'an open start row settles silence on');
+is(state_hash()->{active}, 1, 'and the house is quiet');
+@QUERY_APPOINTMENTS = ({ uuid => 'u-settle', app => 'mirror', type => 'stop', stop_seen => 'yes' });
+@NATIVE = ();
+is(subs::silence_appointment_settle('mirror', 'u-settle', undef), 1,
+	'a closed row settles silence off');
+my $settle_off = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 0 } @NATIVE;
+ok($settle_off, 'and the phone is told off');
+# A movement that opened no session engages nothing.
+reset_all();
+$STORE{'mirror|silence|all'} = 'checked';
+@QUERY_APPOINTMENTS = ({ uuid => 'u-add', app => 'mirror', type => 'add' });
+subs::silence_appointment_settle('mirror', 'u-add', undef);
+is(state_hash(), undef, 'a non-session row engages no silence');
+# A start written for later waits for its own time.
+@QUERY_APPOINTMENTS = ({ uuid => 'u-future', app => 'mirror', type => 'start' });
+is(subs::silence_appointment_settle('mirror', 'u-future', undef, subs::rightNow() + 300000), 0,
+	'a future start settles nothing yet');
+is(state_hash(), undef, 'and leaves the house alone');
+
 # ============================================================================
 # the house level is an owner too
 # ============================================================================
@@ -764,8 +795,10 @@ like($routes, qr/\[\s*53042\s*,\s*'post'\s*,\s*'\/manager\/silence\/peer'\s*,\s*
 like(source('lib/JawnOS/Routes.pm'), qr/\bmanager_silence\b/, 'the route module is named in Routes.pm');
 like(source('lib/JawnOS/Domain/Loader.pm'), qr/JawnOS::Domain::Silence.*silence_engage/s,
 	'the domain helpers are mapped');
-like(source('lib/JawnOS/Manager/Part05.pm'), qr/silence_appointment_write/,
-	'the appointment writer calls the silence hook');
+like(source('lib/JawnOS/Manager/Part05.pm'), qr/silence_appointment_settle/,
+	'the appointment writer settles silence from the row');
+like(source('lib/JawnOS/Manager/Part14.pm'), qr/silence_appointment_settle/,
+	'and the rail press settles it too');
 like(source('lib/JawnOS/Controller/manager_configure4.pm'), qr/\$setting eq 'silence' \|\| \$setting eq 'sound_profile'/,
 	'the sound profile and the legacy box are saved house-wide');
 like(source('lib/JawnOS/Domain/Log.pm'), qr/'silence', 'sound_profile', 'all'/,
@@ -809,8 +842,8 @@ like($js, qr/jawnPhoneSync/, 'and refreshes the phone facts on a change');
 like(source('perl/Reception.pl'), qr/silence_active.*enabled/s, 'the reception worker arms during silence');
 like(source('lib/JawnOS/Domain/Silence.pm'), qr/type in \('start','record'\) and timestamp <= \?/,
 	'the owner query counts only sessions whose start time is due');
-like(source('lib/JawnOS/Manager/Part05.pm'), qr/silence_appointment_write\([^)]*\$app->\{'timestamp'\}/,
-	'and the writer hands the start time to the hook');
+like(source('lib/JawnOS/Manager/Part05.pm'), qr/silence_appointment_settle\([^)]*\$app->\{'timestamp'\}/,
+	'and the writer hands the start time to the settle');
 like(source('perl/Alarm.pl'), qr/silence_tick/, 'the alarm loop starts and stops silence');
 my $probe = source('scripts/silence_probe.pl');
 like($probe, qr/sound_profile_rows/, 'the probe compares the start hook with the bulk read');

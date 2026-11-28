@@ -1277,6 +1277,14 @@ elsif ($type eq 'delay') {
 			&subs::file_encrypter({ app => $app, suds => $suds });
 		}, { name => 'reset file encrypt' });
 	}
+	# Settle the house's silence from the row this press wrote: a live start or
+	# record engages now and a stop releases now, instead of waiting for the next
+	# five-second alarm pass. appointment_writer calls the same helper, so both
+	# writers agree. A press that opened no session settles nothing.
+	if (($theme_movement // '') =~ /^(?:start|stop|record|resume|cancel)$/
+		&& ($app // '') ne '' && ($uuid // '') ne '') {
+		eval { &subs::silence_appointment_settle($app, $uuid, $c, $timestamp); };
+	}
 	if ($theme_movement =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/) {
 		# The push reaches every open manager, but the press's own screen must not
 		# depend on the socket either: send the same bundle back in this reply, so

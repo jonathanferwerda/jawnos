@@ -1060,6 +1060,27 @@ sub silence_appointment_write {
 	return 1;
 }
 
+# Settle the house from the row a writer just wrote. A live start or record
+# engages at once and a closed session releases; the alarm pass reaches the same
+# answer within five seconds, and a press should not have to wait for it.
+# Reading the row rather than trusting the movement the caller named is what
+# keeps a press that opened no session (a new app coerced to "add", a stop that
+# closed nothing, a completed record) from moving the house.
+sub silence_appointment_settle {
+	my ($app, $uuid, $c, $when) = @_;
+	return 0 unless defined $app && length $app;
+	return 0 unless defined $uuid && length $uuid;
+	my $row = eval {
+		&subs::db_query('select type, stop_seen from appointments where uuid = ? limit 1', $uuid)->hashes->[0];
+	};
+	return 0 unless ref $row eq 'HASH';
+	my $type = lc($row->{'type'} // '');
+	return 0 unless length $type;
+	my $open = ($type eq 'start' || $type eq 'record')
+		&& !(defined $row->{'stop_seen'} && length $row->{'stop_seen'});
+	return &silence_appointment_write($app, $open ? 'start' : 'stop', $uuid, $c, $when);
+}
+
 # ---- the phone ---------------------------------------------------------------
 # Silence answers every call with the receptionist. The flow is returned in the
 # same shape a caller match uses, so the phone and the gateway read one answer.

@@ -46,7 +46,7 @@ my (@inserted, @updates, @pushed, @effects);
 	local *subs::appointment_theme_push = sub { push @effects, 'theme'; return 1 };
 	local *subs::visibility_cache_clear = sub { push @effects, 'visibility'; return 1 };
 	local *subs::lockdown_sweep = sub { push @effects, 'lockdown'; return 1 };
-	local *subs::silence_appointment_write = sub { push @effects, 'silence'; return 1 };
+	local *subs::silence_appointment_settle = sub { push @effects, 'silence'; return 1 };
 	local *subs::stop_target_row = sub { return undef };
 	local *Manager::warranty_resolve = sub { return 1 };
 	local *Manager::warehouse_money_mirror = sub { return 1 };
