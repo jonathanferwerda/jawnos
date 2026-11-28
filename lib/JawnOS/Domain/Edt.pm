@@ -125,6 +125,7 @@ sub edt_button_presser {
 	}
 
 	my $relay_outcome;
+	my $sent_away = 0;
 	if ($movement eq 'command' || $movement eq 'kill') {
 		if ($settings->{'command'} && $settings->{'kill'}) {
 
@@ -143,6 +144,7 @@ sub edt_button_presser {
 		my $ran_away = 0;
 		if (!$destination) {
 			$relay_outcome = &subs::destination_relay({ destination => 'all', app => $app, movement => $movement, timestamp => $server_time, command_id => $command_id });
+			$sent_away = 1;
 			$db_data->{'data'} = 'every machine';
 			# This machine is one of "every machine": destination_relay never
 			# sends the movement back here, so run our own copy below. The press
@@ -153,10 +155,12 @@ sub edt_button_presser {
 			$relay_outcome = &subs::destination_relay({ destination => $destination, app => $app, movement => $movement, timestamp => $server_time, command_id => $command_id });
 			if ($relay_outcome->{'sent'}) {
 				$ran_away = 1;
+				$sent_away = 1;
 				$db_data->{'data'} = $relay_outcome->{'label'};
 			}
 			elsif ($relay_outcome->{'queued'}) {
 				$ran_away = 1;
+				$sent_away = 1;
 				$db_data->{'data'} = 'queued for ' . ($relay_outcome->{'label'} || $destination);
 			}
 		}
@@ -217,6 +221,10 @@ sub edt_button_presser {
 			$returner->{'relay_queued'} = $relay_outcome->{'queued'} ? 1 : 0;
 		}
 
+		# destination_relay already put this movement on every machine it named,
+		# and each writes its own row there; the local row must not be relayed a
+		# second time.
+		$db_data->{'relayed'} = 'yes' if $sent_away;
 		my $insert = &Manager::appointment_writer($c,$db_data);
 	}
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
