@@ -720,6 +720,99 @@ sub weather_history_precipitation_days($lat, $lon, $from_date, $to_date) {
 	return $out;
 }
 
+# ---- the provider's own record ----------------------------------------------
+# The stored readings are the house's, and they begin when the house did. A
+# question about a date before that - or the same date a year earlier, for a
+# comparison - reads Open-Meteo's archive instead: the same gridded model
+# behind the rainfall chart, with the daily extremes, weather code, wind and
+# rain. The archive lags a few days, so the forecast endpoint's past week fills
+# the tail. A past day does not change, so the answer is kept for a month.
+sub weather_history_archive_days($lat, $lon, $from_date, $to_date) {
+	my $empty = {
+		days => [], source => 'Open-Meteo archive',
+		from => $from_date // '', to => $to_date // '',
+		note => &subs::ui('Past weather comes from Open-Meteo\'s gridded archive for this coordinate, not from the house\'s own readings.'),
+	};
+	my ($la, $lo) = (&weather_number($lat), &weather_number($lon));
+	return $empty unless defined $la && defined $lo
+		&& ($from_date // '') =~ /^\d{4}-\d{2}-\d{2}$/ && ($to_date // '') =~ /^\d{4}-\d{2}-\d{2}$/;
+	my $span = &weather_days_between($from_date, $to_date);
+	return $empty unless defined $span && $span >= 0;
+	# A comparison or a season is the widest a question needs; a decade is not.
+	if ($span > 366) {
+		my $t = eval { Time::Piece->strptime($from_date, '%Y-%m-%d') } or return $empty;
+		$to_date = Time::Piece->localtime($t->epoch + 366 * 86400)->strftime('%Y-%m-%d');
+	}
+	my $key = substr(md5_sum("archive|v1|$la|$lo|$from_date|$to_date"), 0, 24);
+	my $cached = eval { &cache_get({ app => 'weather', context => 'archive', subcontext => $key }) };
+	return $cached if ref $cached eq 'HASH' && ref $cached->{'days'} eq 'ARRAY';
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 6, request_timeout => 10);
+	my %by_date;
+	my $take = sub {
+		my ($json) = @_;
+		my $daily = ref $json eq 'HASH' ? ($json->{'daily'} || {}) : {};
+		my $times = ref $daily->{'time'} eq 'ARRAY' ? $daily->{'time'} : [];
+		my $highs = ref $daily->{'temperature_2m_max'} eq 'ARRAY' ? $daily->{'temperature_2m_max'} : [];
+		my $lows = ref $daily->{'temperature_2m_min'} eq 'ARRAY' ? $daily->{'temperature_2m_min'} : [];
+		my $means = ref $daily->{'temperature_2m_mean'} eq 'ARRAY' ? $daily->{'temperature_2m_mean'} : [];
+		my $codes = ref $daily->{'weather_code'} eq 'ARRAY' ? $daily->{'weather_code'} : [];
+		my $rains = ref $daily->{'precipitation_sum'} eq 'ARRAY' ? $daily->{'precipitation_sum'} : [];
+		my $winds = ref $daily->{'wind_speed_10m_max'} eq 'ARRAY' ? $daily->{'wind_speed_10m_max'} : [];
+		my $dirs = ref $daily->{'wind_direction_10m_dominant'} eq 'ARRAY' ? $daily->{'wind_direction_10m_dominant'} : [];
+		for my $i (0 .. $#{$times}) {
+			my $date = $times->[$i] // '';
+			next unless $date =~ /^\d{4}-\d{2}-\d{2}$/ && $date ge $from_date && $date le $to_date;
+			my $row = $by_date{$date} ||= { date => $date };
+			my $high = &weather_number($highs->[$i]);
+			$row->{'high'} = $high if defined $high;
+			my $low = &weather_number($lows->[$i]);
+			$row->{'low'} = $low if defined $low;
+			my $mean = &weather_number($means->[$i]);
+			$row->{'mean'} = $mean if defined $mean;
+			my $code = &weather_number($codes->[$i]);
+			$row->{'condition'} = &weather_wmo_text($code) if defined $code && !length($row->{'condition'} // '');
+			my $rain = &weather_number($rains->[$i]);
+			$row->{'precip_mm'} = $rain if defined $rain;
+			my $wind = &weather_number($winds->[$i]);
+			$row->{'wind_speed'} = $wind if defined $wind;
+			my $dir = &weather_number($dirs->[$i]);
+			$row->{'wind_direction'} = &weather_compass($dir) if defined $dir;
+		}
+	};
+	my ($archive) = &weather_http_get(sprintf(
+		'https://archive-api.open-meteo.com/v1/archive?latitude=%.4f&longitude=%.4f'
+		. '&start_date=%s&end_date=%s'
+		. '&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,weather_code,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant'
+		. '&timezone=auto&temperature_unit=celsius&wind_speed_unit=kmh&precipitation_unit=mm',
+		$la, $lo, $from_date, $to_date
+	), $ua);
+	$take->($archive);
+	# The archive lags the last few days; the forecast endpoint carries them.
+	my $today = &weather_day_key(&rightNow());
+	my $recent_from = &weather_day_key(&rightNow() - 7 * 86400000);
+	if ($to_date ge $recent_from && $from_date le $today) {
+		my ($recent) = &weather_http_get(sprintf(
+			'https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f'
+			. '&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,weather_code,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant'
+			. '&timezone=auto&past_days=7&forecast_days=1&temperature_unit=celsius&wind_speed_unit=kmh&precipitation_unit=mm',
+			$la, $lo
+		), $ua);
+		$take->($recent);
+	}
+	my @days = map { $by_date{$_} } sort keys %by_date;
+	my $out = {
+		days => \@days,
+		source => 'Open-Meteo archive',
+		from => $from_date,
+		to => $to_date,
+		server_time => &rightNow(),
+		note => $empty->{'note'},
+	};
+	# A transient failure must not pin an empty month into the cache.
+	eval { &cache_set({ app => 'weather', context => 'archive', subcontext => $key, warranty => '-30d' }, $out) } if @days;
+	return $out;
+}
+
 sub weather_history_read($opts) {
 	$opts ||= {};
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};

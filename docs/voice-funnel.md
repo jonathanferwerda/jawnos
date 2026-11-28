@@ -38,7 +38,7 @@ The key point is that the Guide is not given a bigger catalogue as the house gro
 
 Some questions are better answered without a model:
 
-- **Weather** — `voice_funnel_weather_answer` reads the same forecast as the Weather app (`lib/JawnOS/Domain/Weather.pm:1139`), using the current GPS fix, the home plate, or a saved place. It answers “now”, “tomorrow”, rain chance, high/low and wind.
+- **Weather** — `voice_funnel_weather_answer` reads the same forecast as the Weather app (`lib/JawnOS/Domain/Weather.pm:1139`), using the current GPS fix, the home plate, or a saved place. It answers “now”, any day the app carries (the forecast is fourteen days), rain chance, high/low and wind. A past day or period reads `weather_history_archive_days` (`lib/JawnOS/Domain/WeatherHistory.pm`) — Open-Meteo's gridded archive, the same feed behind the rainfall chart — so “March 5”, “3 months ago” and “last summer” answer. A comparison (“compare this week to last year”, “was it warmer last year”) reads both ranges and states the difference.
 - **History / visit** — `voice_funnel_history_answer` resolves the named person or place through `Manager::help_search`, reads only that app's appointments, and answers last (past only), first, next, a count, or a stop's duration. A start from the last twelve hours reads as “now”; an older lone start is the last time. A mail/chat verb ("message", "call", "email") is deliberately left to the model.
 - **Find / stop** — the spoken Guide now has a `find` branch (`Manager::help_search`) and a `stop` branch (`voice_command_apply`). These were already server-side; the funnel exposes them to the wrist.
 

@@ -573,19 +573,23 @@ sub voice_funnel_fast($text, $meta = {}) {
 	my $low = lc(defined $text ? $text : '');
 	# "weather station" is an app, not the forecast; leave that to the app grammar.
 	return undef if $low =~ /\bstation\b/;
+	# A weather question is answered from the forecast or the archive before the
+	# history resolver can mistake the words for a visit. The time words are the
+	# same set the target reader understands.
+	if ($low =~ /\bweather\b|\bforecast\b|\brain\b|\bsnow\b|\btemperature\b/
+		&& $low =~ /\b(?:what|how|will|was|were|did|is|forecast|tomorrow|today|yesterday|rain|snow|temperature|outside|high|low|wind|warmer|colder|compare)\b/) {
+		my $what = $low =~ /\brain\b|\bsnow\b|shower|precip/ ? 'precip'
+			: $low =~ /\bhigh\b|\blow\b/ ? 'highlow'
+			: $low =~ /\bwind\b/ ? 'wind'
+			: 'now';
+		return &voice_funnel_weather_answer('', $what, $low);
+	}
 	# History/visit questions read the person's own appointments. The resolver
 	# returns undef when the entity or the question does not resolve, so the
-	# weather path and the model keep their turns.
+	# router and the model keep their turns.
 	my $history = &voice_funnel_history_answer($text, $meta);
 	return $history if $history;
-	return undef unless $low =~ /\bweather\b|\bforecast\b|\brain\b|\bsnow\b/;
-	return undef unless $low =~ /what|how|will|is|forecast|tomorrow|today|rain|snow|temperature|outside|high|low|wind/;
-	my $when = $low =~ /tomorrow/ ? 'tomorrow' : 'now';
-	my $what = $low =~ /\brain\b|\bsnow\b|shower|precip/ ? 'precip'
-		: $low =~ /\bhigh\b|\blow\b/ ? 'highlow'
-		: $low =~ /\bwind\b/ ? 'wind'
-		: 'now';
-	return &voice_funnel_weather_answer($when, $what, $low);
+	return undef;
 }
 
 sub _voice_funnel_weather_location($text) {
@@ -610,17 +614,508 @@ sub _voice_funnel_weather_location($text) {
 	return;
 }
 
+my @VF_WEEKDAY_NAME = qw(sunday monday tuesday wednesday thursday friday saturday);
+my %VF_WEEKDAY = map { $VF_WEEKDAY_NAME[$_] => $_ } 0 .. 6;
+my %VF_MONTH = (
+	january => 1, jan => 1, february => 2, feb => 2, march => 3, mar => 3,
+	april => 4, apr => 4, may => 5, june => 6, jun => 6, july => 7, jul => 7,
+	august => 8, aug => 8, september => 9, sep => 9, sept => 9,
+	october => 10, oct => 10, november => 11, nov => 11, december => 12, dec => 12,
+);
+my @VF_MONTH_NAME = qw(_ January February March April May June July August September October November December);
+my %VF_SEASON = (
+	spring => [3, 1, 5, 31], summer => [6, 1, 8, 31],
+	fall => [9, 1, 11, 30], autumn => [9, 1, 11, 30], winter => [12, 1, 2, 28],
+);
+
+sub _vf_leap($y) {
+	return (($y % 4 == 0 && $y % 100 != 0) || $y % 400 == 0) ? 1 : 0;
+}
+
+sub _vf_day($date, $delta) {
+	my $t = eval { Time::Piece->strptime($date, '%Y-%m-%d') } or return $date;
+	return Time::Piece->localtime($t->epoch + $delta * 86400)->strftime('%Y-%m-%d');
+}
+
+sub _vf_month_end($year, $month) {
+	my $next = $month == 12 ? sprintf('%04d-01-01', $year + 1) : sprintf('%04d-%02d-01', $year, $month + 1);
+	my $t = eval { Time::Piece->strptime($next, '%Y-%m-%d') } or return '';
+	return &_vf_day($t->strftime('%Y-%m-%d'), -1);
+}
+
+sub _vf_month_shift($date, $n) {
+	my $t = eval { Time::Piece->strptime($date, '%Y-%m-%d') } or return ($date, $date);
+	my ($y, $m) = ($t->year, $t->mon + $n);
+	while ($m <= 0) { $m += 12; $y--; }
+	while ($m > 12) { $m -= 12; $y++; }
+	return (sprintf('%04d-%02d-01', $y, $m), &_vf_month_end($y, $m));
+}
+
+sub _vf_shift_years($date, $n) {
+	my ($y, $m, $d) = $date =~ /^(\d{4})-(\d{2})-(\d{2})$/ or return '';
+	my $t = eval { Time::Piece->strptime(sprintf('%04d-%02d-%02d', $y + $n, $m, $d), '%Y-%m-%d') };
+	unless ($t) {
+		# 29 February has no counterpart in a common year
+		$t = eval { Time::Piece->strptime(sprintf('%04d-%02d-28', $y + $n, $m), '%Y-%m-%d') };
+	}
+	return $t ? $t->strftime('%Y-%m-%d') : '';
+}
+
+sub _vf_date_label($date) {
+	my $t = eval { Time::Piece->strptime($date, '%Y-%m-%d') } or return $date;
+	return $t->strftime('%B') . ' ' . $t->mday . ', ' . $t->year;
+}
+
+sub _vf_day_name($date) {
+	my $t = eval { Time::Piece->strptime($date, '%Y-%m-%d') } or return '';
+	return $t->strftime('%A');
+}
+
+sub _vf_week_start($date) {
+	my $t = eval { Time::Piece->strptime($date, '%Y-%m-%d') } or return $date;
+	my $back = $t->wday == 0 ? 6 : $t->wday - 1;   # Monday starts the week
+	return &_vf_day($date, -$back);
+}
+
+sub _vf_last_week($today) {
+	my $from = &_vf_day(&_vf_week_start($today), -7);
+	return ($from, &_vf_day($from, 6));
+}
+
+sub _vf_this_week($today) {
+	my $from = &_vf_week_start($today);
+	return ($from, &_vf_day($from, 6));
+}
+
+sub _vf_next_week($today) {
+	my $from = &_vf_day(&_vf_week_start($today), 7);
+	return ($from, &_vf_day($from, 6));
+}
+
+sub _vf_last_season($today, $season) {
+	my $t = eval { Time::Piece->strptime($today, '%Y-%m-%d') } or return ($today, $today);
+	my ($sm, $sd, $em, $ed) = @{ $VF_SEASON{$season} || [3, 1, 5, 31] };
+	my $y = $t->year;
+	if ($season eq 'winter') {
+		my $end_year = $y;
+		my $end = sprintf('%04d-02-%02d', $end_year, &_vf_leap($end_year) ? 29 : 28);
+		if ($end gt $today) {
+			$end_year--;
+			$end = sprintf('%04d-02-%02d', $end_year, &_vf_leap($end_year) ? 29 : 28);
+		}
+		return (sprintf('%04d-12-01', $end_year - 1), $end);
+	}
+	my $end = sprintf('%04d-%02d-%02d', $y, $em, $ed);
+	if ($end gt $today) {
+		$y--;
+		$end = sprintf('%04d-%02d-%02d', $y, $em, $ed);
+	}
+	return (sprintf('%04d-%02d-%02d', $y, $sm, $sd), $end);
+}
+
+sub _vf_calendar_day($today, $year, $mon, $mday, $last_year = 0) {
+	my $t = eval { Time::Piece->strptime($today, '%Y-%m-%d') } or return $today;
+	my $explicit = (defined $year && $year =~ /^\d{4}$/) ? 1 : 0;
+	my $y = $explicit ? $year : $t->year;
+	$y = $t->year - 1 if !$explicit && $last_year;
+	my $candidate = sprintf('%04d-%02d-%02d', $y, $mon, $mday);
+	my $valid = eval { Time::Piece->strptime($candidate, '%Y-%m-%d') };
+	return '' unless $valid;
+	# No year named: the coming occurrence while it is in the forecast, else the
+	# most recent one. "March 5" in November is this year; "December 20" is last
+	# year, because that is the last time it happened.
+	if (!$explicit && !$last_year) {
+		my $ahead = &subs::weather_days_between($today, $candidate);
+		if (defined $ahead && $ahead > 14) {
+			$candidate = sprintf('%04d-%02d-%02d', $y - 1, $mon, $mday);
+		}
+	}
+	return $candidate;
+}
+
+sub _vf_round($v) {
+	return undef unless defined $v && "$v" =~ /^-?\d+(?:\.\d+)?$/;
+	my $n = 0 + $v;
+	return int($n * 10 + ($n < 0 ? -0.5 : 0.5)) / 10;
+}
+
+sub _vf_avg {
+	my @v = grep { defined } @_;
+	return undef unless @v;
+	my $sum = 0;
+	$sum += $_ for @v;
+	return $sum / @v;
+}
+
+# The day or stretch a weather question names. Returns
+#   { from, to, label, compare }
+# or undef when the words name no time at all. "compare" is last_year,
+# last_month or last_week, and the same period is read again for the answer.
+sub _voice_funnel_weather_target($when, $text) {
+	my $now = &subs::rightNow();
+	my $today = &subs::weather_day_key($now);
+	my $s = lc(join(' ', (defined $when ? $when : ''), (defined $text ? $text : '')));
+	$s =~ s/\x{2019}/'/g;
+	$s =~ s/[^a-z0-9\s\/:.-]+/ /g;
+	$s =~ s/\bplease\b//g;
+	$s =~ s/\s+/ /g;
+	$s =~ s/^\s+|\s+$//g;
+	return undef unless length $s;
+
+	my $compare = '';
+	if ($s =~ /\b(?:compare|compared|versus|vs|difference|warmer|colder|hotter|cooler|wetter|drier)\b/) {
+		$compare = 'last_year' if $s =~ /\blast year\b|\byear ago\b/;
+		$compare = 'last_month' if $s =~ /\blast month\b/;
+		$compare = 'last_week' if $s =~ /\blast week\b/;
+		if (length $compare) {
+			# the comparison phrase is not the time being asked about
+			$s =~ s/\b(?:than|versus|vs|compared to|compare with|to)\s+last (?:year|month|week)\b//g;
+			$s =~ s/\b(?:warmer|colder|hotter|cooler|wetter|drier)\s+last (?:year|month|week)\b//g;
+			$s =~ s/\blast (?:year|month|week)\b//g if $s =~ /\b(?:warmer|colder|hotter|cooler|wetter|drier)\b/;
+		}
+	}
+	my $last_year = (!$compare && $s =~ /\blast year\b/) ? 1 : 0;
+
+	my ($from, $to, $label);
+	if ($s =~ /\b(\d{4})-(\d{2})-(\d{2})\b/) {
+		my ($y, $m, $d) = ($1, $2, $3);
+		$from = $to = sprintf('%04d-%02d-%02d', $y, $m, $d);
+		$label = 'on ' . &_vf_date_label($from);
+	}
+	elsif ($s =~ /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?\b/) {
+		my ($mon, $mday, $year) = ($VF_MONTH{$1}, $2, $3);
+		$from = $to = &_vf_calendar_day($today, $year, $mon, $mday, $last_year);
+		$label = 'on ' . &_vf_date_label($from);
+	}
+	elsif ($s =~ /\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\.?(?:,?\s+(\d{4}))?\b/) {
+		my ($mday, $mon, $year) = ($1, $VF_MONTH{$2}, $3);
+		$from = $to = &_vf_calendar_day($today, $year, $mon, $mday, $last_year);
+		$label = 'on ' . &_vf_date_label($from);
+	}
+	elsif ($s =~ /\b(\d{1,3}|a|one)\s+(day|days|week|weeks|month|months|year|years)\s+ago\b/) {
+		my $n = ($1 eq 'a' || $1 eq 'one') ? 1 : 0 + $1;
+		my $unit = $2;
+		if ($unit =~ /^day/) {
+			$from = $to = &_vf_day($today, -$n);
+			$label = 'on ' . &_vf_date_label($from);
+		}
+		elsif ($unit =~ /^week/) {
+			$from = &_vf_day($today, -7 * $n);
+			$to = &_vf_day($from, 6);
+			$label = 'the week of ' . &_vf_date_label($from);
+		}
+		elsif ($unit =~ /^month/) {
+			my ($fy) = &_vf_month_shift($today, -$n);
+			my ($y, $m) = split /-/, $fy;
+			$from = sprintf('%04d-%02d-01', $y, $m);
+			$to = &_vf_month_end($y, $m);
+			$label = 'in ' . $VF_MONTH_NAME[$m] . ' ' . $y;
+		}
+		else {
+			$from = $to = &_vf_shift_years($today, -$n);
+			$label = 'on ' . &_vf_date_label($from);
+		}
+	}
+	elsif ($s =~ /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\.?\s+(\d{4})\b/) {
+		my ($mon, $y) = ($VF_MONTH{$1}, $2);
+		$from = sprintf('%04d-%02d-01', $y, $mon);
+		$to = &_vf_month_end($y, $mon);
+		$label = 'in ' . $VF_MONTH_NAME[$mon] . ' ' . $y;
+	}
+	elsif ($s =~ /\b(?:in|during|for)\s+(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\b/) {
+		my $mon = $VF_MONTH{$1};
+		my $t = eval { Time::Piece->strptime($today, '%Y-%m-%d') };
+		my $y = $t ? $t->year : (localtime)[5] + 1900;
+		$y-- if &_vf_month_end($y, $mon) gt $today;
+		$from = sprintf('%04d-%02d-01', $y, $mon);
+		$to = &_vf_month_end($y, $mon);
+		$label = 'in ' . $VF_MONTH_NAME[$mon] . ' ' . $y;
+	}
+	elsif ($s =~ /\bday after tomorrow\b/) {
+		$from = $to = &_vf_day($today, 2);
+		$label = 'the day after tomorrow';
+	}
+	elsif ($s =~ /\btomorrow\b/) {
+		$from = $to = &_vf_day($today, 1);
+		$label = 'tomorrow';
+	}
+	elsif ($s =~ /\byesterday\b/) {
+		$from = $to = &_vf_day($today, -1);
+		$label = 'yesterday';
+	}
+	elsif ($s =~ /\btoday\b|\btonight\b|\bnow\b|\bcurrently\b/) {
+		$from = $to = $today;
+		$label = 'today';
+	}
+	elsif ($s =~ /\blast\s+(week|month|year|spring|summer|fall|autumn|winter)\b/) {
+		my $p = $1;
+		if ($p eq 'week') {
+			($from, $to) = &_vf_last_week($today);
+			$label = 'last week (' . &_vf_date_label($from) . ' to ' . &_vf_date_label($to) . ')';
+		}
+		elsif ($p eq 'month') {
+			($from, $to) = &_vf_month_shift($today, -1);
+			my ($y, $m) = split /-/, $from;
+			$label = 'last month (' . $VF_MONTH_NAME[$m] . ' ' . $y . ')';
+		}
+		elsif ($p eq 'year') {
+			$from = $to = &_vf_shift_years($today, -1);
+			$label = 'a year ago today';
+		}
+		else {
+			($from, $to) = &_vf_last_season($today, $p);
+			$label = 'last ' . $p . ' (' . &_vf_date_label($from) . ' to ' . &_vf_date_label($to) . ')';
+		}
+	}
+	elsif ($s =~ /\bthis\s+(week|month)\b/) {
+		my $p = $1;
+		if ($p eq 'week') {
+			($from, $to) = &_vf_this_week($today);
+			$label = 'this week (' . &_vf_date_label($from) . ' to ' . &_vf_date_label($to) . ')';
+		}
+		else {
+			($from, $to) = &_vf_month_shift($today, 0);
+			my ($y, $m) = split /-/, $from;
+			$label = 'this month (' . $VF_MONTH_NAME[$m] . ' ' . $y . ')';
+		}
+	}
+	elsif ($s =~ /\bnext\s+(week|month)\b/) {
+		my $p = $1;
+		if ($p eq 'week') {
+			($from, $to) = &_vf_next_week($today);
+			$label = 'next week (' . &_vf_date_label($from) . ' to ' . &_vf_date_label($to) . ')';
+		}
+		else {
+			($from, $to) = &_vf_month_shift($today, 1);
+			my ($y, $m) = split /-/, $from;
+			$label = 'next month (' . $VF_MONTH_NAME[$m] . ' ' . $y . ')';
+		}
+	}
+	elsif ($s =~ /\b(last|next)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/) {
+		my ($which, $name) = ($1, $2);
+		my $target = $VF_WEEKDAY{$name};
+		my $t = eval { Time::Piece->strptime($today, '%Y-%m-%d') };
+		my $today_w = $t ? $t->wday : 0;
+		my $ahead = ($target - $today_w + 7) % 7;
+		if ($which eq 'last') {
+			my $back = ($today_w - $target + 7) % 7;
+			$back = 7 if $back == 0;
+			$from = $to = &_vf_day($today, -$back);
+		}
+		else {
+			$ahead = 7 if $ahead == 0;
+			$ahead += 7 if $ahead > 0 && $ahead < 7;
+			$from = $to = &_vf_day($today, $ahead);
+		}
+		$label = 'on ' . &_vf_day_name($from) . ', ' . &_vf_date_label($from);
+	}
+	elsif ($s =~ /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/) {
+		my $target = $VF_WEEKDAY{$1};
+		my $t = eval { Time::Piece->strptime($today, '%Y-%m-%d') };
+		my $today_w = $t ? $t->wday : 0;
+		my $ahead = ($target - $today_w + 7) % 7;
+		$from = $to = &_vf_day($today, $ahead);
+		$label = $ahead == 0 ? 'today' : ($ahead == 1 ? 'tomorrow' : 'on ' . &_vf_day_name($from) . ', ' . &_vf_date_label($from));
+	}
+	elsif ($s =~ /\bin\s+(\d{1,2})\s+(day|days|week|weeks)\b/) {
+		my $n = 0 + $1;
+		my $days = $2 =~ /^week/ ? $n * 7 : $n;
+		$from = $to = &_vf_day($today, $days);
+		$label = 'on ' . &_vf_date_label($from);
+	}
+	elsif ($s =~ /\b(\d{1,2})\s+days?\s+from\s+now\b/) {
+		$from = $to = &_vf_day($today, 0 + $1);
+		$label = 'on ' . &_vf_date_label($from);
+	}
+	if (!defined $from && length $compare) {
+		$from = $to = $today;
+		$label = 'today';
+	}
+	return undef unless defined $from && length $from;
+	$label = 'on ' . &_vf_date_label($from) unless defined $label && length $label;
+	return { from => $from, to => $to, label => $label, compare => $compare };
+}
+
+# The days of a range, from the forecast while it reaches and from Open-Meteo's
+# archive for the past. Each row carries its own source so the answer can say
+# which record it read.
+sub _voice_funnel_weather_range_days($lat, $lon, $from, $to) {
+	return [] unless defined $from && defined $to && length $from && length $to && $from le $to;
+	my %rows;
+	my $today = &subs::weather_day_key(&subs::rightNow());
+	if ($to ge $today) {
+		my $w = eval { &subs::weather_fetch($lat, $lon, {}) };
+		if ($w && ref $w eq 'HASH' && !$w->{'error'}) {
+			foreach my $d (@{ $w->{'daily'} || [] }) {
+				my $date = $d->{'date'} // '';
+				next unless $date ge $from && $date le $to;
+				$rows{$date} = { %$d, source => 'forecast' };
+			}
+		}
+	}
+	my @missing;
+	my $d = $from;
+	my $guard = 0;
+	while ($d le $to && $guard++ < 400) {
+		push @missing, $d if $d lt $today && !$rows{$d};
+		$d = &_vf_day($d, 1);
+	}
+	if (@missing) {
+		my $archive = eval { &subs::weather_history_archive_days($lat, $lon, $missing[0], $missing[-1]) } || {};
+		foreach my $row (@{ $archive->{'days'} || [] }) {
+			my $date = $row->{'date'} // '';
+			next unless length $date;
+			$rows{$date} = { %$row, source => 'archive' };
+		}
+	}
+	return [ map { $rows{$_} } sort keys %rows ];
+}
+
+sub _voice_funnel_weather_range_speech($target, $days, $what, $place) {
+	my @d = @{ $days || [] };
+	return '' unless @d;
+	my $archive = 1;
+	$archive = 0 if grep { ($_->{'source'} // '') ne 'archive' } @d;
+	my $label = $target->{'label'} // ('on ' . &_vf_date_label($target->{'from'}));
+	my $head = $label;
+	if ($archive) {
+		my $tail = $label;
+		$tail =~ s/^(?:on|in|from)\s+//;
+		$head = "Open-Meteo's record for " . $tail;
+	}
+	if (@d == 1) {
+		my $d = $d[0];
+		my @bits;
+		if (($what // '') eq 'precip') {
+			if (defined $d->{'precip_mm'}) { push @bits, &_vf_round($d->{'precip_mm'}) . ' mm of rain'; }
+			elsif (defined $d->{'precip_prob'}) { push @bits, &_vf_round($d->{'precip_prob'}) . '% chance of precipitation'; }
+			else { push @bits, 'no precipitation figure'; }
+		}
+		elsif (($what // '') eq 'highlow') {
+			push @bits, 'high ' . &_vf_round($d->{'high'}) if defined $d->{'high'};
+			push @bits, 'low ' . &_vf_round($d->{'low'}) if defined $d->{'low'};
+		}
+		else {
+			push @bits, lc($d->{'condition'}) if length($d->{'condition'} // '');
+			push @bits, 'high ' . &_vf_round($d->{'high'}) if defined $d->{'high'};
+			push @bits, 'low ' . &_vf_round($d->{'low'}) if defined $d->{'low'};
+			if (defined $d->{'precip_mm'} && $d->{'precip_mm'} > 0) { push @bits, &_vf_round($d->{'precip_mm'}) . ' mm of rain'; }
+			elsif (defined $d->{'precip_prob'}) { push @bits, &_vf_round($d->{'precip_prob'}) . '% chance of precipitation'; }
+			if (($what // '') eq 'wind' && defined $d->{'wind_speed'}) {
+				push @bits, 'wind ' . &_vf_round($d->{'wind_speed'}) . ' kilometres an hour' . (length($d->{'wind_direction'} // '') ? ' from the ' . $d->{'wind_direction'} : '');
+			}
+		}
+		@bits = ('no reading') unless @bits;
+		return ucfirst($head) . $place . ': ' . join(', ', @bits) . '.';
+	}
+	my @highs = grep { defined } map { $_->{'high'} } @d;
+	my @lows = grep { defined } map { $_->{'low'} } @d;
+	my @precips = grep { defined } map { $_->{'precip_mm'} } @d;
+	my %conditions;
+	$conditions{$_->{'condition'}}++ for grep { length($_->{'condition'} // '') } @d;
+	my @bits;
+	if (($what // '') eq 'precip') {
+		my $total = 0;
+		$total += $_ for @precips;
+		@bits = @precips ? ('about ' . &_vf_round($total) . ' mm of rain') : ('no rainfall figure');
+	}
+	elsif (($what // '') eq 'highlow') {
+		my $mh = &_vf_avg(@highs);
+		my $ml = &_vf_avg(@lows);
+		push @bits, 'highs averaging ' . &_vf_round($mh) if defined $mh;
+		push @bits, 'lows averaging ' . &_vf_round($ml) if defined $ml;
+	}
+	else {
+		my $mh = &_vf_avg(@highs);
+		my $ml = &_vf_avg(@lows);
+		push @bits, 'highs averaging ' . &_vf_round($mh) if defined $mh;
+		push @bits, 'lows averaging ' . &_vf_round($ml) if defined $ml;
+		my ($top) = sort { $conditions{$b} <=> $conditions{$a} || $a cmp $b } keys %conditions;
+		push @bits, 'mostly ' . lc($top) if defined $top && length $top;
+		my $total = 0;
+		$total += $_ for @precips;
+		push @bits, &_vf_round($total) . ' mm of rain' if @precips && $total > 0;
+	}
+	@bits = ('no reading') unless @bits;
+	return ucfirst($head) . $place . ': ' . join(', ', @bits) . '.';
+}
+
+sub _voice_funnel_weather_compare_range($target) {
+	my $kind = $target->{'compare'} // '';
+	return () unless length $kind;
+	my ($from, $to) = ($target->{'from'}, $target->{'to'});
+	return () unless defined $from && defined $to && length $from && length $to;
+	if ($kind eq 'last_year') {
+		return (&_vf_shift_years($from, -1), &_vf_shift_years($to, -1), 'the same time last year');
+	}
+	if ($kind eq 'last_month') {
+		my ($f, $t) = &_vf_month_shift($from, -1);
+		return ($f, $t, 'the month before');
+	}
+	if ($kind eq 'last_week') {
+		return (&_vf_day($from, -7), &_vf_day($to, -7), 'the week before');
+	}
+	return ();
+}
+
+sub _voice_funnel_weather_compare_speech($days, $cdays, $clabel, $what) {
+	my @t = @{ $days || [] };
+	my @c = @{ $cdays || [] };
+	return '' unless @t && @c;
+	if (($what // '') eq 'precip') {
+		my ($tt, $tn, $ct, $cn) = (0, 0, 0, 0);
+		foreach my $d (@t) { if (defined $d->{'precip_mm'}) { $tt += $d->{'precip_mm'}; $tn++; } }
+		foreach my $d (@c) { if (defined $d->{'precip_mm'}) { $ct += $d->{'precip_mm'}; $cn++; } }
+		return '' unless $tn && $cn;
+		my $word = $tt > $ct + 0.5 ? 'wetter' : ($tt < $ct - 0.5 ? 'drier' : 'about as wet');
+		return ' That was ' . $word . ' than ' . $clabel . ' (' . &_vf_round($tt) . ' mm against ' . &_vf_round($ct) . ').';
+	}
+	my $th = &_vf_avg(map { $_->{'high'} } @t);
+	my $ch = &_vf_avg(map { $_->{'high'} } @c);
+	my $tl = &_vf_avg(map { $_->{'low'} } @t);
+	my $cl = &_vf_avg(map { $_->{'low'} } @c);
+	return '' unless defined $th && defined $ch;
+	my $diff = $th - $ch;
+	my $word = $diff > 0.5 ? 'warmer' : ($diff < -0.5 ? 'cooler' : 'about the same');
+	my $amount = ($diff > 0.5 || $diff < -0.5) ? ' by ' . &_vf_round(abs($diff)) . ' degrees' : '';
+	my $speech = ' That is ' . $word . $amount . ' than ' . $clabel . ' (a high of ' . &_vf_round($th) . ' against ' . &_vf_round($ch);
+	$speech .= '; a low of ' . &_vf_round($tl) . ' against ' . &_vf_round($cl) if defined $tl && defined $cl;
+	return $speech . ').';
+}
+
 sub voice_funnel_weather_answer($when, $what, $text = '') {
-	my ($lat, $lon, $label) = &_voice_funnel_weather_location($text);
+	my ($lat, $lon, $location_label) = &_voice_funnel_weather_location($text);
 	unless (defined $lat && defined $lon) {
 		return { handled => 1, kind => 'weather', speech => 'I do not have a recent location for the weather.' };
+	}
+	my $target = &_voice_funnel_weather_target($when, $text);
+	if ($target && length($target->{'from'} // '')) {
+		my $place = (length($location_label // '') && $location_label ne 'here') ? ' in ' . $location_label : '';
+		my $days = &_voice_funnel_weather_range_days($lat, $lon, $target->{'from'}, $target->{'to'});
+		unless (@{$days}) {
+			my $missing = $target->{'label'} // 'that time';
+			$missing =~ s/^(?:on|in|from)\s+//;
+			return { handled => 1, kind => 'weather', speech => 'I have no weather record for ' . lc($missing) . $place . '.' };
+		}
+		my $speech = &_voice_funnel_weather_range_speech($target, $days, $what, $place);
+		my ($cf, $ct, $clabel) = &_voice_funnel_weather_compare_range($target);
+		if (length($cf // '')) {
+			my $cdays = &_voice_funnel_weather_range_days($lat, $lon, $cf, $ct);
+			if (@{$cdays}) {
+				$speech .= &_voice_funnel_weather_compare_speech($days, $cdays, $clabel, $what);
+			}
+			else {
+				$speech .= ' I have no record for ' . $clabel . ' to compare.';
+			}
+		}
+		return { handled => 1, kind => 'weather', speech => $speech };
 	}
 	my $w = eval { &subs::weather_fetch($lat, $lon, {}) };
 	unless ($w && ref $w eq 'HASH' && !$w->{'error'}) {
 		return { handled => 1, kind => 'weather', speech => 'Weather is unavailable right now.' };
 	}
 	my $cur = $w->{'current'} || {};
-	my $place = length($label) ? ' in ' . $label : '';
+	my $place = length($location_label) ? ' in ' . $location_label : '';
 	my $temp = $cur->{'temperature'};
 	my $cond = $cur->{'condition'} || '';
 	if (($when // '') eq 'tomorrow') {
