@@ -19,6 +19,7 @@ use File::Copy;
 use File::Find;
 use File::Path;
 use File::Slurp;
+use File::Spec ();
 use JawnOS::Platform ();
 use JawnOS::Platform::Audio ();
 use IO::Select;
@@ -377,6 +378,318 @@ sub transcode_pcm_8k {
 	return ($? == 0 && length $pcm) ? $pcm : undef;
 }
 
+# ---------------------------------------------------------------------------
+# Warm Piper: a resident voice for the replies that follow each other.
+#
+# piper the CLI loads its model on every call, and a short sentence is most of
+# that cost on a small machine. A repeat reply should not pay it twice. The
+# daemon (scripts/piper_server.pl) keeps one piper process and answers loopback
+# HTTP with the same 8 kHz PCM the one-shot path makes; the reply path tries it
+# first and falls back to the one-shot when it is not up, not current, or slow.
+#
+# It follows the warm whisper server's shape (Ai.pm): a demand marker,
+# ~/.president/piper-want, that a voice clip touches, a President loop that
+# starts the daemon while the marker is fresh and stops the one it started after
+# ten quiet minutes, and no server on a machine that has no piper (the Android
+# app runtime). The daemon also stops itself, so a server a Crew job started on
+# a peer cannot outlive its welcome either.
+# ---------------------------------------------------------------------------
+
+sub piper_server_port {
+	my $port = $ENV{'JAWNOS_PIPER_WARM_PORT'};
+	return $port + 0 if defined $port && $port =~ /^\d+$/;
+	return 8179;
+}
+
+# The daemon this tree ships. A packaged install keeps scripts/ beside lib/.
+sub piper_server_script {
+	my $root = eval { &subs::install_dir() } || '';
+	return '' unless length $root;
+	return $root . '/scripts/piper_server.pl';
+}
+
+# True only where a warm render is possible at all: piper, a voice model for the
+# chosen voice, and the daemon script. The phone answers no here (no glibc piper,
+# no python), so it never starts a loop it cannot use.
+sub piper_server_available {
+	return 0 unless length &subs::say_piper_binary();
+	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+	return 0 unless $argv && ref $argv eq 'ARRAY' && @{$argv} && $model && -e $model;
+	my $script = &piper_server_script();
+	return 0 unless length $script && -f $script;
+	return 1;
+}
+
+# Demand marker, the same contract as whisper-want: 0 when nothing has ever
+# asked, the marker's mtime otherwise. Passing a true value touches it.
+sub piper_server_wanted {
+	my ($touch) = @_;
+	my $file = &subs::home('~/.president/piper-want');
+	if (!-e $file) {
+		return 0 unless $touch;
+		my $dir = &subs::home('~/.president');
+		eval { File::Path::make_path($dir) } unless -d $dir;
+		open(my $fh, '>>', $file) or return 0;
+		close($fh);
+	}
+	utime(undef, undef, $file) if $touch;
+	my $mtime = (stat($file))[9];
+	return $mtime || 0;
+}
+
+# One request to the daemon. Returns { code, headers, body } or undef. A tiny
+# hand-rolled client (rather than Mojo::UserAgent) keeps this usable inside a
+# subprocessor child whose loop was reset and gives a precise timeout: a reply
+# must fall back, never wait.
+sub _piper_warm_http {
+	my ($method, $path, $body, $timeout) = @_;
+	$timeout = 3 unless defined $timeout && $timeout > 0;
+	require IO::Socket::INET;
+	require IO::Select;
+	my $sock = IO::Socket::INET->new(
+		PeerAddr => '127.0.0.1',
+		PeerPort => &piper_server_port(),
+		Proto    => 'tcp',
+		Timeout  => 1,
+	);
+	return undef unless $sock;
+	$sock->autoflush(1);
+	$body = '' unless defined $body;
+	my $req = $method . ' ' . $path . " HTTP/1.1\r\n"
+		. "Host: 127.0.0.1\r\nConnection: close\r\n";
+	$req .= "Content-Type: text/plain; charset=utf-8\r\n" if $method eq 'POST';
+	$req .= 'Content-Length: ' . length($body) . "\r\n\r\n" . $body;
+	my $wrote = eval {
+		local $SIG{'PIPE'} = 'IGNORE';
+		print {$sock} $req;
+		1;
+	};
+	unless ($wrote) {
+		close $sock;
+		return undef;
+	}
+	my $sel = IO::Select->new($sock);
+	my $buf = '';
+	my $deadline = time + $timeout;
+	while (1) {
+		my $left = $deadline - time;
+		last if $left <= 0;
+		last unless $sel->can_read($left);
+		my $n = sysread($sock, my $chunk, 65536);
+		last unless defined $n && $n > 0;
+		$buf .= $chunk;
+		last if length($buf) > 2_000_000;
+		if ($buf =~ /\r?\n\r?\n/ && $buf =~ /^Content-Length:\s*(\d+)/mi) {
+			my (undef, $got) = split(/\r?\n\r?\n/, $buf, 2);
+			last if defined $got && length($got) >= $1;
+		}
+	}
+	close $sock;
+	my ($head, $payload) = split(/\r?\n\r?\n/, $buf, 2);
+	return undef unless defined $head && length $head;
+	my ($code) = $head =~ m{^HTTP/\d\.\d\s+(\d{3})};
+	return undef unless defined $code;
+	my %headers;
+	foreach my $line (split(/\r?\n/, $head)) {
+		my ($k, $v) = $line =~ /^([^:]+):\s*(.*)$/ or next;
+		$headers{lc $k} = $v;
+	}
+	$payload = '' unless defined $payload;
+	my $len = $headers{'content-length'};
+	if (defined $len && $len =~ /^\d+$/ && length($payload) > $len) {
+		$payload = substr($payload, 0, $len);
+	}
+	return { code => $code + 0, headers => \%headers, body => $payload };
+}
+
+# The daemon's identity, or undef. The model is how the caller knows a voice
+# change has made the resident process stale.
+sub piper_server_health {
+	my $res = &_piper_warm_http('GET', '/health', '', 2);
+	return undef unless $res && $res->{'code'} == 200;
+	my $d = eval { decode_json($res->{'body'}) };
+	return undef unless ref $d eq 'HASH' && $d->{'ok'};
+	return $d;
+}
+
+# Render words through the resident process. Undef when it is not up, answers
+# with a different model, or takes longer than a reply may. The caller then uses
+# the one-shot path, so a warm server is an accelerator and never a dependency.
+sub piper_server_render {
+	my ($text, $model) = @_;
+	return undef unless defined $text && length $text;
+	my $res = &_piper_warm_http('POST', '/render', $text, 10);
+	return undef unless $res && $res->{'code'} == 200;
+	my $seen = $res->{'headers'}->{'x-piper-model'} // '';
+	if (defined $model && length $model && $seen ne $model) {
+		return undef;
+	}
+	my $pcm = $res->{'body'};
+	return (defined $pcm && length $pcm) ? $pcm : undef;
+}
+
+sub piper_server_shutdown {
+	my $res = &_piper_warm_http('POST', '/shutdown', '', 2);
+	return ($res && $res->{'code'} == 200) ? 1 : 0;
+}
+
+# Start the daemon detached. The child loads the model while the caller returns
+# to its turn; the server's own idle timer is what eventually ends it. Only a
+# platform with fork runs it (the loop and the Crew job are its two callers, and
+# the no-fork desktops fall back to the one-shot render).
+sub piper_server_spawn {
+	my ($argv, $espeak, $model) = @_;
+	return 0 unless $argv && ref $argv eq 'ARRAY' && @{$argv} && $model;
+	return 0 unless JawnOS::Platform::use_fork();
+	my $script = &piper_server_script();
+	return 0 unless length $script && -f $script;
+	my $piper = $argv->[-1];
+	return 0 unless defined $piper && length $piper && -x $piper;
+	my $log = &subs::home('~/piper-warm.log');
+	my @cmd = ($^X, $script, '--piper', $piper, '--model', $model,
+		'--port', &piper_server_port(), '--log', $log);
+	push @cmd, '--runner', $argv->[0] if scalar(@{$argv}) > 1;
+	my $espeak_dir = (@{ $espeak || [] } >= 2 && $espeak->[0] eq '--espeak_data')
+		? $espeak->[1] : '';
+	push @cmd, '--espeak-data', $espeak_dir if length $espeak_dir;
+	my $pid = fork();
+	return 0 unless defined $pid;
+	if ($pid == 0) {
+		POSIX::setsid();
+		open(STDIN, '<', File::Spec->devnull());
+		open(STDOUT, '>>', $log);
+		open(STDERR, '>&', STDOUT);
+		exec(@cmd) or POSIX::_exit(1);
+	}
+	return $pid;
+}
+
+# Ask for a warm voice now. Touches the marker (so the demand loop keeps one
+# alive) and starts the daemon when it is not already up. Best effort: a machine
+# without piper answers 0 and nothing is started.
+sub piper_server_warm {
+	return 0 unless &piper_server_available();
+	&piper_server_wanted(1);
+	return 1 if &piper_server_health();
+	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+	my $pid = &piper_server_spawn($argv, $espeak, $model);
+	return $pid ? 1 : 0;
+}
+
+# A warm server outlives the tree that started it: its loop is killed with the
+# restart and the process stays, reparented to init. Stop those once, when the
+# loop starts. Only a piper_server.pl on this port is touched; a person's own
+# server is not this script's business.
+sub piper_server_stop_orphans {
+	my $port = &piper_server_port();
+	my $stopped = 0;
+	require JawnOS::Platform::Process;
+	foreach my $row ( @{ JawnOS::Platform::Process::table() } ) {
+		my $pid = $row->{'pid'};
+		next if $pid == $$;
+		next unless defined $row->{'ppid'} && $row->{'ppid'} eq '1';
+		my $cmd = $row->{'cmdline'} || '';
+		next unless length $cmd;
+		next unless $cmd =~ /piper_server\.pl/;
+		next unless $cmd =~ /--port\s+\Q$port\E/;
+		JawnOS::Platform::Process::signal('TERM', $pid);
+		$stopped++;
+	}
+	return $stopped;
+}
+
+# The demand loop, run by President as the 'piper server' subprocessor. Started
+# only where piper can run; the phone has none and skips it. The daemon stops
+# itself on idle, so the loop owns a process only to reap it; a server a Crew
+# job started on a peer is left to its own timer. The one thing the loop must
+# act on is a voice change: the resident model is the old voice, so it is
+# stopped and (while the house is still talking) the new one is started.
+sub piper_server_demand_loop {
+	my $idle_limit = 600;      # ten quiet minutes, then the model goes back
+	my $want_at = 0;
+	my $server_pid = 0;
+	my $orphans = &piper_server_stop_orphans();
+	$log->info('piper: stopped ' . $orphans . ' orphaned warm server(s)') if $orphans && $log;
+	while (1) {
+		&subs::subprocessor_heartbeat();
+		my $want = &piper_server_wanted();
+		$want_at = $want if $want > $want_at;
+		my $recent = ($want_at && (time - $want_at) <= 120) ? 1 : 0;
+		my $idle   = ($want_at && (time - $want_at) > $idle_limit) ? 1 : 0;
+		if ($server_pid) {
+			my $reaped = waitpid($server_pid, POSIX::WNOHANG());
+			$server_pid = 0 if $reaped == $server_pid || $reaped == -1;
+		}
+		my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+		my $health = &piper_server_health();
+		my $up = $health ? 1 : 0;
+		my $up_model = $health ? ($health->{'model'} // '') : '';
+		if ($up && length $model && $up_model ne $model) {
+			# The chosen voice changed: the loaded model is the old one. Stop it
+			# whatever started it, then let the fresh start below pick it up.
+			&piper_server_shutdown();
+			$up = 0;
+			$server_pid = 0;
+		}
+		my $ready = ($argv && $model && -e $model) ? 1 : 0;
+		if (!$up && !$server_pid && $recent && $ready) {
+			$server_pid = &piper_server_spawn($argv, $espeak, $model);
+		}
+		elsif ($up && $server_pid && $idle) {
+			&piper_server_shutdown();
+			my $gone = 0;
+			for (1 .. 50) {
+				$gone = 1 if waitpid($server_pid, POSIX::WNOHANG()) != 0;
+				last if $gone;
+				select(undef, undef, undef, 0.1);
+			}
+			if (!$gone) {
+				kill 'KILL', $server_pid;
+				waitpid($server_pid, 0);
+			}
+			$server_pid = 0;
+		}
+		sleep($recent ? 5 : 30);
+	}
+}
+
+# The phone's own voice, written to a file instead of played: the app runtime
+# has no piper and no python, but its Android service can synthesize to a WAV
+# (speech.synth, added in app 0.118.377). The path must be inside getFilesDir(),
+# which subs::home() is on the app runtime (files/home). Returns 8 kHz PCM or
+# undef; the caller logs 'device:tts' when it spoke.
+sub device_tts_pcm_8k {
+	my ($text) = @_;
+	return undef unless defined $text && length $text;
+	my $dir = &subs::home('~/.president');
+	eval { File::Path::make_path($dir) } unless -d $dir;
+	# Sweep a crashed render's leftovers; a reply is a few hundred KB at most.
+	foreach my $old ( glob("$dir/speech_*.wav") ) {
+		unlink $old if $old && time - (stat($old))[9] > 600;
+	}
+	my $name = &subs::random_string_creator(24);
+	$name =~ s/[^A-Za-z0-9]//g;
+	return undef unless length $name >= 12;
+	my $wav = "$dir/speech_$name.wav";
+	# A first synthesis may load the device's engine, so give the bridge longer
+	# than its two-second default; the reply must still never wait on a dead one.
+	my $result = eval {
+		&subs::device_call('speech.synth', { text => $text, path => $wav }, 10);
+	};
+	unless ($result) {
+		unlink $wav if -e $wav;
+		return undef;
+	}
+	unless (-f $wav && (-s $wav) > 44) {
+		unlink $wav if -e $wav;
+		return undef;
+	}
+	my $bytes = eval { read_file($wav, binmode => ':raw') };
+	unlink $wav if -e $wav;
+	return undef unless defined $bytes && length $bytes;
+	return &transcode_pcm_8k($bytes);
+}
+
 # Ask the Crew for a machine with piper to render the words. Returns 8 kHz
 # PCM, or undef. This keeps the house voice on a homebase that cannot run
 # piper (the Android app runtime) without sending the reply to a provider.
@@ -397,15 +710,27 @@ sub crew_say_render {
 }
 
 # The words as 8 kHz PCM by whichever engine this machine has. Returns
-# ($pcm, $source, $error); $source is 'piper', 'piper@peer' or 'cloud:<model>',
-# so a log line and a test can say who spoke.
+# ($pcm, $source, $error); $source is 'piper-warm', 'piper', 'device:tts',
+# 'piper@peer' or 'cloud:<model>', so a log line and a test can say who spoke.
 sub reply_pcm_8k {
 	my ($text) = @_;
 	return (undef, undef, 'nothing to say') unless defined $text && length $text;
 	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
 	if ($argv && $model) {
+		# Warm first: it skips the model load the one-shot pays on every call.
+		# A repeat reply is then fast; when the daemon is not up yet this is a
+		# refused loopback connect, and the one-shot below renders the reply.
+		my $warm = &piper_server_render($text, $model);
+		return ($warm, 'piper-warm', undef) if defined $warm && length $warm;
 		my $pcm = &piper_pcm_8k($text, $argv, $espeak, $model, $rate);
 		return ($pcm, 'piper', undef) if defined $pcm && length $pcm;
+	}
+	# The phone's own engine, to a file this manager can read. It is the house's
+	# voice only where piper cannot run (the Android app runtime); it keeps the
+	# sentence on the device, unlike the cloud fallback below.
+	if ((&subs::device_setter() // '') eq 'mobile') {
+		my $device = &device_tts_pcm_8k($text);
+		return ($device, 'device:tts', undef) if defined $device && length $device;
 	}
 	# No local piper: a peer that has one renders the house voice. This is the
 	# phone homebase's normal path, and it keeps the reply out of the cloud.

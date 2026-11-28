@@ -712,6 +712,17 @@ sub manager_starter() {
 	# from a request worker, whose child would inherit them.
 	&subs::subprocessor(\&jobs::job_whisper_server, { name => 'whisper server' });
 
+	# Warm Piper, the same demand shape for the spoken reply. A voice clip asks
+	# for it (say.warm, or the local reply path), a resident piper then skips the
+	# per-call model load, and the loop stops the one it started after ten quiet
+	# minutes. It is started only where piper can really run: the phone's app
+	# runtime has none, and its reply goes to a peer or its own voice. The loop
+	# needs fork (a no-fork desktop keeps the one-shot render), which every
+	# machine with a piper this loop would start has.
+	if (JawnOS::Platform::use_fork() && length &subs::say_piper_binary()) {
+		&subs::subprocessor(\&subs::piper_server_demand_loop, { name => 'piper server' });
+	}
+
 
 
 

@@ -132,4 +132,22 @@ copy arrives first (`lib/JawnOS/Domain/Ai.pm`, `docs/transcription-roadmap.md`).
    names the model that actually spoke. Note the privacy trade: a reply spoken through the
    cloud sends that sentence to the provider.
 
+   **A repeat reply no longer reloads the model.** A peer render used to be ~3.1–3.5 s for a
+   short sentence, almost all of it piper loading its voice model on each invocation. A
+   demand-started resident daemon (`scripts/piper_server.pl`, loopback port 8179) keeps one
+   piper process and returns 8 kHz PCM from `POST /render`; `reply_pcm_8k` tries it first
+   (`piper-warm`) and falls back to the one-shot (`piper`). A voice clip touches
+   `~/.president/piper-want`, and the Crew job `say.warm` warms a peer while whisper and the
+   Guide are thinking, so the phone's later `say.render` finds the model loaded. The daemon
+   stops after ten quiet minutes and at a hard maximum age, restarts when `say_voice` changes,
+   and never starts on a machine without piper. Measured on the dev box: the one-shot cold
+   render took 0.86–1.10 s and the warm daemon 0.31–0.32 s for the same sentence (the ARM
+   homebase's cold cost is the ~3 s above; warm removes the model load).
+
+   **The phone's own voice first.** App 0.118.377 (versionCode 1375) added `speech.synth`,
+   which writes a WAV inside the app's `getFilesDir()`. On a mobile runtime with no piper,
+   `reply_pcm_8k` asks the bridge and transcodes that file to 8 kHz (`device:tts`) before
+   asking a peer or the cloud. The sentence stays on the device, and the house voice is still
+   preferred wherever piper can run.
+
 The spoken-input brain those all feed is the guide's; see `docs/voice-brain-handoff.md`.

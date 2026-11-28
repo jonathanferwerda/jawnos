@@ -74,6 +74,7 @@ require(root() . '/lib/JawnOS/Domain/Evaluation.pm') unless defined &subs::ai_te
 	{
 		no warnings 'redefine';
 		local *subs::say_piper_parts = sub { return (['/bin/true'], [], '/models/voice.onnx', 22050) };
+		local *subs::piper_server_render = sub { return undef };   # no warm daemon here
 		local *subs::piper_pcm_8k = sub { return 'PIPER-PCM' };
 		local *subs::reply_speech_model = sub { push @cloud_calls, 1; return 'groq:playai-tts' };
 		my ($pcm, $source) = &subs::reply_pcm_8k('hello');

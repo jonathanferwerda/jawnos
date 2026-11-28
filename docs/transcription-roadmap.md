@@ -88,6 +88,22 @@ What remains is operational, not transcription accuracy: R5–R8 below.
 - **The WiFi reply no longer probes the device's board server** when the clip itself arrived
   over WiFi: the source address proves the device is reachable, so the reply is served over
   WiFi immediately. The probe remains for the BLE path.
+- **Warm Piper, and the phone's own voice.** A peer render was ~3.1–3.5 s for a short
+  sentence, nearly all of it piper loading its model per invocation. `scripts/piper_server.pl`
+  is now a demand-started resident daemon (loopback 8179, one piper process, 8 kHz PCM from
+  `POST /render`); `reply_pcm_8k` tries it first (`piper-warm`) and falls back to the one-shot
+  (`piper`). A voice clip touches `~/.president/piper-want`, and the Crew job `say.warm`
+  (needs `piper`, no cache) warms a peer while whisper and the Guide are thinking; the peer's
+  `say.render` then uses the warm process. The daemon stops after ten quiet minutes and at a
+  hard maximum age, and a `say_voice` change reloads it; a machine with no piper never starts
+  it. Measured on the dev box, same sentence: cold 0.86–1.10 s, warm 0.31–0.32 s.
+- **Android native TTS to file.** App 0.118.377 added `speech.synth` (writes a WAV under
+  `getFilesDir()`). On a mobile runtime with no piper, `reply_pcm_8k` asks the device bridge
+  and transcodes that file to 8 kHz (`device:tts`) before a peer or the cloud, so the
+  sentence stays on the device and the reply is faster than either. Order is warm/local
+  piper, device TTS on `mobile`, peer piper, cloud. The render log names the source, so cold
+  and warm are measurable: `voice: reply audio piper-warm|piper|device:tts|piper@peer|cloud
+  ... in Xms`.
 
 ### R1 — Vendor sherpa and prove it (the gate) — **done 2026-11-27**
 

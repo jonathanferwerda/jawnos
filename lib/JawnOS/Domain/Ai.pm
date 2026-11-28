@@ -29,6 +29,7 @@ use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use JawnOS::Platform ();
 use JawnOS::Platform::Process ();
 use Text::Unidecode;
 use Time::Duration;
@@ -54,6 +55,7 @@ our $device;
 our $gb;
 our $log;
 our %m;
+our $warm_piper_at;
 
 # Speech -> text through a cloud model. The transcription model (Configure -> Plat)
 # is either Cloudflare's @cf/openai/whisper or an OpenAI-compatible /audio/
@@ -1202,6 +1204,28 @@ sub voice_brain {
 	return undef;
 }
 
+# A voice clip is the moment before a spoken reply. Ask the Crew to warm a
+# Piper model now, in the background, so the render after whisper and the Guide
+# does not pay the model load - the whole point of a repeat reply being fast.
+# Best effort only: the turn never waits on it, and a peer with piper is warmed
+# exactly the same way as this machine's own demand loop.
+sub voice_warm_piper {
+	return 0 unless defined &crew::dispatch;
+	# The warm-up is a child process. A platform without fork would run the
+	# peer HTTP call inline and make the turn wait, so it keeps the cold path.
+	return 0 unless JawnOS::Platform::use_fork();
+	my $now = time();
+	return 0 if $warm_piper_at && $now - $warm_piper_at < 20;
+	$warm_piper_at = $now;
+	# A machine with its own piper touches the marker here too, so its demand
+	# loop starts even if the Crew dispatch below finds nothing to place.
+	eval { &subs::piper_server_wanted(1) } if eval { length &subs::say_piper_binary() };
+	&subs::subprocessor(sub {
+		eval { &crew::dispatch('say.warm', {}); 1 };
+	}, { name => 'say warm', fork => 1, args => {} });
+	return 1;
+}
+
 sub voice_ingest {
 	# Audio -> text -> action. The single entry both the WiFi route and the BLE
 	# bridge funnel into; the caller says whether its bytes are the whole-clip file
@@ -1258,6 +1282,9 @@ sub voice_ingest {
 	if ($mode ne $VOICE_NOTE_MODE
 		&& !&subs::voice_clip_fresh($meta->{'chip_id'}, $meta->{'ts'})) {
 		return { status => 'duplicate' };
+	}
+	if ($mode ne $VOICE_NOTE_MODE) {
+		&subs::voice_warm_piper();
 	}
 	my $text = &subs::whisper_transcribe($raw, undef, $meta->{'edt'} || 'watch');
 	if (!$text) {

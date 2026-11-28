@@ -107,6 +107,18 @@ our %KINDS = (
 		# has it as soon as the job returns, so do not store it.
 		cache   => 0,
 	},
+	# A voice clip is about to become a spoken reply. Warm the piper model on
+	# a machine that can speak, now, so the later say.render does not pay the
+	# model load inside the reply's critical path. It answers as soon as the
+	# daemon is spawned; the daemon loads in the background while whisper and
+	# the Guide are thinking.
+	'say.warm' => {
+		handler => \&_job_say_warm,
+		timeout => 30,
+		needs   => ['piper'],
+		cost    => 'light',
+		cache   => 0,
+	},
 	# The public (Tailscale-hosted) DERP relay. Any machine may dispatch it; the
 	# `headscale` ability decides which one runs it, because only a machine that
 	# holds the Headscale control target can reach the relay's config.
@@ -1554,9 +1566,28 @@ sub _job_say_render {
 	die "say.render text is too long\n" if length($text) > 2000;
 	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
 	die "piper is not ready here\n" unless $argv && $model;
-	my $pcm = &subs::piper_pcm_8k($text, $argv, $espeak, $model, $rate);
+	# The resident voice this machine warmed for the clip, then the one-shot.
+	# A peer asked to render usually has the model up (say.warm ran while the
+	# clip's whisper and Guide were still thinking), which is the difference
+	# between ~3 s and under a second on a small homebase.
+	my $pcm = &subs::piper_server_render($text, $model);
+	$pcm = &subs::piper_pcm_8k($text, $argv, $espeak, $model, $rate)
+		unless defined $pcm && length $pcm;
 	die "piper rendered nothing\n" unless defined $pcm && length $pcm;
 	return { pcm_b64 => encode_base64($pcm, ''), rate => 8000 };
+}
+
+# A voice clip's warm-up: make sure a Piper model is resident on this machine
+# before the reply is rendered. The caller waits only for the daemon to be
+# spawned, not for the model to load - the daemon loads in the background while
+# whisper and the Guide are thinking. A machine without piper (or a model)
+# refuses, exactly as say.render does.
+sub _job_say_warm {
+	my ($payload) = @_;
+	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
+	die "piper is not ready here\n" unless $argv && $model;
+	my $warm = &subs::piper_server_warm();
+	return { warm => ($warm ? 1 : 0), model => $model };
 }
 
 1;

@@ -48,6 +48,7 @@ my %known = map { $_ => 1 } qw(
 	contact.list
 	location.current
 	speech.speak
+	speech.synth
 	silence.set
 	telephony.dial
 	telephony.deviceinfo

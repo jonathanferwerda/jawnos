@@ -85,14 +85,26 @@ ok(crew::job_caches('whisper.transcribe'), 'a small answer still is');
 {
 	no warnings 'redefine';
 	local *subs::say_piper_parts = sub { return ([qw(/opt/piper)], [], '/voices/ljspeech.onnx', 22050) };
+	local *subs::piper_server_render = sub { return undef };   # no warm daemon
 	local *subs::piper_pcm_8k = sub { return 'PEER-PCM' };
 	my $out = crew::_job_say_render({ text => 'hello' });
 	is($out->{'rate'}, 8000, 'the job returns the reply rate');
 	is(decode_base64($out->{'pcm_b64'}), 'PEER-PCM', 'and the PCM itself');
 }
 {
+	my $one_shot = 0;
+	no warnings 'redefine';
+	local *subs::say_piper_parts = sub { return ([qw(/opt/piper)], [], '/voices/ljspeech.onnx', 22050) };
+	local *subs::piper_server_render = sub { return 'WARM-PCM' };
+	local *subs::piper_pcm_8k = sub { $one_shot++; return 'PEER-PCM' };
+	my $out = crew::_job_say_render({ text => 'hello' });
+	is(decode_base64($out->{'pcm_b64'}), 'WARM-PCM', 'a warmed peer speaks without paying the model load');
+	is($one_shot, 0, 'and never runs the one-shot');
+}
+{
 	no warnings 'redefine';
 	local *subs::say_piper_parts = sub { return () };
+	local *subs::piper_server_render = sub { return undef };
 	my $ok = eval { crew::_job_say_render({ text => 'hello' }); 1 };
 	ok(!$ok, 'a machine without piper refuses the job');
 	like($@, qr/piper is not ready here/, 'and says why');
