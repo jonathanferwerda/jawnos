@@ -122,6 +122,23 @@ sub action_32033 {
 	my $subject = $c->param('subject');
 	my $body = $c->param('body');
 	my $uuid = $c->param('uuid');
+	# A voice letter names the person, not their address or the account uuid.
+	# Resolve the name here, and take the first active account when none was named.
+	if ((!defined $email || $email !~ /\@/) && length($email // '')) {
+		my $addr = &subs::contact_for_name($email, 'email');
+		$email = $addr if length $addr;
+	}
+	unless (defined $from && length $from) {
+		my $servers = eval { decode_json &subs::setting_grabber({ app => 'mailbox', setting => 'email_config' }) } || [];
+		$servers = [] unless ref $servers eq 'ARRAY';
+		my ($active) = grep { ($_->{'active'} // '') eq 'on' } @{$servers};
+		$from = $active ? ($active->{'uuid'} // '') : '';
+	}
+	unless (defined $from && length $from) {
+		$c->render(json => { result => 'no sending account' });
+		return;
+	}
+	$uuid = &subs::random_string_creator(40) unless defined $uuid && length $uuid;
 	my $jattachments = $c->param('attachments');
 	my $timestamp = $c->param('timestamp') ? $c->param('timestamp') : &subs::rightNow();
 	my $sender = $c->param('sender') || &subs::device_setter();

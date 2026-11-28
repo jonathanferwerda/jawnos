@@ -489,6 +489,7 @@ sub guide_stop_when;
 sub guide_stop_appointment;
 sub guide_stage_delete;
 sub guide_undo_push;
+sub guide_undo_appointment;
 sub guide_undo_pop;
 sub guide_refresh_app;
 sub guide_promote_update;

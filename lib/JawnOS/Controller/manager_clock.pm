@@ -197,14 +197,28 @@ sub action_22744 {
 		}
 		else {
 			my @lt = localtime(int($now / 1000));
-			my $hour = ($lt[2] + 1) % 24;
+			# A person setting an alarm names the time in the same sentence
+			# ("set an alarm for 7:30"); add carries that time instead of the next
+			# hour, so one voice call makes the alarm they asked for.
+			my $hour = $c->param('hour');
+			my $minute = $c->param('minute');
+			$hour = ($lt[2] + 1) % 24 unless defined $hour && $hour =~ /^\d{1,2}$/;
+			$minute = 0 unless defined $minute && $minute =~ /^\d{1,2}$/;
+			$hour = 0 + $hour;
+			$minute = 0 + $minute;
+			$hour = 23 if $hour > 23;
+			$minute = 59 if $minute > 59;
+			my $days = $c->param('days');
+			my @days = ref $days eq 'ARRAY' ? @{$days} : grep { length } split /[,\s]+/, ($days // '');
+			@days = grep { defined && /^\d$/ && $_ <= 6 } @days;
+			my $label = $c->param('label');
 			push @{$alarms}, &subs::clock_normalize_alarm({
 				uuid => &subs::random_string_creator(24),
 				hour => $hour,
-				minute => 0,
-				days => [],
+				minute => $minute,
+				days => \@days,
 				enabled => 1,
-				label => &subs::lang('alarm'),
+				label => (defined $label && length $label ? $label : &subs::lang('alarm')),
 				sound => 'notifications/ring.mp3',
 				volume => 70,
 				ramp => 60,

@@ -131,6 +131,14 @@ sub action_41140 {
 	my $c = shift;
 	my $digits = $c->param('digits');
 	my $message = $c->param('message');
+	my $person = $c->param('person') || '';
+	if ((!defined $digits || !length $digits) && length $person) {
+		$digits = &subs::contact_for_name($person, 'phone');
+	}
+	unless (defined $digits && length $digits) {
+		$c->render(json => { ok => 0, error => 'I do not have a number for ' . ($person || 'that person') . '.' });
+		return;
+	}
 
 	my $sms = &sms_message_send($digits,$message);
 

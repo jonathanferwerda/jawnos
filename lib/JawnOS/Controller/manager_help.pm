@@ -640,32 +640,8 @@ sub action_36675 {
 # POST /manager/help/undo
 sub action_36684 {
 	my $c = shift;
-	my $rec = guide_undo_pop();
-	return $c->render(json => { ok => 0, error => 'there is nothing to undo' }) unless $rec && $rec->{'uuid'};
-	# undoing a delete puts the row back; undoing a change restores the fields it set
-	if (($rec->{'kind'} || '') eq 'delete') {
-		my $row = $rec->{'row'};
-		return $c->render(json => { ok => 0, error => 'there is nothing to put back' }) unless ref $row eq 'HASH' && scalar keys %{$row};
-		my %insert = %{$row};
-		$insert{'server_time'} = &subs::rightNow();
-		&subs::db_insert('appointments', \%insert);
-		&subs::appt_toggle_checker($rec->{'app'});
-		&guide_refresh_app($rec->{'app'}, $rec->{'uuid'});
-		return $c->render(json => { ok => 1, app => $rec->{'app'}, summary => 'put back the "' . &subs::format_name($rec->{'app'}) . '" appointment' });
-	}
-	my $target = &subs::db_select('appointments', undef, { uuid => $rec->{'uuid'} })->hash;
-	return $c->render(json => { ok => 0, error => 'that appointment is gone' }) unless $target;
-	my %set = ( timestamp => $rec->{'timestamp'}, server_time => &subs::rightNow() );
-	$set{'duration'} = $rec->{'duration'} if exists $rec->{'duration'};
-	$set{'notes'} = $rec->{'notes'} if exists $rec->{'notes'};
-	$set{'seen'} = $rec->{'seen'} if exists $rec->{'seen'};
-	$set{'stop_seen'} = $rec->{'stop_seen'} if exists $rec->{'stop_seen'};
-	$set{'type'} = $rec->{'type'} if exists $rec->{'type'};
-	$set{'stop_timestamp'} = $rec->{'stop_timestamp'} if exists $rec->{'stop_timestamp'};
-	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
-	&subs::appt_toggle_checker($target->{'app'});
-	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
-	$c->render(json => { ok => 1, app => $target->{'app'}, summary => ($rec->{'title'} || 'the last change was undone') });
+	my $r = &Manager::guide_undo_appointment($c) || {};
+	$c->render(json => $r);
 }
 
 # The Guide makes media: an image, a sound or a video through the matching agent,

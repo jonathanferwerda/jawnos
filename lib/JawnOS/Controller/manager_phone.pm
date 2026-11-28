@@ -135,6 +135,14 @@ sub action_23201 {
 sub action_24603 {
 	my $c = shift;
 	my $number = $c->param('number') || '';
+	my $person = $c->param('person') || '';
+	if (!length $number && length $person) {
+		$number = &subs::contact_for_name($person, 'phone');
+		unless (length $number) {
+			$c->render(json => { ok => 0, error => 'I do not have a phone number for ' . $person . '.' });
+			return;
+		}
+	}
 	$number =~ s/[^\d+#*]//g;
 	unless ($number) { $c->render(json => { ok => 0, error => 'No number.' }); return; }
 	if (&subs::device_setter() eq 'mobile') {

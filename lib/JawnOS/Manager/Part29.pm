@@ -284,6 +284,37 @@ sub guide_undo_pop() {
 	return $rec;
 }
 
+# Undo the newest applied change: an undone delete puts the whole saved row back;
+# an undone change restores the fields it moved. Shared by the Guide's undo route
+# and the spoken "undo that", so both repair the screen the same way.
+sub guide_undo_appointment($c) {
+	my $rec = &guide_undo_pop();
+	return { error => 'there is nothing to undo' } unless $rec && $rec->{'uuid'};
+	if (($rec->{'kind'} || '') eq 'delete') {
+		my $row = $rec->{'row'};
+		return { error => 'there is nothing to put back' } unless ref $row eq 'HASH' && scalar keys %{$row};
+		my %insert = %{$row};
+		$insert{'server_time'} = &subs::rightNow();
+		&subs::db_insert('appointments', \%insert);
+		&subs::appt_toggle_checker($rec->{'app'});
+		&guide_refresh_app($rec->{'app'}, $rec->{'uuid'});
+		return { ok => 1, app => $rec->{'app'}, summary => 'put back the "' . &subs::format_name($rec->{'app'}) . '" appointment' };
+	}
+	my $target = &subs::db_select('appointments', undef, { uuid => $rec->{'uuid'} })->hash;
+	return { error => 'that appointment is gone' } unless $target;
+	my %set = ( timestamp => $rec->{'timestamp'}, server_time => &subs::rightNow() );
+	$set{'duration'} = $rec->{'duration'} if exists $rec->{'duration'};
+	$set{'notes'} = $rec->{'notes'} if exists $rec->{'notes'};
+	$set{'seen'} = $rec->{'seen'} if exists $rec->{'seen'};
+	$set{'stop_seen'} = $rec->{'stop_seen'} if exists $rec->{'stop_seen'};
+	$set{'type'} = $rec->{'type'} if exists $rec->{'type'};
+	$set{'stop_timestamp'} = $rec->{'stop_timestamp'} if exists $rec->{'stop_timestamp'};
+	&subs::db_update('appointments', \%set, { uuid => $target->{'uuid'}, app => $target->{'app'} });
+	&subs::appt_toggle_checker($target->{'app'});
+	&guide_refresh_app($target->{'app'}, $target->{'uuid'});
+	return { ok => 1, app => $target->{'app'}, summary => ($rec->{'title'} || 'the last change was undone') };
+}
+
 # Redraw an app on screen the moment a change lands: the header a window shows
 # (appointment_header) and the open detail view. appt_header_printer also re-arms
 # the app's alarms through its header worker, so a moved appointment fires at its

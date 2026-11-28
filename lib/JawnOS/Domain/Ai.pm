@@ -1356,8 +1356,30 @@ sub voice_brain {
 	{
 		my $pending = eval { &Manager::app_action_pending_take({ chip_id => ($meta->{'chip_id'} // '') }) };
 		if (ref $pending eq 'HASH') {
-			my $kind = &subs::voice_confirmation_kind($text);
-			if ($kind eq 'yes') {
+			my $answer = &subs::voice_confirmation_kind($text);
+			# A staged appointment is held the same way an app write is: the
+			# wrist's "yes" promotes it, "no" discards it, and anything else
+			# drops the proposal.
+			if (($pending->{'kind'} // '') eq 'promote') {
+				if ($answer eq 'yes') {
+					my $r = eval { &Manager::guide_promote_staged(&subs::controller_builder(), $pending->{'uuid'}) } || {};
+					my $speech = $r->{'error'}
+						? ('I could not save it: ' . $r->{'error'} . '.')
+						: ('Saved ' . ($pending->{'label'} || 'the appointment') . '.');
+					$reply->($speech);
+					$log->info('voice: brain promoted a staged appointment "' . $speech . '"');
+					return { handled => 1, action => 'promote', saved => 1, said => $speech };
+				}
+				if ($answer eq 'no') {
+					eval { &subs::db_update('staged_appointments', { status => 'discarded' }, { uuid => $pending->{'uuid'} }) };
+					my $speech = 'Okay, I left it unsaved.';
+					$reply->($speech);
+					$log->info('voice: brain discarded a staged appointment (no)');
+					return { handled => 1, action => 'promote', dropped => 1, said => $speech };
+				}
+				$log->info('voice: brain dropped a staged appointment (not an answer)');
+			}
+			elsif ($answer eq 'yes' && ($pending->{'app'} // '') ne '') {
 				my $r = eval { &Manager::app_action_execute(&subs::controller_builder(), {
 					action => 'app', app => $pending->{'app'}, do => $pending->{'do'},
 					params => ($pending->{'params'} || {}),
@@ -1375,13 +1397,15 @@ sub voice_brain {
 				}
 				return undef;
 			}
-			if ($kind eq 'no') {
+			elsif ($answer eq 'no') {
 				my $speech = 'Okay, I did not do it.';
 				$reply->($speech);
 				$log->info('voice: brain dropped the held app write (no)');
 				return { handled => 1, action => 'app', said => $speech, dropped => 1 };
 			}
-			$log->info('voice: brain dropped the held app write (not an answer)');
+			else {
+				$log->info('voice: brain dropped the held write (not an answer)');
+			}
 		}
 	}
 	# A few data questions need no model at all. Weather is the first: the
@@ -1489,10 +1513,65 @@ sub voice_brain {
 				return { handled => 1, action => 'create', saved => 1, said => $speech };
 			}
 		}
-		my $speech = 'I staged ' . $what . '. Promote it in the Guide and it is saved.';
+		# The wrist has no screen to promote on: hold the staged id for its next
+		# "yes", the same handoff a spoken app write uses.
+		eval { &Manager::app_action_pending_store({ chip_id => ($meta->{'chip_id'} // '') }, {
+			kind => 'promote', uuid => $staged->{'staged'}, label => $what,
+		}) };
+		my $speech = 'I staged ' . $what . '. Say yes to save it.';
 		$reply->($speech);
 		$log->info('voice: brain staged "' . $what . '"');
 		return { handled => 1, action => 'create', staged => $staged->{'staged'}, said => $speech };
+	}
+	# The rest of the appointment loop. A change or a delete stages a proposal
+	# the next "yes" applies; undo acts at once. Without these a spoken create
+	# could never be finished, moved or removed from the wrist.
+	if ($a eq 'update' || $a eq 'delete') {
+		my $app = &subs::unformat_name($action->{'app'} // '');
+		return undef unless length $app;
+		my $params = {
+			app => $app,
+			app_uuid => $action->{'app_uuid'},
+			title => $action->{'title'},
+			when => $action->{'when'},
+			which => $action->{'which'},
+			delay => $action->{'delay'},
+			duration => $action->{'duration'},
+			notes => $action->{'notes'},
+		};
+		my $r = $a eq 'update'
+			? eval { &Manager::guide_stage_update(&subs::controller_builder(), $params) }
+			: eval { &Manager::guide_stage_delete(&subs::controller_builder(), $params) };
+		$r = {} unless ref $r eq 'HASH';
+		my $speech = $r->{'error'}
+			? ('I could not ' . ($a eq 'update' ? 'change' : 'delete') . ' it: ' . $r->{'error'} . '.')
+			: ('I staged ' . ($r->{'summary'} || ($a eq 'update' ? 'the change' : 'the delete')) . '. Say yes to apply it.');
+		if (!$r->{'error'} && $r->{'staged'}) {
+			eval { &Manager::app_action_pending_store({ chip_id => ($meta->{'chip_id'} // '') }, {
+				kind => 'promote', uuid => $r->{'staged'}, label => ($r->{'summary'} || 'the change'),
+			}) };
+		}
+		$reply->($speech);
+		$log->info('voice: brain ' . $a . ' "' . $speech . '"');
+		return { handled => 1, action => $a, staged => $r->{'staged'}, said => $speech };
+	}
+	if ($a eq 'promote') {
+		my $uuid = $action->{'uuid'} // '';
+		return undef unless length $uuid;
+		my $r = eval { &Manager::guide_promote_staged(&subs::controller_builder(), $uuid) } || {};
+		my $speech = $r->{'error'} ? ('I could not save it: ' . $r->{'error'} . '.') : 'Saved it.';
+		$reply->($speech);
+		$log->info('voice: brain promote "' . $speech . '"');
+		return { handled => 1, action => 'promote', said => $speech };
+	}
+	if ($a eq 'undo') {
+		my $r = eval { &Manager::guide_undo_appointment(&subs::controller_builder()) } || {};
+		my $speech = $r->{'error'}
+			? ('I could not undo it: ' . $r->{'error'} . '.')
+			: (ucfirst($r->{'summary'} || 'Put the last change back') . '.');
+		$reply->($speech);
+		$log->info('voice: brain undo "' . $speech . '"');
+		return { handled => 1, action => 'undo', said => $speech, undo => $r };
 	}
 	# speaking verbs: answer out loud, nothing else to run
 	if ($a eq 'say' || $a eq 'ask' || $a eq 'done') {

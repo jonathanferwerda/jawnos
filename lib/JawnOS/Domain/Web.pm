@@ -451,6 +451,25 @@ sub contact_lines {
 	return \%lines;
 }
 
+# The line a person named in words keeps, for voice: resolve the person to
+# their app, then read the house's contact settings for that app. A number or
+# an address the person already said is left alone by the caller.
+sub contact_for_name($name, $kind) {
+	$kind = 'phone' unless defined $kind && ($kind eq 'phone' || $kind eq 'email');
+	$name = defined $name ? $name : '';
+	$name =~ s/^\s+|\s+$//g;
+	return '' unless length $name;
+	my $r = eval { &guide_resolve_target($name, kind => 'person') } || {};
+	return '' unless ref $r eq 'HASH' && $r->{'ok'} && ref $r->{'target'} eq 'HASH';
+	my $app = $r->{'target'}->{'app'} // '';
+	return '' unless length $app;
+	my $lines = eval { &contact_lines($kind, $app) } || {};
+	my $list = $lines->{$app} || [];
+	my ($line) = grep { ($_->{'primary'} // 0) } @{$list};
+	$line ||= $list->[0];
+	return $line ? ($line->{'value'} // '') : '';
+}
+
 # How one line reads in a list: the number or address, and - for a line beyond
 # the first - its type in front of it (a custom entry wears its own label). A
 # blocked line says so.

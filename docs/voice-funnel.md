@@ -98,7 +98,9 @@ A new **fast** resolver:
 
 A new **Guide tool** (the long tail):
 
-1. Declare it in `perl/gb/03_engines_and_tools.pl`.
+1. Declare it in one of the registry files: `perl/gb/03_engines_and_tools.pl`,
+   `09_voice_actions_house.pl`, `10_voice_actions_comms.pl` or
+   `11_voice_actions_system.pl`.
 2. Add it to `voice_funnel_verbs` only when a voice branch can run it.
 3. Add the branch in `voice_brain` (`lib/JawnOS/Domain/Ai.pm`).
 4. Add it to the peer allow-list in `lib/JawnOS/Manager/Part28.pm` only if it must cross machines.
@@ -106,11 +108,23 @@ A new **Guide tool** (the long tail):
 6. Add a route/action if it needs a new HTTP surface (`lib/JawnOS/Routes/`, `lib/JawnOS/Controller/`, `t/58`).
 7. Update the app's help topic (`perl/help/topics_*.pl`, `t/11`) in the same change.
 
-A new **app action** (the bridge): add one entry to `@gb::app_actions` in
-`perl/gb/03_engines_and_tools.pl` naming the app, the `do`, the read/write kind,
-the method and the app's own literal route, its parameter names, and a `speech`
-sub that turns the JSON result into a sentence. No new route is needed if the
-app already answers JSON. Add a test to `t/484-app-action-bridge.t`.
+A new **app action** (the bridge): add one entry to `@gb::app_actions` naming the
+app, the `do`, the read/write kind, the method and the app's own literal route,
+its parameter names, and a `speech` sub that turns the JSON result into a
+sentence. No new route is needed if the app already answers JSON. The array is
+declared in five files, all required by `perl/gb.pl`; put a new entry in the one
+that matches the app's area (or in `03_engines_and_tools.pl` for a lone action):
+
+- `perl/gb/03_engines_and_tools.pl` — the first actions (clock read, mail count,
+  market, store, camera).
+- `perl/gb/09_voice_actions_house.pl` — clock alarms and timers, tasks, money,
+  warehouse and inventory.
+- `perl/gb/10_voice_actions_comms.pl` — email send/search, SMS, phone, music.
+- `perl/gb/11_voice_actions_system.pl` — power, notifications, packages, network,
+  security, handbook, scan, studio, notes, search, ide, process monitor.
+
+`t/484-app-action-bridge.t` reads the whole array; the family tests
+(`t/495`, `t/496`, `t/497`) read only the keys their file declares.
 
 ## The app-action bridge (first slice)
 
@@ -199,6 +213,50 @@ whose `jawnDeviceUuid()` matches draws the card (a page with no known target
 draws it only when focused). The hook is in `voice_brain`'s reply closure, so
 every voice answer - fast resolver, Guide, held write, remote relay - is shown.
 
+### The spoken appointment loop
+
+`create` stages a proposal through `Manager::guide_stage_appointment` and holds
+its uuid the same way a spoken write is held. With the Confirmation Requirement
+off it promotes at once; otherwise the reply says "I staged X. Say yes to save
+it." and the next utterance from that wrist decides: yes promotes, no marks the
+staged row discarded, anything else drops the hold. `update` and `delete` stage
+through `Manager::guide_stage_update` / `guide_stage_delete` and hold the same
+way, so the whole loop is reachable from the wrist: make it, move it, delete it,
+save it, undo it. `undo` acts at once (there is no second thing to confirm) through
+`Manager::guide_undo_appointment`, which is the same helper the Guide's
+`/manager/help/undo` route now calls: an undone delete re-inserts the saved row,
+an undone change restores every field it moved, and `appt_toggle_checker` plus
+`guide_refresh_app` redraw the header and any open detail view.
+
+The clock's alarm route takes a time, so "set an alarm for 7:30" is one call
+(`action=add` with `hour`, `minute`, `days`, `label`); it used to force the next
+hour. The task, money, warehouse and inventory actions live in `09_`.
+
+### Communications by name
+
+Email, SMS and phone accept a person's name instead of an address or number.
+`subs::contact_for_name($name, $kind)` resolves the name through the Guide's own
+person lookup (`guide_resolve_target(kind => 'person')`) and reads that person's
+saved `contact_lines`, preferring a primary line. The phone route
+(`manager_phone.pm`, `action_24603`) and the SMS route (`manager_misc12.pm`,
+`action_41140`) call it only when no number was given, and answer a JSON error
+naming the person when the house cannot reach them. The email send route
+(`manager_mail2.pm`, `action_32033`) accepts `to` as a name, defaults `from` to
+the first active mailbox account, and generates a `uuid` when the caller did not
+bring one (it used to insert NULL).
+
+### Music: album and track queue
+
+`Manager::help_music_file` normalises case, `&` and punctuation, then groups the
+library by folder (an album) under its parent (the artist). An artist alone is
+every track of theirs. An album, in either word order or as a unique bare album
+name, is that album in order (`same_order=1`). A unique track plays that track
+and then the rest of its album, so "Play Ben Folds Five Whatever and Ever Amen"
+picks the album rather than the whole artist, and a song does not stop after one
+track. An ambiguous match falls back to the old word search rather than guessing.
+Transport (play, pause, next, previous, stop) is `POST /manager/music/transport`
+(`voice_music_extra`), which sends the browser's own `musicTransportLocal`.
+
 ### Remote machines
 
 `remote` is in the common voice verb core. "Tell the table to play Ben Folds
@@ -259,8 +317,14 @@ family's speech), `t/488-history-visit.t` (a fast resolver) or
 - `public/js/manager/help/03_pending.js`, `public/js/manager/help.js`,
   `public/js/manager/websocket/00_console_router.js`,
   `templates/apps/help.html.ep` — the card strip and its reload command.
-- `perl/gb/03_engines_and_tools.pl` — `@gb::app_actions`; the `app`, `weather`
-  and `history` tools.
+- `perl/gb/03_engines_and_tools.pl`, `perl/gb/09_voice_actions_house.pl`,
+  `perl/gb/10_voice_actions_comms.pl`, `perl/gb/11_voice_actions_system.pl` —
+  `@gb::app_actions` (the app-action vocabulary, in four files) and the `app`,
+  `weather` and `history` tools.
+- `lib/JawnOS/Routes/voice_music_extra.pm`,
+  `lib/JawnOS/Controller/voice_music_extra.pm` — the music transport route.
+- `lib/JawnOS/Domain/Web.pm` — `contact_for_name`, the name-to-number/address
+  resolver the phone, SMS and email routes share.
 - `perl/help.pl` — `app_actions`, `app_action_find`, `app_action_lines`.
 - `lib/JawnOS/Manager/Part28.pm` — self-app fallback for `measure`.
 - `perl/help/topics_features.pl`, `perl/help/topics_business.pl`,
@@ -268,6 +332,10 @@ family's speech), `t/488-history-visit.t` (a fast resolver) or
   Store, Appointments and Help topics name the new answers and the card.
 - `t/483-voice-funnel.t`, `t/484-app-action-bridge.t`, `t/487-store-actions.t`,
   `t/488-history-visit.t`, `t/489-pending-card.t`, `t/490-guide-parity.t`,
+  `t/495-voice-house-actions.t`, `t/496-voice-comms-actions.t`,
+  `t/497-voice-system-actions.t`, `t/498-music-album-queue.t`,
+  `t/499-appointment-voice-loop.t`, `t/500-guide-undo-appointment.t`,
+  `t/501-voice-contact-names.t`,
   `t/491-camera-window-voice.t`, `t/493-remote-voice.t` — matcher, scope,
   router contract, identity, weather, history/visit, the action gates, the held
   write, the Store family, the card, the Guide parity, the camera press, the

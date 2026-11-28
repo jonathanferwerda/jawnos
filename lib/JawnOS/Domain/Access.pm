@@ -44,6 +44,7 @@ our %ACCESS_APP = (
 	coding       => [qw(coding agents app_draft work_claim work_claims)],
 	junderground => [qw(junderground new_room room_namer)],
 	studio       => [qw(studio synth)],
+	music        => [qw(music)],
 	media        => [qw(gallery camera scan scan_document marker thumbs media_window take_picture)],
 	games        => [qw(games cards twirl pipedream minesweeper card_picker game_play)],
 	weather      => [qw(weather)],

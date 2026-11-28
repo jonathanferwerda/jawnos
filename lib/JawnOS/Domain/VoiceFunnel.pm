@@ -255,6 +255,10 @@ sub voice_funnel_verbs($t) {
 	$v{'where_when'} = 1 if $app =~ /travel|place|weather|navigation/;
 	$v{'create'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
 	$v{'stop'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
+	$v{'update'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
+	$v{'delete'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
+	$v{'promote'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
+	$v{'undo'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
 	$v{'play_music'} = 1 if $app =~ /music|video|gallery|studio/;
 	# An app with declared actions gets the bridge verb. The scoped prompt names
 	# those actions, and the executor refuses a "do" that is not among them.

@@ -216,6 +216,7 @@ our %SUB = (
 	'guide_stop_when'                        => 'JawnOS/Manager/Part29.pm',
 	'guide_time_keywords'                    => 'JawnOS/Manager/Part01.pm',
 	'guide_time_machine'                     => 'JawnOS/Manager/Part01.pm',
+	'guide_undo_appointment'                 => 'JawnOS/Manager/Part29.pm',
 	'guide_undo_pop'                         => 'JawnOS/Manager/Part29.pm',
 	'guide_undo_push'                        => 'JawnOS/Manager/Part29.pm',
 	'guide_update_changes'                   => 'JawnOS/Manager/Part29.pm',

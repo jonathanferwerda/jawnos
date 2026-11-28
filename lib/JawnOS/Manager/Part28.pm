@@ -203,10 +203,14 @@ sub help_measure($measure, $period, $target) {
 }
 
 # "play <x>" - run the music app's own folder walk (Music::music_search) over
-# every known location, then keep the files that contain all the words asked for,
-# best match first (a "Ben Folds Five" album folder and a "Mess" track are the
-# same request). Hands back the one file to play. Shared by the guide's route and
-# the remote command channel.
+# every known location, then name what was asked for. The library's shape is the
+# answer: a bare artist is every track by it, an album (with or without the
+# artist, "and" or "&", punctuation ignored) is that one folder's tracks in
+# order, and a track is its album starting at that track so playback carries on
+# through the release. Only when none of those names one thing does the older
+# word search (all the words in the path, best match first) run. Hands back the
+# ordered list to play. Shared by the guide's route and the remote command
+# channel.
 sub help_music_file($c, $q, $shuffle) {
 	$q = '' unless defined $q;
 	$q =~ s/^\s+//; $q =~ s/\s+$//;
@@ -225,41 +229,156 @@ sub help_music_file($c, $q, $shuffle) {
 	my $port = $c->req->url->base->port;
 	my $res = &music_search({ settings => $settings, c => $c, now_playing => {}, port => $port, misc_settings => $misc, return_files => 1, folders => \@every, permissive => (&help_media_revealed(&media_unlock_device($c)) ? 1 : 0) });
 	my @files = @{ $res->{'files'} || [] };
-	my @words = grep { length } split /\s+/, lc $q;
-	my @hits;
+
+	# One spelling to compare in: lowercase, "&" said the way the person says it,
+	# every run of punctuation or space flattened to one space. Both the query and
+	# the library names go through this, so case, "and"/"&" and a hyphen do not
+	# hide a match.
+	my $norm = sub {
+		my $s = lc($_[0] // '');
+		$s =~ s/&/ and /g;
+		$s =~ s/[^a-z0-9]+/ /g;
+		$s =~ s/^\s+//; $s =~ s/\s+$//;
+		$s =~ s/\s+/ /g;
+		return $s;
+	};
+	my $stem_of = sub {
+		my $base = $_[0] // '';
+		$base =~ s{.*/}{};
+		$base =~ s/\.enc$//i;
+		$base =~ s/\.[a-z0-9]+$//i;
+		return $base;
+	};
+
+	# The library's own shape: one folder is one album, its parent is the artist.
+	# Grouping by the whole folder path keeps two libraries' same-named albums
+	# apart. The files keep the walk's order, which is the album's order.
+	my (@album_order, %album_at);
 	foreach my $f ( @files ) {
-		my $lf = lc $f;
-		my $ok = 1;
-		my $last = -1;
-		foreach my $w ( @words ) {
-			my $at = index($lf, $w);
-			if ($at < 0) { $ok = 0; last; }
-			$last = $at if $at > $last;
+		next unless defined $f && length $f;
+		my $p = $f; $p =~ s{\\}{/}g;
+		my @seg = split m{/}, $p;
+		my $base = pop @seg;
+		next unless defined $base && length $base;
+		my $dir = join '/', @seg;
+		my $album = @seg ? $seg[-1] : '';
+		my $artist = @seg > 1 ? $seg[-2] : '';
+		unless (exists $album_at{$dir}) {
+			$album_at{$dir} = { artist => $artist, album => $album, files => [] };
+			push @album_order, $dir;
 		}
-		next unless $ok;
-		push @hits, { file => $f, last => $last };
+		push @{$album_at{$dir}->{'files'}}, $f;
 	}
-	return { q => $q, found => 0 } unless @hits;
-	# the words landing earliest in the path is the tighter match (the album folder
-	# holds the artist, the track name holds the song); a shorter path breaks a tie
-	my @ranked = sort { $a->{'last'} <=> $b->{'last'} || length($a->{'file'}) <=> length($b->{'file'}) } @hits;
-	my $file = $ranked[0]->{'file'};
-	my $title = $file;
-	$title =~ s{.*/}{};
-	$title =~ s/\.[a-z0-9]+$//i;
+
+	# What the words name. artist+album and album+artist are a strong album
+	# request; a bare album title is weak and only counts when one album has it.
+	# A bare artist name stays an artist request even when an album shares it.
+	my $q_n = $norm->($q);
+	my (@album_strong, @album_weak, %artist_named);
+	foreach my $dir ( @album_order ) {
+		my $a = $album_at{$dir};
+		my $artist_n = $norm->($a->{'artist'});
+		my $album_n = $norm->($a->{'album'});
+		$artist_named{$artist_n} = 1 if length $artist_n;
+		next unless length $album_n;
+		my $join = $norm->($a->{'artist'} . ' ' . $a->{'album'});
+		my $join_rev = $norm->($a->{'album'} . ' ' . $a->{'artist'});
+		if ($q_n eq $join || $q_n eq $join_rev) { push @album_strong, $dir; }
+		elsif ($q_n eq $album_n) { push @album_weak, $dir; }
+	}
+	my $artist_only = (!@album_strong && $artist_named{$q_n}) ? 1 : 0;
+
+	my @resolved;
+	if (!$artist_only && scalar @album_strong == 1) {
+		@resolved = @{ $album_at{$album_strong[0]}->{'files'} };
+	}
+	elsif (!$artist_only && scalar @album_strong > 1) {
+		# one artist and album in two libraries: both albums, as a list
+		@resolved = map { @{ $album_at{$_}->{'files'} } } @album_strong;
+	}
+	elsif (!$artist_only && scalar @album_weak == 1) {
+		@resolved = @{ $album_at{$album_weak[0]}->{'files'} };
+	}
+	elsif (!$artist_only && !@album_strong && !@album_weak) {
+		# A track name: start at that track and carry on through its album rather
+		# than stopping after the one song. A title repeated across albums is not
+		# guessed at; neither is a lone file in a folder (it is not an album).
+		my @track_hits;
+		foreach my $dir ( @album_order ) {
+			my $a = $album_at{$dir};
+			my $in = $a->{'files'};
+			for my $i ( 0 .. $#{$in} ) {
+				my $stem = $stem_of->($in->[$i]);
+				# a leading track number is the album's ordering, not its name
+				my $bare = $stem; $bare =~ s/^\s*\d+[\s._-]+//;
+				my $track_n = $norm->($stem);
+				my $bare_n = $norm->($bare);
+				my @cand = ($track_n, $bare_n);
+				push @cand, $norm->($a->{'artist'} . ' ' . $bare);
+				push @cand, $norm->($a->{'album'} . ' ' . $bare);
+				push @cand, $norm->($a->{'artist'} . ' ' . $a->{'album'} . ' ' . $bare);
+				next unless grep { length $_ && $_ eq $q_n } @cand;
+				push @track_hits, { dir => $dir, index => $i };
+			}
+		}
+		if (scalar @track_hits == 1) {
+			my $hit = $track_hits[0];
+			my $in = $album_at{$hit->{'dir'}}->{'files'};
+			@resolved = @{$in}[ $hit->{'index'} .. $#{$in} ] if scalar @{$in} > 1;
+		}
+	}
+
+	my (@all, $same_order, $found);
+	if (@resolved) {
+		@all = @resolved;
+		$found = scalar @resolved;
+		# the resolved list is already in album order; keep the player from
+		# re-sorting a track-first list back to the top of the album
+		$same_order = 1;
+	}
+	else {
+		# The older word search: every word somewhere in the path, the words
+		# landing earliest being the tighter match (the artist folder holds the
+		# artist, the track name holds the song), a shorter path breaking a tie.
+		# An artist-only "Ben Folds Five" lands here, as does a title two albums
+		# share, so the broader answer is kept rather than a guess.
+		my @words = grep { length } split /\s+/, lc $q;
+		my @hits;
+		foreach my $f ( @files ) {
+			my $lf = lc $f;
+			my $ok = 1;
+			my $last = -1;
+			foreach my $w ( @words ) {
+				my $at = index($lf, $w);
+				if ($at < 0) { $ok = 0; last; }
+				$last = $at if $at > $last;
+			}
+			next unless $ok;
+			push @hits, { file => $f, last => $last };
+		}
+		return { q => $q, found => 0 } unless @hits;
+		$found = scalar @hits;
+		my @ranked = sort { $a->{'last'} <=> $b->{'last'} || length($a->{'file'}) <=> length($b->{'file'}) } @hits;
+		@all = map { $_->{'file'} } @ranked;
+		$same_order = 0;
+	}
+
 	# Every match rides along, so "watch friends" plays the whole show rather
 	# than one episode. The player splices its queue to the max_files setting, so
 	# only what it will actually play is handed over; a requested shuffle happens
 	# here, and same_order keeps the player from re-sorting it away.
-	my @all = map { $_->{'file'} } @ranked;
 	my $max = &subs::setting_grabber({ app => 'misc', setting => 'max_files' }) || 30;
 	@all = @all[0 .. $max - 1] if scalar @all > $max;
-	my $same_order = 0;
 	if ($shuffle && scalar @all > 1) {
 		@all = shuffle(@all);
 		$same_order = 1;
 	}
-	return { q => $q, found => scalar @hits, file => $file, title => $title, files => \@all, same_order => $same_order };
+	return { q => $q, found => 0 } unless @all;
+	my $file = $all[0];
+	my $title = $file;
+	$title =~ s{.*/}{};
+	$title =~ s/\.[a-z0-9]+$//i;
+	return { q => $q, found => $found, file => $file, title => $title, files => \@all, same_order => $same_order };
 }
 
 # A name a write route was handed by our own client or by the model. An id wins

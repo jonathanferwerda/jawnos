@@ -37,6 +37,9 @@ our $user_agent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, li
 require "./perl/gb/01_state_and_defaults.pl";
 require "./perl/gb/02_labels_and_collectives.pl";
 require "./perl/gb/03_engines_and_tools.pl";
+require "./perl/gb/09_voice_actions_house.pl";
+require "./perl/gb/10_voice_actions_comms.pl";
+require "./perl/gb/11_voice_actions_system.pl";
 require "./perl/gb/04_budget_and_calendar.pl";
 require "./perl/gb/05_abilities_and_studio.pl";
 require "./perl/gb/06_movements_and_inputs.pl";
