@@ -825,7 +825,7 @@ static void rec_note_prune(const String &keep) {
 // that never reached Notes. Hold the radio's bring-up and try again, but only
 // after a send that returned false: the server does not dedupe memos, so a
 // retry after the bytes landed would file the note twice.
-#define REC_SHIP_WINDOW_MS 15000UL
+#define REC_SHIP_WINDOW_MS 30000UL   // one 12 s POST plus a retry
 
 static void rec_voice_ship_task(void *pv) {
     (void)pv;

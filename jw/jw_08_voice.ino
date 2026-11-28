@@ -109,9 +109,10 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
   WiFiClientSecure client;
   client.setCACert(HOUSE_CA_PEM);
   HTTPClient https;
-  // Short enough that an unreachable homebase costs a moment, not the reply
-  // window: the clip is compressed and the link is local, so this is ample.
-  https.setTimeout(4000);
+  // The house's watch listener can answer a room fetch in five seconds when it
+  // is busy; a four-second POST timed out every clip (-1) while the same port
+  // served GETs. Long enough for a busy listener, still bounded.
+  https.setTimeout(12000);
   String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
     + "&chip_id=" + chip_id_maker()
     + "&authorization=" + urlEncode(authorization)
@@ -465,8 +466,8 @@ static void voice_stream_end() {
 // the house reads. Every block has its own predictor and step index, so block
 // boundaries are safe split points.
 #define COM_STREAM_QUEUE 6
-#define COM_STREAM_TIMEOUT_MS 4000
-#define COM_STREAM_DRAIN_MS 10000
+#define COM_STREAM_TIMEOUT_MS 12000
+#define COM_STREAM_DRAIN_MS 20000
 static QueueHandle_t com_stream_q = nullptr;
 static String com_stream_base;                       // URL without seq/last
 static String com_stream_session;

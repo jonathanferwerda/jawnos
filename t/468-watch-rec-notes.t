@@ -303,7 +303,7 @@ like($ship, qr/static void voice_border_show\(bool on, bool note\)/,
 
 # A note that could not be sent is retried inside a bounded window instead of
 # being left on flash after one attempt (the Rec test that never reached Notes).
-like($audio, qr/#define REC_SHIP_WINDOW_MS 15000UL/, 'a note gets a bounded retry window');
+like($audio, qr/#define REC_SHIP_WINDOW_MS 30000UL/, 'a note gets a bounded retry window');
 like($audio, qr/while \(!ok && millis\(\) - ship_started < REC_SHIP_WINDOW_MS\)/,
 	'and is retried until a send succeeds or the window ends');
 
