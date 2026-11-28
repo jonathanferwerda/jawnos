@@ -663,6 +663,10 @@ sub action_26178 {
 		$models = &subs::ai_model_catalogue('chat');
 		&subs::cache_set({ app => 'search', context => $context, warranty => '-10m' }, $models);
 	}
+	# Offer only what this house can reach: a provider whose key is entered, or
+	# the local Ollama and its peers. The cached catalogue is the full one, so a
+	# key added in Plat shows here at once instead of waiting out the cache.
+	$models = &subs::ai_catalogue_available($models);
 	my $contents = $c->render_to_string(
 		template => 'apps/search',
 		app => 'search',

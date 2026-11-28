@@ -367,7 +367,7 @@ sub mail_checker($c) {
 	  # picker's rows. Load Domain::Sent by its mapped sibling first, since the
 	  # chooser is a plain helper beside pen_model_list rather than its own entry.
 	  &subs::preload('pen_model_list');
-	  $chatbot_models = &subs::pen_model_choices(&subs::ai_model_catalogue('chat'));
+	  $chatbot_models = &subs::pen_model_choices(&subs::ai_catalogue_available(&subs::ai_model_catalogue('chat')));
 		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? and conversation_uuid = ? order by timestamp desc LIMIT 30', $timestamp, 'pen', $settings->{'chatbot_conversation'});
 		&subs::db_query('delete from mailbox where contact = ? and conversation_uuid is null', 'pen');
 		$main_title = 'Pen';

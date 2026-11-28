@@ -64,7 +64,7 @@ is_deeply(&subs::pen_model_choices([]), [], 'an empty catalogue is an empty pick
 # The Pen section asks the shared catalogue rather than probing Ollama and
 # Cloudflare itself.
 my $part = read_file(repo_root() . '/lib/JawnOS/Manager/Part25.pm');
-like($part, qr/pen_model_choices\(&subs::ai_model_catalogue\('chat'\)\)/, 'the Pen section flattens the chat catalogue');
+like($part, qr/pen_model_choices\(&subs::ai_catalogue_available\(&subs::ai_model_catalogue\('chat'\)\)\)/, 'the Pen section offers the reachable chat catalogue');
 unlike($part, qr/\$chatbot_models\s*=\s*&subs::pen_model_list\(\)/, 'the Pen section no longer hand-builds the list');
 
 # The picker template reads the shape the helper produces: the value is the

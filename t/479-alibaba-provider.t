@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Ai2.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Controller/manager_misc7.pm perl/crew.pl templates/apps/help.html.ep templates/mail/pen_sections.html.ep templates/configure/plat_setting_list.html.ep perl/help/topics_functions.pl
+# tests-for: lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Ai2.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Manager/Part25.pm lib/JawnOS/Controller/manager_misc7.pm perl/crew.pl templates/apps/help.html.ep templates/mail/pen_sections.html.ep templates/configure/plat_setting_list.html.ep perl/help/topics_functions.pl
 # covers: the Alibaba (Qwen) provider — its key setting, its model prefix, the
 #         DashScope wire, its new-user free-trial models — and the
 #         provider-grouped model pickers it joins.
@@ -77,6 +77,25 @@ ok(!grep({ $_->{'trial'} } @{ $openai->{'models'} || [] }),
 like(subs::ai_catalogue_signature(), qr/^[0-9a-f]{32}$/,
 	'the catalogue signature is a short digest');
 
+# A picker only offers what this house can reach: a keyed provider, or the
+# local Ollama and its peers (whose groups only exist when they answered).
+{
+	no warnings 'redefine', 'once';
+	local *subs::ai_provider_ready = sub { return $_[0] eq 'openai' ? 1 : 0 };
+	my $all = [
+		{ id => 'ollama', label => 'Ollama (local)', models => [ { value => 'qwen3:8b' } ] },
+		{ id => 'cloudflare', label => 'Cloudflare Workers AI', models => [ { value => '@cf/llama' } ] },
+		{ id => 'openai', label => 'OpenAI', models => [ { value => 'openai:gpt-4o' } ] },
+		{ id => 'anthropic', label => 'Anthropic (Claude)', models => [ { value => 'anthropic:claude' } ] },
+		{ id => 'ollama:den', label => 'Ollama \x{00b7} den', models => [ { value => '@den/qwen3:8b' } ] },
+		{ id => 'mistral', label => 'Mistral', models => [] },
+	];
+	my $ready = subs::ai_catalogue_available($all);
+	is_deeply([ map { $_->{'id'} } @{$ready} ],
+		[ 'ollama', 'cloudflare', 'openai', 'ollama:den' ],
+		'only keyed providers and the Ollama groups with models are offered');
+}
+
 # A used-up trial reads as one model's quota, not the account's credit: tell
 # the person to pick another trial model instead of standing the provider down.
 ok(subs::ai_trial_exhausted('{"code":"AllocationQuota.FreeTierOnly","message":"..."}'),
@@ -119,6 +138,11 @@ like($search, qr/ai_catalogue_signature/,
 	'the Search cache is keyed by the provider model lists');
 like($search, qr/ai_models_/,
 	'the Search catalogue cache is still keyed by the provider set');
+like($search, qr/ai_catalogue_available/,
+	'and the picker offers only providers the house can reach');
+my $part25 = read_file("$root/lib/JawnOS/Manager/Part25.pm");
+like($part25, qr/ai_catalogue_available/,
+	'the Pen picker also offers only reachable providers');
 
 my $help_tpl = read_file("$root/templates/apps/help.html.ep");
 like($help_tpl, qr/<optgroup label=/, 'the Guide picker groups models by provider');

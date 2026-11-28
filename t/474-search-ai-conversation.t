@@ -27,6 +27,7 @@ like($tpl, qr/id="search_app_ai_model"/, 'the AI tab has a model picker');
 like($tpl, qr/<optgroup label=/, 'the models are grouped by provider');
 like($tpl, qr/id="search_app_ai_new"/, 'a New chat control is there');
 like($open, qr/ai_model_catalogue\('chat'\)/, 'the window is drawn with the chat catalogue');
+like($open, qr/ai_catalogue_available/, 'and only providers this house can reach are offered');
 like($open, qr/ai_models_/, 'the provider probe is cached for the open, keyed by the provider set');
 like($js, qr/localStorage\.setItem\(AI_MODEL_KEY/, 'the chosen model is remembered');
 

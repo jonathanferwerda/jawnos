@@ -145,6 +145,30 @@ sub ai_catalogue_signature {
 	return md5_sum($text);
 }
 
+# The part of a catalogue this house can actually reach: a provider whose key is
+# entered, and the local Ollama and its peers (their groups only carry models when
+# the daemon answered or a peer advertised them). A picker offers these, so it
+# never presents a provider that would fail the moment it was chosen.
+sub ai_catalogue_available {
+	my ($catalogue) = @_;
+	return [] unless ref $catalogue eq 'ARRAY';
+	my @out;
+	foreach my $group ( @{$catalogue} ) {
+		next unless ref $group eq 'HASH';
+		my $id = $group->{'id'} || '';
+		next unless scalar @{ $group->{'models'} || [] };
+		# Ollama and Cloudflare can only list models if they answered, so their
+		# rows are proof enough; the other providers need their key entered.
+		if ($id eq 'ollama' || $id =~ /^ollama:/ || $id eq 'cloudflare') {
+			push @out, $group;
+		}
+		elsif (&ai_provider_ready($id)) {
+			push @out, $group;
+		}
+	}
+	return \@out;
+}
+
 # Pass a capability (chat, vision, image, audio) to keep only models that serve it.
 sub ai_model_catalogue {
 	my ($cap) = @_;
