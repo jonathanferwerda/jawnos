@@ -189,33 +189,143 @@ post '/watch/voice' => sub($c) {
 	# pid), which is how the BLE ingest has always run.
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
-	if (my $watch_settings = &embeddedAuthorizer($c)) {
-		my $raw = $c->req->body // '';
-		if (my $b64 = $c->param('audio')) {
-			require MIME::Base64;
-			$raw = MIME::Base64::decode_base64($b64) // '';
-		}
-		if (length $raw > 100) {
-			my $ts = $c->param('timestamp');
-			my $voice = $c->param('voice');
-			my $t_arrival = &subs::rightNow();
-			&subs::bluetooth_sender_async({
-				intent => 'com.jawn.president.bt.connect',
-				chip_id => $chip_id,
-				edt => $edt || 'watch',
-				message => { type => 'voice_recv', ts => (0 + ($ts || 0)) },
-			});
-			my $peer_ip = $c->tx->remote_address;
-			&subs::subprocessor(sub {
-				&subs::voice_ingest($raw, {
-					edt => $edt, chip_id => $chip_id, ts => $ts, voice => $voice,
-					source => 'file', t_arrival => $t_arrival, peer_ip => $peer_ip,
-				});
-			}, { name => 'voice ingest' });
-		}
-		$c->render('text' => 'ok');
+	my $voice = $c->param('voice') || '';
+	# A refused authorization used to answer 200 "failure", which the watch reads
+	# as a successful POST: it stopped retrying and never fell back to BLE, so the
+	# clip vanished with no ingest line anywhere. Refuse it (403) so the watch's
+	# own retry/BLE fallback runs, and say so here.
+	unless (&embeddedAuthorizer($c)) {
+		$log->info('voice: wifi clip rejected (authorization) chip=' . ($chip_id // '-')
+			. ' bytes=' . length($c->req->body // '') . ' mode=' . ($voice || '-')) if $log;
+		return $c->rendered(403);
 	}
-	else { $c->render('text' => 'failure'); }
+	my $raw = $c->req->body // '';
+	if (my $b64 = $c->param('audio')) {
+		require MIME::Base64;
+		$raw = MIME::Base64::decode_base64($b64) // '';
+	}
+	# The decisive arrival line: the bytes reached this route, in this mode, and
+	# what they look like (container/rate/non-zero samples). whisper's stock
+	# hallucination cannot tell "never arrived" from "arrived silent".
+	$log->info('voice: arrival route=wifi source=file chip=' . ($chip_id // '-')
+		. ' mode=' . ($voice || '-') . ' ' . &subs::voice_clip_shape($raw)) if $log;
+	if (length $raw > 100) {
+		my $ts = $c->param('timestamp');
+		my $t_arrival = &subs::rightNow();
+		&subs::bluetooth_sender_async({
+			intent => 'com.jawn.president.bt.connect',
+			chip_id => $chip_id,
+			edt => $edt || 'watch',
+			message => { type => 'voice_recv', ts => (0 + ($ts || 0)) },
+		});
+		my $peer_ip = $c->tx->remote_address;
+		&subs::subprocessor(sub {
+			&subs::voice_ingest($raw, {
+				edt => $edt, chip_id => $chip_id, ts => $ts, voice => $voice,
+				source => 'file', t_arrival => $t_arrival, peer_ip => $peer_ip,
+			});
+		}, { name => 'voice ingest' });
+	}
+	else {
+		# A body that cannot hold speech must not be acked. Telling the watch
+		# "arrived" made it stop retrying a clip the house never had; refuse it so
+		# the retry and the BLE fallback both remain.
+		$log->info('voice: wifi clip too short (' . length($raw) . ' bytes); refused') if $log;
+		return $c->rendered(400);
+	}
+	$c->render('text' => 'ok');
+};
+
+post '/watch/voice/stream' => sub($c) {
+	# Chunked WiFi upload: the watch POSTs encoded clip chunks while it is still
+	# recording, each with a session id, seq and last, and the last one is
+	# assembled into the same IMA ADPCM WAV the whole-clip route receives. The
+	# assembly is bounded in Domain/Ai.pm (voice_stream_chunk): 512 KB a chunk,
+	# 4 MB a session, and a session abandoned mid-stream is swept after 120 s. The
+	# whole-clip POST above and the BLE paths stay untouched, so a watch that never
+	# adopts this route - or abandons a stream - still delivers its clip.
+	#
+	# A memo's stream is deferred by voice_ingest because the whole file is its
+	# truth, so only a command is answered from the stream; a memo still ships the
+	# file. That is the point of this route: a command's clip reaches the house
+	# before the person stops speaking, so whisper, the Guide and the reply do not
+	# wait on a post-recording upload.
+	my $edt = $c->param('edt');
+	my $chip_id = $c->param('chip_id');
+	my $session = $c->param('session') || '';
+	unless (&embeddedAuthorizer($c)) {
+		$log->info('voice: stream rejected (authorization) chip=' . ($chip_id // '-')
+			. ' session=' . ($session || '-')) if $log;
+		return $c->rendered(403);
+	}
+	my $chunk = $c->req->body // '';
+	if (my $b64 = $c->param('audio')) {
+		require MIME::Base64;
+		$chunk = MIME::Base64::decode_base64($b64) // '';
+	}
+	my $ts = $c->param('timestamp');
+	my $voice = $c->param('voice') || '';
+	my $seq = $c->param('seq') || 0;
+	my $last = $c->param('last') || 0;
+	my $peer_ip = $c->tx->remote_address;
+	my $t_arrival = &subs::rightNow();
+	my $onset = (defined $ts && $ts =~ /\A\d+\z/ && $ts)
+		? ($ts < 100000000000 ? $ts * 1000 : $ts) : undef;
+	my $timing = sub {
+		my ($stage, $from, $extra) = @_;
+		$log->info('voice: timing stage=' . $stage
+			. ' chip=' . ($chip_id // '-')
+			. ' source=stream session=' . ($session || '-')
+			. ' since_onset=' . (defined $onset ? (&subs::rightNow() - $onset) . 'ms' : '-')
+			. ' since_arrival=' . (&subs::rightNow() - ($from || $t_arrival)) . 'ms'
+			. ((defined $extra && length $extra) ? ' ' . $extra : '')) if $log;
+	};
+	my $res = &subs::voice_stream_chunk($chunk, {
+		chip_id => $chip_id, ts => $ts, voice => $voice, session => $session,
+		seq => $seq, last => $last, rate => $c->param('rate'), t_arrival => $t_arrival,
+	});
+	my $status = $res->{'status'} || 'error';
+	$log->info('voice: stream chunk status=' . $status
+		. ' chip=' . ($chip_id // '-') . ' session=' . ($session || '-')
+		. ' seq=' . $seq . ' last=' . $last . ' bytes=' . length($chunk)
+		. ' total=' . ($res->{'bytes'} // '-')) if $log;
+	if ($status eq 'ok') {
+		if (($seq || 0) == 0) {
+			# Warm the readers while the person is still speaking: the ASR server
+			# is asked for now, and a command also warms Piper, so the reply is
+			# not paying a model load after the last chunk lands.
+			&subs::whisper_server_wanted(1);
+			&subs::voice_warm_piper() if $voice ne 'note';
+			$timing->('upload_start', $t_arrival, 'bytes=' . length($chunk));
+		}
+		return $c->render(text => 'ok');
+	}
+	unless ($status eq 'complete') {
+		# A 4xx keeps the watch's whole-clip fallback alive.
+		$timing->('upload_failed', $res->{'t_arrival'}, 'status=' . $status);
+		return $c->rendered(400);
+	}
+	# A command's stream is confirmed at reassembly exactly as the BLE stream is;
+	# a memo sends none because its file is its receipt.
+	if ($voice ne 'note') {
+		&subs::bluetooth_sender_async({
+			intent => 'com.jawn.president.bt.connect',
+			chip_id => $chip_id,
+			edt => $edt || 'watch',
+			message => { type => 'voice_recv', ts => (0 + ($ts || 0)) },
+		});
+	}
+	$timing->('upload_done', $res->{'t_arrival'},
+		'bytes=' . ($res->{'bytes'} // 0) . ' chunks=' . ($res->{'chunks'} // 0)
+		. ' ' . &subs::voice_clip_shape($res->{'wav'}));
+	my $raw = $res->{'wav'};
+	&subs::subprocessor(sub {
+		&subs::voice_ingest($raw, {
+			edt => $edt, chip_id => $chip_id, ts => $ts, voice => $voice,
+			source => 'stream', t_arrival => $res->{'t_arrival'}, peer_ip => $peer_ip,
+		});
+	}, { name => 'voice ingest' });
+	return $c->render(text => 'ok');
 };
 
 get '/watch/button' => sub($c) {

@@ -861,7 +861,18 @@ sub watch_reply {
 	# reply line below is the end-to-end number they actually feel.
 	my $since_onset = (defined $meta->{'ts'} && $meta->{'ts'})
 		? (&subs::rightNow() - $meta->{'ts'}) . 'ms' : '-';
-	my $who = ' chip=' . $meta->{'chip_id'} . ' since_onset=' . $since_onset;
+	# The caller that had the request stamps t_arrival; a BLE clip has none, so
+	# the line says '-' rather than inventing a zero.
+	my $since_arrival = (defined $meta->{'t_arrival'} && $meta->{'t_arrival'})
+		? (&subs::rightNow() - $meta->{'t_arrival'}) . 'ms' : '-';
+	my $who = ' chip=' . $meta->{'chip_id'} . ' since_onset=' . $since_onset
+		. ' since_arrival=' . $since_arrival;
+	# One ledger line for the reply transport, so the 5 s budget has a close:
+	# asr/brain say when the words were ready, this says how they went out.
+	my $reply_timing = sub {
+		my ($transport) = @_;
+		$log->info('voice: timing stage=reply transport=' . $transport . $who) if $log;
+	};
 	# The words go first and must keep their place ahead of the audio below, so
 	# this send is async only when we are on the loop (see bluetooth_sender_async:
 	# inside a fork it runs inline).
@@ -877,6 +888,7 @@ sub watch_reply {
 	my $want = $op->{'__specs'}->{'audio_replies'};
 	if (defined $want && $want eq 'off') {
 		$log->info('voice: reply text-only (audio replies are off)' . $who) if $log;
+		$reply_timing->('text-only');
 		return;
 	}
 	# A device on WiFi pulls one WAV instead of receiving hundreds of BLE parts;
@@ -891,6 +903,7 @@ sub watch_reply {
 			base => $wifi->{'base'},
 		};
 		$log->info('voice: reply transport=wifi' . $who) if $log;
+		$reply_timing->('wifi');
 		&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_wifi($args) },
 			{ name => 'watch reply wifi', fork => 1, args => $args });
 		return;
@@ -900,6 +913,7 @@ sub watch_reply {
 	# child re-dials the database itself (bluetooth_sender reads it), so forking
 	# here is safe.
 	$log->info('voice: reply transport=ble' . $who) if $log;
+	$reply_timing->('ble');
 	my $args = { text => $text, chip_id => $meta->{'chip_id'}, edt => $edt };
 	&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_audio($args) },
 		{ name => 'watch reply audio', fork => 1, args => $args });

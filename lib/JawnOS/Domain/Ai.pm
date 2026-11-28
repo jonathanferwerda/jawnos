@@ -896,6 +896,61 @@ sub voice_command_apply {
 	return $db_data;
 }
 
+sub voice_clip_shape {
+	# What a received clip actually IS, in one log-safe line. "The watch's Rec did
+	# nothing" has two very different causes - the bytes never arrived, or they
+	# arrived as silence - and whisper's stock hallucination ("you",
+	# "[BLANK_AUDIO]") cannot tell them apart. This reads the WAV header the watch
+	# sends (IMA ADPCM or PCM) and counts the non-zero bytes in the data chunk, so
+	# the next arrival says bytes=N wav=kind rate=R data=D nonzero=Z. A clip of
+	# silence is all zeroes; good samples are not.
+	my ($raw) = @_;
+	my $n = defined $raw ? length $raw : 0;
+	return 'bytes=0' unless $n;
+	my $shape = 'bytes=' . $n;
+	if ($n >= 44 && substr($raw, 0, 4) eq 'RIFF' && substr($raw, 8, 4) eq 'WAVE') {
+		my ($fmt, $ch, $rate, $bits, $dlen, $doff) = (undef, undef, undef, undef, 0, 0);
+		my $at = 12;
+		while ($at + 8 <= $n) {
+			my $id = substr($raw, $at, 4);
+			my $len = unpack('V', substr($raw, $at + 4, 4));
+			if ($id eq 'fmt ' && $at + 24 <= $n) {
+				($fmt, $ch, $rate) = unpack('vvV', substr($raw, $at + 8, 8));
+				$bits = unpack('v', substr($raw, $at + 22, 2));
+			}
+			elsif ($id eq 'data') {
+				$doff = $at + 8;
+				$dlen = $len;
+				last;
+			}
+			$at += 8 + $len + ($len % 2);
+		}
+		my $kind = !defined $fmt ? 'wav?'
+			: $fmt == 0x11 ? 'adpcm'
+			: $fmt == 1 ? 'pcm'
+			: 'fmt' . $fmt;
+		$shape .= ' wav=' . $kind;
+		$shape .= ' rate=' . $rate if defined $rate;
+		$shape .= ' ch=' . $ch if defined $ch;
+		$shape .= ' bits=' . $bits if defined $bits;
+		if ($doff && $dlen && $doff <= $n) {
+			my $avail = $n - $doff;
+			my $probe = substr($raw, $doff, $dlen < $avail ? $dlen : $avail);
+			$probe = substr($probe, 0, 65536) if length($probe) > 65536;
+			my $copy = $probe;
+			my $zeros = ($copy =~ tr/\x00//);
+			$shape .= ' data=' . $dlen . ' nonzero=' . (length($probe) - $zeros) . '/' . length($probe);
+		}
+	}
+	else {
+		my $probe = substr($raw, 0, 65536);
+		my $copy = $probe;
+		my $zeros = ($copy =~ tr/\x00//);
+		$shape .= ' raw nonzero=' . (length($probe) - $zeros) . '/' . length($probe);
+	}
+	return $shape;
+}
+
 sub voice_note_store {
 	# A spoken clip with no wake word is not a failed command, it is a note: keep
 	# the transcript so it turns up in the Notes app, to be sorted out later. This
@@ -924,7 +979,10 @@ sub voice_note_store {
 	# a single word, a clipped fragment, or a two-word noise is not a note: the
 	# wake word already filters ", the room"; this keeps the rest of the mumbles out.
 	my @words = split ' ', $spoken;
-	return unless scalar @words >= 3;
+	if (scalar @words < 3) {
+		$log->info('voice: note dropped (fewer than three words): "' . $clean . '"') if $log;
+		return;
+	}
 	my $now = &subs::rightNow();
 	# A plain note row, not an appointment: the Notes app reads this table, and the
 	# server_time column rides the generic peer sync so the note still reaches
@@ -938,9 +996,15 @@ sub voice_note_store {
 		uuid => &subs::random_string_creator(21)
 	);
 	$row{'device'} = $device if defined $device && length $device;
-	&subs::db_insert('notes', \%row);
+	# A failed write must not take the worker down with it: the watch is waiting
+	# for voice_done, and a note that did not land has to say so in the log.
+	my $stored = eval { &subs::db_insert('notes', \%row); 1 };
+	unless ($stored) {
+		$log->error('voice: note store failed (' . ($@ =~ s/\s+/ /gr) . ')') if $log;
+		return;
+	}
 	&voice_note_prune($device) if defined $device && length $device;
-	$log->info('voice: note stored (' . $clean . ')');
+	$log->info('voice: note stored (' . $clean . ')') if $log;
 	return $clean;
 }
 
@@ -1016,6 +1080,108 @@ sub voice_clip_fresh {
 	}
 	$gb::voice_seen->{$key} = $now;
 	return 1;
+}
+
+sub voice_stream_chunk {
+	# One chunk of the WiFi upload stream (the watch POSTs a clip while it is still
+	# recording). Chunks are appended to a per-session file under
+	# ~/.president/voice-stream, so a prefork watch worker can take the next chunk
+	# on any process; the last chunk reads the assembly back, wraps it in the same
+	# 60-byte IMA ADPCM WAV header the whole-clip path carries (adpcm_wav_wrap) and
+	# hands it to the caller. Bounded on purpose: one chunk is at most 512 KB, one
+	# session at most 4 MB, and a session abandoned mid-stream is swept after two
+	# minutes so a dead watch cannot fill the home.
+	#
+	# Returns { status => 'ok', ... } for a chunk, { status => 'complete', wav =>
+	# $bytes, ... } for the last one, and a non-'ok' status the route can turn into
+	# a 4xx (so the watch keeps the whole-clip fallback) for anything unusable.
+	my ($chunk, $meta) = @_;
+	$meta ||= {};
+	my $chip = defined $meta->{'chip_id'} ? $meta->{'chip_id'} : '';
+	my $ts   = defined $meta->{'ts'} ? $meta->{'ts'} : '';
+	my $session = defined $meta->{'session'} ? $meta->{'session'} : '';
+	my $seq  = defined $meta->{'seq'} ? (0 + $meta->{'seq'}) : 0;
+	my $last = $meta->{'last'} ? 1 : 0;
+	$chunk = '' unless defined $chunk;
+	return { status => 'bad_session' } unless $session =~ /\A[A-Za-z0-9_.-]{1,64}\z/ && length $chip && $ts =~ /\A\d{1,20}\z/;
+	my $rate = (defined $meta->{'rate'} && $meta->{'rate'} =~ /\A(?:8000|16000|22050|32000|44100|48000)\z/)
+		? 0 + $meta->{'rate'} : 8000;
+	return { status => 'too_large' } if length($chunk) > 512 * 1024;
+	my $dir = &subs::home('~/.president/voice-stream');
+	eval { make_path($dir) } unless -d $dir;
+	return { status => 'no_dir' } unless -d $dir;
+	my $base = &subs::path_name($chip . '|' . $ts . '|' . $session);
+	my $part = $dir . '/' . $base . '.part';
+	my $meta_path = $dir . '/' . $base . '.meta';
+	if (opendir(my $dh, $dir)) {
+		my $now = time;
+		foreach my $name (readdir $dh) {
+			next if $name eq '.' || $name eq '..';
+			my $path = $dir . '/' . $name;
+			unlink $path if $now - ((stat($path))[9] || 0) > 120;
+		}
+		closedir $dh;
+	}
+	if ($seq == 0) {
+		write_file($part, { binmode => ':raw' }, '');
+		write_file($meta_path, encode_json({
+			rate => $rate,
+			voice => ($meta->{'voice'} // ''),
+			chip_id => $chip,
+			ts => $ts,
+			t_arrival => ($meta->{'t_arrival'} || &subs::rightNow()),
+			bytes => 0,
+			chunks => 0,
+		}));
+	}
+	return { status => 'no_session' } unless -f $part;
+	my $info = eval { decode_json(read_file($meta_path)) } || {};
+	my $have = -s $part || 0;
+	if ($have + length($chunk) > 4 * 1024 * 1024) {
+		# The session is over the cap: drop it now instead of holding the bytes
+		# until the idle sweep, and answer 4xx so the watch falls back to the file.
+		unlink $part;
+		unlink $meta_path;
+		return { status => 'too_large', bytes => $have };
+	}
+	if (length $chunk) {
+		open(my $fh, '>>', $part) or return { status => 'write_failed' };
+		binmode($fh);
+		print {$fh} $chunk;
+		close($fh);
+		$have += length $chunk;
+	}
+	$info->{'bytes'} = $have;
+	$info->{'chunks'} = (0 + ($info->{'chunks'} || 0)) + 1;
+	$info->{'rate'} = $rate if $seq == 0;
+	eval { write_file($meta_path, encode_json($info)) };
+	my $result = {
+		status => 'ok',
+		bytes => $have,
+		chunks => $info->{'chunks'},
+		seq => $seq,
+		last => $last,
+		rate => ($info->{'rate'} || 8000),
+		voice => ($info->{'voice'} // ''),
+		t_arrival => ($info->{'t_arrival'} || &subs::rightNow()),
+	};
+	return $result unless $last;
+	my $data = eval { read_file($part, binmode => ':raw') } // '';
+	unlink $part;
+	unlink $meta_path;
+	return { status => 'empty', bytes => length($data) } unless length($data) > 100;
+	# A firmware that sends whole WAV chunks instead of raw blocks is not wrapped
+	# twice; anything else is the raw IMA ADPCM the watch's encoder emits.
+	my $wav = (substr($data, 0, 4) eq 'RIFF') ? $data : &subs::adpcm_wav_wrap($data, $result->{'rate'});
+	return {
+		status => 'complete',
+		wav => $wav,
+		bytes => length($data),
+		rate => $result->{'rate'},
+		voice => $result->{'voice'},
+		t_arrival => $result->{'t_arrival'},
+		chunks => $result->{'chunks'},
+	};
 }
 
 sub adpcm_wav_wrap {
@@ -1291,6 +1457,15 @@ sub voice_ingest {
 	my $mode   = $meta->{'voice'} || '';
 	my $source = $meta->{'source'} || 'file';
 	$meta->{'source'} = $source;
+	# Arrival, before anything decides to drop the clip: source, mode, and what
+	# the bytes actually are. This one line separates "never arrived" from
+	# "arrived but silent" in the next Rec/Com report, which whisper's stock
+	# hallucination alone cannot do.
+	$log->info('voice: arrival source=' . $source
+		. ' mode=' . (length($mode) ? $mode : '-')
+		. ' chip=' . ($meta->{'chip_id'} // '-')
+		. ' ts=' . ($meta->{'ts_watch'} // $meta->{'ts'} // '-')
+		. ' ' . &subs::voice_clip_shape($raw)) if $log;
 	# One ledger line per stage, so "it took 30 s" can be answered without
 	# guessing. The watch stamps the clip when the person STARTED speaking
 	# (ts), so since_onset is the wall clock the person actually feels; the
@@ -1309,7 +1484,7 @@ sub voice_ingest {
 			. ((defined $extra && length $extra) ? ' ' . $extra : ''));
 	};
 	if ($mode eq $VOICE_NOTE_MODE && $source eq 'stream') {
-		$log->info('voice: memo streamed; waiting for the whole-clip file');
+		$log->info('voice: memo streamed; waiting for the whole-clip file (chip=' . ($meta->{'chip_id'} // '-') . ')') if $log;
 		return { status => 'deferred' };
 	}
 	# A command is the opposite: whichever copy arrives first wins. Claim the clip
@@ -1319,6 +1494,8 @@ sub voice_ingest {
 	# deferred stream above and must be allowed through.
 	if ($mode ne $VOICE_NOTE_MODE
 		&& !&subs::voice_clip_fresh($meta->{'chip_id'}, $meta->{'ts'})) {
+		$log->info('voice: duplicate clip dropped (chip=' . ($meta->{'chip_id'} // '-')
+			. ' mode=' . $mode . ' source=' . $source . ')') if $log;
 		return { status => 'duplicate' };
 	}
 	if ($mode ne $VOICE_NOTE_MODE) {
@@ -1326,6 +1503,8 @@ sub voice_ingest {
 	}
 	my $text = &subs::whisper_transcribe($raw, undef, $meta->{'edt'} || 'watch');
 	if (!$text) {
+		$log->info('voice: stt empty (chip=' . ($meta->{'chip_id'} // '-')
+			. ' mode=' . ($mode || '-') . ' source=' . $source . ')') if $log;
 		$timing->('silence');
 		return { status => 'silence' };
 	}
@@ -1340,6 +1519,7 @@ sub voice_ingest {
 			$timing->('note');
 			return { status => 'note', said => $text };
 		}
+		$log->info('voice: note not stored ("' . $text . '")') if $log;
 		$timing->('note_empty');
 		return { status => 'note_empty', said => $text };
 	}
@@ -1371,8 +1551,17 @@ sub voice_ingest {
 				return { status => 'apply_failed', app => $app, said => $text };
 			}
 			$log->info('voice: ' . $app . ' -> ' . $cmd->{'want'} . ' (' . $text . ')');
+			# A Com clip is a spoken command, so a recognised movement answers
+			# too: the watch shows the words and speaks them. Without this the
+			# only observable result of "start email test" was a toggle, and the
+			# wrist said nothing at all.
+			my $speech = &subs::format_name($app) . ($cmd->{'want'} eq 'on' ? ' on.' : ' off.');
+			my $who = $meta->{'chip_id'} // '';
+			if (length $who) { &subs::watch_reply($meta, $speech); }
+			else { &subs::say_it($speech); }
+			$log->info('voice: command reply "' . $speech . '"') if $log;
 			$timing->('command', 'app=' . $app . ' want=' . $cmd->{'want'});
-			return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text };
+			return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text, reply => $speech };
 		}
 		# The verb was heard but no app matches the target: fall through to the
 		# Guide so "start a conversation about the roof" is answered, not dropped.

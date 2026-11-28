@@ -69,6 +69,9 @@ $gb::voice_seen = {};
 my (@whisper, @acked, @applied, @guided);
 local *subs::whisper_transcribe   = sub { push @whisper, $_[0]; return $main::WHISPER };
 local *subs::voice_clip_ack       = sub { push @acked, $_[0]{'ts'} };
+# An applied command speaks its confirmation now; keep the bridge out of a test.
+local *subs::watch_reply          = sub { return 1 };
+local *subs::say_it               = sub { return 1 };
 local *subs::voice_command_apply  = sub { push @applied, $_[0]; return {} };
 local *subs::guide_set_message    = sub { push @guided, $_[0] };
 local *subs::voice_brain          = sub { return undef };

@@ -108,16 +108,20 @@ ok(!&subs::notes_tombstoned($typed->{'ost'}), 'a typed note is never pruned by t
 # the command path an app to toggle.
 $db->query('create table settings (app text, setting text, value text)');
 $db->query("insert into settings (app, setting, value) values ('email test', 'toggle', 'off')");
-my (@guided, @applied, @acked, @frames);
+my (@guided, @applied, @acked, @frames, @replied);
 local *subs::whisper_transcribe = sub { $main::WHISPER };
 local *subs::voice_clip_ack    = sub { push @acked, $_[0]{'ts'} };
 local *subs::guide_set_message = sub { push @guided, $_[0] };
 local *subs::voice_brain       = sub { $main::BRAIN };
 local *subs::voice_command_apply = sub { push @applied, $_[0]; return {} };
+# A recognised command answers on the watch now (the Com button's reply), so
+# watch_reply is observed here instead of being allowed to touch the bridge.
+local *subs::watch_reply = sub { push @replied, [ 'watch', $_[1] ]; return 1 };
+local *subs::say_it      = sub { push @replied, [ 'say', $_[0] ]; return 1 };
 local *Websocket::send = sub { return 1 };
 local *Websocket::console_command = sub { return '{}' };
 
-sub reset_observers { @guided = @applied = @acked = (); }
+sub reset_observers { @guided = @applied = @acked = @replied = (); }
 
 # The Rec button's mode files a note and never touches the Guide or a command.
 reset_observers();
@@ -139,6 +143,7 @@ my $cmd_result = &subs::voice_ingest('raw', { voice => 'hey_jawn', chip_id => 'w
 is($cmd_result->{'status'}, 'done', 'a wake-word start command still runs');
 is($cmd_result->{'app'}, 'email test', 'the target resolves to the app');
 is_deeply(\@applied, ['email test'], 'the app is toggled');
+is_deeply(\@replied, [ [ 'watch', 'Email Test on.' ] ], 'a recognised command is answered on the watch');
 is(scalar(@guided), 0, 'a running command is not also sent to the Guide');
 my $cmd_note = $db->query("select uuid from notes where text = ?", 'start email test')->hash;
 ok(!$cmd_note, 'a command is not filed as a note');
@@ -218,6 +223,8 @@ $main::BRAIN   = undef;
 my $com_cmd = &subs::voice_ingest('raw', { voice => 'command', chip_id => 'watch-chip', ts => 1_700_000_120_000 });
 is($com_cmd->{'status'}, 'done', 'a Com clip runs a recognised command');
 is_deeply(\@applied, ['email test'], 'and toggles the app');
+is($com_cmd->{'reply'}, 'Email Test on.', 'the Com reply names the app and its new state');
+is_deeply(\@replied, [ [ 'watch', 'Email Test on.' ] ], 'so the Com button is no longer silent');
 is(scalar(@guided), 0, 'a Com command does not go to the Guide');
 
 reset_observers();
