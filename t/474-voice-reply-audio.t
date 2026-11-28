@@ -210,4 +210,39 @@ require(root() . '/lib/JawnOS/Domain/Evaluation.pm') unless defined &subs::ai_te
 	}
 }
 
+# --- a reply from inside a subprocessor streams inline ---------------------
+{
+	my (@inline, @forks);
+	{
+		no warnings 'redefine';
+		local *TLog::info = sub { return 1 };
+		local $subs::log = bless {}, 'TLog';
+		local *subs::bluetooth_sender_async = sub { return 1 };
+		local *subs::device_wifi_reply = sub { return undef };
+		local *subs::embedded_operator_door = sub { return '{}' };
+		local *subs::watch_reply_audio = sub { push @inline, $_[0]{'text'} };
+		local *subs::subprocessor = sub { push @forks, 1; return 1 };
+		local $gb::subprocessed = 1;
+		&subs::watch_reply({ chip_id => 'watch-chip', edt => 'watch' }, 'Email Test on.');
+		is_deeply(\@inline, ['Email Test on.'], 'already in a subprocessor: the reply audio runs inline');
+		is(scalar(@forks), 0, 'and no nested fork is asked for (a frozen parent loop never runs it)');
+	}
+	{
+		@inline = ();
+		@forks = ();
+		no warnings 'redefine';
+		local *TLog::info = sub { return 1 };
+		local $subs::log = bless {}, 'TLog';
+		local *subs::bluetooth_sender_async = sub { return 1 };
+		local *subs::device_wifi_reply = sub { return undef };
+		local *subs::embedded_operator_door = sub { return '{}' };
+		local *subs::watch_reply_audio = sub { push @inline, $_[0]{'text'} };
+		local *subs::subprocessor = sub { push @forks, 1; return 1 };
+		local $gb::subprocessed = 0;
+		&subs::watch_reply({ chip_id => 'watch-chip', edt => 'watch' }, 'Email Test on.');
+		is(scalar(@inline), 0, 'on a request worker the audio is handed to a child');
+		is(scalar(@forks), 1, 'exactly one subprocessor');
+	}
+}
+
 done_testing();

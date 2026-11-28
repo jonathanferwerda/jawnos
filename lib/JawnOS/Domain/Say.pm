@@ -972,16 +972,27 @@ sub watch_reply {
 	# small, immediate half either way.
 	my $wifi = &subs::device_wifi_reply($meta);
 	if ($wifi) {
+		$log->info('voice: reply transport=wifi' . $who) if $log;
+		$reply_timing->('wifi');
 		my $args = {
 			text => $text,
 			chip_id => $meta->{'chip_id'},
 			edt => $edt,
 			base => $wifi->{'base'},
 		};
-		$log->info('voice: reply transport=wifi' . $who) if $log;
-		$reply_timing->('wifi');
-		&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_wifi($args) },
-			{ name => 'watch reply wifi', fork => 1, args => $args });
+		# A clip is ingested in a subprocessor child (the route answers the watch
+		# before whisper). A subprocessor asked from inside that child never runs:
+		# its parent's event loop is frozen, so the fork-on-next-tick never happens.
+		# The text still went out (sent inline), which is why the wrist showed the
+		# words and no sound ever followed. Already off the request: run it here.
+		if ($gb::subprocessed) {
+			$log->info('voice: reply wifi inline (already in a subprocessor)') if $log;
+			&subs::watch_reply_wifi($args);
+		}
+		else {
+			&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_wifi($args) },
+				{ name => 'watch reply wifi', fork => 1, args => $args });
+		}
 		return;
 	}
 	# Piper synthesizes far faster than the answer is spoken, and the WiFi path
@@ -991,8 +1002,17 @@ sub watch_reply {
 	$log->info('voice: reply transport=ble' . $who) if $log;
 	$reply_timing->('ble');
 	my $args = { text => $text, chip_id => $meta->{'chip_id'}, edt => $edt };
-	&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_audio($args) },
-		{ name => 'watch reply audio', fork => 1, args => $args });
+	# Same trap as the WiFi branch above: a nested subprocessor is never forked, so
+	# a BLE clip's reply audio was silently dropped. The voice ingest is already a
+	# child; stream the parts from here.
+	if ($gb::subprocessed) {
+		$log->info('voice: reply audio inline (already in a subprocessor)') if $log;
+		&subs::watch_reply_audio($args);
+	}
+	else {
+		&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_audio($args) },
+			{ name => 'watch reply audio', fork => 1, args => $args });
+	}
 }
 
 # The WiFi half of a watch reply, as a named body: the subprocessor starts it by
@@ -1032,19 +1052,14 @@ sub watch_reply_audio {
 	return;
 }
 
-# Stream the spoken answer to the watch as PCM parts. Piper writes raw samples as
-# it makes them; ffmpeg resamples them to 8 kHz mono (16 KB/s, which the BLE link
-# carries comfortably) as it goes, so parts leave while the sentence is still
-# being synthesized - the watch starts talking back almost at once instead of
-# after the whole clip has been rendered and pushed. Each part is its own bridge
-# message (all over one connection, see bluetooth_stream_open), so a long answer
-# is no longer capped by the 64 KB message limit.
+# Stream the spoken answer to the watch as PCM parts. One engine decides who
+# speaks (reply_pcm_8k): the warm daemon first, then one-shot piper, the device's
+# own voice, a peer, and finally the cloud. Each part is its own bridge message
+# (all over one connection, see bluetooth_stream_open), so a long answer is no
+# longer capped by the 64 KB message limit.
 sub watch_reply_stream {
 	my ($meta, $text) = @_;
-	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
 	require MIME::Base64;
-	require IPC::Open3;
-	require Symbol;
 	# the words go first as their own message; the sound rides this one connection
 	my $bt = &subs::bluetooth_stream_open({
 		intent => 'com.jawn.president.bt.connect',
@@ -1056,9 +1071,7 @@ sub watch_reply_stream {
 	# jawn-bt script). Do not throw the sound away there: send the same parts
 	# through bluetooth_sender, one message at a time, which is the path the
 	# text already takes. Slower, but the deck buffers to the last part anyway.
-	unless ($bt) {
-		$log->info('voice: no stream client; sending reply audio part by part');
-	}
+	$log->info('voice: no stream client; sending reply audio part by part') if !$bt && $log;
 	my $send = sub {
 		my ($data) = @_;
 		if ($bt) {
@@ -1076,82 +1089,37 @@ sub watch_reply_stream {
 			});
 		}
 	};
-	# No piper on this machine (the Android app runtime ships none): render the
-	# answer through the configured cloud speech model and send the same 8 kHz
-	# PCM parts. This is the case that used to leave the watch silent.
-	if (!$argv || !$model) {
-		my $started = &subs::rightNow();
-		my ($pcm, $source, $err) = &subs::reply_pcm_8k($text);
-		my $sent = 0;
-		if (defined $pcm && length $pcm) {
-			my $est_total = length $pcm;
-			my $seq = 0;
-			for (my $off = 0; $off < length $pcm; $off += 512) {
-				my $chunk = substr($pcm, $off, 512);
-				$send->({ type => 'say_audio', data => { seq => $seq, last => 0, rate => 8000, total => $est_total, audio => MIME::Base64::encode_base64($chunk, '') } });
-				$seq++;
-			}
-			$send->({ type => 'say_audio', data => { seq => $seq, last => 1, rate => 8000, total => $est_total, audio => '' } });
-			$sent = 1;
-			$log->info('voice: reply audio ' . $source . ' ' . length($pcm) . ' bytes in '
-				. (&subs::rightNow() - $started) . 'ms over BLE') if $log;
-		}
-		else {
-			$log->info('voice: no reply audio rendered for the watch (text only): '
-				. ($err || 'nothing rendered')) if $log;
-		}
+	# One engine decides who speaks: the warm daemon first (the model is already
+	# loaded), then one-shot piper, the device's own voice, a peer, and finally the
+	# cloud. The cold piper pipeline this used to run itself bypassed all of that
+	# and paid the model load on every reply.
+	my $started = &subs::rightNow();
+	my ($pcm, $source, $err) = &subs::reply_pcm_8k($text);
+	unless (defined $pcm && length $pcm) {
+		$log->info('voice: no reply audio rendered for the watch (text only): '
+			. ($err || 'nothing rendered')) if $log;
 		close $bt if $bt;
-		return $sent;
+		return 0;
 	}
-	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
-	# How much audio there will be, near enough: ~14 characters a second of
-	# speech, 8 kHz mono s16 is 16000 bytes a second. The watch uses it to decide
-	# how much to hold back before speaking (half of it, clamped), so playback
-	# starts with a cushion against the link's jitter without a short answer
-	# waiting for a cushion longer than itself.
-	my $est_total = int((length($text) / 14) * 16000);
-	# Resample to 8 kHz when ffmpeg is here (the whisper path uses it, so it is on
-	# every machine that can already hear). Otherwise piper's own rate rides along
-	# in the messages and the watch opens the codec at it.
-	my $pipeline = join(' | ', &subs::pipeline_quote(@piper),
-		"ffmpeg -nostdin -loglevel error -f s16le -ar $rate -ac 1 -i - -ar 8000 -ac 1 -f s16le -");
-	my $done = 0;
-	for my $attempt ( [ $pipeline, 8000 ], [ &subs::pipeline_quote(@piper), $rate ] ) {
-		my ($pipe, $out_rate) = @{$attempt};
-		my $err = Symbol::gensym();
-		my ($pin, $pout);
-		my $pid = eval { IPC::Open3::open3($pin, $pout, $err, 'sh', '-c', $pipe) };
-		next unless $pid;
-		print {$pin} $text;
-		close $pin;
-		binmode($pout);
-		my ($seq, $sent) = (0, 0);
-		while (1) {
-			my $chunk = '';
-			# 512 bytes of PCM per part (~700 bytes base64, under 1 KB of JSON):
-			# the watch's BLE reassembler and JSON parser are smaller than the
-			# deck's, and a 4 KB part (a ~5.5 KB line) reached it as text only -
-			# the parts were dropped. More, smaller parts cost a little link time
-			# and cannot be silently lost.
-			my $n = read($pout, $chunk, 512);
-			last unless defined $n && $n > 0;
-			my $b64 = MIME::Base64::encode_base64($chunk, '');
-			$send->({ type => 'say_audio', data => { seq => $seq, last => 0, rate => $out_rate, total => $est_total, audio => $b64 } });
-			$seq++;
-			$sent += $n;
-		}
-		close $pout;
-		waitpid($pid, 0);
-		if ($sent) {
-			$send->({ type => 'say_audio', data => { seq => $seq, last => 1, rate => $out_rate, total => $est_total, audio => '' } });
-			$done = 1;
-			last;
-		}
-		# nothing came out (ffmpeg missing, say): try piper alone at its own rate
+	my $total = length $pcm;
+	my $seq = 0;
+	my $parts = 0;
+	# 512 bytes of PCM per part (~700 bytes base64, under 1 KB of JSON): the
+	# watch's BLE reassembler and JSON parser are smaller than the deck's, and a
+	# 4 KB part (a ~5.5 KB line) reached it as text only - the parts were dropped.
+	for (my $off = 0; $off < $total; $off += 512) {
+		my $chunk = substr($pcm, $off, 512);
+		$send->({ type => 'say_audio', data => { seq => $seq, last => 0, rate => 8000, total => $total, audio => MIME::Base64::encode_base64($chunk, '') } });
+		$seq++;
+		$parts++;
 	}
+	$send->({ type => 'say_audio', data => { seq => $seq, last => 1, rate => 8000, total => $total, audio => '' } });
+	my $streamed = $bt ? 1 : 0;
 	close $bt if $bt;
-	$log->info('voice: no reply audio rendered for the watch (text only)') unless $done;
-	return $done;
+	$log->info('voice: reply audio ' . $source . ' ' . $total . ' bytes in ' . $parts
+		. ' part(s) in ' . (&subs::rightNow() - $started) . 'ms over '
+		. ($streamed ? 'one stream' : 'BLE sends')) if $log;
+	return 1;
 }
 
 # Does this path hold a picture, not just a directory entry? A synced stub can be

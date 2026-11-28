@@ -875,13 +875,17 @@ sub voice_command_apply {
 	my ($app, $want, $meta) = @_;
 	my $now = &subs::rightNow();
 	my $settings = &subs::settings_grabber({ app => $app }) || {};
-	&subs::setting_setter({ app => $app, setting => 'toggle', value => $want, timestamp => ($meta->{'ts'} || $now) });
+	# The person is asking NOW. The clip's own stamp is when they started speaking,
+	# and the watch's RTC can lag the house by minutes; feeding that to the toggle
+	# write made the settings layer refuse it as "older than the stored toggle", so
+	# "start email test" did nothing and the reply said so. The utterance stamp
+	# still rides along on the clip for the note's own sort order (voice_note_store).
+	my $written = &subs::setting_setter({ app => $app, setting => 'toggle', value => $want, timestamp => $now });
 	my $db_data = {
 		app => $app,
 		server_time => $now,
-		# the clip's own time (when the utterance began), not our processing time:
-		# voice_ingest carries it as 'ts'
-		timestamp => $meta->{'ts'} || $now,
+		# a spoken movement starts now; a stale clip is not a scheduled start
+		timestamp => $now,
 		type => ($want eq 'on' ? 'start' : 'stop'),
 		toggle => ($want eq 'on' ? 1 : 0),
 		uuid => &subs::random_string_creator(21),
@@ -893,10 +897,19 @@ sub voice_command_apply {
 	};
 	&Manager::appointment_writer(&subs::controller_builder(), $db_data);
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $db_data->{'uuid'})});
-	# What the app now holds, read back rather than assumed: the reply must not
-	# say "off" when the write did not land (a cross-machine sync can lag).
-	my $state = &subs::setting_grabber({ app => $app, setting => 'toggle' });
-	$db_data->{'state'} = defined $state ? $state : '';
+	# What the app now holds, read from the row this write landed on rather than
+	# assumed: a device-less read can answer with a peer's synced row (the phone's
+	# stale "off" made the wrist say a start that had just happened had failed), and
+	# a refused write must not be reported as one that landed.
+	my $state;
+	if (ref $written eq 'HASH' && !$written->{'refused'}) {
+		$state = $written->{'value'};
+		if (defined $written->{'device'} && length $written->{'device'}) {
+			my $read = &subs::setting_grabber({ app => $app, setting => 'toggle', device => $written->{'device'} });
+			$state = $read if defined $read;
+		}
+	}
+	$db_data->{'state'} = (defined $state && $state =~ /^\s*(?:1|on|true|yes)\s*$/i) ? 'on' : 'off';
 	return $db_data;
 }
 
@@ -1567,6 +1580,10 @@ sub voice_ingest {
 			my $who = $meta->{'chip_id'} // '';
 			if (length $who) { &subs::watch_reply($meta, $speech); }
 			else { &subs::say_it($speech); }
+			# The command consumed the clip: tell the watch to drop its copy. The
+			# arrival receipt (voice_recv) stops the retry, but only voice_done
+			# deletes the file - a command used to leave every clip on disk.
+			&subs::voice_clip_ack($meta);
 			$log->info('voice: command reply "' . $speech . '"') if $log;
 			$timing->('command', 'app=' . $app . ' want=' . $cmd->{'want'});
 			return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text, reply => $speech };

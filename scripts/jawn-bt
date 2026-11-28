@@ -50,6 +50,7 @@ while (defined(my $a = shift @ARGV)) {
 	elsif ($a eq '--all') { $opt{all} = 1; }
 	else { push @args, $a; }
 }
+$opt{'mac'} = norm_mac($opt{'mac'}) if defined $opt{'mac'};
 
 # How long each command may wait for the daemon. A watch that goes to sleep
 # suspends its radio without telling anyone, and a no-response write to it is
@@ -143,6 +144,18 @@ sub send_cmd {
 
 # Does a status event show $want connected? With no $want, asks about the
 # primary link (the v1 top-level fields); with a MAC, looks in the v2 list.
+# The daemon normalises a MAC to AA:BB:CC:DD:EE:FF. A device record often carries
+# it bare (64E8334B3839, the watch's form), and every wait below compares the
+# answer's MAC with that same string. An unnormalised form never matched, so a
+# connect burned its full 20 s and a send its full 15 s even though the write had
+# already landed - the words reached the watch, and the reply was reported late.
+sub norm_mac {
+	my ($mac) = @_;
+	return undef unless defined $mac && length $mac;
+	(my $hex = uc $mac) =~ s/[^0-9A-F]//g;
+	return length($hex) == 12 ? join(':', $hex =~ /(..)/g) : uc $mac;
+}
+
 sub status_shows_connected {
 	my ($o, $want) = @_;
 	unless (defined $want) {
@@ -216,7 +229,7 @@ if ($cmd eq 'scan') {
 	$last = wait_for(sub { $_[0]->{'event'} eq 'scan_done' || $_[0]->{'event'} eq 'error' }, $timeout || ($secs + 15));
 }
 elsif ($cmd eq 'connect') {
-	my $mac = $args[0] or die "jawn-bt connect: mac required\n";
+	my $mac = norm_mac($args[0]) or die "jawn-bt connect: mac required\n";
 	my %h = (cmd => 'connect', mac => $mac);
 	for my $k (qw/service rx tx/) {
 		$h{$k} = $opt{$k} if defined $opt{$k};
@@ -298,11 +311,11 @@ elsif ($cmd eq 'status') {
 }
 elsif ($cmd eq 'disconnect') {
 	my %h = (cmd => 'disconnect');
-	if (defined $args[0]) { $h{'mac'} = $args[0]; }
+	if (defined $args[0]) { $h{'mac'} = norm_mac($args[0]); }
 	elsif ($opt{'all'}) { $h{'all'} = JSON::PP::true; }
 	# No mac and no --all is "disconnect everything", the daemon's default.
 	send_cmd(\%h);
-	my $want = defined $args[0] ? uc $args[0] : undef;
+	my $want = defined $args[0] ? norm_mac($args[0]) : undef;
 	$last = wait_for(sub {
 		my $o = shift;
 		return 0 unless $o->{'event'} =~ /^(disconnected|status|error)$/;
