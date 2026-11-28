@@ -158,7 +158,7 @@
 	<div class="help_agent" style="border-top:2px solid var(--line);padding:8px 12px 10px;box-sizing:border-box;flex:0 0 auto;background:var(--panel);">
 		<div class="help_agent_row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
 			<span style="font-weight:bold;font-size:13px;opacity:.8;">Guide</span>
-			<select id="help_model" class="help_model_select" value="<%= $selected_model %>"
+			<select id="help_model" class="help_model_select jawnos_model_select" value="<%= $selected_model %>"
 				style="max-width:210px;padding:3px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:13px;">
 				<% my $sel = defined $selected_model ? $selected_model : '';
 				   my (%hgroups, @horder);

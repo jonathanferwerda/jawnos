@@ -5834,3 +5834,26 @@ body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[positio
 .taskbar_panel .taskbar_music_select { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 11px; padding: 3px 5px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: 5px; }
 .taskbar_panel .taskbar_music_output_label { flex: 0 0 auto; font-size: 11px; opacity: .72; }
 .taskbar_panel .taskbar_music_now { min-height: 1.2em; font-size: 11px; opacity: .72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A model picker: the native select steps out of the way and a button opens a
+   provider accordion. A provider can hold dozens of models, so the current
+   model's provider opens and the rest stay folded. */
+select.jawnos_model_select.model_picker_native { display:none !important; }
+.model_picker_button { display:inline-flex; align-items:center; gap:6px; box-sizing:border-box; max-width:100%; min-width:0; padding:6px 10px; font:inherit; font-size:13px; line-height:1.2; color:inherit; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; cursor:var(--jawnos-cursor-pointer, pointer); text-align:left; }
+.model_picker_button::after { content:'\25be'; flex:0 0 auto; opacity:.65; }
+.model_picker_button .model_picker_label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#search_app_ai_bar .model_picker_button { flex:1 1 auto; }
+#help_model + .model_picker_button { max-width:210px; }
+.model_picker_panel { position:fixed; z-index:2147482500; box-sizing:border-box; padding:4px; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,.35); overflow:auto; }
+.model_picker_group { border-radius:7px; }
+.model_picker_group_head { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:inherit; background:none; border:0; border-radius:7px; font:inherit; font-size:12px; font-weight:600; text-align:left; cursor:var(--jawnos-cursor-pointer, pointer); }
+.model_picker_group_head:hover { background:var(--panel-2); }
+.model_picker_group_label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.model_picker_group_count { margin-left:auto; font-size:11px; font-weight:400; opacity:.6; }
+.model_picker_caret { flex:0 0 auto; width:1em; text-align:center; opacity:.7; transition:transform .12s ease; }
+.model_picker_group.open .model_picker_caret { transform:rotate(90deg); }
+.model_picker_group_body { display:none; padding:2px 0 5px 12px; }
+.model_picker_group.open .model_picker_group_body { display:block; }
+.model_picker_item { display:block; box-sizing:border-box; width:100%; padding:6px 9px; color:inherit; background:none; border:0; border-radius:6px; font:inherit; font-size:13px; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:var(--jawnos-cursor-pointer, pointer); }
+.model_picker_item:hover { background:var(--panel-2); }
+.model_picker_item.selected { color:var(--panel); background:var(--ink, #333); }

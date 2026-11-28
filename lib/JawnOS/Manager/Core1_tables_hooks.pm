@@ -131,6 +131,7 @@ our @manager_bundle_files = qw(
 	/js/music.js
 	/js/images.js
 	/js/manager/configure.js
+	/js/manager/model_picker.js
 	/js/manager/windows.js
 	/js/manager/editor.js
 	/js/manager/ide.js

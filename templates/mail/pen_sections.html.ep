@@ -20,7 +20,7 @@
 			<input class="chatbot_conversation_select" type="checkbox" <% if ($uuid eq $settings->{'chatbot_conversation'}) { %>checked="checked"<% } %> style="vertical-align:bottom;">
 			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="chatbot_conversation_delete little_thumb hover" style="vertical-align:bottom;">
 		<% } %>
-	    <select class="pen_settings" setting="chatbot_model" value="<%= $con->{'chatbot_model'} // '' %>">
+	    <select class="pen_settings jawnos_model_select" setting="chatbot_model" value="<%= $con->{'chatbot_model'} // '' %>">
 	      <% my (%pgroups, @porder);
 	         foreach my $cm ( @{$chatbot_models || []} ) {
 	             my $mid = $cm->{'model'} // '';

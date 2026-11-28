@@ -69,7 +69,7 @@
 	</div>
 	<div id="search_app_ai_bar">
 		<label for="search_app_ai_model"><%= &subs::ui('Model') %></label>
-		<select id="search_app_ai_model" hint="<%= &subs::ui('The model this tab talks to') %>">
+		<select id="search_app_ai_model" class="jawnos_model_select" hint="<%= &subs::ui('The model this tab talks to') %>">
 			<option value=""><%= &subs::ui('Default model') %></option>
 			<% foreach my $group ( @{$model_groups} ) {
 				my $glabel = $group->{'label'} || $group->{'id'} || '';

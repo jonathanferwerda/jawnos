@@ -49,6 +49,6 @@ like($ai, qr/substr\(\$m->\{'content'\}, 0, \$room\)/, 'the whole history is bou
 like($help, qr/opens Search on the Apps tab/, 'the topic names the magnifier\'s Apps hand-off');
 like($help, qr/It is a conversation/, 'and the AI conversation');
 like($help, qr/New chat/, 'and the New chat control');
-like($help, qr/verified => '2026-11-27'/, 'the topic is re-vetted with the change');
+like($help, qr/verified => '2026-11-28'/, 'the topic is re-vetted with the change');
 
 done_testing();

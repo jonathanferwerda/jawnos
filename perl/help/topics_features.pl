@@ -215,7 +215,7 @@ $topic{'search'} = {
 		title => 'Search', category => 'apps', app => 'search',
 		templates => [ 'templates/apps/search.html.ep', 'public/js/manager/search.js' ],
 		controls => [ 'Search engines', 'The model this tab talks to', 'Start a new conversation' ],
-		verified => '2026-11-27',
+		verified => '2026-11-28',
 		summary => 'One window for the house, the web and an AI conversation, with a tab for each.',
 		body => [
 			'The search box in the start menu, the taskbar or the dock still filters apps as you type, and it also answers the akas you have taught an app: a word that is only another name for it still brings the app up, with that word in brackets after its name. The magnifier beside it opens Search on the Apps tab with those words, so the matches are there at once.',
@@ -223,7 +223,7 @@ $topic{'search'} = {
 			'Web asks the search engines that are switched on and shows the links each one finds under its name. Bing, Brave, DuckDuckGo and Wikipedia are on to begin with; the settings panel lists dozens more under General, Reference, Media, Shopping and News. A link opens in the JawnOS Browser; the Search window stays where it is.',
 			'The gear on the tab row opens the engine settings. Type in Find an engine to narrow the list, tick an engine to switch it on or off, and press the × on a custom engine to remove it. The choice is kept for the whole house, so every machine searches with the same engines; with none ticked the Web tab says so and offers the panel.',
 			'In the browser on a phone, + Search adds the site you are reading: the server reads the page\'s OpenSearch description, then a search parameter already in the address, and offers a plain /search?q= guess if neither is there. An engine that answers a server with a JavaScript shell still appears in the list, and its row opens that engine in the browser.',
-			'AI talks to the model you pick in its Model menu: every chat model from every provider the house has set up, grouped by provider, with the Guide\'s own model as the default. It is a conversation - each answer uses the earlier turns, and New chat clears the thread. It answers in plain text, and Enter sends, so typing a question does not spend a call on every letter.',
+			'AI talks to the model you pick in its Model menu: every chat model from every provider the house has set up, grouped under provider headings you open, with the Guide\'s own model as the default. It is a conversation - each answer uses the earlier turns, and New chat clears the thread. It answers in plain text, and Enter sends, so typing a question does not spend a call on every letter.',
 			'Only the tab you are on is searched. The magnifier always lands on Apps; opening Search from the start menu reopens the tab you last used. Type to search Apps and Web; in AI, press Enter to send.'
 		],
 		steps => [

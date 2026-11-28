@@ -179,7 +179,7 @@
 				<div class="cfg-row">
 					<label><%= $label %></label>
 					<span class="cfg-inline ai_model_picker">
-					<select class="configure_input ai_role_model" app="mail" setting="<%= $setting %>">
+					<select class="configure_input ai_role_model jawnos_model_select" app="mail" setting="<%= $setting %>">
 						<option value="">— none —</option>
 						<% foreach my $provider ( @{$catalogue} ) {
 							next unless $provider_ready{ $provider->{'id'} };
@@ -219,7 +219,7 @@
 				</div>
 				<div class="cfg-row ai_fallback_row">
 					<label>Fallback</label>
-					<select class="configure_input ai_role_fallback" app="mail" setting="<%= $setting %>_fallback">
+					<select class="configure_input ai_role_fallback jawnos_model_select" app="mail" setting="<%= $setting %>_fallback">
 						<option value="">— none —</option>
 						<% my (%fgroups, @forder);
 						   foreach my $m ( @role_models ) {
@@ -288,7 +288,7 @@
 					<div class="cfg-row">
 						<label for="qa_ux_model"><%= &subs::lang('configure.qa_ux_model') %></label>
 						<span class="cfg-inline ai_model_picker">
-						<select id="qa_ux_model" class="qa_ux_model ai_role_model">
+						<select id="qa_ux_model" class="qa_ux_model ai_role_model jawnos_model_select">
 							<option value="" <% if (!length $qa_ux_current) { %>selected<% } %>><%= &subs::ui('No model (skip)') %></option>
 							<% my $qa_ux_shown = 0; %>
 							<% foreach my $qa_group ( @{$qa_ux_groups} ) { %>
