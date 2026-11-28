@@ -8,6 +8,7 @@ sub routes {
 	[26376, 'post', '/manager/search/engine/probe', 'action_26376'],
 	[26590, 'get', '/manager/search/web', 'action_26590'],
 	[26602, 'post', '/manager/search/ai', 'action_26602'],
+	[27643, 'post', '/manager/search/ai/pen', 'action_27643'],
 	[26628, 'post', '/manager/clipboard_setter', 'action_26628'],
 	[26639, 'get', '/manager/clipboard_getter', 'action_26639'],
 	[26651, 'get', '/manager/search_engine_grabber', 'action_26651'],

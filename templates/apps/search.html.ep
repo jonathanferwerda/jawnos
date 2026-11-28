@@ -55,6 +55,14 @@
 #search_app .search_app_msg_user { align-self:flex-end; background:var(--ink, #333); color:var(--panel); border-bottom-right-radius:4px; }
 #search_app .search_app_msg_ai { align-self:flex-start; background:var(--panel-2); border:1px solid var(--line); border-bottom-left-radius:4px; }
 #search_app .search_app_msg.search_app_thinking { color:var(--ink-muted, #888); font-style:italic; }
+/* A conversation moves the question field to the bottom, where the turns are;
+   an empty thread puts it back at the top so the tab opens like a search. */
+#search_app_ai_composer { display:none; gap:6px; align-items:center; padding:8px 10px; border-top:1px solid var(--line); flex:0 0 auto; }
+#search_app.ai_mode.ai_conversation #search_app_ai_composer { display:flex; }
+#search_app.ai_mode.ai_conversation #search_app_bar { display:none; }
+#search_app_ai_composer #search_app_input { flex:1 1 auto; min-width:0; }
+#search_app_ai_composer button { flex:0 0 auto; padding:8px 12px; font-size:13px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); white-space:nowrap; }
+#search_app_ai_composer button:disabled { opacity:.45; cursor:var(--jawnos-cursor-default, default); }
 </style>
 <div id="search_app">
 	<div id="search_app_tabs">
@@ -65,7 +73,10 @@
 	</div>
 	<div id="search_app_bar">
 		<input id="search_app_input" type="search" autocomplete="off" spellcheck="false"
-			placeholder="<%= &subs::lang('common.search') %>" value="<%= &subs::html_text($q) %>">
+			placeholder="<%= &subs::lang('common.search') %>"
+			data-search-placeholder="<%= &subs::lang('common.search') %>"
+			data-ai-placeholder="<%= &subs::ui('Ask the assistant…') %>"
+			value="<%= &subs::html_text($q) %>">
 	</div>
 	<div id="search_app_ai_bar">
 		<label for="search_app_ai_model"><%= &subs::ui('Model') %></label>
@@ -97,5 +108,9 @@
 				placeholder="<%= &subs::lang('search.find_engine') %>">
 			<div id="search_app_engine_list"></div>
 		</div>
+	</div>
+	<div id="search_app_ai_composer">
+		<button type="button" id="search_app_ai_clear" hint="<%= &subs::ui('Clear the conversation') %>"><%= &subs::ui('Clear') %></button>
+		<button type="button" id="search_app_ai_pen" hint="<%= &subs::ui('Copy this conversation into the Pen as a new conversation') %>"><%= &subs::ui('Send to Pen') %></button>
 	</div>
 </div>

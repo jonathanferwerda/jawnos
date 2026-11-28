@@ -738,4 +738,90 @@ sub action_27624 {
 	$c->render(json => { html => $html, p_id => $p_id, id => $id });
 }
 
+# Turn the Search AI's conversation into a Pen conversation, so a thread worth
+# keeping can be renamed, continued and read where the Pen keeps its history.
+# The conversation row goes in the Pen's own list and each turn is filed as a
+# Pen message under it; the Pen is then opened on that conversation.
+# POST /manager/search/ai/pen
+sub action_27643 {
+	my $c = shift;
+	my $list = eval { decode_json($c->param('messages') // '') };
+	unless (ref $list eq 'ARRAY') {
+		$c->render(json => { ok => 0, error => &subs::ui('There is no conversation to send.') });
+		return;
+	}
+	my (@msgs, $first);
+	my $total = 0;
+	foreach my $m ( @{$list} ) {
+		last if @msgs >= 100;
+		next unless ref $m eq 'HASH';
+		my $role = lc($m->{'role'} // '');
+		next unless $role eq 'user' || $role eq 'assistant';
+		my $text = $m->{'content'} // '';
+		next unless defined $text && length $text;
+		$text = substr($text, 0, 20000);
+		last if $total + length($text) > 400000;
+		$total += length $text;
+		push @msgs, { role => $role, content => $text };
+		$first = $text if $role eq 'user' && !defined $first;
+	}
+	unless (@msgs) {
+		$c->render(json => { ok => 0, error => &subs::ui('There is no conversation to send.') });
+		return;
+	}
+	my $model = $c->param('model') // '';
+	$model =~ s/[^\x20-\x7e]//g;
+	$model =~ s/^\s+|\s+$//g;
+	$model = substr($model, 0, 200);
+	# "Default model" is whichever model the Search tab's role places, so pin
+	# the Pen conversation to the model that actually answered rather than none.
+	unless (length $model) {
+		my ($primary) = &subs::ai_role_models('help_assistant');
+		$model = $primary // '';
+	}
+
+	my $uuid = &subs::random_string_creator(35);
+	my $name = $first // '';
+	$name =~ s/\s+/ /g;
+	$name =~ s/^\s+|\s+$//g;
+	$name = substr($name, 0, 48);
+	$name = 'Search conversation' unless length $name;
+	$name = 'Search: ' . $name if $name ne 'Search conversation';
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'chatbot_conversations' ] });
+	my $conversations = eval { decode_json $settings->{'chatbot_conversations'} } || {};
+	$conversations->{$uuid} = {
+		uuid => $uuid,
+		chatbot_conversation_name => $name,
+		chatbot_model => $model,
+		system_message => '',
+		server_time => &subs::rightNow(),
+	};
+	&subs::setting_setter({ app => 'mail', setting => 'chatbot_conversations', value => encode_json($conversations) });
+	&subs::setting_setter({ app => 'mail', setting => 'chatbot_conversation', value => $uuid });
+
+	# The Pen reads its history from the mailbox, oldest first by the timestamp
+	# each turn carries, and the assistant's rows are the ones the Pen wrote.
+	my $suds = &subs::suds_grabber();
+	my $now = &subs::rightNow();
+	my $base = $now - (scalar(@msgs) + 1) * 1000;
+	my $pen_file = &subs::manager_file_maker('pen');
+	my $me = &subs::manager_file_maker($c->session('name') || 'me');
+	my $seq = 0;
+	foreach my $m ( @msgs ) {
+		my $body = &subs::html_text($m->{'content'});
+		$body =~ s/\n/<br>/g;
+		&subs::db_insert('mailbox', {
+			uuid => &subs::random_string_creator(25),
+			timestamp => $base + (++$seq) * 1000,
+			server_time => $now,
+			body => &subs::note_encrypter($suds, $body),
+			manager_file => ($m->{'role'} eq 'assistant' ? $pen_file : $me),
+			status => 'sent',
+			contact => 'pen',
+			conversation_uuid => $uuid,
+		});
+	}
+	$c->render(json => { ok => 1, uuid => $uuid, name => $name });
+}
+
 1;

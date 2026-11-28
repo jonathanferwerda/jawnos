@@ -39,6 +39,35 @@
 		$('#search_app .search_app_tab').removeClass('selected')
 			.filter('[data-tab="' + state.tab + '"]').addClass('selected');
 		$('#search_app').toggleClass('ai_mode', state.tab === 'ai');
+		layout();
+	}
+
+	// An AI thread takes the window over: the question field moves from the top
+	// to the bottom composer while there are turns, and back when the thread is
+	// empty or another tab is chosen. One field, moved, so every saver and the
+	// Enter handler keep working.
+	function conversing() {
+		return state.tab === 'ai' && state.messages.length > 0;
+	}
+
+	function layout() {
+		var root = $('#search_app');
+		if (!root.length) { return; }
+		var chat = conversing();
+		root.toggleClass('ai_conversation', chat);
+		var input = $('#search_app_input');
+		var home = chat ? $('#search_app_ai_composer') : $('#search_app_bar');
+		if (input.length && home.length && input[0].parentNode !== home[0]) {
+			var hadFocus = document.activeElement === input[0];
+			if (chat) { home.prepend(input); } else { home.append(input); }
+			if (hadFocus) { input.focus(); }
+		}
+		if (input.length) {
+			input.attr('placeholder', state.tab === 'ai'
+				? (input.attr('data-ai-placeholder') || input.attr('data-search-placeholder') || '')
+				: (input.attr('data-search-placeholder') || ''));
+		}
+		$('#search_app_ai_clear, #search_app_ai_pen').prop('disabled', !state.messages.length);
 	}
 
 	function query() {
@@ -62,7 +91,7 @@
 	// every turn, so a re-render cannot lose it.
 	function renderThread() {
 		var box = results().empty();
-		if (!state.messages.length) { note(T('Ask a question and press Enter.')); return; }
+		if (!state.messages.length) { note(T('Ask a question and press Enter.')); layout(); return; }
 		var thread = $('<div class="search_app_thread"></div>');
 		$.each(state.messages, function (i, m) {
 			thread.append($('<div class="search_app_msg"></div>')
@@ -70,6 +99,7 @@
 				.append($('<div class="search_app_msg_text"></div>').text(m.content)));
 		});
 		box.append(thread);
+		layout();
 	}
 
 	function aiSay(role, text) {
@@ -355,11 +385,40 @@
 		try { localStorage.setItem(AI_MODEL_KEY, $(this).val() || ''); } catch (e) {}
 	});
 
-	$(document).on('click', '#search_app_ai_new', function (e) {
-		e.preventDefault();
+	function clearThread() {
 		state.messages = [];
 		renderThread();
 		$('#search_app_input').val('').focus();
+	}
+
+	$(document).on('click', '#search_app_ai_new, #search_app_ai_clear', function (e) {
+		e.preventDefault();
+		clearThread();
+	});
+
+	// Copy the thread into the Pen as a conversation of its own, then open the
+	// Pen on it. The Search copy is cleared because the words now live there.
+	$(document).on('click', '#search_app_ai_pen', function (e) {
+		e.preventDefault();
+		if (!state.messages.length) { return; }
+		var button = $(this);
+		button.prop('disabled', true);
+		var model = $('#search_app_ai_model').val() || '';
+		$.post('/manager/search/ai/pen', { messages: JSON.stringify(state.messages), model: model }, function (data) {
+			if (!data || !data.ok) {
+				button.prop('disabled', false);
+				note((data && data.error) || T('The Pen could not take the conversation.'));
+				return;
+			}
+			state.messages = [];
+			renderThread();
+			$('#search_app_input').val('');
+			if (typeof mailMaker === 'function') { mailMaker(null, 'pen'); }
+			else if (typeof jawnosSearchOpen === 'function') { jawnosSearchOpen('pen'); }
+		}).fail(function () {
+			button.prop('disabled', false);
+			note(T('The Pen could not take the conversation.'));
+		});
 	});
 
 	$(document).on('click', '#search_app_toggle', function (e) {
