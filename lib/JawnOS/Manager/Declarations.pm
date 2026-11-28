@@ -462,6 +462,7 @@ sub help_measure;
 sub help_music_file;
 sub guide_request_app;
 sub remote_command_run;
+sub remote_machine_by_words;
 sub remote_command_execute;
 sub remote_command_send;
 sub remote_input_geometry;

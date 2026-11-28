@@ -428,6 +428,26 @@ sub remote_command_execute($c, $action) {
 	return $action->{'text'} || ('did ' . ($a // 'nothing'));
 }
 
+# The machine a person named in words: "the table", "my phone", a hostname,
+# fqdn or IP. The Network panel's command box and the voice turn both resolve a
+# name here, so they cannot disagree about which machine was meant.
+sub remote_machine_by_words($machine) {
+	my $want = lc(defined $machine ? $machine : '');
+	$want =~ s/^\s*(?:the|my|a|an)\s+//;
+	$want =~ s/\s+$//;
+	return '' unless length $want;
+	my $fuzzy;
+	foreach my $rm ( @{ &subs::remote_machine_lister() } ) {
+		next unless ref $rm eq 'HASH';
+		my @names = grep { defined && length } ( lc($rm->{'hostname'} // ''), lc($rm->{'fqdn'} // ''), lc($rm->{'ip'} // '') );
+		# a machine the hub knows arrives as "X (mirror)"; match on its real name
+		my @labels = map { my $x = $_; $x =~ s/\s*\(mirror\)$//; $x =~ s/\..*$//; $x } @names;
+		return $rm->{'uuid'} if grep { $_ eq $want } (@names, @labels);
+		$fuzzy ||= $rm if grep { index($_, $want) >= 0 || index($want, $_) >= 0 } @labels;
+	}
+	return $fuzzy ? ($fuzzy->{'uuid'} // '') : '';
+}
+
 # The local half: this machine sends a command to a peer.
 sub remote_command_send($data) {
 	my $uuid = $data->{'uuid'};

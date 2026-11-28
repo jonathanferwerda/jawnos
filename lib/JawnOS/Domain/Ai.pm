@@ -1420,7 +1420,7 @@ sub voice_brain {
 	}
 	my $verbs = ($scope && $scope->{'ok'} && ref $scope->{'verbs'} eq 'HASH')
 		? $scope->{'verbs'}
-		: { map { $_ => 1 } qw/say ask done measure where_when create play_music open_app close_app alias unalias/ };
+		: { map { $_ => 1 } qw/say ask done measure where_when create play_music open_app close_app remote alias unalias/ };
 	my $system = &help::actions_prompt($verbs, 0, $text) . "\n\n";
 	$system .= "Only the actions listed above exist on this turn; ignore any rule that names an action not listed.\n";
 	$system .= "This came in as a spoken command to the person's watch, transcribed on-device: "
@@ -1553,6 +1553,31 @@ sub voice_brain {
 		$reply->($speech);
 		$log->info('voice: brain stop ' . $app);
 		return { handled => 1, action => 'stop', app => $app, said => $speech };
+	}
+	# "tell the table to ..." - the named machine's own Guide reads the words
+	# there, over the peer rail. The name is resolved here, with the same helper
+	# the Network panel's command box uses.
+	if ($a eq 'remote') {
+		my $machine = $action->{'machine'} // $action->{'target'} // '';
+		my $relay = $action->{'text'} // $action->{'command'} // '';
+		return undef unless length $machine && length $relay;
+		my $uuid = eval { &Manager::remote_machine_by_words($machine) } || '';
+		unless (length $uuid) {
+			my $speech = 'I do not know a machine called ' . $machine . '.';
+			$reply->($speech);
+			return { handled => 1, action => 'remote', said => $speech };
+		}
+		my $r = eval { &Manager::remote_command_send({
+			uuid => $uuid, text => $relay,
+			# a voice turn waits less than the panel: a sleeping peer cannot answer
+			# before the person has moved on.
+			inactivity_timeout => 10, request_timeout => 12,
+		}) } || {};
+		my $speech = $r->{'observation'} || $r->{'error'} || '';
+		return undef unless length $speech;
+		$reply->($speech);
+		$log->info('voice: brain remote ' . $machine . ' ("' . $speech . '")');
+		return { handled => 1, action => 'remote', said => $speech, remote => $r };
 	}
 	# the acting verbs the server can run itself: measure/where read our own
 	# records, play_music/open_app/close_app reach the open JawnOS tabs over the socket

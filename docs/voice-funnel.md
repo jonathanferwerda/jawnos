@@ -188,6 +188,16 @@ The full Guide window and its associate now get the same `app`, `weather` and
 `history` tools; the voice turn's scoped list is still smaller, but nothing the
 watch can do is missing from the screen.
 
+### Remote machines
+
+`remote` is in the common voice verb core. "Tell the table to play Ben Folds
+Five" sends the words to the named machine's own Guide over the peer rail
+(`Manager::remote_command_send`), which runs them there; the reply is spoken
+back. The name is resolved by `Manager::remote_machine_by_words`, the same helper
+the Network panel's command box uses, so "the table", a hostname and an IP mean
+the same machine in both places. A voice turn waits ten seconds for the peer
+rather than the panel's thirty.
+
 ### Camera and window control
 
 A spoken capture is an app action for `camera`: `photo` and `video` press the
@@ -215,12 +225,14 @@ family's speech), `t/488-history-visit.t` (a fast resolver) or
 - `lib/JawnOS/Domain/VoiceFunnel.pm` — catalogue, matcher, router, identity,
   weather, history/visit, app action lines.
 - `lib/JawnOS/Domain/Ai.pm` — fast path, scoped prompt, `find`/`stop`/`app`/
-  `open_app`/`close_app` branches, and `voice_confirmation_kind` for the held
-  write's yes/no.
+  `open_app`/`close_app`/`remote` branches, and `voice_confirmation_kind` for
+  the held write's yes/no.
 - `lib/JawnOS/Manager/Part29.pm` — `app_action_execute`: the registry gate,
   visibility, confirmation, route lookup and JSON dispatch; the held-write
   `app_action_pending_store`/`take`/`peek` and the Guide's
   `app_action_pending_list`/`confirm`/`cancel`.
+- `lib/JawnOS/Manager/Part28.pm` — `remote_command_send` and
+  `remote_machine_by_words`, the peer rail and its one name resolver.
 - `lib/JawnOS/Routes.pm` — `table`/`lookup`, the one route table the server and
   the bridge share.
 - `lib/JawnOS/Controller/manager_help.pm`, `lib/JawnOS/Routes/manager_help.pm` —
@@ -243,6 +255,7 @@ family's speech), `t/488-history-visit.t` (a fast resolver) or
   Store, Appointments and Help topics name the new answers and the card.
 - `t/483-voice-funnel.t`, `t/484-app-action-bridge.t`, `t/487-store-actions.t`,
   `t/488-history-visit.t`, `t/489-pending-card.t`, `t/490-guide-parity.t`,
-  `t/491-camera-window-voice.t` — matcher, scope, router contract, identity,
-  weather, history/visit, the action gates, the held write, the Store family,
-  the card, the Guide parity, the camera press and the window close.
+  `t/491-camera-window-voice.t`, `t/493-remote-voice.t` — matcher, scope,
+  router contract, identity, weather, history/visit, the action gates, the held
+  write, the Store family, the card, the Guide parity, the camera press, the
+  window close and the remote machine relay.

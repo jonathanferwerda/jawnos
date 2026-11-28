@@ -507,6 +507,7 @@ our %SUB = (
 	'relationalizer'                         => 'JawnOS/Manager/Part23.pm',
 	'remote_command_execute'                 => 'JawnOS/Manager/Part28.pm',
 	'remote_command_run'                     => 'JawnOS/Manager/Part28.pm',
+	'remote_machine_by_words'                 => 'JawnOS/Manager/Part28.pm',
 	'remote_command_send'                    => 'JawnOS/Manager/Part28.pm',
 	'remote_device_connect'                  => 'JawnOS/Manager/Part11.pm',
 	'remote_input_apply'                     => 'JawnOS/Manager/Part28.pm',

@@ -249,7 +249,7 @@ sub voice_funnel_scope($text) {
 sub voice_funnel_verbs($t) {
 	# Keep this list honest: a verb named here must have a branch in voice_brain.
 	# The common core is seven; each app family adds only what it can act on.
-	my %v = map { $_ => 1 } qw/say ask done find open_app close_app alias unalias/;
+	my %v = map { $_ => 1 } qw/say ask done find open_app close_app remote alias unalias/;
 	my $app = lc(($t->{'app'} // '') . ' ' . ($t->{'id'} // ''));
 	$v{'measure'} = 1 if $app =~ /measure|budget|health|weight/;
 	$v{'where_when'} = 1 if $app =~ /travel|place|weather|navigation/;

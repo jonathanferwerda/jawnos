@@ -826,18 +826,7 @@ sub action_35774 {
 	my $uuid = $c->param('remote_uuid');
 	# a command can name the machine in words ("the table", "the phone") instead of by uuid
 	if (!$uuid && $c->param('machine')) {
-		my $want = lc $c->param('machine');
-		$want =~ s/^\s*(?:the|my|a)\s+//;
-		$want =~ s/\s+$//;
-		my $fuzzy;
-		foreach my $rm ( @{ &subs::remote_machine_lister() } ) {
-			my @names = grep { defined && length } ( lc($rm->{'hostname'} // ''), lc($rm->{'fqdn'} // ''), lc($rm->{'ip'} // '') );
-			# a machine the hub knows arrives as "X (mirror)"; match on its real name
-			my @labels = map { my $x = $_; $x =~ s/\s*\(mirror\)$//; $x =~ s/\..*$//; $x } @names;
-			if (grep { $_ eq $want } (@names, @labels)) { $uuid = $rm->{'uuid'}; last; }
-			$fuzzy ||= $rm if grep { index($_, $want) >= 0 || index($want, $_) >= 0 } @labels;
-		}
-		$uuid = $fuzzy->{'uuid'} if !$uuid && $fuzzy;
+		$uuid = &remote_machine_by_words($c->param('machine'));
 	}
 	unless ($uuid) { $c->render(json => { ok => 0, error => 'no machine selected' }); return; }
 	$c->render(json => remote_command_send({
