@@ -80,6 +80,19 @@ like($hooks, qr/this pass does not include/, 'and its denial names the missing s
 my $gate_at = index($hooks, 'access_scope_missing');
 my $tier_at = index($hooks, 'tier_denied');
 ok($tier_at >= 0 && $gate_at > $tier_at, 'the scope check follows the tier check');
+# A linked machine that proved its pinned key is the house calling, not a person
+# using a resident pass. Its roster grant, not a stale resident cookie's roles,
+# decides the surfaces it reaches. The relay's POST is status-blind, so a denial
+# page read as success and the row waited for the next sync (a task completion).
+my $peer_at = index($hooks, 'app_peer_ok');
+ok($peer_at >= 0 && $peer_at < $gate_at, 'the signed-peer proof is read before the scope refuses');
+like($hooks, qr/\(\$privilege eq 'resident'\) \? &app_peer_ok\(\$c\) : 0/,
+	'only a resident session asks for the peer proof');
+like($hooks, qr/&& !\$peer_call/, 'and the scope check steps aside for a proved peer');
+# The tier check must not consult the peer proof: a signature is a machine's
+# identity, not a promotion to a citizen desk.
+my $tier_block = substr($hooks, $tier_at, $peer_at - $tier_at);
+unlike($tier_block, qr/app_peer_ok/, 'the tier check does not let a signature climb a rung');
 # `$c->stash('key') ||= ...` parses but dies at runtime - "Can't modify
 # non-lvalue subroutine call" - on the first resident request, and every peer
 # rail that carried a stored resident session then answered 500. The roles are

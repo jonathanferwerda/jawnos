@@ -232,10 +232,19 @@ Manager::app->hook(before_dispatch => sub {
 	# The scope check. A resident's pass names roles, and a role names the app
 	# surfaces it reaches; the tier gate above only says the rung. A citizen is
 	# never scoped, and the rails that authenticate themselves are the same
-	# carve-outs the tier check uses. The denial names the missing surface so the
-	# person can ask for the right role instead of guessing.
+	# carve-outs the tier check uses. A linked machine that proved its pinned key
+	# is the house calling, not a person using a resident pass: its surfaces come
+	# from the roster grant, and the resident roles on a relay's stored cookie are
+	# stale bookkeeping. Without this carve-out the scope check answered a signed
+	# relay with the denial page - and the relay's status-blind POST took that as
+	# delivered, so a task completion reached the peers only at the next sync.
+	# A plain resident browser has no peer signature, so it is still scoped. The
+	# denial names the missing surface so the person can ask for the right role
+	# instead of guessing.
+	my $peer_call = ($privilege eq 'resident') ? &app_peer_ok($c) : 0;
 	if ($privilege eq 'resident'
 		&& !&app_public_path($path)
+		&& !$peer_call
 		&& $path ne '/manager/security/media_lock') {
 		# `stash('key')` is a plain call, not an lvalue: `||=` on it dies with
 		# "Can't modify non-lvalue subroutine call" on the first resident request.
