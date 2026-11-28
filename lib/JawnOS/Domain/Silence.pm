@@ -178,34 +178,52 @@ sub sound_house_setting_level {
 	return $level eq 'passive' ? 'sound' : $level;
 }
 
-# One read of every app's profile on the house-wide row, and the legacy Silence
-# box beside it. The alarm pass used to read the whole box in one query; asking
-# per app for a level reached the same cost again, one query per open app.
+# One read of every app's profile and the legacy Silence box beside it, on the
+# house row and on this machine's own row. The legacy box was written per device
+# before the four levels existed, and the start hook (sound_app_level) has always
+# fallen back to it; the alarm pass read only the house row, so a checked box on
+# the device was invisible to it and a press that only wrote an appointment never
+# quieted the house. A house row wins over the device row, exactly as
+# sound_app_level reads them. The alarm pass used to read the whole box in one
+# query; asking per app for a level reached the same cost again, one query per
+# open app.
 sub sound_profile_rows {
+	my $device = eval { &subs::device_setter() } || '';
+	my @devices = ($device eq '' || $device eq 'all') ? ('all') : ('all', $device);
+	my $marks = join ',', ('?') x scalar @devices;
 	my $rows = eval {
 		&subs::db_query(
-			"select app, setting, value from settings where device = ? "
+			"select app, setting, value, device from settings where device in ($marks) "
 			. "and setting in ('sound_profile','silence') "
 			. "and substr(app,1,2) <> '__'",
-			'all'
+			@devices
 		)->hashes;
 	} || [];
-	my (%profile, %legacy);
+	my (%profile, %legacy, %profile_rank, %legacy_rank);
 	foreach my $row ( @{$rows} ) {
 		next unless ref $row eq 'HASH';
 		my $app = $row->{'app'} // '';
 		next unless length $app;
 		next if $app =~ /^__/;
 		my $setting = $row->{'setting'} // '';
-		if ($setting eq 'sound_profile') { $profile{$app} = $row->{'value'}; }
-		elsif ($setting eq 'silence') { $legacy{$app} = $row->{'value'}; }
+		my $rank = (($row->{'device'} // '') eq 'all') ? 0 : 1;
+		if ($setting eq 'sound_profile') {
+			next if exists $profile_rank{$app} && $profile_rank{$app} <= $rank;
+			$profile{$app} = $row->{'value'};
+			$profile_rank{$app} = $rank;
+		}
+		elsif ($setting eq 'silence') {
+			next if exists $legacy_rank{$app} && $legacy_rank{$app} <= $rank;
+			$legacy{$app} = $row->{'value'};
+			$legacy_rank{$app} = $rank;
+		}
 	}
 	return { profile => \%profile, legacy => \%legacy };
 }
 
-# The level a bulk read answers for one app. A row the house does not carry is
-# Passive here; sound_app_level keeps the per-device fallback for the one caller
-# that resolves a single app.
+# The level a bulk read answers for one app. A row neither the house nor this
+# device carries is Passive here; sound_app_level keeps the per-device fallback
+# for the one caller that resolves a single app.
 sub sound_profile_rows_level {
 	my ($rows, $app) = @_;
 	return 'passive' unless defined $app && length $app;

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Silence.pm lib/JawnOS/Controller/manager_silence.pm lib/JawnOS/Routes/manager_silence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_configure4.pm perl/hooks.pl perl/Music.pl perl/help/topics_configure.pl templates/configure/appointment_list.html.ep public/js/manager/silence.js public/js/manager/websocket/00_console_router.js perl/Reception.pl public/js/manager/manager/02_web_nfc.js perl/Alarm.pl
+# tests-for: lib/JawnOS/Domain/Silence.pm lib/JawnOS/Controller/manager_silence.pm lib/JawnOS/Routes/manager_silence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_configure4.pm perl/hooks.pl perl/Music.pl perl/help/topics_configure.pl templates/configure/appointment_list.html.ep public/js/manager/silence.js public/js/manager/websocket/00_console_router.js perl/Reception.pl public/js/manager/manager/02_web_nfc.js perl/Alarm.pl scripts/silence_probe.pl
 # covers:    Silence: the house-wide state, the local mixer snapshot (with the IVR
 #            sinks kept audible), the appointment start/stop hook, the phone's
 #            forced receptionist route, the audio gates, and the browser guard.
@@ -106,7 +106,24 @@ $main::SCRATCH = $scratch;
 *subs::db_query = sub {
 	my ($sql, @args) = @_;
 	if (defined $sql && $sql =~ /from settings/) {
-		return FakeRows->new(\@QUERY_SETTINGS);
+		my @rows = @QUERY_SETTINGS;
+		# Honour the device clause so a legacy row on another device is not read
+		# as this machine's. A fixture with no device is kept: older cases wrote
+		# only app/setting/value.
+		if ($sql =~ /device = \?/) {
+			my $want = defined $args[0] ? $args[0] : '';
+			@rows = grep {
+				ref $_ eq 'HASH' && (!defined $_->{'device'} || ($_->{'device'} // '') eq $want)
+			} @rows;
+		}
+		elsif ($sql =~ /device in \(([^)]*)\)/) {
+			my $count = () = $1 =~ /\?/g;
+			my %want = map { $_ => 1 } @args[0 .. $count - 1];
+			@rows = grep {
+				ref $_ eq 'HASH' && (!defined $_->{'device'} || $want{$_->{'device'}})
+			} @rows;
+		}
+		return FakeRows->new(\@rows);
 	}
 	if (defined $sql && $sql =~ /from appointments/) {
 		# The reconciler asks only for sessions whose own timestamp is due;
@@ -580,6 +597,29 @@ $subs::silence_tick_at = 0;
 subs::silence_tick();
 is_deeply(state_hash()->{owners}, ['u-later'], 'the same row starts owning silence when it is due');
 
+# The legacy Silence box was written on the device's own row, not the house
+# row. The start hook has always read that fallback; the alarm pass must too,
+# or a press that only writes an appointment never quiets the house.
+reset_all();
+$DEVICE = 'mobile';
+@QUERY_SETTINGS = ({ app => 'email_test', setting => 'silence', device => 'mobile', value => 'checked' });
+@QUERY_APPOINTMENTS = ({ uuid => 'u-legacy', app => 'email_test', type => 'start', timestamp => subs::rightNow() - 1000 });
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+my $legacy_state = state_hash();
+is($legacy_state->{active}, 1, 'the alarm pass sees a per-device legacy Silence box');
+is_deeply($legacy_state->{owners}, ['u-legacy'], 'and the open session owns the house');
+my $legacy_on = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 1 } @NATIVE;
+ok($legacy_on, 'and the phone is told on');
+
+# A house row still beats a device row, exactly as silence_app_setting reads it.
+@QUERY_SETTINGS = (
+	{ app => 'email_test', setting => 'silence', device => 'all', value => 'unchecked' },
+	{ app => 'email_test', setting => 'silence', device => 'mobile', value => 'checked' },
+);
+is(subs::sound_profile_rows_level(subs::sound_profile_rows(), 'email_test'), 'passive',
+	'the house Silence row wins over the device row');
+
 # A machine that watched that session run stops it at once when its own row
 # closes, and relays the stop - no sync window to wait out.
 reset_all();
@@ -772,6 +812,9 @@ like(source('lib/JawnOS/Domain/Silence.pm'), qr/type in \('start','record'\) and
 like(source('lib/JawnOS/Manager/Part05.pm'), qr/silence_appointment_write\([^)]*\$app->\{'timestamp'\}/,
 	'and the writer hands the start time to the hook');
 like(source('perl/Alarm.pl'), qr/silence_tick/, 'the alarm loop starts and stops silence');
+my $probe = source('scripts/silence_probe.pl');
+like($probe, qr/sound_profile_rows/, 'the probe compares the start hook with the bulk read');
+unlike($probe, qr/\bsilence_state_write\b|\bsetting_setter\b|\bsilence_tick\s*\(/, 'and never writes or runs a tick');
 like(source('lib/JawnOS/Controller/manager_silence.pm'), qr/silence_release_note/,
 	'a verified peer stop is remembered against a lagging row');
 like(source('lib/JawnOS/Domain/Loader.pm'), qr/silence_tick/, 'the reconcile helper is mapped');
