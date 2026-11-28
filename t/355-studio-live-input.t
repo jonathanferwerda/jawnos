@@ -307,12 +307,16 @@ sub run_take {
 	);
 	is($error, undef, 'a mono may still use channel 31');
 
-	# Two tracks on the same input keep the older, clearer sentence.
-	($error) = Manager::studio_take_json_plan(encode_json([
+	# One source may split into several chains through the same input. The engine
+	# allows it, and a 2-input interface relies on it for a four-track take.
+	($error, $plan) = Manager::studio_take_json_plan(encode_json([
 		{ input => 0 }, { input => 0 },
 	]));
-	is($error, 'tracks_json track 2 names input 0 twice',
-		'a repeated input keeps the duplicate sentence');
+	is($error, undef, 'a repeated input is accepted');
+	is_deeply($plan, [
+		{ input => 0, inserts => [] },
+		{ input => 0, inserts => [] },
+	], 'both tracks keep the same input');
 
 	# A channel send: the destination names the source track instead of a
 	# device input, and keeps its own insert chain.

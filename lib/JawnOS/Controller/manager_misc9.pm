@@ -1577,6 +1577,7 @@ sub action_44023 {
 		$c->param('monitor_gain'),
 		$c->param('click_json'),
 		$c->param('bus'),
+		$c->param('monitor_track'),
 	);
 	$c->render(json => $answer, status => $status);
 	return;
@@ -2601,9 +2602,11 @@ sub studio_input_param {
 # `{ input, channels, inserts }`, or `{ from, inserts }` for a track that takes
 # another track's output. The engine accepts that shape directly, so this only
 # refuses what it could not build: an input outside 0..31, an insert the engine
-# does not have, a duplicate input, a send that names itself, a missing track,
-# a source feeding two destinations, a send loop, or more tracks than the
-# engine takes. When this field is present it wins: the scalar
+# does not have, a send that names itself, a missing track, a source feeding
+# two destinations, a send loop, or more tracks than the engine takes. A
+# repeated input is legal: one source may split into several chains through the
+# same input, and the engine's per-track bound is the only device bound. When
+# this field is present it wins: the scalar
 # `tracks`/`inputs`/`inserts` fields describe the older page's one global chain
 # and are ignored here.
 sub studio_take_json_plan {
@@ -2614,7 +2617,7 @@ sub studio_take_json_plan {
 	return ('tracks_json must name between 1 and 32 tracks', undef)
 		unless @$decoded >= 1 && @$decoded <= $studio_take_tracks_max;
 
-	my (@plan, %seen_input, %claimed, %source_of, %feeds);
+	my (@plan, %source_of, %feeds, %claimed);
 	for my $index (0 .. $#$decoded) {
 		my $entry = $decoded->[$index];
 		my $label = 'tracks_json track ' . ($index + 1);
@@ -2663,7 +2666,6 @@ sub studio_take_json_plan {
 			unless defined $input && !ref $input && $input =~ /\A\+?\d+\z/
 				&& $input <= $studio_take_input_max;
 		$input += 0;
-		return ("$label names input $input twice", undef) if $seen_input{$input}++;
 
 		# `channels` is whole 1 or 2 and defaults to mono. A pair claims
 		# both device channels, so uniqueness is by claimed channel and the
@@ -2678,16 +2680,29 @@ sub studio_take_json_plan {
 		my $last = $input + $channels - 1;
 		return ("$label needs an input between 0 and 30 for a stereo pair", undef)
 			if $last > $studio_take_input_max;
-		for my $channel ($input .. $last) {
-			next unless exists $claimed{$channel};
-			my $other = $claimed{$channel};
-			my $other_channels = $plan[$other]{'channels'} // 1;
-			my $pair = $other_channels == 2
-				? 'stereo pair ' . $plan[$other]{'input'} . '-' . ($plan[$other]{'input'} + 1)
-				: 'input ' . $plan[$other]{'input'};
-			return ("$label input $input overlaps track " . ($other + 1) . "'s $pair", undef);
+		# A repeated mono is legal: one source may split into several chains.
+		# A stereo pair still claims both device channels, so a pair overlapping
+		# any earlier track, or a mono on a channel a pair already claims, is a
+		# mistake and keeps its named refusal.
+		if ($channels == 1) {
+			my $other = $claimed{$input};
+			if ($other && $other->{'channels'} == 2) {
+				my $pair = $other->{'input'} . '-' . ($other->{'input'} + 1);
+				return ("$label input $input overlaps track " . ($other->{'track'} + 1) . "'s stereo pair $pair", undef);
+			}
 		}
-		$claimed{$_} = $index for $input .. $last;
+		else {
+			for my $channel ($input .. $last) {
+				next unless exists $claimed{$channel};
+				my $other = $claimed{$channel};
+				my $what = $other->{'channels'} == 2
+					? 'stereo pair ' . $other->{'input'} . '-' . ($other->{'input'} + 1)
+					: 'input ' . $other->{'input'};
+				return ("$label input $input overlaps track " . ($other->{'track'} + 1) . "'s $what", undef);
+			}
+		}
+		$claimed{$_} = { track => $index, input => $input, channels => $channels }
+			for $input .. $last;
 
 		my %track = (input => $input, inserts => \@chain);
 		$track{'channels'} = 2 if $channels == 2;
@@ -2912,7 +2927,7 @@ sub studio_take_bus {
 # without one does not leave an empty directory behind.
 sub studio_take_start {
 	my ($seconds, $start_at, $tracks, $inputs, $inserts, $tracks_json, $master_json,
-		$monitor_input, $monitor_gain, $click_json, $bus) = @_;
+		$monitor_input, $monitor_gain, $click_json, $bus, $monitor_track) = @_;
 	$seconds  = &studio_take_seconds($seconds);
 	$start_at = &studio_take_start_at($start_at);
 
@@ -2945,6 +2960,20 @@ sub studio_take_start {
 	my ($monitor_error, $monitor_on, $monitor_level) =
 		&studio_monitor_start($monitor_input, $monitor_gain);
 	return (400, { ok => 0, error => $monitor_error }) if defined $monitor_error;
+	# The page may name the one track its live monitor should carry. The
+	# engine's historical behaviour sums every device-fed track, which doubles
+	# a guitar recorded on several tracks and can feed back with two open
+	# mics; naming the track makes the monitor the channel the person chose.
+	my $monitor_index;
+	if (defined $monitor_track && !ref $monitor_track && length $monitor_track) {
+		return (400, { ok => 0, error => 'monitor_track needs the live input to be on' })
+			unless $monitor_on;
+		return (400, { ok => 0, error => 'monitor_track must be a whole, non-negative track number' })
+			unless $monitor_track =~ /\A\+?\d+\z/;
+		$monitor_index = $monitor_track + 0;
+		return (400, { ok => 0, error => "monitor_track $monitor_index is outside the take's " . scalar(@$plan) . ' tracks' })
+			if $plan && $monitor_index >= @$plan;
+	}
 	my ($click_error, $click) = &studio_click_start($click_json);
 	return (400, { ok => 0, error => $click_error }) if defined $click_error;
 
@@ -2968,6 +2997,7 @@ sub studio_take_start {
 	if ($monitor_on) {
 		$extra->{'monitor_input'} = 1;
 		$extra->{'monitor_gain'} = $monitor_level;
+		$extra->{'monitor_track'} = $monitor_index if defined $monitor_index;
 	}
 	$extra->{'click'} = $click if $click;
 	$extra->{'bus'} = $bus_name if defined $bus_name;

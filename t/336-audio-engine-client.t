@@ -459,7 +459,6 @@ sub run_sound_param {
 		[ encode_json([]),         qr/between 1 and 32/ ],
 		[ encode_json([{ input => 32, inserts => [] }]), qr/input between 0 and 31/ ],
 		[ encode_json([{ input => 0, inserts => ['wobble'] }]), qr/no such insert: wobble/ ],
-		[ encode_json([{ input => 0 }, { input => 0 }]), qr/names input 0 twice/ ],
 	) {
 		my ($plan, $error) = @$case;
 		my $bad = run_take(tracks_json => $plan);
@@ -467,6 +466,39 @@ sub run_sound_param {
 		like($bad->{'json'}{'error'}, $error, 'and the refusal names the rule');
 	}
 	is(scalar @calls, $before_json, 'no bad per-track plan reaches the engine');
+
+	# A repeated input is legal: one source may split into several chains.
+	my $repeat = run_take(tracks_json =>
+		encode_json([{ input => 0 }, { input => 0 }]));
+	is($repeat->{'status'}, 200, 'a repeated input is accepted');
+	is(scalar @calls, $before_json + 1, 'and it reaches the engine');
+	$before_json = scalar @calls;
+
+	# The live monitor may name one track. It needs the live input on, and the
+	# index must belong to this take; the chosen index reaches the engine.
+	my $mt_no_input = run_take(
+		monitor_input => 'false', monitor_track => 0,
+		tracks_json => encode_json([{ input => 0 }]),
+	);
+	is($mt_no_input->{'status'}, 400, 'monitor_track without the live input is a 400');
+	like($mt_no_input->{'json'}{'error'}, qr/needs the live input/,
+		'and the refusal says the live input must be on');
+
+	my $mt_bad = run_take(
+		monitor_input => 'true', monitor_track => 1,
+		tracks_json => encode_json([{ input => 0 }]),
+	);
+	is($mt_bad->{'status'}, 400, 'a monitor_track outside the take is a 400');
+	like($mt_bad->{'json'}{'error'}, qr/outside the take's 1 tracks/,
+		'and names the take\'s track count');
+
+	my $mt_ok = run_take(
+		monitor_input => 'true', monitor_track => 1,
+		tracks_json => encode_json([{ input => 0 }, { input => 0 }]),
+	);
+	is($mt_ok->{'status'}, 200, 'a monitor_track on a real track is accepted');
+	is($calls[-1][3]{'monitor_track'}, 1, 'and the chosen track reaches the engine');
+	$before_json = scalar @calls;
 
 	for my $case (
 		[ 'not json', qr/JSON array/ ],

@@ -3134,11 +3134,38 @@ impl Server {
                 ))
             }
         };
-        let master = match parse_master(get(object, "master")) {
-            Ok(master) => master,
-            Err(error) => return error_line(&error),
-        };
-        let tracks = plans.len();
+        		let master = match parse_master(get(object, "master")) {
+        			Ok(master) => master,
+        			Err(error) => return error_line(&error),
+        		};
+        		// Which track the live monitor carries. Without it the engine sums every
+        		// terminal track, which is the historical shape; a take that names one
+        		// track (Studio's monitored channel) hears only that strip.
+        		let monitor_track = match get(object, "monitor_track") {
+        			None | Some(Value::Null) => None,
+        			Some(Value::Num(value))
+        				if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 =>
+        			{
+        				Some(*value as usize)
+        			}
+        			_ => {
+        				return error_line(
+        					"\"monitor_track\" must be a whole, non-negative track number",
+        				)
+        			}
+        		};
+        		if monitor_track.is_some() && !monitor_input {
+        			return error_line("\"monitor_track\" needs \"monitor_input\": true");
+        		}
+        		if let Some(index) = monitor_track {
+        			if index >= plans.len() {
+        				return error_line(&format!(
+        					"monitor_track {index} is outside the take's {} tracks",
+        					plans.len()
+        				));
+        			}
+        		}
+        		let tracks = plans.len();
         // A take may carry more tracks than the device has inputs. Every track
         // still has to name a real input below, and several tracks may share
         // one: a source can split into more than one chain through the same
@@ -3495,20 +3522,21 @@ impl Server {
             let armed = Arc::clone(&armed);
             thread::Builder::new()
                 .name("jawn-audio-take".to_string())
-                .spawn(move || {
-                    run_take(
-                        config,
-                        seconds,
-                        disks,
-                        plans,
-                        shared,
-                        stop,
-                        params,
-                        master,
-                        Some(input_producer),
-                        armed,
-                    )
-                })
+                				.spawn(move || {
+                					run_take(
+                						config,
+                						seconds,
+                						disks,
+                						plans,
+                						shared,
+                						stop,
+                						params,
+                						master,
+                						Some(input_producer),
+                						armed,
+                						monitor_track,
+                					)
+                				})
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -8153,16 +8181,17 @@ struct Captured {
 /// say how it ended. `stop` has already joined every writer before the status
 /// is final.
 fn run_take(
-    config: Config,
-    seconds: f64,
-    mut disks: Vec<DiskWriter>,
-    plans: Vec<TrackPlan>,
-    status: Arc<Mutex<Status>>,
-    stop: Arc<AtomicBool>,
-    params: Arc<ParamQueue>,
-    master: Vec<InsertKind>,
-    live: Option<Producer>,
-    armed: Arc<AtomicBool>,
+	config: Config,
+	seconds: f64,
+	mut disks: Vec<DiskWriter>,
+	plans: Vec<TrackPlan>,
+	status: Arc<Mutex<Status>>,
+	stop: Arc<AtomicBool>,
+	params: Arc<ParamQueue>,
+	master: Vec<InsertKind>,
+	live: Option<Producer>,
+	armed: Arc<AtomicBool>,
+	monitor_track: Option<usize>,
 ) {
     // Build the mixer here, on the take's thread, so it is never moved between
     // threads. Its control ring is the one the socket already holds. The
@@ -8194,26 +8223,28 @@ fn run_take(
     let outcome = match mixer.set_sends(&sends) {
         Err(error) => Err(error),
         Ok(()) => match config.backend {
-            BackendKind::Null => capture_null(
-                &config,
-                seconds,
-                &mut disks,
-                &mut mixer,
-                &status,
-                &stop,
-                live.as_ref(),
-                &armed,
-            ),
-            BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => capture_hardware(
-                &config,
-                seconds,
-                &mut disks,
-                &mut mixer,
-                &status,
-                &stop,
-                live.as_ref(),
-                &armed,
-            ),
+            			BackendKind::Null => capture_null(
+            				&config,
+            				seconds,
+            				&mut disks,
+            				&mut mixer,
+            				&status,
+            				&stop,
+            				live.as_ref(),
+            				&armed,
+            				monitor_track,
+            			),
+            			BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => capture_hardware(
+            				&config,
+            				seconds,
+            				&mut disks,
+            				&mut mixer,
+            				&status,
+            				&stop,
+            				live.as_ref(),
+            				&armed,
+            				monitor_track,
+            			),
             // Oboe is capture-only in this slice, and `--serve` is not wired
             // to it; an honest refusal beats a half-wired backend.
             BackendKind::Oboe => Err(crate::oboe_capture_only_message()),
@@ -8401,14 +8432,15 @@ fn push_if_armed(producer: &Producer, armed: &AtomicBool, block: &[f32]) -> usiz
 /// sized for the whole take (see `main::queue_blocks`), because this loop runs
 /// far faster than real time.
 fn capture_null(
-    config: &Config,
-    seconds: f64,
-    disks: &mut [DiskWriter],
-    mixer: &mut Mixer,
-    status: &Arc<Mutex<Status>>,
-    stop: &AtomicBool,
-    live: Option<&Producer>,
-    armed: &AtomicBool,
+	config: &Config,
+	seconds: f64,
+	disks: &mut [DiskWriter],
+	mixer: &mut Mixer,
+	status: &Arc<Mutex<Status>>,
+	stop: &AtomicBool,
+	live: Option<&Producer>,
+	armed: &AtomicBool,
+	monitor_track: Option<usize>,
 ) -> Result<Captured, String> {
     let track_count = mixer.tracks().len();
     if disks.len() != track_count {
@@ -8479,12 +8511,18 @@ fn capture_null(
             &mut mono,
             &mut stereo,
         )?;
-        for track in 0..track_count {
-            if live.is_some() && !mixer.has_outgoing(track) {
-                for (out, sample) in live_block[..samples].iter_mut().zip(&stereo[track][..samples]) {
-                    *out += sample;
-                }
-            }
+        		for track in 0..track_count {
+        			if live.is_some() {
+        				let heard = match monitor_track {
+        					Some(selected) => selected == track,
+        					None => !mixer.has_outgoing(track),
+        				};
+        				if heard {
+        					for (out, sample) in live_block[..samples].iter_mut().zip(&stereo[track][..samples]) {
+        						*out += sample;
+        					}
+        				}
+        			}
             for (out, sample) in pcm[..samples].iter_mut().zip(&stereo[track][..samples]) {
                 *out = to_i16(*sample);
             }
@@ -8523,9 +8561,12 @@ struct ServeSink<'a> {
     mono: Vec<Vec<f32>>,
     stereo: Vec<Vec<f32>>,
     track_inputs: Vec<(usize, usize)>,
-    live_block: Vec<f32>,
-    pcm: Vec<i16>,
-}
+	    live_block: Vec<f32>,
+	    pcm: Vec<i16>,
+	    /// The one track the live monitor carries; `None` is the historical sum
+	    /// of every terminal track.
+	    monitor_track: Option<usize>,
+	}
 
 #[cfg(feature = "alsa")]
 impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
@@ -8603,15 +8644,21 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
             &mut self.mono,
             &mut self.stereo,
         )?;
-        for track in 0..track_count {
-            if self.live.is_some() && !self.mixer.has_outgoing(track) {
-                for (out, sample) in self.live_block[..samples]
-                    .iter_mut()
-                    .zip(&self.stereo[track][..samples])
-                {
-                    *out += sample;
-                }
-            }
+	        for track in 0..track_count {
+	            if self.live.is_some() {
+	                let heard = match self.monitor_track {
+	                    Some(selected) => selected == track,
+	                    None => !self.mixer.has_outgoing(track),
+	                };
+	                if heard {
+	                    for (out, sample) in self.live_block[..samples]
+	                        .iter_mut()
+	                        .zip(&self.stereo[track][..samples])
+	                    {
+	                        *out += sample;
+	                    }
+	                }
+	            }
             for (out, sample) in self.pcm[..samples].iter_mut().zip(&self.stereo[track][..samples]) {
                 *out = to_i16(*sample);
             }
@@ -8641,6 +8688,7 @@ fn capture_hardware(
     stop: &AtomicBool,
     live: Option<&Producer>,
     armed: &AtomicBool,
+    monitor_track: Option<usize>,
 ) -> Result<Captured, String> {
     let sink = ServeSink {
         mixer,
@@ -8654,9 +8702,10 @@ fn capture_hardware(
         mono: Vec::new(),
         stereo: Vec::new(),
         track_inputs: Vec::new(),
-        live_block: Vec::new(),
-        pcm: Vec::new(),
-    };
+	        live_block: Vec::new(),
+	        pcm: Vec::new(),
+	        monitor_track,
+	    };
     let report = jawn_audio::alsa_device::run_capture(
         &config.device,
         config.rate,
@@ -8675,17 +8724,18 @@ fn capture_hardware(
 
 #[cfg(not(feature = "alsa"))]
 fn capture_hardware(
-    config: &Config,
-    seconds: f64,
-    disks: &mut [DiskWriter],
-    mixer: &mut Mixer,
-    status: &Arc<Mutex<Status>>,
-    stop: &AtomicBool,
-    live: Option<&Producer>,
-    armed: &AtomicBool,
+	config: &Config,
+	seconds: f64,
+	disks: &mut [DiskWriter],
+	mixer: &mut Mixer,
+	status: &Arc<Mutex<Status>>,
+	stop: &AtomicBool,
+	live: Option<&Producer>,
+	armed: &AtomicBool,
+	monitor_track: Option<usize>,
 ) -> Result<Captured, String> {
-    let _ = (config, seconds, disks, mixer, status, stop, live, armed);
-    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
+	let _ = (config, seconds, disks, mixer, status, stop, live, armed, monitor_track);
+	Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
 // --- the parser -------------------------------------------------------------
@@ -11643,6 +11693,23 @@ break"}"#).is_err());
         ));
         assert!(line.contains("playback is running"), "{line}");
         assert!(server.transport.is_none());
+    }
+
+    #[test]
+    fn record_monitor_track_needs_the_live_input_and_a_real_track() {
+        // The live monitor may carry one chosen track instead of every terminal
+        // track. Naming one without arming the live input, or naming a track the
+        // take does not carry, is refused before any device or file is touched.
+        let mut server = socket_server();
+        let line = reply(server.handle(
+            r#"{"cmd":"record","out":"/tmp/x.wav","tracks":[{"input":0},{"input":0}],"monitor_track":0}"#,
+        ));
+        assert!(line.contains(r#"needs \"monitor_input\": true"#), "{line}");
+
+        let line = reply(server.handle(
+            r#"{"cmd":"record","out":"/tmp/x.wav","tracks":[{"input":0}],"monitor_input":true,"monitor_track":1}"#,
+        ));
+        assert!(line.contains("outside the take's 1 tracks"), "{line}");
     }
 
     #[test]

@@ -1205,8 +1205,16 @@ async function studioRecord() {
 	var engine_ready = (typeof studioAudioBackend === 'function' && studioAudioBackend() === 'engine')
 		&& (typeof studioEngineAvailable === 'undefined' || studioEngineAvailable !== false)
 		&& typeof studioEngineTakeStart === 'function';
+	var looped = {};
+	$.each(takes, function (n, a) { if (a.loop) { looped[String(a.ch)] = true; } });
 	$.each(takes, function (n, a) {
-		if (a.loop || !engine_ready || !studioEngineTakeChannel(a.ch)) { browser_takes.push(a); }
+		// A channel send is the engine's too when the chain it draws from is
+		// engine-recordable; an app, a screen share and a loop stay in the
+		// browser.
+		if (a.loop || !engine_ready
+			|| (typeof studioEngineTakeCanTake === 'function' ? !studioEngineTakeCanTake(a.ch, null, looped) : !studioEngineTakeChannel(a.ch))) {
+			browser_takes.push(a);
+		}
 		else { engine_takes.push(a); }
 	});
 

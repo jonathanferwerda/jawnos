@@ -1695,32 +1695,101 @@ function studioEngineTakeChannel(ch) {
 	return (typeof studioInputIsDevice === 'function' && studioInputIsDevice(plug));
 }
 
+// A channel send has no interface input of its own, but the engine can record it
+// when the chain it draws from ends at an engine input. `looped` names the
+// channels that stay on the browser recorder, so a send from one of them stays
+// there too rather than being recorded from a track the take does not carry.
+function studioEngineTakeCanTake(ch, seen, looped) {
+	ch = String(ch);
+	if (looped && looped[ch]) { return false; }
+	if (studioEngineTakeChannel(ch)) { return true; }
+	var from = (typeof studioEngineTrackSend === 'function') ? studioEngineTrackSend(ch) : null;
+	if (from === null) { return false; }
+	seen = seen || {};
+	if (seen[ch]) { return false; }
+	seen[ch] = true;
+	return studioEngineTakeCanTake(String(from + 1), seen, looped);
+}
+
+// The inserts the take can carry: only the enabled widgets the native engine
+// builds. A browser-only insert stays in the browser rather than refusing the
+// whole channel.
+function studioEngineTakeInserts(ch) {
+	var inserts = [];
+	var strip = studioAudio.channels[ch];
+	if (!strip || !strip.inserts) { return inserts; }
+	strip.inserts.forEach(function (ins) {
+		if (!ins || ins.bypassed || !ins.name) { return; }
+		if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
+		inserts.push(studioEffectKind(ins.name));
+	});
+	return inserts;
+}
+
+// Which interface input a channel records. A jack that names an input wins; a
+// channel with no plug falls back to its own number, bounded to the interface.
+function studioEngineTakeInput(ch) {
+	var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
+	return plug ? studioInputListenChannel(plug) : Math.min(1, Math.max(0, parseInt(ch, 10) - 1));
+}
+
 // The engine plan for the channels the Record button can hand over. Track `i`
-// is `channels[i]`, so one WAV per track maps back to one Studio channel.
+// is `channels[i]`, so one WAV per track maps back to one Studio channel. A
+// channel send travels as `{from: n}` where `n` is the source's index in this
+// same plan, not its Studio channel: skipped channels would otherwise shift it.
 function studioEngineTakePlan(takes) {
-	var plan = [];
-	var channels = [];
+	var wanted = [];
+	var source_of = {};
 	$.each(takes || [], function (i, take) {
 		if (!take || take.loop) { return; }
 		var ch = String(take.ch);
-		if (!/^[0-9]+$/.test(ch) || !studioEngineTakeChannel(ch)) { return; }
-		var plug = (typeof studioChannelInput === 'function') ? studioChannelInput(ch) : null;
-		var input = plug ? studioInputListenChannel(plug) : Math.min(1, Math.max(0, parseInt(ch, 10) - 1));
-		var inserts = [];
-		var strip = studioAudio.channels[ch];
-		if (strip && strip.inserts) {
-			strip.inserts.forEach(function (ins) {
-				if (!ins || ins.bypassed || !ins.name) { return; }
-				// Widgets the native engine cannot build stay in the browser; the
-				// take records the rest rather than refusing the whole channel.
-				if (typeof studioEffectBrowserOnly === 'function' ? studioEffectBrowserOnly(ins.name) : studioEffectKind(ins.name) === 'stereowidener') { return; }
-				inserts.push(studioEffectKind(ins.name));
-			});
+		if (!/^[0-9]+$/.test(ch)) { return; }
+		var from = (typeof studioEngineTrackSend === 'function') ? studioEngineTrackSend(ch) : null;
+		if (from !== null) {
+			wanted.push({ ch: ch, from: from });
+			source_of[ch] = String(from + 1);
 		}
-		plan.push({ input: input, channels: 1, inserts: inserts });
-		channels.push(ch);
+		else if (studioEngineTakeChannel(ch)) {
+			wanted.push({ ch: ch, from: null });
+		}
 	});
-	return plan.length ? { channels: channels, plan: plan } : null;
+	// A send is engine-recordable only when the track it draws from is in this
+	// same take. Include device tracks first, then walk send chains inward.
+	var included = {};
+	$.each(wanted, function (i, w) { if (w.from === null) { included[w.ch] = true; } });
+	var changed = true;
+	while (changed) {
+		changed = false;
+		$.each(wanted, function (i, w) {
+			if (w.from === null || included[w.ch]) { return; }
+			if (included[String(source_of[w.ch])]) { included[w.ch] = true; changed = true; }
+		});
+	}
+	var plan = [], channels = [], index = {};
+	$.each(wanted, function (i, w) {
+		if (!included[w.ch]) { return; }
+		index[w.ch] = plan.length;
+		channels.push(w.ch);
+		var entry = { inserts: studioEngineTakeInserts(w.ch) };
+		if (w.from === null) {
+			entry.input = studioEngineTakeInput(w.ch);
+			entry.channels = 1;
+		}
+		else {
+			// Filled below, once every included channel has its index.
+			entry.from = -1;
+		}
+		plan.push(entry);
+	});
+	$.each(wanted, function (i, w) {
+		if (w.from === null || !included[w.ch]) { return; }
+		var src = String(source_of[w.ch]);
+		if (index[src] === undefined) { return; }
+		plan[index[w.ch]].from = index[src];
+	});
+	var complete = true;
+	$.each(plan, function (i, entry) { if (entry.from === -1) { complete = false; } });
+	return (plan.length && complete) ? { channels: channels, plan: plan } : null;
 }
 
 // The engine gives its capture stream to one owner: a Listen and a take cannot
@@ -1772,8 +1841,11 @@ function studioEngineTakeStart(takes, punch, done) {
 	if (!built) { if (done) { done(false); } return false; }
 	var monitored = (typeof studioMonitoredChannel === 'function') ? studioMonitoredChannel() : null;
 	var monitor = false;
+	var monitor_track = null;
 	if (monitored !== null) {
-		$.each(built.channels, function (i, ch) { if (String(ch) === String(monitored)) { monitor = true; } });
+		$.each(built.channels, function (i, ch) {
+			if (String(ch) === String(monitored)) { monitor = true; monitor_track = i; }
+		});
 	}
 	var transportRunning = !!(mixer['time'] && mixer['time']['engine_transport']);
 	// The transport already owns the click; a take beside it must not open one
@@ -1792,6 +1864,10 @@ function studioEngineTakeStart(takes, punch, done) {
 		monitor_input: monitor ? 'true' : 'false',
 		monitor_gain: '1'
 	};
+	// The live monitor carries the one channel the person chose, not every
+	// recorded track: on a 2-input interface a four-track take would otherwise
+	// sum the same guitar four times.
+	if (monitor_track !== null) { request.monitor_track = monitor_track; }
 	if (at > 0) { request.start_at = Math.round(at * rate); }
 	var sent = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
 	studioEngineTakeListenRelease(function () {

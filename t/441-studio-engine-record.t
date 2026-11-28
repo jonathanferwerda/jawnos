@@ -3,9 +3,11 @@
 #            engine whenever the engine is available: the armed device tracks
 #            become one engine take, a running Listen hands the capture over,
 #            and the WAV the engine closes becomes a normal Studio take on each
-#            channel when Stop (or the engine's own length bound) ends it. Apps,
-#            screen shares, channel sends and loop takes stay on the browser
-#            recorder, and an engine refusal falls back to it. The Configure
+#            channel when Stop (or the engine's own length bound) ends it. A
+#            device channel and a send that ends at one go to the engine; apps,
+#            screen shares, loop takes and sends with no engine-fed source stay
+#            on the browser recorder, and an engine refusal falls back to it.
+#            The Configure
 #            Engine take block also carries the engine output picker (Sound's
 #            own choice), and the transport's badge names Engine or Browser for
 #            recording and playback. The take file route serves only the
@@ -64,7 +66,7 @@ my $record = body($inputs, 'studioRecord');
 ok(length $record, 'the Record button has one function');
 like($record, qr/studioAudioBackend\(\) === 'engine'/, 'the house engine is the only native backend Record hands over to');
 like($record, qr/studioEngineAvailable !== false/, 'a socket the page has already lost keeps the browser recorder');
-like($record, qr/studioEngineTakeChannel\(a\.ch\)/, 'only an interface channel is handed to the engine');
+like($record, qr/studioEngineTakeCanTake\(a\.ch/, 'a device channel or an engine-fed send is handed to the engine');
 like($record, qr/studioEngineTakeStart\(engine_takes, punch/, 'the engine take starts at the punch');
 like($record, qr/studioStartTake\(a\.ch, a\.loop, punch\)/, 'the remaining takes stay on the browser recorder');
 like($record, qr/studioEngineTakeBrowserFallback\(engine_takes, punch\)/,
@@ -89,6 +91,9 @@ like($start, qr/studioEngineTakeListenRelease/, 'a running Listen is released be
 like($start, qr/tracks_json: JSON\.stringify\(built\.plan\)/, 'the per-track plan rides the take');
 like($start, qr/seconds: 3600/, 'a Record take is not cut off by the ten-second default');
 like($start, qr/monitor_input: monitor \? 'true' : 'false'/, 'the monitored channel arms the take\'s live input');
+like($start, qr/request\.monitor_track = monitor_track/, 'and names the one track the monitor carries');
+like($studio, qr/plan\[index\[w\.ch\]\]\.from = index\[src\]/, 'a send travels as the source\'s plan index');
+like($studio, qr/function studioEngineTakeCanTake/, 'a send chain is engine-recordable when it ends at a device input');
 like($start, qr/click_json: click \? JSON\.stringify\(click\) : ''/, 'the take owns the click when no transport does');
 like($start, qr/studioEngineTakeArmed = \{/, 'the start remembers which channel each track records');
 
