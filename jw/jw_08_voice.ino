@@ -110,7 +110,8 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
   clock_sync_system();
   WiFiClientSecure client;
   client.setCACert(HOUSE_CA_PEM);
-  Serial.printf("[voice] post mode=%s heap free=%u max=%u\n", mode,
+  Serial.printf("[voice] post mode=%s host=%s local=%s heap free=%u max=%u\n", mode,
+                homebaseIP.c_str(), WiFi.localIP().toString().c_str(),
                 (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
     + "&chip_id=" + chip_id_maker()
@@ -543,7 +544,8 @@ static void com_stream_task(void *pv) {
     uint8_t blk[VOICE_ADPCM_BLOCK];
     if (!logged_heap && com_stream_seq == 0) {
       logged_heap = true;
-      Serial.printf("[voice] com stream heap free=%u max=%u\n",
+      Serial.printf("[voice] com stream host=%s local=%s heap free=%u max=%u\n",
+                    homebaseIP.c_str(), WiFi.localIP().toString().c_str(),
                     (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     }
     if (xQueueReceive(com_stream_q, blk, pdMS_TO_TICKS(100)) == pdTRUE) {

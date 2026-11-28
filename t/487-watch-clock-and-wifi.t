@@ -63,10 +63,10 @@ like($voice, qr/for \(int attempt = 1; attempt <= 2/,
 	'and retries a refused connect once before falling back to BLE');
 like($voice, qr/f\.seek\(0, SeekSet\)/,
 	'rewinding the clip for the retry');
-like($voice, qr/\[voice\] post mode=%s heap free=%u max=%u/,
-	'the heap is on the record at the POST');
-like($voice, qr/\[voice\] com stream heap free=%u max=%u/,
-	'and at the streamed upload');
+like($voice, qr/\[voice\] post mode=%s host=%s local=%s heap free=%u max=%u/,
+	'the POST records the target host and the watch\'s own address, so a split network is obvious');
+like($voice, qr/\[voice\] com stream host=%s local=%s heap free=%u max=%u/,
+	'and the streamed upload records the same pair');
 like($voice, qr/https\.setConnectTimeout\(12000\)/,
 	'the TCP connect deadline is raised too: setTimeout does not cover a busy listener');
 unlike($voice, qr/setBufferSizes/,
