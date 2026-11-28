@@ -145,7 +145,8 @@ jawn-audio — the JawnOS audio engine
   N: prefix to one 1-based file. The monitor starts at the take's --start-at
   sample minus the capture offset: --align-samples gives that offset, or
   --calibrate measures the patch-cable round trip once before the take. With
-  neither, nothing is shifted. A take reports
+  neither, nothing is shifted. A take reports \"first_sample\":S, where its
+  first stored frame sits (the --start-at stamp less the offset), and
   \"playing\":N,\"monitor_frames\":M and
   \"align_samples\":N,\"align_from\":\"measured|given|none\" when a monitor
   ran (plus \"monitor_error\" if the player failed after the take started).
@@ -295,7 +296,9 @@ capture stream. One `stop` ends and joins every running role, and `status` repor
 the take's state with \"playing\", \"monitor_frames\" and the monitor strips
 beside it. `start_at` is the take's stamp; the monitor starts that many
 samples minus the capture offset given by \"align_samples\" or measured by
-\"calibrate\":true before the take. `param` addresses the take's tracks with
+\"calibrate\":true before the take. The take reports \"first_sample\", where its first stored frame
+actually sits; capture still begins when the device opens, so the device's own start
+delay and drift are not measured. `param` addresses the take's tracks with
 \"track\", or a monitor strip with \"target\":\"monitor\".
 `tracks` is a count (one wire per input) or an array of per-track objects
 {\"input\":N,\"gain\":G,\"pan\":P,\"inserts\":[NAMES]}, which arms that track's

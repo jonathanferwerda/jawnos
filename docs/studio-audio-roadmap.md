@@ -868,7 +868,10 @@ take's stamp alone. That is a **start correction**: it places the monitor's firs
 performance will be captured, and is clamped so it never starts before sample 0. It is not a drift
 model — a device whose clock runs slightly fast or slow over a long take is still unmeasured, and a
 device that starts late by a different amount each time is not predicted. With no measurement the
-take reports `align_from: "none"` and shifts nothing rather than guessing.
+take reports `align_from: "none"` and shifts nothing rather than guessing. Each take
+reports `first_sample`, where its first stored frame actually sits (the stamp less the applied
+offset), so a caller can place the WAV from the engine's answer instead of a round-trip guess.
+Capture still begins when the device opens, so a device's own start delay is not measured.
 
 **Channel sends in a take (2026-11-23, in the tree):** the page's channel send is now a take-plan
 edge, not only a browser graph. A track may carry `from` (the 0-based track it takes as its input)

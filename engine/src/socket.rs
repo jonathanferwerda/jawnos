@@ -69,10 +69,13 @@
 //! never reach the take. The monitor starts `align_samples` before the take's
 //! `start_at` (`"align_samples"`, or a measurement from `"calibrate":true`),
 //! clamped at sample 0; with neither, nothing is shifted and `align_from` says
-//! `none`. That is a start correction, not a drift model. One `stop` signals
-//! both before joining either, and `status` reports the take's state with
-//! `playing`, `monitor_frames`, the alignment and the monitor strips beside it.
-//! Two takes at once, or two playbacks at once, are still refused.
+//! `none`. The take reports `first_sample`, where its first stored frame
+//! actually sits (the stamp less that offset). Capture still begins when the
+//! device opens, so a device's own start delay and clock drift are not
+//! measured and never guessed. That is a start correction, not a drift model.
+//! One `stop` signals both before joining either, and `status` reports the
+//! take's state with `playing`, `monitor_frames`, the alignment and the
+//! monitor strips beside it. Two takes at once, or two playbacks at once, are still refused.
 //!
 //! The transport follows the same shape: it owns one output thread, so a take
 //! that asks for no monitor may record beside it and the transport plays its
@@ -3367,6 +3370,12 @@ impl Server {
                 inserts: plan.insert_list(),
             })
             .collect();
+        // Where the take's first stored frame is placed on the transport: the
+        // requested stamp less the capture offset, clamped at 0. That offset is
+        // what the monitor is pre-rolled by and what the capture is corrected
+        // for. Reporting it is what lets a caller place the WAV by the engine's
+        // own answer instead of guessing from the round trip.
+        let first_sample = monitor_start(start_at, alignment.samples);
         let shared = Arc::new(Mutex::new(Status {
             take,
             state: State::Recording,
@@ -3375,6 +3384,7 @@ impl Server {
             dropped: 0,
             channels,
             start_sample: start_at,
+            first_sample,
             xruns: 0,
             align_samples: alignment.samples,
             align_from: alignment.from,
@@ -3592,7 +3602,7 @@ impl Server {
             )
         };
         format!(
-            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at}{}{monitor_part},\"monitor_input\":{monitor_input},\"monitor_gain\":{monitor_gain},\"monitor_dropped\":0{}}}",
+            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at},\"first_sample\":{first_sample}{}{monitor_part},\"monitor_input\":{monitor_input},\"monitor_gain\":{monitor_gain},\"monitor_dropped\":0{}}}",
             tracks_json(&track_status),
             alignment_json(alignment)
         )
@@ -6517,6 +6527,12 @@ struct Status {
     /// The capture channel count the engine asked the device for.
     channels: usize,
     start_sample: u64,
+    /// The transport sample the take's first stored frame sits at: the
+    /// requested stamp less the capture offset, clamped at 0. The capture
+    /// begins when the device opens, so its own start delay is not measured;
+    /// `align_from` says whether an offset was given or measured. Drift is
+    /// never modelled.
+    first_sample: u64,
     xruns: usize,
     /// The capture offset applied to this take's monitor, and its source.
     align_samples: u64,
@@ -6687,7 +6703,7 @@ impl Running {
             from: status.align_from,
         });
         format!(
-            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{}{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"monitor_input\":{},\"monitor_gain\":{},\"monitor_dropped\":{},\"error\":\"{}\"}}",
+            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"first_sample\":{},\"xruns\":{}{}{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"monitor_input\":{},\"monitor_gain\":{},\"monitor_dropped\":{},\"error\":\"{}\"}}",
             status.take,
             status.state.name(),
             jawn_audio::loopback::json_escape(&status.path),
@@ -6695,6 +6711,7 @@ impl Running {
             status.dropped,
             status.channels,
             status.start_sample,
+            status.first_sample,
             status.xruns,
             tracks_json(&status.tracks),
             monitor,
@@ -9478,6 +9495,7 @@ break"}"#).is_err());
             dropped: 0,
             channels: 1,
             start_sample: 0,
+            first_sample: 0,
             xruns: 0,
             align_samples: 0,
             align_from: "none",
@@ -9915,6 +9933,75 @@ break"}"#).is_err());
         assert!(line.contains("\"playing\":0"), "{line}");
         let _ = server.handle(r#"{"cmd":"stop"}"#);
         let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_take_with_no_alignment_reports_none_at_its_stamp() {
+        // Neither `align_samples` nor a calibration: nothing is shifted, and
+        // the take reports `none` rather than inventing a capture offset. Its
+        // first stored frame is stamped where the caller put it.
+        let mut server = socket_server();
+        let out = temp_take("unaligned");
+        let started = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":30,"start_at":9600}}"#
+        )));
+        assert!(started.contains("\"ok\":true"), "{started}");
+        assert!(started.contains("\"start_sample\":9600"), "{started}");
+        assert!(started.contains("\"first_sample\":9600"), "{started}");
+        assert!(started.contains("\"align_samples\":0"), "{started}");
+        assert!(started.contains("\"align_from\":\"none\""), "{started}");
+
+        let status = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(status.contains("\"first_sample\":9600"), "{status}");
+        assert!(status.contains("\"align_from\":\"none\""), "{status}");
+
+        let _ = server.handle(r#"{"cmd":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_given_alignment_shifts_the_take_first_sample() {
+        // A declared capture offset places the take's first stored frame that
+        // many samples before the stamp. The stamp is unchanged; `first_sample`
+        // is where the WAV is placed on the transport.
+        let mut server = socket_server();
+        let out = temp_take("aligned");
+        let started = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":30,"start_at":9600,"align_samples":1200}}"#
+        )));
+        assert!(started.contains("\"ok\":true"), "{started}");
+        assert!(started.contains("\"start_sample\":9600"), "{started}");
+        assert!(started.contains("\"first_sample\":8400"), "{started}");
+        assert!(started.contains("\"align_samples\":1200"), "{started}");
+        assert!(started.contains("\"align_from\":\"given\""), "{started}");
+
+        let status = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(status.contains("\"first_sample\":8400"), "{status}");
+        assert!(status.contains("\"align_samples\":1200"), "{status}");
+        let _ = server.handle(r#"{"cmd":"stop"}"#);
+
+        // The offset is clamped at sample 0: a stamp smaller than the offset
+        // cannot report a negative first sample.
+        let near_zero = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":30,"start_at":600,"align_samples":1200}}"#
+        )));
+        assert!(near_zero.contains("\"first_sample\":0"), "{near_zero}");
+        let _ = server.handle(r#"{"cmd":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_malformed_alignment_is_refused_before_a_take_exists() {
+        let mut server = socket_server();
+        let out = temp_take("bad-align");
+        for bad in ["-1", "1.5"] {
+            let line = reply(server.handle(&format!(
+                r#"{{"cmd":"record","out":"{out}","seconds":1,"align_samples":{bad}}}"#
+            )));
+            assert!(line.contains("\"ok\":false"), "{bad}: {line}");
+            assert!(line.contains("align_samples"), "{bad}: {line}");
+            assert!(!std::path::Path::new(&out).exists(), "{bad} created a file");
+        }
     }
 
     #[test]

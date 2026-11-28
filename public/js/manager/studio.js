@@ -1636,6 +1636,14 @@ function studioEngineStartNow(punch) {
 		monitor_input: monitor ? 'true' : 'false',
 		monitor_gain: '1'
 	};
+	// The page's own record offset is the number the browser path already uses;
+	// give the engine the same value as its capture offset so it starts the
+	// monitor (and reports where the take's first sample sits) by that many
+	// samples instead of the page guessing after the fact.
+	var pageOffset = (typeof studioRecordOffset === 'function') ? Number(studioRecordOffset(null)) : 0;
+	if (isFinite(pageOffset) && pageOffset > 0) {
+		request.align_samples = Math.round(pageOffset * studioEngineDeviceRate);
+	}
 	// The punch-in stamp is a whole, non-negative sample count on the engine's
 	// own timeline, so a count-in take lands at the bar line it counted into.
 	if (typeof punch === 'number' && punch > 0) {
@@ -1881,6 +1889,14 @@ function studioEngineTakeStart(takes, punch, done) {
 	// recorded track: on a 2-input interface a four-track take would otherwise
 	// sum the same guitar four times.
 	if (monitor_track !== null) { request.monitor_track = monitor_track; }
+	// The page's own record offset is the number the browser path already uses;
+	// give the engine the same value as its capture offset so it starts the
+	// monitor (and reports where the take's first sample sits) by that many
+	// samples instead of the page guessing after the fact.
+	var pageOffset = (typeof studioRecordOffset === 'function') ? Number(studioRecordOffset(null)) : 0;
+	if (isFinite(pageOffset) && pageOffset > 0) {
+		request.align_samples = Math.round(pageOffset * rate);
+	}
 	if (at > 0) { request.start_at = Math.round(at * rate); }
 	var sent = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
 	studioEngineTakeListenRelease(function () {
@@ -1897,13 +1913,24 @@ function studioEngineTakeStart(takes, punch, done) {
 					return;
 				}
 				var now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
-				// The browser reached the punch before the engine opened the input.
-				// Half the round trip is the best estimate of that gap, and placing
-				// the first sample there keeps the take on the same grid.
+				// The engine reports where the take's first stored frame actually
+				// sits: its stamp less the capture offset it applied. When it names
+				// a measured or given offset, place the WAV there instead of
+				// guessing from the HTTP round trip. With no offset the engine
+				// shifts nothing, so half the round trip remains the only estimate
+				// of the gap while the device was opening.
 				var delay = Math.max(0, now - sent) / 2000;
+				var first = Number(data.first_sample);
+				var answeredRate = Number(data.rate) || rate;
+				var aligned = (data.align_from === 'measured' || data.align_from === 'given');
+				var startTime = (aligned && isFinite(first) && first >= 0)
+					? first / answeredRate
+					: at + delay;
 				studioEngineTakeArmed = {
-					channels: built.channels, plan: built.plan, rate: rate,
-					punch: at, startTime: at + delay, imported: false
+					channels: built.channels, plan: built.plan, rate: answeredRate,
+					punch: at, startTime: startTime, imported: false,
+					align_from: data.align_from || 'none',
+					align_samples: Number(data.align_samples) || 0
 				};
 				studioEngineRecording = true;
 				if (mixer['time']) { mixer['time']['engine_take'] = true; }

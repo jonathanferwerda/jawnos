@@ -1578,6 +1578,8 @@ sub action_44023 {
 		$c->param('click_json'),
 		$c->param('bus'),
 		$c->param('monitor_track'),
+		$c->param('align_samples'),
+		$c->param('calibrate'),
 	);
 	$c->render(json => $answer, status => $status);
 	return;
@@ -2375,6 +2377,37 @@ sub studio_take_start_at {
 	return int($value);
 }
 
+# A capture offset is a whole sample count. It is exact to 2^53 like the start
+# stamp, but a real offset is far smaller: one minute at the engine's highest
+# rate is a generous ceiling, and a larger claim is a unit mistake rather than
+# a device. Absent or blank means "no declared offset".
+our $studio_take_align_max = 11_520_000;
+
+sub studio_take_align_samples {
+	my ($value) = @_;
+	return (undef, undef) unless defined $value && !ref $value && length $value;
+	return ('align_samples must be a whole, non-negative sample count', undef)
+		unless $value =~ /\A\s*\+?(\d+)\s*\z/;
+	my $samples = $1 + 0;
+	return ("align_samples must be from 0 to $studio_take_align_max samples", undef)
+		if $samples > $studio_take_align_max;
+	return (undef, int($samples));
+}
+
+# `calibrate` asks the engine to measure the capture offset once with the patch
+# cable. A blank or false spelling is off; anything that is not a boolean
+# spelling is a refusal rather than a guess.
+sub studio_take_calibrate {
+	my ($value) = @_;
+	return (undef, 0) unless defined $value && !ref $value && length $value;
+	(my $word = lc $value) =~ s/\A\s+|\s+\z//g;
+	return (undef, 0)
+		if $word eq '' || $word eq '0' || $word eq 'false' || $word eq 'no' || $word eq 'off';
+	return (undef, 1)
+		if $word eq '1' || $word eq 'true' || $word eq 'yes' || $word eq 'on';
+	return ('calibrate must be true or false', undef);
+}
+
 # The machine's recording folder, resolved the way every other recording path
 # is (misc/rec_location, then `~`), and made absolute because the engine refuses
 # a relative `out`. An unset or unusable setting is the empty string, which the
@@ -2967,9 +3000,19 @@ sub studio_take_bus {
 # without one does not leave an empty directory behind.
 sub studio_take_start {
 	my ($seconds, $start_at, $tracks, $inputs, $inserts, $tracks_json, $master_json,
-		$monitor_input, $monitor_gain, $click_json, $bus, $monitor_track) = @_;
+		$monitor_input, $monitor_gain, $click_json, $bus, $monitor_track,
+		$align_samples, $calibrate) = @_;
 	$seconds  = &studio_take_seconds($seconds);
 	$start_at = &studio_take_start_at($start_at);
+
+	# The capture offset and the one-shot calibration are the engine's own
+	# fields: a malformed value is refused here, before the engine is dialled.
+	my ($align_error, $align) = &studio_take_align_samples($align_samples);
+	return (400, { ok => 0, error => $align_error }) if defined $align_error;
+	my ($calibrate_error, $calibrate_on) =
+		&studio_take_calibrate($calibrate);
+	return (400, { ok => 0, error => $calibrate_error })
+		if defined $calibrate_error;
 
 	# A bus take records one bus of the running patch. It owns no tracks, no
 	# monitor files and no mastering rack: those are a normal take's, and the
@@ -2983,13 +3026,14 @@ sub studio_take_start {
 			|| (defined $inputs && length $inputs)
 			|| (defined $inserts && length $inserts)
 			|| (defined $tracks_json && length $tracks_json)
-			|| (defined $master_json && length $master_json);
+			|| (defined $master_json && length $master_json)
+			|| defined $align || $calibrate_on;
 		if (defined $monitor_input && !ref $monitor_input) {
 			(my $word = lc $monitor_input) =~ s/\A\s+|\s+\z//g;
 			$forbidden = 1
 				if $word ne '' && $word ne 'false' && $word ne 'no' && $word ne '0';
 		}
-		return (400, { ok => 0, error => "a bus take records the running patch's bus; tracks, inserts, monitor files, the live input and the mastering rack belong to a normal take" })
+		return (400, { ok => 0, error => "a bus take records the running patch's bus; tracks, inserts, monitor files, the live input, the mastering rack and the capture offset belong to a normal take" })
 			if $forbidden;
 	}
 
@@ -3046,6 +3090,8 @@ sub studio_take_start {
 	}
 	$extra->{'click'} = $click if $click;
 	$extra->{'bus'} = $bus_name if defined $bus_name;
+	$extra->{'align_samples'} = $align if defined $align;
+	$extra->{'calibrate'} = 1 if $calibrate_on;
 	my $answer = &JawnOS::Audio::Engine::audio_engine_record(
 		$path, $seconds, $start_at, $extra,
 	);

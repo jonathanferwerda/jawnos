@@ -96,6 +96,12 @@ like($start, qr/request\.monitor_track = monitor_track/, 'and names the one trac
 like($studio, qr/plan\[index\[w\.ch\]\]\.from = index\[src\]/, 'a send travels as the source\'s plan index');
 like($studio, qr/function studioEngineTakeCanTake/, 'a send chain is engine-recordable when it ends at a device input');
 like($start, qr/click_json: click \? JSON\.stringify\(click\) : ''/, 'the take owns the click when no transport does');
+like($start, qr/request\.align_samples = Math\.round\(pageOffset \* rate\)/,
+	'the page sends its own record offset as the engine\'s align_samples');
+like($start, qr/studioRecordOffset\(null\)/, 'using the same offset the browser path measures');
+like($start, qr/data\.first_sample/, 'the take is placed by the engine\'s reported first sample');
+like($start, qr/data\.align_from === 'measured' \|\| data\.align_from === 'given'/,
+	'and only trusts that placement when the engine names a measured or given offset');
 like($start, qr/studioEngineTakeArmed = \{/, 'the start remembers which channel each track records');
 
 my $finish = body($studio, 'studioEngineTakeFinish');

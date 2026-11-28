@@ -239,6 +239,40 @@ my %reply = (
 	$server_pids[-1] = undef;
 }
 
+# --- a capture offset and calibration are forwarded -------------------------
+{
+	my ($path, $log, $pid) = start_mock(replies => \%reply);
+	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
+
+	my $given = JawnOS::Audio::Engine::audio_engine_record(
+		'/tmp/aligned.wav', 10, 9600, { align_samples => 1200 },
+	);
+	ok($given->{'ok'}, 'a record with a declared offset is answered');
+	my $calibrated = JawnOS::Audio::Engine::audio_engine_record(
+		'/tmp/calibrated.wav', 10, 9600, { calibrate => 1 },
+	);
+	ok($calibrated->{'ok'}, 'a record with calibration is answered');
+	my $plain = JawnOS::Audio::Engine::audio_engine_record('/tmp/plain.wav', 10, 9600);
+	ok($plain->{'ok'}, 'an unshifted take is still answered');
+	my $off = JawnOS::Audio::Engine::audio_engine_record(
+		'/tmp/off.wav', 10, 9600, { calibrate => 0 },
+	);
+	ok($off->{'ok'}, 'a false calibration is answered as a plain take');
+
+	my @seen = logged_requests($log);
+	is($seen[0]{'align_samples'}, 1200, 'align_samples reaches the engine');
+	ok(!exists $seen[0]{'calibrate'}, 'and a declared offset sends no calibration');
+	ok($seen[1]{'calibrate'}, 'calibrate true reaches the engine as a JSON boolean');
+	ok(!exists $seen[1]{'align_samples'}, 'and calibration sends no offset');
+	ok(!exists $seen[2]{'align_samples'} && !exists $seen[2]{'calibrate'},
+		'a take with neither adds no alignment field');
+	ok(!exists $seen[3]{'calibrate'}, 'a false calibration is not forwarded');
+
+	JawnOS::Audio::Engine::audio_engine_quit();
+	waitpid($pid, 0);
+	$server_pids[-1] = undef;
+}
+
 # --- a multi-input monitor and a patch-source fader --------------------------
 {
 	my ($path, $log, $pid) = start_mock(replies => \%reply);
@@ -592,6 +626,48 @@ sub run_sound_param {
 		is($again, $out, 'the next start in that second gets the number back');
 		unlink @$held;
 	}
+	# A capture offset and its one-shot calibration are the engine's own
+	# fields, validated here and forwarded only when they are real.
+	my $offset = run_take(seconds => '5', align_samples => '1200');
+	is($offset->{'status'}, 200, 'a declared capture offset is accepted');
+	is($calls[-1][3]{'align_samples'}, 1200, 'and reaches audio_engine_record');
+	ok(!exists $calls[-1][3]{'calibrate'}, 'without a calibration flag');
+
+	my $calibrated = run_take(seconds => '5', calibrate => 'true');
+	is($calibrated->{'status'}, 200, 'a calibration request is accepted');
+	ok($calls[-1][3]{'calibrate'}, 'and reaches the engine when on');
+	ok(!exists $calls[-1][3]{'align_samples'}, 'with no invented offset');
+
+	my $neutral = run_take(seconds => '5');
+	is($neutral->{'status'}, 200, 'a take with neither is accepted');
+	ok(!exists $calls[-1][3]{'align_samples'} && !exists $calls[-1][3]{'calibrate'},
+		'and sends no alignment fields, so the engine reports align_from none');
+
+	my $off = run_take(seconds => '5', calibrate => 'false');
+	is($off->{'status'}, 200, 'an explicit false calibration is accepted');
+	ok(!exists $calls[-1][3]{'calibrate'}, 'and is not forwarded to the engine');
+
+	my $before_align = scalar @calls;
+	for my $case (
+		[ align_samples => '-1',       qr/align_samples/ ],
+		[ align_samples => '1.5',      qr/align_samples/ ],
+		[ align_samples => 'word',     qr/align_samples/ ],
+		[ align_samples => '11520001', qr/align_samples/ ],
+		[ calibrate     => 'maybe',     qr/calibrate/ ],
+	) {
+		my ($key, $value, $error) = @$case;
+		my $bad = run_take($key => $value);
+		is($bad->{'status'}, 400, "$key=$value is a 400");
+		like($bad->{'json'}{'error'}, $error, 'and the refusal names the field');
+	}
+	is(scalar @calls, $before_align, 'no malformed alignment reaches the engine');
+
+	# A bus take owns the patch's output and capture, so it carries no offset.
+	my $bus_align = run_take(bus => 'house', align_samples => '1200');
+	is($bus_align->{'status'}, 400, 'a bus take with an offset is a 400');
+	like($bus_align->{'json'}{'error'}, qr/bus take records/,
+		'and says the offset belongs to a normal take');
+	is(scalar @calls, $before_align, 'and nothing is sent to the engine');
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
 	unlike($controller, qr/param\(\s*['"]path['"]\s*\)/, 'the controller never reads a path parameter');
