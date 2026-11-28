@@ -1323,6 +1323,19 @@ sub voice_brain {
 			&subs::say_it($speech);
 		}
 	};
+	# A few data questions need no model at all. Weather is the first: the
+	# answer is read from the same forecast the Weather app shows, so a spoken
+	# "what's the weather" is fast even before a Guide model is configured.
+	my $funnel_on = &subs::voice_funnel_enabled();
+	my $fast_answer = $funnel_on ? eval { &subs::voice_funnel_fast($text, $meta) } : undef;
+	if ($fast_answer && $fast_answer->{'handled'}) {
+		my $speech = $fast_answer->{'speech'} || '';
+		if (length $speech) {
+			$reply->($speech);
+			$log->info('voice: funnel ' . ($fast_answer->{'kind'} // 'fast') . ' "' . $speech . '"');
+			return { handled => 1, action => 'funnel', kind => ($fast_answer->{'kind'} // 'fast'), said => $speech };
+		}
+	}
 	# The guide's own model (Configure -> Plat); without one the caller keeps the
 	# note fallback. A voice turn has to answer in seconds, and the guide's chat
 	# model can be a large cloud one (gemma4:cloud measured 147 s for one turn),
@@ -1332,12 +1345,31 @@ sub voice_brain {
 	return undef unless $model;
 	my $fast = &subs::setting_grabber({ app => 'mail', setting => 'voice_assistant' });
 	$fast = ($fallback && $fallback ne $model) ? $fallback : '' unless defined $fast && length $fast;
-	my %voice_verbs = map { $_ => 1 } qw/say ask done measure where_when create play_music open_app alias unalias/;
-	my $system = &help::actions_prompt(\%voice_verbs) . "\n\n";
+	# The funnel gives the model one app's help topic instead of every app's. A
+	# clear word match is deterministic; only a weak or tied match asks the small
+	# router model to choose a topic. If neither can choose, the old unscoped
+	# vocabulary remains the fallback, so voice never becomes narrower than before.
+	my $scope = $funnel_on ? eval { &subs::voice_funnel_scope($text) } : undef;
+	if ($funnel_on && !($scope && $scope->{'ok'})) {
+		my $routed = eval { &subs::voice_funnel_router($text, ($fast || $model), ($fast ? $model : '')) };
+		$scope = $routed if $routed && $routed->{'ok'};
+	}
+	if ($scope && $scope->{'ok'}) {
+		$log->info('voice: funnel scope ' . $scope->{'id'} . ' by ' . $scope->{'why'} . ' (' . ($scope->{'score'} // 0) . ')');
+	}
+	else {
+		$log->info('voice: funnel no scope');
+	}
+	my $verbs = ($scope && $scope->{'ok'} && ref $scope->{'verbs'} eq 'HASH')
+		? $scope->{'verbs'}
+		: { map { $_ => 1 } qw/say ask done measure where_when create play_music open_app alias unalias/ };
+	my $system = &help::actions_prompt($verbs, 0, $text) . "\n\n";
+	$system .= "Only the actions listed above exist on this turn; ignore any rule that names an action not listed.\n";
 	$system .= "This came in as a spoken command to the person's watch, transcribed on-device: "
 		. "words may be misheard, and there is no follow-up turn - when the intent is clear, act "
 		. "or answer; do not reply with a question. Keep spoken answers to one or two short sentences.\n";
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
+	$system .= &subs::voice_funnel_prompt_block($scope);
 	my $brain_started = &subs::rightNow();
 	my ($out) = $fast
 		? &subs::evaluation_model_call_with_fallback($fast, $model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking_effective('help_assistant'), 'help_assistant')
@@ -1363,6 +1395,13 @@ sub voice_brain {
 		return { handled => 1, action => 'ask', said => $speech };
 	}
 	$a = $action->{'action'};
+	# A scoped turn may only use the verbs its scope offered. Without this, a
+	# model that read the help page could still invent a verb the voice path has
+	# nowhere to run.
+	if ($scope && $scope->{'ok'} && ref $scope->{'verbs'} eq 'HASH' && !$scope->{'verbs'}->{$a}) {
+		$log->info('voice: funnel refused action ' . $a . ' (not in scoped verbs)');
+		return undef;
+	}
 	# A make/create is the Guide's write path: stage a proposal, and the
 	# Confirmation Requirement decides whether the same breath saves it (the
 	# Confirm tick in the Guide's associate; off = save without asking).
@@ -1411,6 +1450,32 @@ sub voice_brain {
 		$reply->($speech);
 		$log->info('voice: brain ' . $a . ' "' . $speech . '"');
 		return { handled => 1, action => $a, said => $speech };
+	}
+	# find answers "when did I last ..." and "where is ..." from the house's own
+	# records. It is the first read the funnel adds beyond the old voice set.
+	if ($a eq 'find') {
+		my $q = $action->{'query'} // '';
+		return undef unless length $q;
+		my $r = eval { &Manager::help_search($q, $meta->{'chip_id'}) } || {};
+		my $summary = eval { &Manager::help_search_summary($r) } || '';
+		my $speech = (length $summary && $summary ne 'nothing found')
+			? $summary
+			: 'I found nothing for ' . $q . '.';
+		$reply->($speech);
+		$log->info('voice: brain find "' . $speech . '"');
+		return { handled => 1, action => 'find', said => $speech, found => $r };
+	}
+	# stop is the same write the watch's stop command makes, but named by the
+	# Guide instead of the start/stop grammar.
+	if ($a eq 'stop') {
+		my $app = &subs::unformat_name($action->{'app'} // '');
+		return undef unless length $app;
+		my $did = eval { &subs::voice_command_apply($app, 'off', $meta); 1 };
+		return undef unless $did;
+		my $speech = 'Stopped ' . &subs::format_name($app) . '.';
+		$reply->($speech);
+		$log->info('voice: brain stop ' . $app);
+		return { handled => 1, action => 'stop', app => $app, said => $speech };
 	}
 	# the acting verbs the server can run itself: measure/where read our own
 	# records, play_music/open_app reach the open JawnOS tabs over the socket

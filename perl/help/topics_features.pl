@@ -35,10 +35,11 @@ $topic{'welcome'} = {
 $topic{'voice'} = {
 		title => 'Voice and wake words', category => 'features',
 		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
-		verified => '2026-11-26',
+		verified => '2026-11-28',
 		summary => 'Speak to the watch or t-deck; a recognised command runs, other words go to the Guide, and the Rec button files a note.',
 		body => [
 			'A watch or a t-deck can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised start/stop command runs as before, and anything else that was addressed to it is taken to the Guide as a message. Only the watch\'s Rec button makes a note.',
+			'The words are first matched to one app\'s help topic, and only that topic is handed to the Guide; if the match is unclear, a small router picks the topic. That keeps a spoken turn small as the house grows more apps, and it means the Help page you read is also the page the Guide reads.',
 			'The watch\'s Rec button is a separate voice memo: hold it, speak, and the clip is transcribed and filed in Notes. The watch keeps its ten most recent memos, so an older one drops off when the eleventh arrives.',
 			'Its Com button is push-to-talk for the same command path as a wake word: hold it, speak, and release. A recognised start/stop runs, and anything else goes to the Guide.',
 			'How the device listens is the Voice setting on its row in the Embedded panel. The watch offers four choices and the t-deck three: Voice: Off (it does not listen), Voice: Any speech (VAD) (it starts a clip as soon as it hears any speech), and a wake word - Voice: Hey Jawn, and on the watch also Voice: Jawn Do - which waits for that phrase and records what follows.',

@@ -165,7 +165,7 @@ sub help_measure($measure, $period, $target) {
 		return { measure => 'walk', period => $unit, km => sprintf('%.2f', $km), fixes => $fixes, text => $text };
 	}
 	if ($measure =~ /weight|pounds?|lbs?|kilos?|kg|mass/) {
-		my $person = &subs::unformat_name(&subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '');
+		my $person = &subs::unformat_name(&subs::setting_grabber({ app => 'me', setting => 'my_name' }) || &subs::voice_funnel_self_app() || '');
 		return { error => 'I do not know whose weight to read.' } unless $person;
 		my $settings = &subs::settings_grabber({ app => $person });
 		my $unit = 'lb';
