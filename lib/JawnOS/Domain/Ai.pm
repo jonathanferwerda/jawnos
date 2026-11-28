@@ -1503,14 +1503,15 @@ sub voice_brain {
 		}) };
 		return undef unless $staged && $staged->{'staged'};
 		my $what = $staged->{'title'} || &subs::format_name($staged->{'app'}) || 'it';
-		# Say the moment in the words the person hears: the clock time, and how far
-		# ahead it is - "Staging Email Test at 5pm, in 3h 59m" - so the confirmation
-		# repeats back what is about to be saved, not just its name.
-		my @lt = localtime(($staged->{'timestamp'} // 0) / 1000);
-		my $hour = $lt[2] % 12;
-		$hour = 12 unless $hour;
-		my $ampm = $lt[2] < 12 ? 'am' : 'pm';
-		my $clock = $lt[1] ? sprintf('%d:%02d%s', $hour, $lt[1], $ampm) : ($hour . $ampm);
+		# Say the moment in the words the person hears: the clock time on the house
+		# clock, not the worker's (the box is UTC while the person reads Eastern),
+		# and how far ahead it is - "Staging Email Test at 5pm, in 3h 59m" - so the
+		# confirmation repeats back what is about to be saved, not just its name.
+		my $clock = &subs::clock_zone_text($staged->{'timestamp'}, undef, '%I:%M%P');
+		$clock =~ s/^0//;
+		$clock =~ s/:00(?=[ap]m\z)//;
+		$clock = lc $clock;
+		$clock = 'that time' unless length $clock;
 		my $delta = ($staged->{'timestamp'} // 0) - &subs::rightNow();
 		my $ahead = $delta > 60000 ? (', in ' . &Manager::guide_length_words($delta)) : '';
 		my $detail = $what . ' at ' . $clock . $ahead;
