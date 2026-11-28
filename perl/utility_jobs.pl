@@ -216,6 +216,12 @@ sub utility_runner() {
 				$log->error("Task '$t' threw an error but we caught it: $@");
 			}
 		}
+		# The loop was blocked for the whole job, so the 2s heartbeat timer could
+		# not fire while it ran. Prove the scheduler is alive between jobs: the
+		# master's lease then measures one job, which is its own timeout, instead
+		# of a whole pass of them. (After the error test above: an eval here would
+		# clear the $@ it reads.)
+		eval { &subs::subprocessor_heartbeat(); };
 		if ($success == 1) {
 			$u->{'last_run'} = &subs::rightNow();
 			# A job may return a short line saying what it did (or that it found

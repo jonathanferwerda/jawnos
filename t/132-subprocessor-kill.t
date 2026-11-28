@@ -1,7 +1,10 @@
-# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Process.pm
+# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Process.pm jawn perl/utility_jobs.pl
 # covers:    a run_p child killed before it reports is named as a killed process,
-#            not as a JSON error; and the reaper starts a deferred job's warranty
-#            on the pass that first sees a live pid, not on the pass of the ask.
+#            not as a JSON error; the reaper starts a deferred job's warranty
+#            on the pass that first sees a live pid, not on the pass of the ask;
+#            and a resident job that leaves is reported to the master, whose
+#            only notice of it is that pass, with a lease that outlasts the
+#            slowest job the scheduler runs.
 
 use strict;
 use warnings;
@@ -22,6 +25,9 @@ use JawnOSTest;
 subs::preload('subprocessor');
 subs::preload('subprocessor_failure_message');
 subs::preload('subprocessor_warranty_at');
+subs::preload('subprocessor_warranty_for');
+subs::preload('subprocessor_heartbeat_for');
+subs::preload('subprocessor_resident');
 subs::preload('subprocessor_reap');
 
 my $NOW = 1_700_000_000_000;
@@ -206,6 +212,86 @@ sub tracked_record {
 	my $forked_at = index($calendar, 'my $forked = $gb::subprocessed > 1');
 	ok($nested_at >= 0 && $forked_at > $nested_at,
 		'the forced fork is decided before the inline/fork test, so nested work always forks');
+}
+
+# ---------------------------------- a resident that left is reported lost
+# The tree's scheduler, servers and supervisors are pinned 'forever': nothing
+# in the tree ends them, so one gone is a tree that has quietly lost a part of
+# itself. The pass that forgets a dead record is the only notice the master
+# ever gets, so it has to say so. manager.log's "utility functions pid ... died
+# without reporting (exit 0)" was followed by an hour of no sync, no relay and
+# no alarms because nothing listened.
+{
+	ok(&subs::subprocessor_resident('utility functions'), 'the scheduler is a resident');
+	ok(&subs::subprocessor_resident('Pro Main Server'), 'so is a server');
+	ok(&subs::subprocessor_resident('tunnel holder wss 4 ports'),
+		'a name with a dynamic suffix follows its prefix');
+	ok(!&subs::subprocessor_resident('task remote relay'), 'a one-shot relay is not');
+	ok(!&subs::subprocessor_resident('voice sync'),
+		'nor an unlisted one-shot, whose default warranty is also forever');
+	ok(!&subs::subprocessor_resident('ollama serve'),
+		'nor a resident the house can live without, which fails benignly');
+	ok(!&subs::subprocessor_resident(undef), 'and no name names no resident');
+
+	my @lost;
+	my $dead = tracked_record(name => 'utility functions', pid => 90010,
+		warranty => &subs::forever_warranty());
+	my $report = &subs::subprocessor_reap($dead,
+		now => $NOW, alive => sub { 0 }, kill => sub { 0 },
+		starttime => sub { '777' }, descendants => sub { [] },
+		on_lost => sub { push @lost, $_[0] });
+	is($report->{'reaped'}, 1, 'a dead child is reaped');
+	is(scalar @lost, 1, 'and handed to the master once as lost');
+	is($lost[0]->{'name'}, 'utility functions', 'by the name the tree knows it by');
+
+	# It is a report about a death, not a heartbeat: a live one says nothing.
+	@lost = ();
+	my $live = tracked_record(name => 'utility functions', pid => 90011,
+		warranty => &subs::forever_warranty());
+	&subs::subprocessor_reap($live,
+		now => $NOW, alive => sub { 1 }, kill => sub { 0 },
+		starttime => sub { '777' }, descendants => sub { [] },
+		on_lost => sub { push @lost, $_[0] });
+	is(scalar @lost, 0, 'a resident that is still running is not reported');
+
+	# A one-shot dying is ordinary: the callback fires, the master decides.
+	@lost = ();
+	my $once = tracked_record(name => 'task remote relay', pid => 90012,
+		warranty => $NOW + 30_000);
+	&subs::subprocessor_reap($once,
+		now => $NOW + 31_000, alive => sub { 0 }, kill => sub { 0 },
+		starttime => sub { '777' }, descendants => sub { [] },
+		on_lost => sub { push @lost, $_[0] });
+	is(scalar @lost, 1, 'a lost one-shot is reported too, for the master to judge');
+	is(&subs::subprocessor_resident($lost[0]->{'name'}), 0, 'and it is not a resident');
+}
+
+# The scheduler runs each job to completion on its own loop, so its lease has to
+# outlast the slowest job's own timeout - remote_machine_sync's 1000s. The old
+# 5m lease TERMed a scheduler that was merely mid-sync, and the house was left
+# with no scheduler until a person restarted the tree.
+{
+	my $lease = &subs::subprocessor_warranty_at(
+		&subs::subprocessor_heartbeat_for('utility functions'), 0);
+	ok($lease > 1000_000, 'the scheduler lease is longer than its slowest job (1000s)');
+	ok($lease <= 3600_000, 'but still inside an hour, so a wedge is noticed');
+}
+
+# The wiring that makes it work: the runner proves it is alive between jobs, and
+# the master hands the reaper the lost-resident callback on both paths.
+{
+	my $runner = read_file(root() . '/perl/utility_jobs.pl');
+	like($runner, qr/eval \{ &subs::subprocessor_heartbeat\(\); \};/,
+		'the runner heartbeats after a job, before the next');
+	my $master = read_file(root() . '/jawn');
+	like($master, qr/on_lost => sub \{ &resident_lost\(\$_\[0\]\) \}/,
+		'the reaper is given the lost-resident callback');
+	like($master, qr/&resident_lost\(\$process\);/, 'a resident that reports its own stop is recovered too');
+	like($master, qr/return unless &subs::subprocessor_resident\(\$name\);/,
+		'only a name the map pins to forever can recover the tree');
+	like($master, qr/\$parent == \$tree_pid/, "and only the tree's own children, not a worker's holder");
+	like($master, qr/a restart cannot cure a repeat within five minutes/,
+		'a resident that keeps dying cannot turn the house into a restart loop');
 }
 
 done_testing();

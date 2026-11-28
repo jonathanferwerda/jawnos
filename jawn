@@ -1101,6 +1101,54 @@ Mojo::IOLoop->recurring(2 => sub {
 
 });
 
+# A resident job that left without reporting is a tree that has quietly lost a
+# permanent part of itself - and the code sync that would pull a fix lives in
+# the very child that just died, so the tree cannot heal itself. Recover it the
+# way a tree that went down is recovered, naming the job in the record. A
+# resident that dies again within five minutes is a fault a restart cannot cure
+# (restarting forever would only hide it), so say so and stand down.
+my $resident_recovery_at = 0;
+my $resident_recovery_n = 0;
+sub resident_lost {
+	my ($record) = @_;
+	return unless ref $record eq 'HASH';
+	my $name = $record->{'name'} || '';
+	return unless length $name;
+	return unless &subs::subprocessor_resident($name);
+	# Only the tree's OWN residents: a holder or a player a worker started is
+	# pinned 'forever' too, but it ends when the person stops it.
+	my $tree_pid = $fork ? $fork->pid : 0;
+	my $parent = $record->{'parent'};
+	return unless $tree_pid && defined $parent && $parent =~ /^\d+$/ && $parent == $tree_pid;
+	# Only a tree that believes it is serving has something to recover, and a
+	# paused ticker means a teardown is already under way.
+	return unless $status eq 'started' && !$master_timer_paused;
+	my $pid = $record->{'pid'} || '?';
+	my $now = time;
+	if ($resident_recovery_at && $now - $resident_recovery_at < 300) {
+		my $line = 'resident ' . $name . ' pid ' . $pid
+			. ' left again; a restart cannot cure a repeat within five minutes - waiting for a person';
+		eval { $log->info($line) } if $log;
+		print "$line\n";
+		return;
+	}
+	$resident_recovery_n = 0 if $now - $resident_recovery_at > 3600;
+	if ($resident_recovery_n >= 3) {
+		my $line = 'resident ' . $name . ' pid ' . $pid
+			. ' left a fourth time this hour; a restart is not the cure - waiting for a person';
+		eval { $log->info($line) } if $log;
+		print "$line\n";
+		return;
+	}
+	$resident_recovery_at = $now;
+	$resident_recovery_n++;
+	my $line = 'resident ' . $name . ' pid ' . $pid . ' left without reporting; recovering the tree';
+	eval { $log->info($line) } if $log;
+	print "$line\n";
+	$status = 'frozen';
+	$status_why = 'the ' . $name . ' job left without reporting';
+}
+
 # A subprocessor stamps a warranty when it starts; this is the only place that
 # can enforce it, because the master owns the records the workers send it. A
 # dead pid is forgotten (a SIGKILLed child never writes its stop record, which
@@ -1118,6 +1166,7 @@ Mojo::IOLoop->recurring(5 => sub {
 	# bind, and its forced refresh stays rate limited.
 	my $report = eval { &subs::subprocessor_reap($subprocesses, {
 		now => time() * 1000,
+		on_lost => sub { &resident_lost($_[0]) },
 		on_expire => sub {
 			my ($record, $why) = @_;
 			my $line = 'subprocess ' . ($record->{'name'} || '?')
@@ -2269,6 +2318,9 @@ sub process_watch() {
 						$subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}} = $process;
 
 						if ($process->{'status'} eq 'stop') {
+							# A resident that reports its own stop has still left: the record
+							# goes either way, and the tree has to be recovered.
+							&resident_lost($process);
 							delete $subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}};
 						}
 

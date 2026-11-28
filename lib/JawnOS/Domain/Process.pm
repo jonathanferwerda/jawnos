@@ -205,7 +205,14 @@ our %HEARTBEAT = (
 	'address directory'     => '10m',
 	'evaluation schedules'  => '20m',
 	'evaluation dispatch'   => '10m',
-	'utility functions'     => '5m',
+	# The scheduler gives each job its whole turn, so its loop is quiet for as
+	# long as that job runs - remote_machine_sync's own timeout is 1000s. A 5m
+	# lease therefore TERMed a scheduler that was merely mid-sync (the Nov 10,
+	# 18 and 25 deaths in manager.log were exactly that), and the house was left
+	# with no scheduler at all: no sync, no relay, no alarms, until a person
+	# restarted the tree. The runner heartbeats between jobs now, so the blind
+	# gap is one job and the lease is set to cover the slowest one.
+	'utility functions'     => '20m',
 	'whisper server'        => '10m',
 	'piper server'          => '10m',
 	'sshd watcher'          => '5m',
@@ -300,6 +307,26 @@ sub subprocessor_warranty_for {
 # The heartbeat lease spec for a name, or undef when it has none.
 sub subprocessor_heartbeat_for {
 	return $seed_for->(\%HEARTBEAT, $_[0]);
+}
+
+# Is this a job the tree must always have running? Only a name the warranty map
+# PINS to 'forever' counts - a resident supervisor, a server, a resident loop.
+# An unlisted one-shot also defaults to 'forever', but it reports its own stop
+# and leaving is normal, so it is not one. The master reads this to tell a
+# resident that vanished from an ordinary job that finished.
+#
+# A resident the house can live without is not one either: the local model
+# server runs only where a working ollama does, and a machine without one is a
+# normal machine, so its death must not recover the tree.
+our %OPTIONAL_RESIDENT = (
+	'ollama serve' => 1,
+);
+sub subprocessor_resident {
+	my ($name) = @_;
+	return 0 unless defined $name && length $name;
+	return 0 if $OPTIONAL_RESIDENT{$name};
+	my $spec = $seed_for->(\%WARRANTY, $name);
+	return (defined $spec && $spec eq 'forever') ? 1 : 0;
 }
 
 # Prove this subprocessor is still working. A resident loop calls this once per
@@ -547,6 +574,11 @@ sub subprocessor_reap {
 		return kill($signal, $target);
 	};
 	my $on_expire = $opt{'on_expire'} || sub { };
+	# Told about every record this pass forgets because its process is gone. A
+	# child that left without a stop record is indistinguishable from one that
+	# crashed, and for a resident (the scheduler, a server) that is the only
+	# notice the master ever gets.
+	my $on_lost = $opt{'on_lost'} || sub { };
 
 	# The signal target: the wrapper's own group when it is the leader, else the
 	# pid alone. Never our own group.
@@ -596,6 +628,7 @@ sub subprocessor_reap {
 			unless ($alive->($pid)) {
 				delete $kids->{$pid};
 				$report->{'reaped'}++;
+				$on_lost->($record);
 				next;
 			}
 			$live{$pid} = $record;
