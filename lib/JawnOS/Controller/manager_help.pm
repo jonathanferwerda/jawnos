@@ -267,6 +267,23 @@ sub action_34818 {
 	$system .= 'The reader opened help for: ' . ($t ? $t->{'title'} : 'the Help index') . ".\n";
 	$system .= &help::briefing($topic) . "\n" if $topic;
 	$system .= &help::inventory($topic) . "\n" if $topic;
+	# The app-action bridge: the same list a scoped voice turn carries, so a
+	# window opened from Market (or a Help topic for an app) can use its actions.
+	my $app_actions_for = ($t && ($t->{'app'} // '') ne '') ? $t->{'app'} : ($context->{'app'} // '');
+	# A general Guide turn has no topic or window to name the app; the same
+	# deterministic matcher the wrist uses can still find it from the words, so
+	# "add milk" in a plain chat is offered Market's actions.
+	unless (length $app_actions_for) {
+		my $scope = eval { &subs::voice_funnel_scope($rule_text) };
+		$app_actions_for = ($scope->{'app'} // '') if $scope && $scope->{'ok'};
+	}
+	if (length $app_actions_for) {
+		my $acts = &help::app_action_lines($app_actions_for);
+		if (length $acts) {
+			$system .= $acts;
+			$system .= "When an APP ACTIONS block is present, use only a listed \"do\" and its parameter names in \"params\". A read runs at once; a write is proposed first - call app again with \"confirmed\":1 only after the person agrees, and never say it is done before the result says so.\n";
+		}
+	}
 	if ($context->{'title'}) {
 		$system .= 'They are looking at the window \'' . $context->{'title'} . '\''
 			. ($context->{'view'} ? ' (view: ' . $context->{'view'} . ')' : '')
@@ -808,6 +825,50 @@ sub action_37702 {
 	my $c = shift;
 	my $r = &app_action_pending_cancel($c, $c->param('id'));
 	$c->render(json => $r);
+}
+
+# The same weather answer the watch's fast resolver gives, for the Guide window
+# and its associate. No args is not a weather question, so the QA route pass
+# cannot trigger a forecast fetch.
+# GET /manager/help/weather
+sub action_37703 {
+	my $c = shift;
+	my $when = $c->param('when') || '';
+	my $where = $c->param('where') || '';
+	my $what = $c->param('what') || 'now';
+	unless (length($when) || length($where) || length($c->param('what'))) {
+		return $c->render(json => { ok => 0, error => 'Ask about the weather first.' });
+	}
+	my $r = eval { &subs::voice_funnel_weather_answer($when || 'now', $what, length($where) ? ('in ' . $where) : '') } || {};
+	return $c->render(json => { ok => 0, error => 'I could not read the forecast.' })
+		unless $r->{'handled'};
+	$c->render(json => { ok => 1, speech => ($r->{'speech'} // '') });
+}
+
+# The history/visit answer the watch's fast resolver gives, for the Guide window
+# and its associate. The query is the person or place in the person's words; the
+# structured fields shape the sentence the resolver reads.
+# GET /manager/help/history
+sub action_37704 {
+	my $c = shift;
+	my $query = $c->param('query') || '';
+	$query =~ s/^\s+|\s+$//g;
+	return $c->render(json => { ok => 0, error => 'Name the person or place.' })
+		unless length $query;
+	my $which = lc($c->param('which') || 'last');
+	$which = 'last' unless $which =~ /^(?:last|first|next|count|duration)$/;
+	my $visit = (lc($c->param('kind') || '') eq 'visit') ? 1 : 0;
+	my $text;
+	if    ($which eq 'count')    { $text = $visit ? "how many times have i been to $query" : "how many times have i seen $query"; }
+	elsif ($which eq 'duration') { $text = "how long was my last visit to $query"; }
+	elsif ($which eq 'first')    { $text = $visit ? "when did i first visit $query" : "when did i first see $query"; }
+	elsif ($which eq 'next')     { $text = $visit ? "when is the next time i visit $query" : "when is the next time i see $query"; }
+	else                         { $text = $visit ? "when was i last at $query" : "when did i last see $query"; }
+	my $device = eval { &media_unlock_device($c) } || '';
+	my $r = eval { &subs::voice_funnel_history_answer($text, { chip_id => $device }) } || {};
+	return $c->render(json => { ok => 0, error => 'I could not find that in your records.' })
+		unless $r->{'handled'};
+	$c->render(json => { ok => 1, speech => ($r->{'speech'} // '') });
 }
 
 

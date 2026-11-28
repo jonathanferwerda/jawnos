@@ -319,6 +319,9 @@ function helpActionLabel(a) {
 	if (a.action === 'show_place') { return 'Finding ' + (a.place || 'the place') + ' on the map…'; }
 	if (a.action === 'where_when') { return 'Looking up where you were…'; }
 	if (a.action === 'measure') { return 'Measuring…'; }
+	if (a.action === 'weather') { return 'Checking the weather…'; }
+	if (a.action === 'history') { return 'Looking up that history…'; }
+	if (a.action === 'app') { return 'Working with ' + (a.app || 'the app') + '…'; }
 	if (a.action === 'remote') { return 'Telling ' + (a.machine || 'the machine') + '…'; }
 	if (a.action === 'update') { return 'Changing “' + (a.app || a.title || 'the appointment') + '”…'; }
 	if (a.action === 'schedule') { return 'Working out the schedule…'; }
@@ -602,6 +605,20 @@ function helpDoAction(a, cb) {
 			if (!r || r.error) { cb((r && r.error) || 'I could not measure that.'); return; }
 			cb(r.text || 'I measured nothing.', r.text || '');
 		}).fail(function () { cb('I could not measure that.'); });
+		return;
+	}
+	if (a.action === 'weather') {
+		$.get('/manager/help/weather', { when: a.when || 'now', where: a.where || '', what: a.what || 'now' }, function (r) {
+			if (!r || r.ok === 0 || r.error) { cb((r && r.error) || 'I could not read the forecast.'); return; }
+			cb(r.speech || 'I have no forecast.', r.speech || '');
+		}).fail(function () { cb('I could not read the forecast.'); });
+		return;
+	}
+	if (a.action === 'history') {
+		$.get('/manager/help/history', { query: a.query || '', which: a.which || 'last', kind: a.kind || '' }, function (r) {
+			if (!r || r.ok === 0 || r.error) { cb((r && r.error) || 'I could not find that.'); return; }
+			cb(r.speech || '', r.speech || '');
+		}).fail(function () { cb('I could not look that up.'); });
 		return;
 	}
 	if (a.action === 'translate') {

@@ -233,8 +233,8 @@ like($block, qr/only these "do" values/, 'and says the list is closed');
 
 my $with = help::actions_prompt({ say => 1, app => 1 }, 0, '');
 like($with, qr/"action":"app"/, 'a scoped turn is offered the app tool');
-my $without = help::actions_prompt({ say => 1 }, 0, '');
-unlike($without, qr/"action":"app"/, 'the full Guide is not offered the voice-only tool');
+my $without = help::actions_prompt(undef, 0, '');
+like($without, qr/"action":"app"/, 'the full Guide is offered the app tool too');
 
 # ------------------------------------------------------------ the voice branch
 package TestLog;

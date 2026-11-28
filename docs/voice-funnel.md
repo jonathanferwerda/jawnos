@@ -42,6 +42,10 @@ Some questions are better answered without a model:
 - **History / visit** — `voice_funnel_history_answer` resolves the named person or place through `Manager::help_search`, reads only that app's appointments, and answers last (past only), first, next, a count, or a stop's duration. A start from the last twelve hours reads as “now”; an older lone start is the last time. A mail/chat verb ("message", "call", "email") is deliberately left to the model.
 - **Find / stop** — the spoken Guide now has a `find` branch (`Manager::help_search`) and a `stop` branch (`voice_command_apply`). These were already server-side; the funnel exposes them to the wrist.
 
+The Guide window and its associate call the same weather and history answers
+through `GET /manager/help/weather` and `GET /manager/help/history`, so a
+typed or spoken request on a screen gets the same answer as the wrist.
+
 A fast resolver returns `{ handled => 1, speech => '...' }`; `voice_brain` speaks it and never calls the model. Add the next one when a question has a reliable, cheap answer.
 
 The funnel is on unless `__president/voice_funnel` is set to `off`; that is the escape hatch back to the old unscoped prompt.
@@ -176,10 +180,12 @@ row as its claim and runs the action through the browser path; `POST
 `helpPendingReload` console command when a row is stored, taken, confirmed or
 cancelled, and the strip also loads when the Guide window opens.
 
-Not done yet: the full Guide window is not offered `app` (it is `voice_only`);
-camera and window control still need a route or a resolver that fits the same
-shape (camera has no server route today). To add an action, add one entry to
-`@gb::app_actions` and a test to `t/484-app-action-bridge.t` (read/execute),
+The full Guide window and its associate now get the same `app`, `weather` and
+`history` tools; the voice turn's scoped list is still smaller, but nothing the
+watch can do is missing from the screen. Not done yet: camera and window
+control still need a route or a resolver that fits the same shape (camera has
+no server route today). To add an action, add one entry to `@gb::app_actions`
+and a test to `t/484-app-action-bridge.t` (read/execute),
 `t/487-store-actions.t` (a read family's speech) or `t/488-history-visit.t` (a
 fast resolver).
 
@@ -196,17 +202,19 @@ fast resolver).
 - `lib/JawnOS/Routes.pm` — `table`/`lookup`, the one route table the server and
   the bridge share.
 - `lib/JawnOS/Controller/manager_help.pm`, `lib/JawnOS/Routes/manager_help.pm` —
-  the held-write list, confirm and cancel routes.
+  the held-write list, confirm and cancel routes, and the weather/history
+  routes the Guide uses.
 - `public/js/manager/help/03_pending.js`, `public/js/manager/help.js`,
   `public/js/manager/websocket/00_console_router.js`,
   `templates/apps/help.html.ep` — the card strip and its reload command.
-- `perl/gb/03_engines_and_tools.pl` — `@gb::app_actions` and the `app` tool.
+- `perl/gb/03_engines_and_tools.pl` — `@gb::app_actions`; the `app`, `weather`
+  and `history` tools.
 - `perl/help.pl` — `app_actions`, `app_action_find`, `app_action_lines`.
 - `lib/JawnOS/Manager/Part28.pm` — self-app fallback for `measure`.
 - `perl/help/topics_features.pl`, `perl/help/topics_business.pl`,
   `perl/help/topics_functions.pl`, `perl/help/topics_devices.pl` — the Voice,
   Store, Appointments and Help topics name the new answers and the card.
 - `t/483-voice-funnel.t`, `t/484-app-action-bridge.t`, `t/487-store-actions.t`,
-  `t/488-history-visit.t`, `t/489-pending-card.t` — matcher, scope, router
-  contract, identity, weather, history/visit, the action gates, the held write,
-  the Store family and the card.
+  `t/488-history-visit.t`, `t/489-pending-card.t`, `t/490-guide-parity.t` —
+  matcher, scope, router contract, identity, weather, history/visit, the action
+  gates, the held write, the Store family, the card and the Guide parity.

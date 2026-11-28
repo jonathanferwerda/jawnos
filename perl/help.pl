@@ -709,10 +709,8 @@ sub app_action_lines {
 
 # Every verb the guide may pick: the built-in ones plus the learned ones. Used
 # for the allow-list here and by the remote channel, so both understand alike.
-# `voice_only` tools are left out: the app-action bridge is offered only on the
-# scoped voice turn, which passes an explicit $only list.
 sub live_verb_names {
-	my %names = map { $_->{'name'} => 1 } grep { !$_->{'planned'} && !$_->{'voice_only'} } @gb::guide_tools;
+	my %names = map { $_->{'name'} => 1 } grep { !$_->{'planned'} } @gb::guide_tools;
 	$names{ $_->{'name'} } = 1 for @{ &learned_verbs() };
 	return \%names;
 }
@@ -804,9 +802,6 @@ sub actions_prompt {
 	foreach my $t ( @gb::guide_tools ) {
 		next if $t->{'planned'};
 		next if $t->{'name'} eq 'page' && !$with_page;
-		# A voice-only tool is offered only when this turn explicitly asks for it
-		# ($only), which the scoped funnel turn does. The full Guide window does not.
-		next if $t->{'voice_only'} && !($only && ref $only eq 'HASH' && $only->{ $t->{'name'} });
 		next if $only && ref $only eq 'HASH' && !$only->{ $t->{'name'} };
 		next if $auto_save && ($t->{'name'} eq 'promote' || $t->{'name'} eq 'discard');
 		my $desc = $t->{'desc'};

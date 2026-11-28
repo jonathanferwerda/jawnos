@@ -37,6 +37,8 @@ sub routes {
 	[37700, 'get', '/manager/help/pending', 'action_37700'],
 	[37701, 'post', '/manager/help/pending/confirm', 'action_37701'],
 	[37702, 'post', '/manager/help/pending/cancel', 'action_37702'],
+	[37703, 'get', '/manager/help/weather', 'action_37703'],
+	[37704, 'get', '/manager/help/history', 'action_37704'],
 	);
 }
 
