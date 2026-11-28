@@ -336,6 +336,29 @@ sub notes_tombstone ($uuid) {
 	return 1;
 }
 
+# Delete several notes at once: the bulk route hands over the uuids the person
+# ticked, and each goes through the single delete above, so the checks and the
+# `deleting` marker are identical. Only rows that are actually in this house's
+# notes table are touched - a uuid from another table, an appointment, or one
+# that is not there is refused, never written - and a uuid named twice is
+# counted once. The cap keeps one request from walking an unbounded list.
+sub notes_tombstones ($uuids) {
+	my ( @deleted, @refused );
+	return ( \@deleted, \@refused ) unless ref $uuids eq 'ARRAY';
+	my ( %seen, $count );
+	foreach my $uuid ( @{$uuids} ) {
+		last if $count++ >= 300;
+		next if ref $uuid;
+		$uuid = '' unless defined $uuid;
+		$uuid = "$uuid";
+		next unless length $uuid;
+		next if $seen{$uuid}++;
+		if ( &notes_tombstone($uuid) ) { push @deleted, $uuid; }
+		else { push @refused, $uuid; }
+	}
+	return ( \@deleted, \@refused );
+}
+
 # The number beside each chip, over the same rows the list shows. The total is
 # the All chip; a draft counts toward the total and toward no category.
 sub notes_category_counts ($rows) {

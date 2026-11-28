@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Manager.pm public/js/manager/notes.js templates/notes/notes.html.ep
+# tests-for: lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Domain/Notes.pm lib/JawnOS/Manager.pm lib/JawnOS/Routes/manager_misc6.pm public/js/manager/notes.js public/js/manager/notes/02_categories.js public/js/manager/notes/03_row.js templates/notes/notes.html.ep
 # covers:    A note is filed under one of six categories.
 
 use strict;
@@ -277,6 +277,24 @@ is( $counts->{'dreams'}, 0, 'an empty category counts zero' );
 is( scalar( grep { $counts->{$_} } keys %{$counts} ), 2,
 	'a draft counts toward All and toward no category' );
 
+# ------------------------------------------------- bulk delete, ticked only
+# The Notes app's Delete selected hands the domain the uuids the person ticked.
+# Each goes through the single delete, so the same checks and the same marker
+# apply; a uuid that is not a row here is refused, and a repeat is one note.
+my ( $bulk_deleted, $bulk_refused ) = &subs::notes_tombstones( [ 'old-typed', 'missing-uuid', 'old-typed' ] );
+is_deeply( $bulk_deleted, ['old-typed'], 'only the ticked note in the table is deleted' );
+is_deeply( $bulk_refused, ['missing-uuid'], 'a uuid that is not a note is refused, not written' );
+my %after_bulk = map { $_->{'uuid'} => $_->{'category'} } @{ &subs::notes_category_rows() };
+ok( !exists $after_bulk{'old-typed'}, 'the deleted note is gone from the list' );
+ok( exists $after_bulk{'old-watch'}, 'a note that was not ticked stays' );
+my $marked = $db->query("select ost from notes where uuid = 'old-typed'")->hash;
+is( $marked->{'ost'}, &subs::notes_delete_marker(),
+	'the row keeps the deleting marker the single X writes' );
+my ( $repeat_deleted ) = &subs::notes_tombstones( ['old-typed'] );
+is_deeply( $repeat_deleted, ['old-typed'], 'deleting a marked row again is a no-op, not a new row' );
+my ( $empty_deleted, $empty_refused ) = &subs::notes_tombstones( [] );
+is_deeply( [ $empty_deleted, $empty_refused ], [ [], [] ], 'an empty selection deletes nothing' );
+
 # ------------------------------- the route and the template still agree
 my $controller = read_file('lib/JawnOS/Controller/manager_misc6.pm');
 like( $controller, qr/sub action_22702\b/, 'the Notes route action is unchanged' );
@@ -299,16 +317,27 @@ like( $routes, qr{/manager/note_header', 'action_53027'},
 	'the heading route is registered' );
 like( $routes, qr{/manager/notes_categories', 'action_53040'},
 	'the category save route is registered' );
+like( $controller, qr/sub action_92004\b/, 'the bulk delete route action exists' );
+like( $controller, qr/notes_tombstones\(/, 'the bulk delete goes through the domain helper' );
+like( $routes, qr{/manager/notes_delete', 'action_92004'},
+	'the bulk delete route is registered' );
 
 my $template = template_source('notes/notes');
-like( $template, qr/class="notes_chip"/, 'the chips are on screen' );
+like( $template, qr/id="notes_filter_menu"/, 'the category filter is a dropdown' );
+like( $template, qr/class="notes_filter_cat"/, 'the dropdown carries one box per category' );
+like( $template, qr/id="notes_filter_all"/, 'the dropdown offers All' );
+like( $template, qr/id="notes_filter_none"/, 'the dropdown offers None' );
+like( $template, qr/class="note_select"/, 'each row can be ticked' );
+like( $template, qr/id="notes_select_all"/, 'Select all is on screen' );
+like( $template, qr/id="notes_clear_all"/, 'Clear all is on screen' );
+like( $template, qr/id="notes_delete_selected"/, 'one bulk delete button is on screen' );
 like( $template, qr/id="notes_category"/, 'the picker is on screen' );
 like( $template, qr/class="notes_category_open"/, 'the hand-off button is on screen' );
 like( $template, qr/category="<%= \$n->\{'category'\} %>"/,
 	'each row carries its own category' );
 like( $template, qr/subs::notes_category_label\( \$n->\{'category'\} \)/,
 	'a row label resolves through the configured list' );
-like( $template, qr/subs::lang\('notes\.all'\)/, 'the All chip is a core label' );
+like( $template, qr/subs::lang\('notes\.all'\)/, 'the All control wears the core label' );
 like( $template, qr/id="notes_categories_manage"/, 'the Categories button is on screen' );
 like( $template, qr/id="notes_categories_view"/, 'the category screen exists' );
 like( $template, qr/class="notes_category_row"/, 'each category is a row on that screen' );
@@ -346,6 +375,17 @@ like( $js, qr/function notesCategoriesAdd/, 'a category can be added' );
 like( $js, qr/notes_category_remove/, 'a category row can be removed' );
 like( $js, qr/function notesSelectRefresh/, 'the pickers follow a category change' );
 like( $js, qr/function notesCategoriesReload/, 'a category save refreshes every local tab' );
+like( $js, qr/var notesCategoryFilter = null;/, 'with nothing ticked every category shows' );
+like( $js, qr/function notesFilterShowing/, 'the filter reads a multi-code selection' );
+like( $js, qr/notesCategoryFilter\.indexOf\(code\)/, 'a category is shown when it is one of the chosen codes' );
+like( $js, qr/function notesFilterReconcile/, 'a removed category leaves the selection cleanly' );
+like( $js, qr/'#notes_filter_all'/, 'All clears the filter' );
+like( $js, qr/'#notes_filter_none'/, 'None shows nothing' );
+like( $js, qr/function notesSelectedUuids/, 'the ticked rows are read off the list' );
+like( $js, qr/'#notes_select_all'/, 'Select all ticks the rows the filter shows' );
+like( $js, qr/'#notes_clear_all'/, 'Clear all unticks them' );
+like( $js, qr{url: '/manager/notes_delete'}, 'Delete selected posts the ticked uuids' );
+like( $js, qr/JSON\.stringify\(uuids\)/, 'the uuids travel as one JSON list' );
 unlike( $js, qr/\\n\{3,\}/, 'the editor does not collapse the blank lines it was given' );
 
 # ------------------------------------- and the template draws what it promises
@@ -370,8 +410,10 @@ my $rendered = eval {
 };
 ok( defined $rendered && length $rendered, 'the Notes template renders' ) or diag($@);
 
-my @chips = $rendered =~ /class="notes_chip"/g;
-is( scalar(@chips), 8, 'All plus Uncategorized and the six categories are drawn' );
+my @filter_boxes = $rendered =~ /class="notes_filter_cat"/g;
+is( scalar(@filter_boxes), 7, 'Uncategorized and the six categories each get a filter box' );
+my @renticks = $rendered =~ /class="note_select"/g;
+is( scalar(@renticks), 1, 'the drawn note carries its selection tick' );
 like( $rendered, qr/note_status note_status_open/, 'a note wears its open status badge' );
 like( $rendered, qr/class="note_edit note_category_edit"/, 'each note has a category editor' );
 like( $rendered, qr/class="note_edit note_status_edit"/, 'and a status editor' );

@@ -2,7 +2,8 @@
    notes.js is part 1. The rest live in notes/ in name order:
      01_edit.js - the note's own screen
      02_categories.js - adding, renaming and removing categories
-     03_row.js - row clicks, the inline editor, delete, drag and the chip filter
+     03_row.js - row clicks, the inline editor, delete, drag, the multi-category
+                 filter and the bulk selection
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 // The Notes app: what the watch heard when it was not a command, plus anything typed
@@ -60,7 +61,7 @@ function notesReload() {
 		data: { window_maker: 'yes', timestamp: w.attr('timestamp') },
 		success: function(response) {
 			var doc = $('<div>').html(response);
-			// The chips and their counts are redrawn with the rows, so the count a
+			// The filter boxes and their counts are redrawn with the rows, so the count a
 			// save changes is right without reopening the window; the filter the
 			// person is looking through is re-applied after the swap.
 			var fresh = doc.find('#notes_body');
@@ -72,11 +73,10 @@ function notesReload() {
 			notesSelectRefresh(w.find('#notes_category'), doc.find('#notes_category'));
 			notesSelectRefresh(w.find('#notes_edit_category'), doc.find('#notes_edit_category'));
 			notesSelectRefresh(w.find('#notes_edit_status'), doc.find('#notes_edit_status'));
-			// A category removed on another machine (or by this save) must not leave the
-			// list filtered to a chip that no longer exists.
-			if (notesCategoryFilter && !w.find('#notes_category_bar .notes_chip[category="' + notesCategoryFilter + '"]').length) {
-				notesCategoryFilter = '';
-			}
+			// A category removed on another machine (or by this save) must not leave
+			// the filter pointing at a box that no longer exists. The fresh body
+			// carries the new boxes, so reconcile against those before applying.
+			notesFilterReconcile();
 			if (!w.find('#notes').hasClass('categories_open')) {
 				var fresh_categories = doc.find('#notes_categories_view');
 				if (fresh_categories.length) { w.find('#notes_categories_view').replaceWith(fresh_categories); }

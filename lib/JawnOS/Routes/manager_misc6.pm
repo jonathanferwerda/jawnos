@@ -31,6 +31,7 @@ sub routes {
 	[25425, 'get', '/manager/appointment_measures', 'action_25425'],
 	[53027, 'post', '/manager/note_header', 'action_53027'],
 	[53040, 'post', '/manager/notes_categories', 'action_53040'],
+	[92004, 'post', '/manager/notes_delete', 'action_92004'],
 	);
 }
 

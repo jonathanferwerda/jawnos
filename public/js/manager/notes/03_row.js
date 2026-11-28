@@ -79,7 +79,7 @@ function notesDraggable() {
 			},
 			revert: 'invalid',
 			zIndex: 999999,
-			cancel: '.note_delete, .note_editor, .note_edit',
+			cancel: '.note_delete, .note_editor, .note_edit, .note_select',
 			start: function(p, ui) {
 				// A drag is not a click: releasing over an appointment window must fold
 				// the note in, not open its editor. The click that follows mouseup sees
@@ -126,46 +126,178 @@ function notesDraggable() {
 }
 
 // --- Categories ---------------------------------------------------
-// The six categories a note is filed under. The chips, their counts and the
-// picker are drawn by the server with their translated labels, so this script
-// only moves them: which chip is showing, which rows belong under it, and the
-// one link a category hands off to. Roadmap opens Store, Shopping opens Market,
-// Dreams opens the Handbook's Today (where dreams are planted), Social opens
-// People; Journal and JawnOS stay here, because JawnOS is the queue the nightly
-// agent reads.
-var notesCategoryFilter = '';
+// The house's categories are drawn by the server with their translated labels;
+// this script decides which of them are showing. The filter is one dropdown of
+// checkboxes, so several categories can stay on screen at once. The choice is
+// kept in the page (as the old single chip was), not in a setting: reopening the
+// app starts on All. Roadmap opens Store, Shopping opens Market, Dreams opens
+// the Handbook's Today (where dreams are planted), Social opens People; Journal
+// and JawnOS stay here, because JawnOS is the queue the nightly agent reads.
+var notesCategoryFilter = null; // null = every category; an array = the chosen few
+
+// The categories the dropdown currently offers. The boxes are redrawn with the
+// rows, so after a reload this is the fresh list.
+function notesFilterCodes() {
+	var codes = [];
+	$('#notes_filter_menu .notes_filter_cat').each(function() {
+		codes.push($(this).val() || '');
+	});
+	return codes;
+}
+
+function notesFilterShowing(code) {
+	return notesCategoryFilter === null || notesCategoryFilter.indexOf(code) >= 0;
+}
+
+// A category removed on another machine must not leave the filter pointing at
+// nothing. Selected codes that still exist stay; if the whole selection
+// disappeared, fall back to All rather than a permanently empty list. An empty
+// array the person chose with None stays empty.
+function notesFilterReconcile() {
+	if (notesCategoryFilter === null) { return; }
+	var have = notesFilterCodes();
+	var kept = [];
+	for (var i = 0; i < notesCategoryFilter.length; i++) {
+		if (have.indexOf(notesCategoryFilter[i]) >= 0) { kept.push(notesCategoryFilter[i]); }
+	}
+	notesCategoryFilter = (kept.length || !notesCategoryFilter.length) ? kept : null;
+}
 
 function notesCategoryApply() {
 	var w = $('.wind[app="notes"]');
 	if (!w.length) { return; }
-	var filter = notesCategoryFilter || '';
-	w.find('#notes_category_bar .notes_chip').each(function() {
-		var chip = $(this);
-		var on = (chip.attr('category') || '') == filter;
-		chip.css({
-			'opacity': (on ? '1' : '0.8'),
-			'font-weight': (on ? 'bold' : 'normal'),
-			'border-color': (on ? 'var(--ink, var(--line))' : 'var(--line)')
-		});
+	w.find('#notes_filter_menu .notes_filter_cat').each(function() {
+		$(this).prop('checked', notesFilterShowing($(this).val() || ''));
 	});
 	w.find('#notes_list .note').each(function() {
 		var note = $(this);
-		note.toggle(filter == '' || (note.attr('category') || '') == filter);
+		note.toggle(notesFilterShowing(note.attr('category') || ''));
 	});
 	w.find('.notes_category_open').each(function() {
 		var link = $(this);
-		link.toggle(filter != '' && (link.attr('category') || '') == filter);
+		// A hand-off belongs to a category the person is reading, not to All.
+		var on = notesCategoryFilter !== null && notesCategoryFilter.indexOf(link.attr('category') || '') >= 0;
+		link.toggle(on);
 	});
-	// An empty category says so instead of showing a blank list.
-	w.find('#notes_empty').toggle(filter != '' && w.find('#notes_list .note:visible').length == 0);
+	// A filter that matches nothing says so instead of showing a blank list.
+	var listed = w.find('#notes_list .note').length;
+	w.find('#notes_empty').toggle(listed > 0 && w.find('#notes_list .note:visible').length == 0);
+	notesSelectionRefresh();
 }
 
-$(document).on('click', '#notes_category_bar .notes_chip', function() {
-	notesCategoryFilter = $(this).attr('category') || '';
-	var category = notesCategoryFilter;
-	// A note written while a category is showing is filed under it.
-	if (category) { $('#notes_category').val(category); }
+// A note written while exactly one category is showing is filed under it.
+function notesCategoryFilterAfterChange() {
+	if (notesCategoryFilter !== null && notesCategoryFilter.length == 1) {
+		$('#notes_category').val(notesCategoryFilter[0]);
+	}
 	notesCategoryApply();
+}
+
+$(document).on('click', '#notes_filter_toggle', function(e) {
+	e.stopPropagation();
+	$('#notes_filter_menu').toggle();
+});
+
+$(document).on('click', '#notes_filter_menu', function(e) {
+	// A press inside the menu does not close it; the document handler closes it
+	// only for a press elsewhere.
+	e.stopPropagation();
+});
+
+$(document).on('click', function() {
+	$('#notes_filter_menu').hide();
+});
+
+$(document).on('change', '.notes_filter_cat', function() {
+	var code = $(this).val() || '';
+	if (notesCategoryFilter === null) {
+		// Dropping out of All takes the boxes as they now stand.
+		notesCategoryFilter = [];
+		$('#notes_filter_menu .notes_filter_cat').each(function() {
+			if ($(this).prop('checked')) { notesCategoryFilter.push($(this).val() || ''); }
+		});
+	}
+	else {
+		var at = notesCategoryFilter.indexOf(code);
+		if ($(this).prop('checked')) {
+			if (at < 0) { notesCategoryFilter.push(code); }
+		}
+		else if (at >= 0) {
+			notesCategoryFilter.splice(at, 1);
+		}
+	}
+	notesCategoryFilterAfterChange();
+});
+
+$(document).on('click', '#notes_filter_all', function() {
+	notesCategoryFilter = null;
+	notesCategoryApply();
+});
+
+$(document).on('click', '#notes_filter_none', function() {
+	notesCategoryFilter = [];
+	notesCategoryApply();
+});
+
+// --- Selecting rows -------------------------------------------------
+// Each row carries a tick. The bar above the list selects every row the current
+// filter shows, clears the ticks, and deletes the ticked notes in one request.
+// A single X still deletes one note its own way.
+function notesSelectedUuids() {
+	var uuids = [];
+	$('#notes_list .note .note_select:checked').each(function() {
+		var uuid = $(this).attr('uuid') || $(this).closest('.note').attr('uuid') || '';
+		if (uuid) { uuids.push(uuid); }
+	});
+	return uuids;
+}
+
+function notesSelectionRefresh() {
+	var count = notesSelectedUuids().length;
+	var button = $('#notes_delete_selected');
+	button.prop('disabled', count == 0);
+	button.attr('data-count', count);
+}
+
+$(document).on('change', '.note_select', function() { notesSelectionRefresh(); });
+
+$(document).on('click', '#notes_select_all', function() {
+	$('#notes_list .note:visible .note_select').prop('checked', true);
+	notesSelectionRefresh();
+});
+
+$(document).on('click', '#notes_clear_all', function() {
+	$('#notes_list .note .note_select').prop('checked', false);
+	notesSelectionRefresh();
+});
+
+// One Delete selected for the whole ticked set. The first press arms it for two
+// seconds like a row's X, so a single stray click cannot remove a notebook; the
+// second posts every uuid at once. The server tombstones them one by one through
+// the same delete the X uses.
+$(document).on('click', '#notes_delete_selected', function() {
+	var button = $(this);
+	var uuids = notesSelectedUuids();
+	if (!uuids.length) { return; }
+	if (button.attr('armed') != 'yes') {
+		button.attr('armed', 'yes');
+		var bgcolor = button.css('background-color');
+		button.data('notes_delete_bg', bgcolor).css({ 'background-color': 'red' });
+		setTimeout(function() {
+			button.css({ 'background-color': button.data('notes_delete_bg') });
+			button.attr('armed', 'no');
+		}, 2000);
+		return;
+	}
+	button.attr('armed', 'no').css({ 'background-color': button.data('notes_delete_bg') });
+	button.prop('disabled', true);
+	$.ajax({
+		url: '/manager/notes_delete',
+		type: 'POST',
+		data: { uuids: JSON.stringify(uuids), timestamp: Date.now() },
+		success: function(response) { notesReload(); },
+		error: function() { notesSelectionRefresh(); }
+	});
 });
 
 // The hand-off. Store, Market and People are windowMaker apps, so they open

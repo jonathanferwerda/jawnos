@@ -206,6 +206,16 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 	text-overflow: ellipsis;
 	cursor: var(--jawnos-cursor-pointer, pointer);
 }
+/* The tick that feeds the bulk delete sits at the row's own edge, clear of the
+   heading and the two-click X. */
+.wind[app="notes"] .note_select {
+	float: left;
+	margin: 4px 8px 0 0;
+}
+/* The filter is a dropdown of checkboxes, so the menu carries its own surface
+   over the list rather than pushing the rows down. */
+.wind[app="notes"] #notes_filter_menu .notes_filter_cat { margin: 0; }
+.wind[app="notes"] #notes_delete_selected:disabled { opacity: 0.5; }
 .wind[app="notes"] .note_editor {
 	display: flex;
 	flex-wrap: wrap;
@@ -221,10 +231,26 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 <div id="notes" data-header-agent="<%= $header_agent ? 1 : 0 %>">
 	<div id="notes_body">
 		<div id="notes_category_bar" style="flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding-bottom:4px;font-size:13px;">
-			<button class="notes_chip" category="" hint="<%= &subs::ui('Show every note, whatever its category') %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.all') %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $total || 0 %></span></button>
-			<% foreach my $cat ( @{$categories} ) { %>
-				<button class="notes_chip" category="<%= $cat->{'code'} %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= $cat->{'label'} %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $counts->{ $cat->{'code'} } || 0 %></span></button>
-			<% } %>
+			<%# The filter is one dropdown that can keep several categories showing at
+			    once. All shows everything; None shows nothing; the boxes pick the
+			    categories that stay, and the choice lives in the page the way the
+			    old single chip did. The counts are drawn with the rows. %>
+			<div id="notes_filter" style="position:relative;flex:0 0 auto;">
+				<button id="notes_filter_toggle" type="button" hint="<%= &subs::ui('Choose the categories to show') %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::ui('Filter') %> <span class="notes_filter_mark" style="opacity:0.7;font-size:11px;">&#9662;</span></button>
+				<div id="notes_filter_menu" style="display:none;position:absolute;z-index:60;top:100%;left:0;margin-top:4px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;min-width:190px;max-height:60vh;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.35);">
+					<div id="notes_filter_actions" style="display:flex;gap:4px;padding-bottom:4px;">
+						<button id="notes_filter_all" type="button" style="flex:1 1 auto;width:auto;"><%= &subs::lang('notes.all') %></button>
+						<button id="notes_filter_none" type="button" style="flex:1 1 auto;width:auto;"><%= &subs::ui('None') %></button>
+					</div>
+					<% foreach my $cat ( @{$categories} ) { %>
+						<label class="notes_filter_row" style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);">
+							<input type="checkbox" class="notes_filter_cat" value="<%= $cat->{'code'} %>" checked>
+							<span style="flex:1 1 auto;"><%= $cat->{'label'} %></span>
+							<span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $counts->{ $cat->{'code'} } || 0 %></span>
+						</label>
+					<% } %>
+				</div>
+			</div>
 			<span id="notes_category_tools" style="margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;">
 				<% foreach my $cat ( @{$categories} ) { next unless $cat->{'target'}; %>
 					<button class="notes_category_open" category="<%= $cat->{'code'} %>" target="<%= $cat->{'target'} %>" style="display:none;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);" title="<%= $cat->{'open_label'} %>"><%= $cat->{'open_label'} %></button>
@@ -232,8 +258,16 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 				<button id="notes_categories_manage" type="button" hint="<%= &subs::ui('Add, rename or remove a category') %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.categories') %></button>
 			</span>
 		</div>
+		<%# Bulk delete: tick rows, Select all or Clear all, then one Delete selected.
+		    The button arms on the first press like a row's X, so one stray click
+		    cannot remove a notebook. %>
+		<div id="notes_select_bar" style="flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding-bottom:4px;font-size:13px;">
+			<button id="notes_select_all" type="button" hint="<%= &subs::ui('Select every note in the list') %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::ui('Select all') %></button>
+			<button id="notes_clear_all" type="button" hint="<%= &subs::ui('Clear the selection') %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::ui('Clear all') %></button>
+			<button id="notes_delete_selected" type="button" disabled hint="<%= &subs::ui('Delete every selected note') %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::ui('Delete selected') %></button>
+		</div>
 		<div id="notes_list">
-			<div id="notes_empty" style="display:none;padding:6px;font-size:18px;opacity:0.7;"><%= &subs::ui('No notes in this category yet.') %></div>
+			<div id="notes_empty" style="display:none;padding:6px;font-size:18px;opacity:0.7;"><%= &subs::ui('No notes in the chosen categories yet.') %></div>
 			<% if (!scalar @{$notes}) { %>
 				<span style="font-size:18px;"><%= &subs::ui('No notes yet. Anything the watch hears that is not a command lands here.') %></span>
 			<% } %>
@@ -241,6 +275,7 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 				<% my $draft_of = $n->{'app'} || ''; %>
 				<% my $status = &subs::notes_status_effective( $n->{'status'} ); %>
 				<div class="note hover<%= ($status eq 'completed' ? ' note_completed' : '') %>" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" status="<%= $status %>" data-text="<%= $n->{'text'} %>" data-sig="<%= $n->{'server_time'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:var(--jawnos-cursor-move, move);">
+					<input type="checkbox" class="note_select" uuid="<%= $n->{'uuid'} %>" style="float:left;margin:4px 8px 0 0;" title="<%= &subs::ui('Select this note') %>">
 					<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="<%= &subs::lang('delete') %>">X</button>
 					<span class="note_status note_status_<%= $status %>" title="<%= &subs::lang('notes.status') %>"><%= &subs::lang( 'notes.status.' . $status ) %></span>
 					<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } elsif (($n->{'category'} || '') ne '') { %><span class="note_category" title="<%= &subs::lang('notes.category') %>" style="padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:0.8;"><%= &subs::notes_category_label( $n->{'category'} ) %></span><% } %>

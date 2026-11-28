@@ -359,6 +359,22 @@ sub action_24980 {
 	$c->render(json => { uuid => $uuid, tombstoned => $tombstoned });
 }
 
+# POST /manager/notes_delete
+sub action_92004 {
+	my $c = shift;
+	# The Notes app's bulk delete: the person ticked rows, pressed Delete selected
+	# once to arm it and again to remove them. The uuids are the only thing acted
+	# on, and each goes through the same tombstone as the single X, so the checks
+	# and the `deleting` marker are identical. A uuid that is not a row in this
+	# house's notes table is refused, never written.
+	my $raw = $c->param('uuids') // '';
+	my $list = ( length $raw && length($raw) <= 20000 ) ? eval { decode_json($raw) } : undef;
+	$list = [] unless ref $list eq 'ARRAY';
+	my ( $deleted, $refused ) = &subs::notes_tombstones( $list );
+	&Websocket::send('tab', { console => &Websocket::console_command('notesReload')}) if @{$deleted};
+	$c->render(json => { ok => 1, deleted => $deleted, refused => $refused });
+}
+
 # POST /manager/note_to_appt
 sub action_24989 {
 	my $c = shift;

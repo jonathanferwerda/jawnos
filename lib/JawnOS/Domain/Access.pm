@@ -48,7 +48,7 @@ our %ACCESS_APP = (
 	games        => [qw(games cards twirl pipedream minesweeper card_picker game_play)],
 	weather      => [qw(weather)],
 	travel       => [qw(travel continent)],
-	notes        => [qw(notes note_delete note_header note_retriever note_save note_to_appt notes_categories tasks)],
+	notes        => [qw(notes note_delete notes_delete note_header note_retriever note_save note_to_appt notes_categories tasks)],
 	clock        => [qw(clock time_jump time_preview)],
 	intelligence => [qw(intelligence)],
 );

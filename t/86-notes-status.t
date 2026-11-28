@@ -204,7 +204,7 @@ unlike( $template, qr/#notes_input_row[^>]*position:\s*absolute/,
 my $js = js_source('js/manager/notes.js');
 like( $js, qr/\.note_category_edit, \.note_status_edit/, 'the app script wires the per-note editor' );
 like( $js, qr/status: status/, 'the editor posts the chosen status' );
-like( $js, qr/cancel: '\.note_delete, \.note_editor, \.note_edit'/, 'the editor is not dragged' );
+like( $js, qr/cancel: '\.note_delete, \.note_editor, \.note_edit, \.note_select'/, 'the editor and the selection tick are not dragged' );
 
 # ------------------------------------------------ the labels, all sixteen
 my @languages = map { $_->{code} } @language::languages;

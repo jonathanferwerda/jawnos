@@ -85,14 +85,8 @@ function notesCategoriesSave() {
 				$('#notes_categories_status').text((response && response.error) ? response.error : notesCategoryText('The category list could not be saved.'));
 				return;
 			}
-			// A filter on a category that was just deleted would hide every row.
-			if (notesCategoryFilter && notesCategoryFilter != 'uncategorized') {
-				var kept = false;
-				for (var i = 0; i < (response.categories || []).length; i++) {
-					if (response.categories[i].code == notesCategoryFilter) { kept = true; }
-				}
-				if (!kept) { notesCategoryFilter = ''; }
-			}
+			// A filter on a category that was just deleted would hide every row;
+			// the reload reconciles the selection against the fresh boxes.
 			$('#notes').removeClass('categories_open');
 			notesReload();
 		},
