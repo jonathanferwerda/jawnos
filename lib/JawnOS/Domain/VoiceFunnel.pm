@@ -255,6 +255,9 @@ sub voice_funnel_verbs($t) {
 	$v{'create'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
 	$v{'stop'} = 1 if $app =~ /appointment|clock|calendar|reminder|task/;
 	$v{'play_music'} = 1 if $app =~ /music|video|gallery|studio/;
+	# An app with declared actions gets the bridge verb. The scoped prompt names
+	# those actions, and the executor refuses a "do" that is not among them.
+	$v{'app'} = 1 if eval { @{ &help::app_actions($t->{'app'} // '') } } ? 1 : 0;
 	return \%v;
 }
 
@@ -264,6 +267,11 @@ sub voice_funnel_prompt_block($scope) {
 	my @lines;
 	push @lines, 'MATCHED HELP TOPIC: ' . ($scope->{'title'} // '') . ' (app: ' . ($scope->{'app'} // '') . ').';
 	push @lines, $scope->{'briefing'} if length($scope->{'briefing'} // '');
+	# The app-action bridge: the closed list of routes this turn may call. It is
+	# appended here rather than to every Guide turn, so a prompt only ever carries
+	# the actions of the app the person actually asked about.
+	my $acts = eval { &help::app_action_lines($scope->{'app'} // '') } || '';
+	push @lines, $acts if length $acts;
 	push @lines, 'Use this help as the source of truth for this app. If the request belongs to a different app, say so instead of guessing.';
 	return join("\n", @lines) . "\n" . $identity;
 }

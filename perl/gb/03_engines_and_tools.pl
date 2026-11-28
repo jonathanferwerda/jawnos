@@ -116,6 +116,8 @@ our @guide_tools = (
 	  desc => 'list every language the translation engine offers; use when the person asks what languages you can translate' },
 	{ name => 'page', args => { do => 'fill', fields => [ { field => 'f1', value => '...' } ], target => 'b1' }, example => '{"action":"page","do":"fill","fields":[{"field":"f1","value":"..."}]}',
 	  desc => 'work with the window the person attached you to: "do":"fill" sets every field in "fields" (a list of {"field":"f1","value":"..."}), "do":"read" returns the named field or all of them, and "do":"press" presses the button named by "target". Use only the field and button keys from the PAGE ON SCREEN block, and prefer this to telling the person where to click' },
+	{ name => 'app', voice_only => 1, args => { app => 'market', do => 'add_item', params => { text => 'milk' } }, example => '{"action":"app","app":"market","do":"add_item","params":{"text":"milk"}}',
+	  desc => 'run one action the app\'s help topic lists under APP ACTIONS. Use only a listed "do" and only its parameter names, with the values in "params". A read runs at once; a write is proposed first, so never say it is done until the result says so' },
 	{ name => 'generate', args => { kind => 'image', prompt => 'a full description', app => 'the appointment it is for' }, example => '{"action":"generate","kind":"image","prompt":"a red barn at dawn","app":"kitchen renovation"}',
 	  desc => 'make an image, a sound or a video for the person through the matching agent (set "kind" to image, audio or video, and write "prompt" as a full, self-contained description). Set "app" to the appointment it belongs to when you know it; leave "app" out and the media waits in the Camera pool to be filed' },
 	{ name => 'create', args => { app => 'lunch', title => 'lunch with Mom', when => 'in 3 hours', type => 'start', duration => '20 minutes' }, example => '{"action":"create","app":"meditate","title":"evening sit","when":"in 3 hours","type":"start","duration":"20 minutes"}',
@@ -144,6 +146,67 @@ our @guide_tools = (
 # closed set rather than inventing one. The alarm clock treats start/record/
 # command as things to fire when their time comes.
 our @guide_create_types = qw/stop start record command/;
+
+# ---- the app-action bridge -------------------------------------------------
+# One validated tool (`app`) can call an app's own declared route. The entries
+# below are the whole vocabulary: a "do" not named here cannot run, and a route
+# not named here cannot be reached. The help topic supplies the words and the
+# briefing; this table supplies only what voice can actually do with them.
+#
+# kind "read" is a GET that never writes; kind "write" is a POST and waits for
+# the person's confirmation unless the Confirmation Requirement is off. The
+# route action must return JSON: the bridge speaks a summary, never HTML.
+our @app_actions = (
+	{
+		app => 'clock', do => 'timers', kind => 'read',
+		method => 'get', route => '/manager/clock/state',
+		params => {},
+		desc => 'read the running timers and the next alarm',
+		speech => sub {
+			my ($d) = @_;
+			my @running = grep { (($_->{'state'} // '') eq 'running') } @{ $d->{'timers'} || [] };
+			my @alarms = grep { ($_->{'enabled'} // 0) && ($_->{'next_at'} // 0) } @{ $d->{'alarms'} || [] };
+			my @bits;
+			push @bits, scalar(@running) . ' timer' . (@running == 1 ? '' : 's') . ' running' if @running;
+			if (@alarms) {
+				my $a = $alarms[0];
+				my @lt = localtime(int($a->{'next_at'} / 1000));
+				my $label = ($a->{'label'} // '') ne '' ? ('"' . $a->{'label'} . '" at ') : '';
+				push @bits, 'the next alarm is ' . $label . sprintf('%d:%02d %s', ($lt[2] % 12) || 12, $lt[1], $lt[2] >= 12 ? 'pm' : 'am');
+			}
+			return @bits ? (ucfirst(join '; ', @bits) . '.') : 'No timers are running and no alarm is set.';
+		},
+	},
+	{
+		app => 'email', do => 'count', kind => 'read',
+		method => 'get', route => '/manager/mail/email/list',
+		params => { folder => 'inbox, starred, drafts, sent, outbox, archive, trash or contacts' },
+		desc => 'count the threads in one mail folder',
+		speech => sub {
+			my ($d, $p) = @_;
+			my $folder = ($p->{'folder'} // '') ne '' ? $p->{'folder'} : 'inbox';
+			my $n = 0 + ($d->{'total'} // 0);
+			return 'The ' . $folder . ' holds ' . $n . ' thread' . ($n == 1 ? '' : 's') . '.';
+		},
+	},
+	{
+		app => 'market', do => 'add_item', kind => 'write',
+		method => 'post', route => '/manager/market/item_add',
+		params => {
+			text => 'the item to add (required)',
+			list => 'the list name, optional',
+			vendor => 'the shop, optional',
+		},
+		required => { text => 'the item to add' },
+		confirm => 'I can add that to the shopping list. Confirm it and I will.',
+		desc => 'add an item to the shopping list',
+		speech => sub {
+			my ($d) = @_;
+			my $text = ($d->{'item'} && ($d->{'item'}->{'text'} // '') ne '') ? $d->{'item'}->{'text'} : 'the item';
+			return 'Added ' . $text . ' to the shopping list.';
+		},
+	},
+);
 
 # The Coding agent's tools: a closed vocabulary the model may pick from, one
 # action per turn, exactly like the Guide's. Unlike the Guide, these run on the

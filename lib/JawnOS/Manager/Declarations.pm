@@ -495,6 +495,7 @@ sub guide_promote_delete;
 sub guide_apply_schedule;
 sub _guide_fill;
 sub guide_verb_execute;
+sub app_action_execute;
 sub coding_rel;
 sub coding_execute;
 sub coding_system_prompt;

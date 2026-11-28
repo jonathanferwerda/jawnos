@@ -1451,6 +1451,22 @@ sub voice_brain {
 		$log->info('voice: brain ' . $a . ' "' . $speech . '"');
 		return { handled => 1, action => $a, said => $speech };
 	}
+	# The app-action bridge: one declared action of the app this turn was scoped
+	# to. The executor holds the closed registry and the app's own route, checks
+	# visibility, and speaks a summary. A write is only proposed here: voice has
+	# no follow-up turn, so it runs only when the house has turned the
+	# Confirmation Requirement off.
+	if ($a eq 'app') {
+		my $r = eval { &Manager::app_action_execute(&subs::controller_builder(), $action, {
+			voice => 1,
+			scope_app => ($scope && $scope->{'ok'}) ? ($scope->{'app'} // '') : '',
+		}) } || {};
+		my $speech = $r->{'speech'} || $r->{'error'} || '';
+		return undef unless length $speech;
+		$reply->($speech);
+		$log->info('voice: brain app ' . ($r->{'ok'} ? 'ran' : ($r->{'confirm'} ? 'confirm' : 'refused')) . ' "' . $speech . '"');
+		return { handled => 1, action => 'app', said => $speech, app_action => $r };
+	}
 	# find answers "when did I last ..." and "where is ..." from the house's own
 	# records. It is the first read the funnel adds beyond the old voice set.
 	if ($a eq 'find') {

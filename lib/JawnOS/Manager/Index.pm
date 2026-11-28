@@ -37,6 +37,7 @@ our %SUB = (
 	'agent_title'                            => 'JawnOS/Manager/Part29.pm',
 	'allocation_duration_add'                => 'JawnOS/Manager/Part15.pm',
 	'app_access_mode'                        => 'JawnOS/Manager/Part30.pm',
+	'app_action_execute'                     => 'JawnOS/Manager/Part29.pm',
 	'app_draft_uuid'                         => 'JawnOS/Manager/Part21.pm',
 	'app_gate_shadow_log'                    => 'JawnOS/Manager/Part33.pm',
 	'app_icon_url'                           => 'JawnOS/Manager/Part22.pm',

@@ -101,14 +101,67 @@ A new **Guide tool** (the long tail):
 6. Add a route/action if it needs a new HTTP surface (`lib/JawnOS/Routes/`, `lib/JawnOS/Controller/`, `t/58`).
 7. Update the app's help topic (`perl/help/topics_*.pl`, `t/11`) in the same change.
 
-## What is not done yet
+A new **app action** (the bridge): add one entry to `@gb::app_actions` in
+`perl/gb/03_engines_and_tools.pl` naming the app, the `do`, the read/write kind,
+the method and the app's own literal route, its parameter names, and a `speech`
+sub that turns the JSON result into a sentence. No new route is needed if the
+app already answers JSON. Add a test to `t/484-app-action-bridge.t`.
 
-The funnel scopes the Guide and gives it the app's help, but it is not yet a generic **app-action bridge**. A command that needs a route with no Guide tool still needs a resolver (the audit lists the gaps: weather is done; history/visit, mail send, store, camera and window control are next). The next big piece is one validated `app` tool that can call an app's own route with its own help page in context, behind the same visibility and confirmation gates.
+## The app-action bridge (first slice)
+
+A scoped turn is now offered one more verb, `app`. It runs one declared action
+of the app the turn was scoped to, through the app's own route, and speaks a
+summary. The registry is `@gb::app_actions` in
+`perl/gb/03_engines_and_tools.pl`:
+
+- `clock` / `timers` (read) — `GET /manager/clock/state`: the running timers and
+  the next alarm.
+- `email` / `count` (read) — `GET /manager/mail/email/list`: the thread count in
+  one folder.
+- `market` / `add_item` (write) — `POST /manager/market/item_add`: `text`,
+  `list`, `vendor`.
+
+The gates are in code, not only in the prompt:
+
+- **The registry is the whole vocabulary.** An app, `do`, method, route or
+  parameter not declared there is refused. The route is then looked up in
+  `JawnOS::Routes`, the table the server dispatches, so a declaration cannot
+  point at a path that does not exist.
+- **Visible only.** `help_app_visible` is the Guide's own rule, so a hidden or
+  private app is refused however the request arrived.
+- **The scoped app only.** The executor receives the turn's app and refuses an
+  action another app declares.
+- **Confirmation.** A read runs. A write is only proposed; it runs after the
+  Confirmation Requirement is off, or after the screen confirms it. A voice turn
+  never honours its own `confirmed`: it has no follow-up turn, so it can only
+  propose.
+- **JSON only.** The route must answer JSON; HTML is not an observation the
+  bridge can speak.
+
+The action is the app's own controller action, called on a synthetic request
+built from the declared parameters (and the caller's session cookie, when there
+is one). The bridge never writes straight to a table.
+
+Not done yet: the full Guide window is not offered `app` (it is `voice_only`);
+a proposed write has no promotion UI or later "yes" on the watch; and the rest
+of the audit's gaps (history/visit, store, camera, window control) still need
+their declarations. To add an action, add one entry to `@gb::app_actions` and a
+test to `t/484-app-action-bridge.t`.
 
 ## Files
 
-- `lib/JawnOS/Domain/VoiceFunnel.pm` — catalogue, matcher, router, identity, weather.
-- `lib/JawnOS/Domain/Ai.pm` — fast path, scoped prompt, `find`/`stop` branches.
+- `lib/JawnOS/Domain/VoiceFunnel.pm` — catalogue, matcher, router, identity,
+  weather, app action lines.
+- `lib/JawnOS/Domain/Ai.pm` — fast path, scoped prompt, `find`/`stop`/`app`
+  branches.
+- `lib/JawnOS/Manager/Part29.pm` — `app_action_execute`: the registry gate,
+  visibility, confirmation, route lookup and JSON dispatch.
+- `lib/JawnOS/Routes.pm` — `table`/`lookup`, the one route table the server and
+  the bridge share.
+- `perl/gb/03_engines_and_tools.pl` — `@gb::app_actions` and the `app` tool.
+- `perl/help.pl` — `app_actions`, `app_action_find`, `app_action_lines`.
 - `lib/JawnOS/Manager/Part28.pm` — self-app fallback for `measure`.
-- `perl/help/topics_features.pl` — the Voice topic now mentions the funnel.
-- `t/483-voice-funnel.t` — matcher, scope, router contract, identity, weather, wiring.
+- `perl/help/topics_features.pl` — the Voice topic mentions the funnel and the
+  bridge.
+- `t/483-voice-funnel.t`, `t/484-app-action-bridge.t` — matcher, scope, router
+  contract, identity, weather, the action gates and the voice wiring.

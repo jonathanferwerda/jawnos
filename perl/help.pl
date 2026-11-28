@@ -668,10 +668,51 @@ sub learned_tool_lines {
 	return $lines;
 }
 
+# The app-action bridge: the declared actions for one app, the one a name
+# picks, and the lines a scoped prompt carries. The registry lives in
+# perl/gb/03_engines_and_tools.pl (@gb::app_actions); this is only the lookup.
+sub app_actions {
+	my ($app) = @_;
+	return [] unless defined $app && length $app;
+	return [ grep { ($_->{'app'} // '') eq $app } @gb::app_actions ];
+}
+
+sub app_action_find {
+	my ($app, $do) = @_;
+	return undef unless defined $do && length $do;
+	foreach my $a ( @gb::app_actions ) {
+		return $a if ($a->{'app'} // '') eq $app && ($a->{'do'} // '') eq $do;
+	}
+	return undef;
+}
+
+# The scoped prompt's list. It names the same "do" values the executor accepts,
+# so a model cannot be told about an action the server would refuse.
+sub app_action_lines {
+	my ($app) = @_;
+	my $acts = &app_actions($app);
+	return '' unless @{$acts};
+	my @lines;
+	push @lines, 'APP ACTIONS for ' . $app . ' - use {"action":"app","app":"' . $app
+		. '","do":"...","params":{...}} and only these "do" values:';
+	foreach my $a ( @{$acts} ) {
+		my @p = sort keys %{ $a->{'params'} || {} };
+		my $params = @p
+			? ': params ' . join(', ', map { $_ . ' (' . ($a->{'params'}->{$_} // '') . ')' } @p)
+			: '';
+		push @lines, '  - "' . $a->{'do'} . '" (' . ($a->{'kind'} // 'read') . '): '
+			. ($a->{'desc'} // '') . $params;
+	}
+	push @lines, 'A read runs at once. A write is only proposed until the person confirms it; never say it is done before the result says so.';
+	return join("\n", @lines) . "\n";
+}
+
 # Every verb the guide may pick: the built-in ones plus the learned ones. Used
 # for the allow-list here and by the remote channel, so both understand alike.
+# `voice_only` tools are left out: the app-action bridge is offered only on the
+# scoped voice turn, which passes an explicit $only list.
 sub live_verb_names {
-	my %names = map { $_->{'name'} => 1 } grep { !$_->{'planned'} } @gb::guide_tools;
+	my %names = map { $_->{'name'} => 1 } grep { !$_->{'planned'} && !$_->{'voice_only'} } @gb::guide_tools;
 	$names{ $_->{'name'} } = 1 for @{ &learned_verbs() };
 	return \%names;
 }
@@ -763,6 +804,9 @@ sub actions_prompt {
 	foreach my $t ( @gb::guide_tools ) {
 		next if $t->{'planned'};
 		next if $t->{'name'} eq 'page' && !$with_page;
+		# A voice-only tool is offered only when this turn explicitly asks for it
+		# ($only), which the scoped funnel turn does. The full Guide window does not.
+		next if $t->{'voice_only'} && !($only && ref $only eq 'HASH' && $only->{ $t->{'name'} });
 		next if $only && ref $only eq 'HASH' && !$only->{ $t->{'name'} };
 		next if $auto_save && ($t->{'name'} eq 'promote' || $t->{'name'} eq 'discard');
 		my $desc = $t->{'desc'};

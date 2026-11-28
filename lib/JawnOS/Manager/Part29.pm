@@ -415,6 +415,10 @@ sub _guide_fill {
 # declared argument. It can never reach anything the primitive list does not name.
 sub guide_verb_execute($c, $action) {
 	my $name = $action->{'action'} // '';
+	# The app-action bridge is a built-in verb, not a learned one: it has its own
+	# closed registry and its own gate (see app_action_execute below).
+	return (app_action_execute($c, $action, {})->{'speech'} || 'That action did not run.')
+		if $name eq 'app';
 	my ($verb) = grep { $_->{'name'} eq $name } @{ &help::learned_verbs() };
 	return 'no such command: ' . $name unless $verb;
 	my $prim = $verb->{'primitive'};
@@ -493,6 +497,120 @@ sub guide_verb_execute($c, $action) {
 		return scalar(@{$list}) > 1 ? ('now playing ' . scalar(@{$list}) . ' matches') : ('now playing ' . $r->{'title'});
 	}
 	return 'unknown primitive: ' . $prim;
+}
+
+# ---- the app-action bridge -------------------------------------------------
+# One declared action of an app, run through the app's own route. The registry
+# (@gb::app_actions) is the whole vocabulary: an app, a "do", a method, a
+# literal path and the parameters that path may receive. Everything else is
+# refused here, in code - not only in the prompt.
+#
+# The route is looked up in JawnOS::Routes, the same table the server dispatches,
+# then called on a controller built for a synthetic request. Only a JSON answer
+# is accepted: an HTML page is not an observation the bridge can speak.
+sub app_action_execute($c, $action, $opts) {
+	$opts ||= {};
+	$action = {} unless ref $action eq 'HASH';
+	my $app = &subs::unformat_name($action->{'app'} || '');
+	my $do  = lc($action->{'do'} || '');
+	my $entry = &help::app_action_find($app, $do);
+	return { ok => 0, error => 'I do not know that action for ' . ($app || 'that app') . '.' }
+		unless $entry;
+	# The funnel scoped this turn to one app. An action another app declares is
+	# refused even when its name exists, so a misheard word cannot wander.
+	my $scope = defined $opts->{'scope_app'} ? $opts->{'scope_app'} : '';
+	return { ok => 0, error => 'That action belongs to a different app.' }
+		if length $scope && $scope ne $entry->{'app'};
+	# The Guide's own visibility rule: a hidden or private app is not reachable,
+	# however the request arrived.
+	my $device = eval { &media_unlock_device($c) } || $subs::request_device_uuid || '';
+	return { ok => 0, error => 'That app is hidden here.' }
+		unless &help_app_visible($entry->{'app'}, $device);
+	# Only the declared parameters, each one line of bounded text. A padlock
+	# token is never forwarded: the bridge is not a way to unlock anything.
+	my $given = ref $action->{'params'} eq 'HASH' ? $action->{'params'} : {};
+	my %allowed = map { $_ => 1 } keys %{ $entry->{'params'} || {} };
+	my %vals;
+	foreach my $k (sort keys %{$given}) {
+		next if $k eq 'unlock';
+		return { ok => 0, error => 'I do not know the "' . $k . '" value for that action.' }
+			unless $allowed{$k};
+		my $v = $given->{$k};
+		return { ok => 0, error => 'The "' . $k . '" value must be one line of text.' } if ref $v;
+		$v = '' unless defined $v;
+		$v =~ s/[\r\n\t]+/ /g;
+		$v =~ s/^\s+|\s+$//g;
+		return { ok => 0, error => 'The "' . $k . '" value is too long.' } if length($v) > 500;
+		$vals{$k} = $v if length $v;
+	}
+	foreach my $k (sort keys %{ $entry->{'required'} || {} }) {
+		return { ok => 0, error => 'I need ' . $entry->{'required'}->{$k} . '.' }
+			unless length($vals{$k} // '');
+	}
+	# The Confirmation Requirement, the same setting the Guide's appointment
+	# writes use. A read runs. A write waits for a confirmation from the screen;
+	# by voice it runs only when the requirement is off, because "confirmed" from
+	# a one-shot voice turn cannot prove the person answered.
+	my $confirm = &subs::setting_grabber({ app => '__president', setting => 'guide_confirm', device => 'all' });
+	my $auto = (defined $confirm && $confirm eq 'off');
+	my $confirmed = 0;
+	if (!$opts->{'voice'} && defined $action->{'confirmed'}) {
+		my $flag = $action->{'confirmed'};
+		$confirmed = ($flag && $flag !~ /^(?:0|no|false)$/i) ? 1 : 0;
+	}
+	if (($entry->{'kind'} // 'read') ne 'read' && !$auto && !$confirmed) {
+		return {
+			ok => 0, confirm => 1,
+			speech => ($entry->{'confirm'} || ('I can ' . $entry->{'desc'} . '. Confirm that and I will.')),
+		};
+	}
+	# The app's own route, from the server's own route table.
+	my $route = eval {
+		require JawnOS::Routes;
+		JawnOS::Routes->lookup($entry->{'method'}, $entry->{'route'});
+	};
+	return { ok => 0, error => 'That app action has no route.' } unless $route;
+	my $handler = 'main::Manager::' . $route->{'action'};
+	return { ok => 0, error => 'That app action has no handler.' } unless defined &{$handler};
+	my $code = do { no strict 'refs'; \&{$handler} };
+	# A request the route's own action reads. The caller's session cookie is
+	# copied when there is one, so a route that asks for the screen's session
+	# answers as it would for the screen; a watch request carries no cookie and a
+	# route that insists on one stays shut.
+	require Mojo::Transaction::HTTP;
+	my $app_obj = eval { ($c && $c->app) || app() } or return { ok => 0, error => 'The server is not ready for that.' };
+	my $tx = Mojo::Transaction::HTTP->new;
+	my $req = $tx->req;
+	my $method = uc($entry->{'method'} // 'get');
+	$req->method($method);
+	$req->url->path($entry->{'route'});
+	if ($method eq 'GET') {
+		$req->url->query({ %vals });
+	}
+	else {
+		$req->headers->content_type('application/x-www-form-urlencoded');
+		$req->body(join('&', map { &url_escape($_) . '=' . &url_escape($vals{$_}) } sort keys %vals));
+	}
+	my $cookie = eval { $c->req->headers->cookie } || '';
+	$req->headers->cookie($cookie) if length $cookie;
+	my $sub_c = $app_obj->build_controller($tx);
+	my $ran = eval { $code->($sub_c); 1 };
+	return { ok => 0, error => 'That app action failed.' } unless $ran;
+	my $res = $sub_c->res;
+	my $type = $res->headers->content_type || '';
+	return { ok => 0, error => 'That app action did not answer with a result I can read.' }
+		unless $type =~ m{json}i;
+	my $data = eval { $res->json };
+	return { ok => 0, error => 'That app action did not answer with a result I can read.' }
+		unless defined $data;
+	if (ref $data eq 'HASH' && defined $data->{'error'} && length $data->{'error'}) {
+		return { ok => 0, error => 'The app refused that: ' . $data->{'error'} . '.' };
+	}
+	my $speech = '';
+	$speech = eval { $entry->{'speech'}->($data, \%vals) } || ''
+		if ref $entry->{'speech'} eq 'CODE';
+	$speech = ($entry->{'desc'} || 'Done') . '.' unless length $speech;
+	return { ok => 1, speech => $speech, data => $data, app => $entry->{'app'}, do => $entry->{'do'} };
 }
 
 # ---- the Coding agent: the Guide's self-healing half ---------------------
