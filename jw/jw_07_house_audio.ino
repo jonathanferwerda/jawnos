@@ -4,6 +4,7 @@
 // helpers let it find another House machine (computer/mobile/server) that is
 // actually up. The preferred address always wins when it answers, so a phone
 // that comes back reclaims the watch.
+#include <sys/time.h>
 static void house_add(const String &host, int arm, int coms, int bestow) {
   if (host.length() == 0 || host == "0.0.0.0" || arm <= 0) { return; }
   for (int i = 0; i < house_node_count; i++) {
@@ -215,7 +216,28 @@ static void president_fetch_task(void *pvParameters) {
 // carries DST (it is timegm - timelocal on the homebase: -4 h in summer, -5 h
 // in winter here), and the ESP runs in UTC, so system clock + offset is the
 // local wall clock.
+// The hardware chip holds the house time; the C library's clock does not. TLS
+// validates the house leaf against time(), and a system clock still in 1970
+// makes mbedTLS read a 2026 certificate as "not yet valid": every house
+// connection failed at the handshake (the clip POST with -1, the sleep fetch
+// writing /bootreport.txt "failure") while curl on the same port answered.
+// Bring the system clock to the chip's time before any TLS client runs.
+static void clock_sync_system() {
+  long ts = timestamp_maker();
+  if (ts < 1700000000L) { return; }   // the chip was never set: nothing to copy
+  time_t now = time(NULL);
+  if (now >= ts - 120 && now <= ts + 120) { return; }
+  struct timeval tv;
+  tv.tv_sec = (time_t)ts;
+  tv.tv_usec = 0;
+  settimeofday(&tv, NULL);
+  Serial.printf("[rtc] system clock <- %ld (was %ld)\n", ts, (long)now);
+}
+
 static void clock_apply_to_face() {
+  // The chip is the trusted source here; copy it to the C library first, before
+  // this function can rewrite the chip from the ESP clock.
+  clock_sync_system();
   struct tm local_tm = rtc.getTimeStruct();   // system clock + homebase offset
   if (local_tm.tm_year + 1900 < 2024) {
     return;   // the clock was never set; do not write junk into the chip
