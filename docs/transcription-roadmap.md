@@ -89,14 +89,17 @@ What remains is operational, not transcription accuracy: R5–R8 below.
   over WiFi: the source address proves the device is reachable, so the reply is served over
   WiFi immediately. The probe remains for the BLE path.
 - **Warm Piper, and the phone's own voice.** A peer render was ~3.1–3.5 s for a short
-  sentence, nearly all of it piper loading its model per invocation. `scripts/piper_server.pl`
-  is now a demand-started resident daemon (loopback 8179, one piper process, 8 kHz PCM from
-  `POST /render`); `reply_pcm_8k` tries it first (`piper-warm`) and falls back to the one-shot
-  (`piper`). A voice clip touches `~/.president/piper-want`, and the Crew job `say.warm`
+  sentence, nearly all of it piper loading its model per invocation. A demand-started resident
+  daemon (loopback 8179, 8 kHz PCM from `POST /render`) keeps the model; `reply_pcm_8k` tries
+  it first (`piper-warm`) and falls back to the one-shot (`piper`). `scripts/piper_server.py`
+  uses the pip wheel's `PiperVoice` API where the venv can import piper (the wheel's CLI exits
+  after one stdin line and buffers its path on stderr); `scripts/piper_server.pl` remains for
+  a native piper. A voice clip touches `~/.president/piper-want`, and the Crew job `say.warm`
   (needs `piper`, no cache) warms a peer while whisper and the Guide are thinking; the peer's
   `say.render` then uses the warm process. The daemon stops after ten quiet minutes and at a
   hard maximum age, and a `say_voice` change reloads it; a machine with no piper never starts
-  it. Measured on the dev box, same sentence: cold 0.86–1.10 s, warm 0.31–0.32 s.
+  it. Measured, same sentence: dev cold 0.86–1.10 s / warm 0.31–0.32 s; ARM Table cold ~2–3 s /
+  warm 0.27 s first and 0.21 s repeat.
 - **Android native TTS to file.** App 0.118.377 added `speech.synth` (writes a WAV under
   `getFilesDir()`). On a mobile runtime with no piper, `reply_pcm_8k` asks the device bridge
   and transcodes that file to 8 kHz (`device:tts`) before a peer or the cloud, so the

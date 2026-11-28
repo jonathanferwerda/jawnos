@@ -209,7 +209,8 @@ SKIP: {
 #!/usr/bin/env perl
 use strict;
 use warnings;
-$| = 1;   # the daemon waits for the path on stdout; a buffered pipe would hang it
+# The Python piper wheel writes the WAV but logs "Wrote ..." to stderr, and its
+# stdout is silent. The daemon must find the file itself, not read a path.
 my $dir = '.';
 while (@ARGV) {
 	my $a = shift @ARGV;
@@ -226,7 +227,6 @@ while (defined(my $line = <STDIN>)) {
 	open(my $fh, '>:raw', $path) or die "fake piper: $!";
 	print {$fh} $hdr, $data;
 	close $fh;
-	print "$path\n";
 }
 FAKE
 	chmod 0755, $fake;

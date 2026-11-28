@@ -20,10 +20,11 @@
 #   POST /render   -> 8 kHz mono s16le PCM (body is UTF-8 text)
 #   POST /shutdown -> stop after replying
 #
-# The protocol with piper is the CLI's own: one text line in, a WAV path out on
-# stdout (piper -d writes one file per stdin line). The path arrives after the
-# sentence is synthesized, so one line in and one line out keeps requests in
-# lockstep, and the same process keeps the model.
+# The protocol with piper is the CLI's own: one text line in, a WAV written into
+# the spool. The output path is not a reliable signal - the C++ bundle prints it
+# on stdout, while the Python wheel logs "Wrote ..." on stderr and buffers it
+# when stderr is a pipe - so the new file in the spool is the signal. One line in
+# and one file out keeps requests in lockstep, and the process keeps the model.
 use strict;
 use warnings;
 
@@ -100,21 +101,9 @@ if (!$errfh) {
 	open($errfh, '>', File::Spec->devnull) or undef $errfh;
 }
 
-my ($pin, $pout);
-my $piper_pid = eval {
-	IPC::Open3::open3($pin, $pout, $errfh, @piper_argv);
-};
-# Do not close $errfh here: piper writes its startup log to stderr immediately,
-# and closing the parent's copy made the child die on SIGPIPE before it ever
-# waited for a line (measured). The handle costs one fd for the daemon's life.
-unless ($piper_pid) {
-	saylog('piper did not start: ' . ($@ || 'no pid'));
-	exit 1;
-}
-binmode($pin);
-binmode($pout);
-$pin->autoflush(1);
-
+# Bind the port BEFORE loading the model. The demand loop and a say.warm can
+# both ask for a server at the same moment; the loser then exits here without
+# paying a second piper start (which is exactly the model load we are avoiding).
 my $listen = IO::Socket::INET->new(
 	LocalAddr => '127.0.0.1',
 	LocalPort => $port,
@@ -124,9 +113,24 @@ my $listen = IO::Socket::INET->new(
 );
 unless ($listen) {
 	saylog("could not listen on 127.0.0.1:$port: $!");
-	kill 'TERM', $piper_pid;
 	exit 1;
 }
+
+my ($pin, $pout);
+my $piper_pid = eval {
+	IPC::Open3::open3($pin, $pout, $errfh, @piper_argv);
+};
+# Do not close $errfh here: piper writes its startup log to stderr immediately,
+# and closing the parent's copy made the child die on SIGPIPE before it ever
+# waited for a line (measured). The handle costs one fd for the daemon's life.
+unless ($piper_pid) {
+	saylog('piper did not start: ' . ($@ || 'no pid'));
+	close($listen);
+	exit 1;
+}
+binmode($pin);
+binmode($pout);
+$pin->autoflush(1);
 
 # A client that hangs up mid-response must not take the daemon with it.
 local $SIG{'PIPE'} = 'IGNORE';
@@ -216,9 +220,10 @@ sub _pcm_8k {
 	return (($ok && length $pcm) ? $pcm : undef);
 }
 
-# One line in, one WAV path out. Undef means piper did not answer in time or
-# produced nothing usable; the caller then stops the daemon so the demand loop
-# starts a fresh one rather than serving failures.
+# One text line in; the new WAV in the spool is the signal that the sentence is
+# done (the file's size settles). Undef means piper did not answer in time; the
+# caller stops the daemon so the demand loop starts a fresh one rather than
+# serving failures.
 sub _synthesize {
 	my ($text) = @_;
 	return undef unless defined $text && length $text;
@@ -226,16 +231,45 @@ sub _synthesize {
 	$text =~ s/^\s+|\s+$//g;
 	return undef unless length $text;
 	return undef if length($text) > 4000;
+	my %before = map { $_ => 1 } glob("$spool/*.wav");
 	my $wrote = eval {
 		print {$pin} $text . "\n";
 		1;
 	};
 	return undef unless $wrote;
+	my $deadline = time + $opt{'timeout'};
 	my $sel = IO::Select->new($pout);
-	return undef unless $sel->can_read($opt{'timeout'});
-	my $path = <$pout>;
-	return undef unless defined $path && length $path;
-	$path =~ s/[\r\n]+$//;
+	my ($path, $last_size, $stable_at) = ('', -1, 0);
+	while (time < $deadline) {
+		# Drain stdout: the C++ bundle prints the path there, the Python wheel
+		# does not. It is discarded either way; the file is the signal, so an
+		# unread pipe can never fill and wedge the synthesis.
+		while ($sel->can_read(0)) {
+			my $n = sysread($pout, my $buf, 65536);
+			last unless defined $n && $n > 0;
+		}
+		if (!length $path) {
+			foreach my $candidate (glob("$spool/*.wav")) {
+				next if $before{$candidate};
+				$path = $candidate;
+				last;
+			}
+		}
+		if (length $path) {
+			my $size = -s $path || 0;
+			if ($size > 44) {
+				if ($size == $last_size) {
+					last if $stable_at && time - $stable_at >= 0.1;
+					$stable_at = time unless $stable_at;
+				}
+				else {
+					$last_size = $size;
+					$stable_at = 0;
+				}
+			}
+		}
+		select(undef, undef, undef, 0.02);
+	}
 	return undef unless length $path && -f $path;
 	my $pcm = _pcm_8k($path);
 	unlink $path;

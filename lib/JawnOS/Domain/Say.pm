@@ -401,20 +401,68 @@ sub piper_server_port {
 	return 8179;
 }
 
-# The daemon this tree ships. A packaged install keeps scripts/ beside lib/.
+# The Perl CLI daemon, for a native piper that loops on stdin. A packaged
+# install keeps scripts/ beside lib/.
 sub piper_server_script {
 	my $root = eval { &subs::install_dir() } || '';
 	return '' unless length $root;
 	return $root . '/scripts/piper_server.pl';
 }
 
+# The Python warm server, for the pip wheel's PiperVoice API. The wheel's CLI
+# exits after one stdin line, so the CLI daemon cannot keep its model there;
+# PiperVoice can. Its venv is the one the dependency step installs.
+sub piper_server_python {
+	my $py = &subs::home('~/.local/share/jawnos/piper18/venv/bin/python3');
+	return -x $py ? $py : '';
+}
+
+sub piper_server_python_script {
+	my $root = eval { &subs::install_dir() } || '';
+	return '' unless length $root;
+	return $root . '/scripts/piper_server.py';
+}
+
+# Can the venv import piper? A Termux venv can have the wheel without its
+# espeakbridge, so the import is the honest test. Memoised: the demand loop asks
+# every few seconds and the probe starts a Python interpreter.
+our $piper_python_probe;
+sub piper_server_python_ok {
+	my $now = time;
+	return $piper_python_probe->{'ok'}
+		if $piper_python_probe && $now - $piper_python_probe->{'at'} < 60;
+	my $py = &piper_server_python();
+	my $ok = 0;
+	if (length $py) {
+		require IPC::Open3;
+		require Symbol;
+		my $err = Symbol::gensym();
+		my ($in, $out);
+		my $pid = eval { IPC::Open3::open3($in, $out, $err, $py, '-c', 'import piper') };
+		if ($pid) {
+			close $in;
+			do { local $/; <$out> };
+			close $out;
+			close $err;
+			waitpid($pid, 0);
+			$ok = ($? == 0) ? 1 : 0;
+		}
+	}
+	$piper_python_probe = { at => $now, ok => $ok };
+	return $ok;
+}
+
 # True only where a warm render is possible at all: piper, a voice model for the
-# chosen voice, and the daemon script. The phone answers no here (no glibc piper,
+# chosen voice, and a server that can keep the model (the Python wheel first,
+# then the CLI daemon for a native piper). The phone answers no here (no piper,
 # no python), so it never starts a loop it cannot use.
 sub piper_server_available {
 	return 0 unless length &subs::say_piper_binary();
 	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
 	return 0 unless $argv && ref $argv eq 'ARRAY' && @{$argv} && $model && -e $model;
+	my $python = &piper_server_python();
+	my $py_script = &piper_server_python_script();
+	return 1 if length $python && length $py_script && -f $py_script && &piper_server_python_ok();
 	my $script = &piper_server_script();
 	return 0 unless length $script && -f $script;
 	return 1;
@@ -541,17 +589,28 @@ sub piper_server_spawn {
 	my ($argv, $espeak, $model) = @_;
 	return 0 unless $argv && ref $argv eq 'ARRAY' && @{$argv} && $model;
 	return 0 unless JawnOS::Platform::use_fork();
-	my $script = &piper_server_script();
-	return 0 unless length $script && -f $script;
-	my $piper = $argv->[-1];
-	return 0 unless defined $piper && length $piper && -x $piper;
 	my $log = &subs::home('~/piper-warm.log');
-	my @cmd = ($^X, $script, '--piper', $piper, '--model', $model,
-		'--port', &piper_server_port(), '--log', $log);
-	push @cmd, '--runner', $argv->[0] if scalar(@{$argv}) > 1;
-	my $espeak_dir = (@{ $espeak || [] } >= 2 && $espeak->[0] eq '--espeak_data')
-		? $espeak->[1] : '';
-	push @cmd, '--espeak-data', $espeak_dir if length $espeak_dir;
+	my @cmd;
+	my $python = &piper_server_python();
+	my $py_script = &piper_server_python_script();
+	if (length $python && length $py_script && -f $py_script && &piper_server_python_ok()) {
+		# The wheel's API keeps the model, unlike its one-shot CLI. The venv's
+		# packaged espeak data is the default, so no --espeak-data here.
+		@cmd = ($python, $py_script, '--model', $model,
+			'--port', &piper_server_port(), '--log', $log);
+	}
+	else {
+		my $script = &piper_server_script();
+		return 0 unless length $script && -f $script;
+		my $piper = $argv->[-1];
+		return 0 unless defined $piper && length $piper && -x $piper;
+		@cmd = ($^X, $script, '--piper', $piper, '--model', $model,
+			'--port', &piper_server_port(), '--log', $log);
+		push @cmd, '--runner', $argv->[0] if scalar(@{$argv}) > 1;
+		my $espeak_dir = (@{ $espeak || [] } >= 2 && $espeak->[0] eq '--espeak_data')
+			? $espeak->[1] : '';
+		push @cmd, '--espeak-data', $espeak_dir if length $espeak_dir;
+	}
 	my $pid = fork();
 	return 0 unless defined $pid;
 	if ($pid == 0) {
@@ -590,7 +649,7 @@ sub piper_server_stop_orphans {
 		next unless defined $row->{'ppid'} && $row->{'ppid'} eq '1';
 		my $cmd = $row->{'cmdline'} || '';
 		next unless length $cmd;
-		next unless $cmd =~ /piper_server\.pl/;
+		next unless $cmd =~ /piper_server\.(?:pl|py)/;
 		next unless $cmd =~ /--port\s+\Q$port\E/;
 		JawnOS::Platform::Process::signal('TERM', $pid);
 		$stopped++;
