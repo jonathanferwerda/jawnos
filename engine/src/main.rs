@@ -3406,10 +3406,11 @@ pub(crate) fn take_frames(seconds: f64, rate: u32) -> u64 {
 /// How many blocks the disk queue may hold between the audio side and its
 /// writer thread.
 ///
-/// Hardware is paced by the device, so the queue stays shallow: a few periods
-/// cover a scheduling hiccup, and a disk that stalls past that must drop rather
-/// than stall the capture loop past its deadline.
-pub(crate) const HARDWARE_QUEUE_BLOCKS: usize = 8;
+/// Hardware is paced by the device, so the queue stays bounded: 32 blocks is
+/// 64 ms at the studio 96-frame period, enough to ride a header sync on four
+/// writers sharing one disk. A disk that stalls past that still drops and counts
+/// the block rather than stalling the capture loop past its deadline.
+pub(crate) const HARDWARE_QUEUE_BLOCKS: usize = 32;
 
 /// The most the null backend's whole-take queue may hold. The cap keeps a very
 /// long `--seconds` from asking for an unbounded allocation; past it the disk
@@ -4474,11 +4475,13 @@ mod tests {
     }
 
     #[test]
-    fn hardware_gets_a_shallow_queue() {
-        // Hardware is paced by the device; a deep queue would only hide a
-        // stalled disk until the take ended.
-        let queue = queue_blocks(BackendKind::Alsa, 480_000, 64, TAKE_CHANNELS);
+    fn hardware_gets_a_bounded_queue() {
+        // Four tracks can share one disk, and a header sync can stall a writer.
+        // 32 blocks is 64 ms at the studio 96-frame period: enough to ride it,
+        // still bounded so a longer stall drops and counts the block.
+        let queue = queue_blocks(BackendKind::Alsa, 480_000, 96, TAKE_CHANNELS);
         assert_eq!(queue, HARDWARE_QUEUE_BLOCKS);
+        assert!(queue * 96 * 1000 / 48_000 >= 50, "the queue must cover a sync");
     }
 
     #[test]
