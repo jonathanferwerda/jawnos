@@ -57,7 +57,7 @@ our %ACCESS_APP = (
 # tier gate. Kept explicit so an unclassified route fails the audit test rather
 # than silently becoming core.
 our %ACCESS_CORE = map { $_ => 1 } qw(
-	ago ai_chat app_download app_measure_delete app_measures app_release
+	activity ago ai_chat app_download app_measure_delete app_measures app_release
 	app_release_sync app_section apps assistant backup backup_serve
 	cache_delete cache_get cache_set calculate clipboard_getter clipboard_setter
 	clone_app clothesline clothesline_rail debrief debrief_grabber delete_app

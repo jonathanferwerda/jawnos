@@ -38,6 +38,7 @@ sub routes {
 	[35597, 'post', '/manager/resolve/alias/remove', 'action_35597'],
 	[35739, 'post', '/manager/remote_command', 'action_35739'],
 	[35774, 'post', '/manager/remote_command/send', 'action_35774'],
+	[92031, 'post', '/manager/activity', 'action_92031'],
 	);
 }
 

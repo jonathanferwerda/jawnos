@@ -215,6 +215,7 @@ our @manager_bundle_files = qw(
 	/js/manager/internet.js
 	/js/manager/search.js
 	/js/manager/screening.js
+	/js/manager/voice_card.js
 	/js/manager/phone.js
 	/js/manager/people.js
 	/js/manager/websocket.js

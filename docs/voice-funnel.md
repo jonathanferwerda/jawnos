@@ -188,6 +188,17 @@ The full Guide window and its associate now get the same `app`, `weather` and
 `history` tools; the voice turn's scoped list is still smaller, but nothing the
 watch can do is missing from the screen.
 
+### The card on the last machine
+
+`activity_touch` records a throttled stamp (one row per device in the synced
+`__president/last_active` setting) from a mouse move, key, tap, wheel or a real
+device movement; the page throttles to twenty seconds and `activity_touch` does
+the same. `voice_card_show` reads the newest stamp and sends a `voiceCard`
+console command with the question and reply; every page hears it, and the page
+whose `jawnDeviceUuid()` matches draws the card (a page with no known target
+draws it only when focused). The hook is in `voice_brain`'s reply closure, so
+every voice answer - fast resolver, Guide, held write, remote relay - is shown.
+
 ### Remote machines
 
 `remote` is in the common voice verb core. "Tell the table to play Ben Folds
@@ -243,6 +254,8 @@ family's speech), `t/488-history-visit.t` (a fast resolver) or
 - `public/js/manager/camera.js`, `public/js/manager/windows/03_stack.js`,
   `public/js/manager/websocket/00_console_router.js` — the camera press and the
   window close press.
+- `lib/JawnOS/Domain/Activity.pm`, `public/js/manager/voice_card.js` — the
+  activity stamp and the card on the last-touched machine.
 - `public/js/manager/help/03_pending.js`, `public/js/manager/help.js`,
   `public/js/manager/websocket/00_console_router.js`,
   `templates/apps/help.html.ep` — the card strip and its reload command.
@@ -258,4 +271,5 @@ family's speech), `t/488-history-visit.t` (a fast resolver) or
   `t/491-camera-window-voice.t`, `t/493-remote-voice.t` — matcher, scope,
   router contract, identity, weather, history/visit, the action gates, the held
   write, the Store family, the card, the Guide parity, the camera press, the
-  window close and the remote machine relay.
+  window close and the remote machine relay; `t/494-activity-card.t` covers the
+  activity stamp and the voice card.

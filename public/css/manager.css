@@ -4976,6 +4976,45 @@ body.dark_theme .inventory_details {
 	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
+/* The voice card: the question and answer on the machine the person last
+   touched. It is transient - a toast, not a call - so it sits at the bottom
+   edge and leaves by itself. */
+.jawn_voice_card {
+	position: fixed;
+	left: 50%;
+	right: auto;
+	transform: translateX(-50%) translateY(10px);
+	bottom: calc(var(--taskbar_bottom_h, 0px) + 24px);
+	width: min(420px, 92vw);
+	display: none;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px 13px;
+	background: rgba(24, 33, 44, .97);
+	color: #eaf1f8;
+	border: 1px solid rgba(127, 140, 155, .4);
+	border-radius: 14px;
+	box-shadow: 0 14px 40px rgba(0, 0, 0, .38);
+	z-index: 9001;
+	transition: opacity .18s ease, transform .18s ease;
+}
+.jawn_voice_card.on { display: flex; opacity: 1; transform: translateX(-50%) translateY(0); }
+.jawn_voice_card_head { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.jawn_voice_card_title { font-weight: 600; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .62; }
+.jawn_voice_card_close {
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font-size: 12px;
+	line-height: 1;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+	opacity: .7;
+	padding: 3px 7px;
+	border-radius: 999px;
+}
+.jawn_voice_card_question { font-size: 13px; opacity: .72; font-style: italic; }
+.jawn_voice_card_reply { font-size: 14px; line-height: 1.4; }
+
 /* A taskbar widget's panel. taskbar_panel.js owns the frame, the placing and
    the closing; each widget builds its own contents in these classes. The
    clock's menu (#clock_nav) is the same idea, one widget over. */

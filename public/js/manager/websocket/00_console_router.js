@@ -277,6 +277,9 @@ var jawnosConsoleCommands = {
 		if (!app || typeof jawnAppWindowCloser !== 'function') { return; }
 		jawnAppWindowCloser(app);
 	},
+	voiceCard: function (a) {
+		if (typeof jawnVoiceCardShow === 'function') { jawnVoiceCardShow(a[0] || {}); }
+	},
 	cameraAction: function (a) {
 		var what = String(a[0] || '');
 		if (what !== 'photo' && what !== 'video') { return; }

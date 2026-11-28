@@ -834,4 +834,12 @@ sub action_35774 {
 	}));
 }
 
+# POST /manager/activity
+sub action_92031 {
+	my $c = shift;
+	my $device = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $at = &subs::activity_touch($device);
+	$c->render(json => { ok => $at ? 1 : 0, at => $at });
+}
+
 1;

@@ -1338,6 +1338,9 @@ sub voice_brain {
 	my $reply = sub {
 		my ($speech) = @_;
 		return unless defined $speech && length $speech;
+		# The question and the answer also land on the screen the person last
+		# touched; a display failure must never stop the spoken reply.
+		eval { &subs::voice_card_show($text, $speech) };
 		if (($meta->{'chip_id'} || '') ne '') {
 			&subs::watch_reply($meta, $speech);
 		}
