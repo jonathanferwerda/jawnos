@@ -57,6 +57,13 @@ package JawnOS::Audio::SystemMix;
 # machine somewhere honest if the process is killed in the middle (a stop is
 # routinely cut short by the tree's stop sweep), including after a crash.
 #
+# Off must also give back a card WirePlumber did not rebuild. A restart can
+# return with the card still on Pro Audio and none of its nodes listed, so the
+# removal verifies the names the rule recorded, cycles the card's profile off
+# and back once, and - if that does not help - restarts WirePlumber once more.
+# The default sink/source is never moved: the PCH sink and webcam source belong
+# to the person, and only the card's own node names are checked.
+#
 # This is deliberately the same `pactl` idiom JawnOS::Sco::Mixer already uses,
 # through JawnOS::Platform::Audio::run so a test can inject the tool and a
 # machine without it behaves as if there were nothing to do.
@@ -706,13 +713,125 @@ sub _remove_managed_card {
 	$restart->{note} = $note if defined $note && !defined $restart->{note};
 	$restart->{error} = $note
 		if defined $note && !defined $restart->{error} && !$restart->{ok};
+
+	# The restart can return with the card still on the profile the rule was
+	# written for and none of its nodes listed. Wait for the names the rule
+	# recorded, and force the rebuild if they are still gone; a machine with no
+	# systemd cannot restart its way out, so it is left to the next start.
+	my $handback;
+	if ( $acted && $restart->{'ok'} && !$restart->{'skipped'}
+		&& ( defined $card->{'playback'} || defined $card->{'node'} ) ) {
+		$handback = _handback_card($card);
+	}
 	return {
 		ok       => defined $note && !$acted ? 0 : 1,
 		path     => $path,
 		removed  => $removed,
 		restored => $restored,
 		restart  => $restart,
+		( defined $handback ? ( handback => $handback ) : () ),
 		( defined $note ? ( error => $note ) : () ),
+	};
+}
+
+# A WirePlumber restart returns before the graph is rebuilt, and on a card left
+# on a non-default profile (Pro Audio is the one the rule needed) it can leave
+# the profile active with no nodes listed. This is the second half of the
+# handback: poll for the exact names the rule recorded, and if they are still
+# absent, cycle the card's profile off and back to the one it was on. A card the
+# machine does not list is not guessed at; the caller then restarts once more.
+# Only names are checked - the default sink/source belongs to the person, and
+# this never moves it.
+sub _await_card_nodes {
+	my ($card, $playback, $capture) = @_;
+	return 0 unless defined $playback && length $playback;
+	for my $attempt (0 .. 39) {
+		my $present = _sinks()->{$playback} ? 1 : 0;
+		$present = $present && _sources()->{$capture} ? 1 : 0
+			if $present && defined $capture && length $capture;
+		return 1 if $present;
+		last if $attempt == 39;
+		select undef, undef, undef, 0.025;
+	}
+	return 0;
+}
+
+# The Pactl card for an ALSA index, the profile it is on and whether it can be
+# switched off. `available` says the machine listed the card at all: a machine
+# that does not answer has nothing safe to cycle, so the caller must not read
+# the miss as a card that refused. The profile is read here rather than from
+# the domain's saved choice so this module keeps its own one-source rule.
+sub _card_profile_cycle {
+	my ($card) = @_;
+	return { available => 0, ok => 0, skipped => 1 }
+		unless defined $card && $card =~ /\A\d+\z/;
+	require JawnOS::Platform::Audio;
+	my $cards = JawnOS::Platform::Audio::parse_pactl_cards(
+		JawnOS::Platform::Audio::run('pactl', 'list', 'cards'));
+	my ($found) = grep {
+		defined $_->{'alsa_card'} && "$_->{'alsa_card'}" eq "$card"
+	} @{ $cards || [] };
+	return { available => 0, ok => 0, skipped => 1 }
+		unless $found && defined $found->{'name'} && length $found->{'name'};
+	my $name   = $found->{'name'};
+	my $active = $found->{'active'};
+	return { available => 1, ok => 0, skipped => 1, card => $name }
+		unless defined $active && length $active && $active ne 'off';
+	my %offered = map {
+		defined $_->{'id'} ? ( $_->{'id'} => 1 ) : ()
+	} @{ $found->{'profiles'} || [] };
+	return { available => 1, ok => 0, skipped => 1, card => $name, profile => $active }
+		unless $offered{'off'};
+	my $off  = JawnOS::Platform::Audio::set_card_profile($name, 'off');
+	my $back = $off ? JawnOS::Platform::Audio::set_card_profile($name, $active) : 0;
+	return {
+		available => 1, ok => $off && $back ? 1 : 0,
+		card => $name, profile => $active,
+	};
+}
+
+# Verify the card's own nodes came back after the rule was removed. Present is
+# the fast path (the ordinary restart rebuilt them); absent triggers the
+# profile cycle, and a cycle that does not help - or a card this machine did
+# not list - gets one more WirePlumber restart. The result says what was done
+# and whether the names are actually there, so a caller never has to trust a
+# restart's exit status for it.
+sub _handback_card {
+	my ($card) = @_;
+	my $playback = defined $card->{'playback'} && length $card->{'playback'}
+		? $card->{'playback'} : $card->{'node'};
+	my $capture = $card->{'capture'};
+	return { ok => 1, skipped => 1 }
+		unless defined $playback && length $playback;
+	return { ok => 1, verified => 1 }
+		if _await_card_nodes($card->{'card'}, $playback, $capture);
+
+	my $cycle = _card_profile_cycle($card->{'card'});
+	if ($cycle->{'ok'}
+		&& _await_card_nodes($card->{'card'}, $playback, $capture)) {
+		return {
+			ok => 1, verified => 1, profile_cycled => 1,
+			card => $cycle->{'card'}, profile => $cycle->{'profile'},
+		};
+	}
+	unless ($cycle->{'available'}) {
+		return {
+			ok => 0, verified => 0, skipped => 1,
+			error => "the card's playback node $playback did not come back after the"
+				. ' rule was removed, and this machine lists no card to rebuild it',
+		};
+	}
+
+	my $again = restart_wireplumber();
+	my $restarted = $again->{'ok'} && !$again->{'skipped'} ? 1 : 0;
+	my $verified = $restarted
+		? _await_card_nodes($card->{'card'}, $playback, $capture) : 0;
+	return {
+		ok => $verified ? 1 : 0, verified => $verified ? 1 : 0,
+		( defined $cycle->{'profile'} ? ( profile => $cycle->{'profile'} ) : () ),
+		restarts => $restarted,
+		( $verified ? () : ( error => "the card's playback node $playback did not"
+				. ' come back after the rule was removed' ) ),
 	};
 }
 
@@ -731,6 +850,23 @@ sub _sink_list {
 
 sub _sinks {
 	my $names = _sink_list();
+	return { map { $_ => 1 } @{$names} };
+}
+
+# The sources in the server's own order, for the same reason as `_sink_list`:
+# a duplex rule hides a capture node too, and the handback verifies by name.
+sub _source_list {
+	my $text = JawnOS::Platform::Audio::run('pactl', 'list', 'short', 'sources');
+	my @name;
+	foreach my $line ( split /\n/, defined $text ? $text : '' ) {
+		my @field = split /\t/, $line;
+		push @name, $field[1] if @field > 1 && defined $field[1] && length $field[1];
+	}
+	return \@name;
+}
+
+sub _sources {
+	my $names = _source_list();
 	return { map { $_ => 1 } @{$names} };
 }
 

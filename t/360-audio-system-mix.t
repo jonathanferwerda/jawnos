@@ -75,6 +75,7 @@ my $dir = tempdir(CLEANUP => 1);
 my $bin = "$dir/bin";
 make_path($bin);
 write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+write_file("$dir/sources", '');
 write_file("$dir/default", "alsa_output.real\n");
 write_file("$dir/pactl.log", '');
 
@@ -151,6 +152,26 @@ if ($all eq 'list sinks') {
 }
 if ($all eq 'list sources') {
 	print read_file("$dir/sources_long");
+	exit 0;
+}
+if ($cmd eq 'list' && ($ARGV[1] // '') eq 'short' && ($ARGV[2] // '') eq 'sources') {
+	print read_file("$dir/sources");
+	exit 0;
+}
+if ($all eq 'list cards') {
+	print read_file("$dir/cards_long");
+	exit 0;
+}
+if ($cmd eq 'set-card-profile') {
+	# The handback cycles an active profile off and back when the card's
+	# nodes were not rebuilt. A marker makes the fake rebuild them on the
+	# return, as WirePlumber does after a successful re-probe.
+	my $profile = $ARGV[2] // '';
+	if ($profile ne 'off' && -e "$dir/card_nodes_rebuild") {
+		write_text("$dir/sinks", read_file("$dir/sinks_rebuilt"));
+		write_text("$dir/sources", read_file("$dir/sources_rebuilt"));
+		unlink "$dir/card_nodes_rebuild";
+	}
 	exit 0;
 }
 if ($cmd eq 'info') {
@@ -334,6 +355,36 @@ my $dir = $ENV{FAKE_PACTL_DIR} or exit 9;
 open(my $log, '>>', "$dir/systemctl.log") or exit 9;
 print {$log} join(' ', @ARGV), "\n";
 close $log;
+sub slurp {
+	my ($path) = @_;
+	open(my $fh, '<', $path) or return '';
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	return defined $text ? $text : '';
+}
+sub spew {
+	my ($path, $text) = @_;
+	open(my $fh, '>', $path) or exit 9;
+	print {$fh} $text;
+	close $fh;
+}
+# A restart can be told how many more to skip before the card's nodes are
+# rebuilt, so a test can model one restart that did not rebuild the graph.
+if (-e "$dir/rebuild_restarts") {
+	my $left = slurp("$dir/rebuild_restarts");
+	$left =~ s/\s+//g;
+	if ($left =~ /\A\d+\z/) {
+		if ($left > 0) {
+			spew("$dir/rebuild_restarts", ($left - 1) . "\n");
+		}
+		else {
+			spew("$dir/sinks", slurp("$dir/sinks_rebuilt"));
+			spew("$dir/sources", slurp("$dir/sources_rebuilt"));
+			unlink "$dir/rebuild_restarts";
+		}
+	}
+}
 exit 0;
 SYSTEMCTL
 chmod 0755, $systemctl or die "chmod $systemctl: $!";
@@ -689,13 +740,17 @@ is($twice->{skipped}, 1, 'and changes nothing');
 # run that always succeeds can only pass by asking again.
 sub reset_mix {
 	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sources", '');
 	write_file("$dir/default", "alsa_output.real\n");
 	write_file("$dir/pactl.log", '');
 	write_file("$dir/systemctl.log", '');
 	write_file("$dir/levels", '');
 	write_file("$dir/modules_short", '');
 	write_file("$dir/modules_long", '');
+	write_file("$dir/cards_long", '');
 	unlink "$dir/set_count";
+	unlink "$dir/card_nodes_rebuild";
+	unlink "$dir/rebuild_restarts";
 }
 
 # The fake server's per-sink levels: `name volume mute`. A sink with no line is
@@ -836,7 +891,121 @@ sub set_attempts {
 	write_levels('');
 }
 
-# --- a card that cannot be mapped is an error, never a guessed rule ---------
+# --- manage off rebuilds the card's nodes when one restart is not enough ----
+# Found on `table`: after POST /manager/sound/manage manage=0 the stale rule was
+# gone and WirePlumber had restarted, but the UM2's card stayed active on Pro
+# Audio while `pactl list short sinks/sources` listed none of its nodes until a
+# second restart by hand. The handback must force the rebuild itself and verify
+# the names the rule recorded - without moving the default, which stays the
+# output the mix replaced.
+{
+	reset_mix();
+	my $card_dir = tempdir(CLEANUP => 1);
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$card_dir/wireplumber";
+	# A class-compliant interface: no mixer controls to hold, so this also
+	# covers the card that answers amixer with nothing.
+	local $ENV{JAWNOS_AUDIO_SKIP_CARD_MIXER} = 1;
+
+	# The picker names `hw:1,0`, the USB interface. It is active on Pro Audio
+	# and offers `off` as every ALSA card does.
+	write_file("$dir/cards_long", <<'CARDS');
+Card #1
+	Name: alsa_card.usb-Burr-Brown_from_TI_USB_Audio_CODEC
+	Properties:
+		alsa.card = "1"
+	Profiles:
+		off: Off (sinks: 0, sources: 0, priority: 0, available: yes)
+		output:analog-stereo: Analog Stereo Output (sinks: 1, sources: 0, priority: 6500, available: yes)
+		pro-audio: Pro Audio (sinks: 2, sources: 2, priority: 1, available: yes)
+	Active Profile: pro-audio
+CARDS
+
+	# ensure maps the card while its node is listed; the previous default is
+	# the PCH sink, which the handback must leave alone.
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "2\talsa_output.usb-card\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sources", "1\talsa_input.usb-card\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+
+	my $on = JawnOS::Audio::SystemMix::ensure($card_dir, 'hw:1,0');
+	is($on->{ok}, 1, 'the USB card is managed');
+	is($on->{managed_card}{playback}, 'alsa_output.usb-card',
+		'and its playback node is recorded');
+	is(read_file("$dir/default"), "jawn_system\n", 'the mix is the default while managed');
+
+	# The restart happened, but the card's graph was not rebuilt: Pro Audio is
+	# still active and the short listings have none of its nodes.
+	write_file("$dir/sinks_rebuilt", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "2\talsa_output.usb-card\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sources_rebuilt", "1\talsa_input.usb-card\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sources", '');
+	write_file("$dir/card_nodes_rebuild", "1\n");
+	my $restarts_before = restart_count();
+
+	my $off = JawnOS::Audio::SystemMix::remove($card_dir);
+	is($off->{ok}, 1, 'manage off removes the rule and hands the card back');
+	my $handback = $off->{managed_card}{handback};
+	ok(ref $handback eq 'HASH', 'the removal reports a handback');
+	is($handback->{verified}, 1, 'the card\'s nodes are verified back');
+	is($handback->{profile_cycled}, 1, 'by cycling the profile the rule was written for');
+	my $log = read_file("$dir/pactl.log");
+	like($log, qr/set-card-profile alsa_card\.usb\S* off/, 'the card is switched off');
+	like($log, qr/set-card-profile alsa_card\.usb\S* pro-audio/,
+		'and back to Pro Audio, the profile it was on');
+	is(restart_count(), $restarts_before + 1,
+		'the profile cycle needed no extra WirePlumber restart');
+	is(read_file("$dir/default"), "alsa_output.real\n",
+		'and the default is the output the mix replaced, not the card');
+}
+
+# --- a card with no profile to cycle still gets one more restart ------------
+# The fallback: the card is listed, so a restart can rebuild it, but it offers
+# no `off` profile to cycle. The handback restarts WirePlumber once more and
+# verifies the names rather than trusting the exit status.
+{
+	reset_mix();
+	my $card_dir = tempdir(CLEANUP => 1);
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$card_dir/wireplumber";
+	local $ENV{JAWNOS_AUDIO_SKIP_CARD_MIXER} = 1;
+
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "2\talsa_output.usb-card\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sources", "1\talsa_input.usb-card\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	my $on = JawnOS::Audio::SystemMix::ensure($card_dir, 'hw:1,0');
+	is($on->{ok}, 1, 'the card mix comes up for the restart fallback');
+
+	# A card that is listed but offers no off profile.
+	write_file("$dir/cards_long", <<'CARDS');
+Card #1
+	Name: alsa_card.usb-Burr-Brown_from_TI_USB_Audio_CODEC
+	Properties:
+		alsa.card = "1"
+	Profiles:
+		pro-audio: Pro Audio (sinks: 2, sources: 2, priority: 1, available: yes)
+	Active Profile: pro-audio
+CARDS
+
+	write_file("$dir/sinks_rebuilt", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "2\talsa_output.usb-card\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sources_rebuilt", "1\talsa_input.usb-card\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/sources", '');
+	# The removal restart does not rebuild; the handback's second one does.
+	write_file("$dir/rebuild_restarts", "1\n");
+	my $restarts_before = restart_count();
+
+	my $off = JawnOS::Audio::SystemMix::remove($card_dir);
+	my $handback = $off->{managed_card}{handback};
+	is($off->{ok}, 1, 'the removal succeeds without a profile to cycle');
+	is($handback->{restarts}, 1, 'it restarts WirePlumber once more');
+	is($handback->{verified}, 1, 'and verifies the card\'s playback node is back');
+	is(restart_count(), $restarts_before + 2,
+		'that is the removal restart plus the handback retry');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'the previous output is the default');
+}
+
 {
 	reset_mix();
 	my $card_dir = tempdir(CLEANUP => 1);
