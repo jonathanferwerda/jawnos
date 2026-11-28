@@ -127,6 +127,13 @@ sub appointment_writer($c,$app) {
 			&& defined $app->{$relay_key} && length $app->{$relay_key};
 		delete $app->{$relay_key};
 	}
+	# A relayed row is a mirror of the origin's write, not a second press: the
+	# origin already started the recorder, toggled the devices and ran the house
+	# bookkeeping. Write the row, keep the local state that must follow it
+	# (silence, theme, the Clock), but never run the press's side effects here.
+	my $mirror = $app->{'mirror'};
+	delete $app->{'mirror'};
+	$quiet_child = 1 if $mirror;
 	my $timestamp = $app->{'timestamp'};
 	my $server_time = $app->{'server_time'};
 	# A stop may name its own length. The stop branch below measures the session
@@ -159,8 +166,9 @@ sub appointment_writer($c,$app) {
 	my $capture_source = (($app->{'type'} || '') eq 'record')
 		? ($named_source || $settings->{'record'} || '')
 		: '';
-	if ($capture_source =~ /^(?:video|video_front|audio|screen)$/
-		|| ($named_source && $named_source eq 'system')) {
+	if (!$mirror
+		&& ($capture_source =~ /^(?:video|video_front|audio|screen)$/
+			|| ($named_source && $named_source eq 'system'))) {
 		$app->{'seen'} = undef;
 	}
 	elsif ($app->{'timestamp'} <= $app->{'server_time'} + 1000) {
@@ -170,7 +178,7 @@ sub appointment_writer($c,$app) {
 	# reach another machine with no machine/recorder in it, and that machine's
 	# Alarm would claim the capture too. The press's own source and machine go on
 	# the row before the insert; the record branch below writes the same value.
-	if (($app->{'type'} || '') eq 'record' && $named_source) {
+	if (!$mirror && ($app->{'type'} || '') eq 'record' && $named_source) {
 		my $preset = { recorder => $named_source, machine => ($pressed_machine || '') };
 		$preset->{'camera'} = $pressed_camera if defined $pressed_camera && $named_source =~ /^video/;
 		$app->{'data'} = encode_json $preset;
@@ -188,18 +196,22 @@ sub appointment_writer($c,$app) {
 		&subs::db_insert('appointments', $app);
 		$appt_header = &subs::appt_header_printer({ app => $app->{'app'}, timestamp => $app->{'timestamp'} });
 		$db_written = 1;
-		my ($model,$options);
-		($model,$options,$app->{'model'},$app->{'options'}) = &subs::usual_appointment_maker($app,$settings);
-		if ($model->{'unit'} && !$app->{'unit'}) {
-			$app->{'unit'} = $model->{'unit'};
-		}
-		if ($model->{'quantity'} && !$app->{'quantity'}) {
-			$app->{'quantity'} = $model->{'quantity'};
+		# On a mirror the origin already chose the model and options and wrote
+		# their child sessions; re-running the maker here would duplicate them.
+		unless ($mirror) {
+			my ($model,$options);
+			($model,$options,$app->{'model'},$app->{'options'}) = &subs::usual_appointment_maker($app,$settings);
+			if ($model->{'unit'} && !$app->{'unit'}) {
+				$app->{'unit'} = $model->{'unit'};
+			}
+			if ($model->{'quantity'} && !$app->{'quantity'}) {
+				$app->{'quantity'} = $model->{'quantity'};
+			}
 		}
 	}
 
 
-	if ($app->{'type'} eq 'record') {
+	if (!$mirror && $app->{'type'} eq 'record') {
 		# a press may name the source on the row itself (see manager_reset); a
 		# scheduled or synced record keeps the app's setting
 		my $recording_type = &record_source_param($pressed_recorder)
@@ -318,10 +330,10 @@ sub appointment_writer($c,$app) {
 			# the board off at a time the person no longer meant. The deleter
 			# matches a board's jobs by the session uuid. It runs before the
 			# record branches, which may `next`.
-			&embedded_app_deleter({ appt_uuid => $appt->{'uuid'} });
+			&embedded_app_deleter({ appt_uuid => $appt->{'uuid'} }) unless $mirror;
 			$appt_header = &subs::appt_header_printer({ app => $app->{'app'}, timestamp => $app->{'timestamp'} });
 			my $recording_type = &subs::setting_grabber({ app => $app->{'app'}, setting => 'record' }) || 'system';
-			if ($appt->{'type'} eq 'record') {
+			if (!$mirror && $appt->{'type'} eq 'record') {
 				my $dat = $stop_data;
 
 				if ($dat->{'recorder'} eq 'security') {
@@ -345,7 +357,7 @@ sub appointment_writer($c,$app) {
 
 
 
-			&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'off', timestamp => $app->{'timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id });
+			&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'off', timestamp => $app->{'timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id }) unless $mirror;
 			my $sources = &subs::db_select('appointments', undef, { source_uuid => $app->{'uuid'} })->hashes;
 			my $options = eval { return decode_json $appt->{'options'} } || [];
 			my $model = eval { return decode_json $appt->{'model'} } || {};
@@ -383,8 +395,8 @@ sub appointment_writer($c,$app) {
 
 					&subs::db_update('appointments', $so_data, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 					$child_apps{ $so->{'app'} } = 1;
-					&budget_runner($so->{'app'});
-					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $ts, remote_address => $remote_address, source_chip_id => $source_chip_id });
+					&budget_runner($so->{'app'}) unless $mirror;
+					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $ts, remote_address => $remote_address, source_chip_id => $source_chip_id }) unless $mirror;
 					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 				}
 			}
@@ -417,12 +429,12 @@ sub appointment_writer($c,$app) {
 	}
 	else {
 		if ($app->{'type'} eq 'start' || $app->{'type'} eq 'record') {
-			&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'on', timestamp => $app->{'timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id });
+			&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'on', timestamp => $app->{'timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id }) unless $mirror;
 			if ($app->{'stop_timestamp'}) {
-				&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'off', timestamp => $app->{'stop_timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id });
+				&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'off', timestamp => $app->{'stop_timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id }) unless $mirror;
 			}
 
-			if ($app->{'type'} eq 'record') {
+			if (!$mirror && $app->{'type'} eq 'record') {
 				my $jdata;
 
 				my $recording_type = &record_source_param($pressed_recorder)
@@ -468,13 +480,13 @@ sub appointment_writer($c,$app) {
 	# An invoice gets its own receive address as soon as it is written, so a
 	# print or a public page already names it. Idempotent: a re-save keeps the
 	# address the invoice already owns.
-	if (($app->{'type'} || '') eq 'invoice' && ($app->{'uuid'} || '') ne '') {
+	if (!$mirror && ($app->{'type'} || '') eq 'invoice' && ($app->{'uuid'} || '') ne '') {
 		my $wallet = &subs::crypto_invoice_wallet('BTC');
 		&subs::crypto_invoice_address({ app => $wallet->{'app'}, invoice => $app->{'uuid'} }) if $wallet;
 	}
 	# a transaction with an account is a money move, so it is written to the
 	# warehouse ledger too; the budget and the warehouse then read one store
-	&warehouse_money_mirror($app);
+	&warehouse_money_mirror($app) unless $mirror;
 	# The row, the hardware toggle and the theme push are the child's; the window
 	# render is the press's to do once. The three tab pushes below are socket
 	# writes, not renders, and they are what makes the new child appear on the
@@ -511,6 +523,8 @@ sub appointment_writer($c,$app) {
 		# The origin owns the capture: name it here so a peer's record branch
 		# sees $capture_here false and does not start its own recorder.
 		$relay_row{'remote_signatorial'} = &subs::signatorial_designer() || '';
+		# The peer writes the row only: the origin already ran the press.
+		$relay_row{'mirror'} = 'yes';
 		my $relay_c = $c;
 		unless (eval { $relay_c && defined $relay_c->req }) {
 			$relay_c = eval { &subs::controller_builder() } unless $relay_c;

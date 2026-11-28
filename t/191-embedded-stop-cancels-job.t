@@ -31,7 +31,7 @@ like($stop, qr/&embedded_app_deleter\(\{\s*appt_uuid\s*=>\s*\$appt->\{'uuid'\}\s
 	'the stopped session cancels the jobs armed for it');
 
 my $cancel_at = index($stop, 'embedded_app_deleter');
-my $record_at = index($stop, q{if ($appt->{'type'} eq 'record')});
+my $record_at = index($stop, q{$appt->{'type'} eq 'record'});
 ok($cancel_at >= 0 && $record_at > $cancel_at,
 	'the cancellation runs before the record branches, which may next');
 

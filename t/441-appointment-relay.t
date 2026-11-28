@@ -25,7 +25,8 @@ sub source { my $text = read_file("$root/$_[0]"); return defined $text ? $text :
   sub req { return bless {}, 'RelayReq' }
 }
 
-my (@inserted, @updates, @pushed, @relay);
+my (@inserted, @updates, @pushed, @relay, @audio, @automation, @ledger);
+our $RECORD_SETTING = 'system';
 {
 	no warnings 'redefine';
 	no warnings 'once';
@@ -36,6 +37,13 @@ my (@inserted, @updates, @pushed, @relay);
 	local *subs::setting_initializer = sub { return { app => $_[0], duration => 0 } };
 	local *subs::typesetter = sub { return ($_[0], undef) };
 	local *subs::settings_grabber = sub { return {} };
+	local *subs::setting_grabber = sub {
+		my ($want) = @_;
+		return { record => $RECORD_SETTING } if (($want->{'setting'} // '') eq 'record');
+		return {};
+	};
+	local *subs::usual_appointment_maker = sub { return ({}, {}, undef, undef) };
+	local *subs::source_parent_link = sub { return undef };
 	local *subs::db_insert = sub { push @inserted, { %{$_[1]} }; return 1 };
 	local *subs::db_update = sub { push @updates, { set => { %{$_[1]} }, where => { %{$_[2]} } }; return 1 };
 	local *subs::appt_header_printer = sub { return ('header', []) };
@@ -51,9 +59,11 @@ my (@inserted, @updates, @pushed, @relay);
 	local *subs::subprocessor = sub { my ($body) = @_; eval { $body->() }; return 1 };
 	local *subs::remote_relay_request = sub { push @relay, { %{ $_[1] || {} } }; return 1 };
 	local *Manager::warranty_resolve = sub { return 1 };
-	local *Manager::warehouse_money_mirror = sub { return 1 };
+	local *Manager::warehouse_money_mirror = sub { push @ledger, $_[0]->{'app'}; return 1 };
 	local *Manager::record_source_param = sub { return undef };
+	local *Manager::record_audio = sub { push @audio, $_[0]->{'app'}; return 1 };
 	local *Manager::budget_runner = sub { return 1 };
+	local *subs::intelligent_automation_toggle = sub { push @automation, $_[0]->{'state'}; return 1 };
 	local *Websocket::send = sub { push @pushed, $_[1]; return 1 };
 	local *Websocket::console_command = sub { return [ @_ ] };
 
@@ -88,6 +98,7 @@ my (@inserted, @updates, @pushed, @relay);
 	is($relay[0]{'params'}{'remote_signatorial'}, 'origin-signal',
 		'and names the origin as the capture machine');
 	ok(!exists $inserted[0]{'remote_signatorial'}, 'which never reaches SQL');
+	is($relay[0]{'params'}{'mirror'}, 'yes', 'and marks the row as a mirror for the peer');
 
 	# A caller that already sent the movement says so.
 	write_row(relayed => 'yes');
@@ -99,6 +110,39 @@ my (@inserted, @updates, @pushed, @relay);
 	is(scalar @relay, 0, 'a relayed row is not relayed again');
 	ok(!exists $inserted[0]{'dissemination'} && !exists $inserted[0]{'source_signatorial'},
 		'and the relay keys never reach SQL');
+
+	# A relayed record row is written for the record: the origin already
+	# started the recorder, so a peer must not start its own.
+	sub write_record {
+		my (%extra) = @_;
+		@inserted = ();
+		@relay = ();
+		@audio = ();
+		@automation = ();
+		@ledger = ();
+		Manager::appointment_writer(RelayCtx->new, {
+			app => 'relay_rec',
+			type => 'record',
+			timestamp => 1_700_000_100_000,
+			server_time => 1_700_000_100_000,
+			uuid => '1700000100000-rec',
+			quiet_child => 1,
+			%extra,
+		});
+	}
+	$RECORD_SETTING = 'system';
+	write_record(mirror => 'yes', dissemination => 'yes', source_signatorial => 'peer');
+	ok(!@audio, 'a mirrored record starts no recorder on the peer');
+	ok(!@automation, 'and toggles no device');
+	ok(!@ledger, 'and writes no ledger entry');
+	is(scalar @inserted, 1, 'the mirrored row is still written');
+	is($inserted[0]{'seen'}, 'yes', 'and is not left unseen for the Alarm');
+
+	# The same row on the machine that pressed it still runs the press.
+	write_record();
+	ok(@audio, 'a local record press starts the recorder');
+	ok(@automation, 'and toggles the device');
+	ok(@ledger, 'and writes the ledger entry');
 }
 
 # The two writers that distribute a press themselves mark it.
