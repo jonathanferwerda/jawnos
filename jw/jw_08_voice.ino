@@ -95,13 +95,9 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
                   mode, (unsigned)homebaseIP.length(), (unsigned)authorization.length());
     return false;
   }
-  // the same backoff the room fetch keeps: with the homebase away a TLS connect
-  // only times out, and a run of those is what asserts in the TLS/lwip stack and
-  // reboots the watch (see the notes). While it is marked down, do not POST.
-  if ((int32_t)(millis() - homebase_down_until) < 0) {
-    Serial.printf("[voice] post mode=%s skipped: homebase marked down\n", mode);
-    return false;
-  }
+  // A person just spoke: a fresh clip gets its attempt even if a background
+  // fetch marked the homebase down. The 4 s timeout bounds the cost, and the
+  // retry window is what makes a slow join survivable.
   File f = FFat.open(path.c_str(), FILE_READ);
   if (!f) {
     Serial.printf("[voice] post mode=%s skipped: clip open failed (%s)\n", mode, path.c_str());
@@ -122,20 +118,23 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
     + "&voice=" + String(mode)
     + "&timestamp=" + String(ts);
   bool ok = false;
+  bool reached = false;
   if (https.begin(client, url)) {
     https.addHeader("Content-Type", "application/octet-stream");
     int code = https.sendRequest("POST", &f, (size_t)f.size());
     Serial.printf("[voice] post mode=%s -> %d\n", mode, code);
     // Only 2xx means the house took the body. A 403 (auth) or 400 (unusable
     // body) is a failure like any other: keep the clip for the bounded retry
-    // and let the caller fall back to the other transport.
+    // and let the caller fall back to the other transport. A 4xx still proves
+    // the homebase is reachable, so it must not mark it down.
+    reached = code > 0;
     ok = (code >= 200 && code < 300);
     https.end();
   }
   else {
     Serial.printf("[voice] post mode=%s begin failed\n", mode);
   }
-  homebase_down_until = ok ? 0 : millis() + 20000;
+  homebase_down_until = (ok || reached) ? 0 : millis() + 20000;
   f.close();
   return ok;
 }
@@ -755,6 +754,59 @@ static bool voice_compress_clip(const String &in_path, const String &out_path, b
   free(buf);
   Serial.printf("[voice] compressed clip %u -> %u bytes\n", (unsigned)pcm_bytes, (unsigned)wrote);
   return wrote == o;
+}
+
+// Collect the answer over WiFi when no BLE bridge can carry it. The house parks
+// the words the moment they are ready and the rendered WAV id when the voice
+// finishes (/watch/reply); each is handed over once. The ship task calls this
+// after a clip that went over WiFi, so a watch with no bridge still shows and
+// speaks the reply. Bounded on purpose: the UI loop keeps running while this
+// background task polls.
+static void wifi_reply_poll(uint32_t budget_ms) {
+  if (WiFi.status() != WL_CONNECTED || homebaseIP.length() == 0 || authorization.length() == 0) {
+    Serial.println("[say] reply poll skipped (no wifi/homebase/auth)");
+    return;
+  }
+  uint32_t started = millis();
+  bool got_text = false;
+  bool got_audio = false;
+  while (millis() - started < budget_ms) {
+    String url = url_maker("https://" + homebaseIP + "/watch/reply?poll=1");
+    String body = https_request(url);
+    if (body.length()) {
+      JSONVar r = JSON.parse(body);
+      if (JSON.typeof(r) != "undefined") {
+        if (r.hasOwnProperty("text")) {
+          String t = (const char *)r["text"];
+          if (t.length() && !got_text) {
+            if (xSemaphoreTake(taskMutex, portMAX_DELAY) == pdTRUE) {
+              say_text = t;
+              say_text_pending = true;
+              xSemaphoreGive(taskMutex);
+            }
+            got_text = true;
+            Serial.printf("[say] polled reply %u chars: %s\n", (unsigned)t.length(), t.c_str());
+          }
+        }
+        if (r.hasOwnProperty("id")) {
+          String id = (const char *)r["id"];
+          String base = r.hasOwnProperty("base") ? (const char *)r["base"] : String("");
+          if (id.length() && base.length() && !got_audio && WiFi.status() == WL_CONNECTED) {
+            if (say_fetch_req) { delete say_fetch_req; }
+            say_fetch_req = new String(base + "/watch/reply_audio?id=" + id);
+            if (say_fetch_req) {
+              say_fetch_pending = true;
+              got_audio = true;
+              Serial.println("[say] polled audio ready; fetching");
+            }
+          }
+        }
+      }
+    }
+    if (got_text && got_audio) { break; }
+    vTaskDelay(600 / portTICK_PERIOD_MS);
+  }
+  Serial.printf("[say] reply poll done text=%d audio=%d\n", (int)got_text, (int)got_audio);
 }
 
 // Ship a clip by whichever radio is up: the BLE bridge first (the preferred

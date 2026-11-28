@@ -849,6 +849,76 @@ sub device_reply_wav {
 	return $id;
 }
 
+# A reply parked for the watch to collect over WiFi. The BLE bridge is the only
+# trigger for the spoken answer today (say, say_audio_ready), so a watch that is
+# on WiFi with no bridge hears nothing at all. watch_reply parks the words here
+# the moment they are ready, and the rendered WAV id when Piper finishes; the
+# watch polls /watch/reply after it ships and shows/speaks what it takes. The
+# text is handed over once and the id once, so a poll can never repeat a line.
+# The window is deliberately short: a reply is a live turn, not a mailbox.
+sub watch_pending_reply_file {
+	my ($chip) = @_;
+	return '' unless defined $chip && length $chip;
+	my $dir = &subs::home('~/.president/watch-reply');
+	eval { File::Path::make_path($dir) } unless -d $dir;
+	return $dir . '/' . &subs::path_name($chip) . '.json';
+}
+
+sub watch_pending_reply_put {
+	my ($meta, %fields) = @_;
+	my $chip = ref $meta eq 'HASH' ? ($meta->{'chip_id'} // '') : ($meta // '');
+	my $file = &watch_pending_reply_file($chip);
+	return unless length $file;
+	my $now = &subs::rightNow();
+	my $cur = {};
+	if (-e $file) {
+		my $raw = eval { read_file($file) };
+		my $d = eval { decode_json($raw // '') };
+		$cur = $d if ref $d eq 'HASH';
+	}
+	# an entry older than the window belongs to another turn: start afresh
+	$cur = {} if $cur->{'ts'} && $now - $cur->{'ts'} > 180000;
+	$cur->{'ts'} = $now;
+	foreach my $k (keys %fields) {
+		$cur->{$k} = $fields{$k} if defined $fields{$k};
+	}
+	eval { write_file($file, encode_json($cur)) };
+	return;
+}
+
+sub watch_pending_reply_take {
+	my ($chip) = @_;
+	my $file = &watch_pending_reply_file($chip);
+	return { ok => 1, wait => 1 } unless length $file && -e $file;
+	my $raw = eval { read_file($file) };
+	my $d = eval { decode_json($raw // '') };
+	return { ok => 1, wait => 1 } unless ref $d eq 'HASH';
+	my $now = &subs::rightNow();
+	if ($d->{'ts'} && $now - $d->{'ts'} > 180000) {
+		unlink $file;
+		return { ok => 1, wait => 1 };
+	}
+	if (length($d->{'text'} // '') && !$d->{'text_sent'}) {
+		my %out = (ok => 1, text => $d->{'text'});
+		if (length($d->{'id'} // '')) {
+			# both halves are ready: hand them over together and clear
+			$out{'id'} = $d->{'id'};
+			$out{'base'} = $d->{'base'};
+			unlink $file;
+		}
+		else {
+			$d->{'text_sent'} = 1;
+			eval { write_file($file, encode_json($d)) };
+		}
+		return \%out;
+	}
+	if (length($d->{'id'} // '') && !$d->{'id_sent'}) {
+		unlink $file;
+		return { ok => 1, id => $d->{'id'}, base => $d->{'base'} };
+	}
+	return { ok => 1, wait => 1 };
+}
+
 # A spoken answer to a voice command that came from the watch: push the reply
 # text (the watch shows it on screen) and the spoken answer (a short piper clip
 # the watch plays) over the bridge, so the answer lands on the wrist. No local
@@ -867,6 +937,12 @@ sub watch_reply {
 		? (&subs::rightNow() - $meta->{'t_arrival'}) . 'ms' : '-';
 	my $who = ' chip=' . $meta->{'chip_id'} . ' since_onset=' . $since_onset
 		. ' since_arrival=' . $since_arrival;
+	# A WiFi clip knows the watch's address, and a watch with no BLE bridge can
+	# still collect the answer: park the words for the /watch/reply poll. A BLE
+	# clip has no address and keeps the bridge as its only road.
+	if (($meta->{'peer_ip'} || '') ne '') {
+		&subs::watch_pending_reply_put($meta, text => $text);
+	}
 	# One ledger line for the reply transport, so the 5 s budget has a close:
 	# asr/brain say when the words were ready, this says how they went out.
 	my $reply_timing = sub {
@@ -930,6 +1006,9 @@ sub watch_reply_wifi {
 	my $edt = $args->{'edt'} || 'watch';
 	my $id = &subs::device_reply_wav($text);
 	if ($id) {
+		# the WiFi-only watch learns the id from its poll, not from BLE
+		&subs::watch_pending_reply_put({ chip_id => $meta->{'chip_id'}, edt => $edt },
+			id => $id, base => $args->{'base'});
 		&subs::bluetooth_sender({
 			intent => 'com.jawn.president.bt.connect',
 			chip_id => $meta->{'chip_id'},

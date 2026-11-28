@@ -236,6 +236,18 @@ post '/watch/voice' => sub($c) {
 	$c->render('text' => 'ok');
 };
 
+get '/watch/reply' => sub($c) {
+	# A watch on WiFi collects its answer here after it ships the clip: the BLE
+	# bridge is what normally carries the words and the audio-ready id, so a
+	# watch with no bridge would otherwise hear nothing. The text is handed over
+	# once and the rendered WAV id once, then the entry is cleared.
+	my $chip_id = $c->param('chip_id');
+	if (my $watch_settings = &embeddedAuthorizer($c)) {
+		$c->render(json => &subs::watch_pending_reply_take($chip_id));
+	}
+	else { $c->render(json => { ok => 0 }, status => 403); }
+};
+
 post '/watch/voice/stream' => sub($c) {
 	# Chunked WiFi upload: the watch POSTs encoded clip chunks while it is still
 	# recording, each with a session id, seq and last, and the last one is

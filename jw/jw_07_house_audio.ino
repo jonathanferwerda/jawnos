@@ -869,6 +869,10 @@ static void rec_voice_ship_task(void *pv) {
                   mode, ts, ok ? (streamed ? "streamed" : "shipped") : "NOT shipped",
                   (unsigned)attempts);
     if (!note && ok) { voiceAwaitingSince = millis(); voiceAwaitingReply = true; }
+    // With no BLE bridge to carry the answer, collect it over WiFi: the house
+    // parks the words at once and the audio id when the voice is ready. The
+    // wait indicator is already on, so the wrist shows the turn is live.
+    if (!note && ok && !ble_link_ready()) { wifi_reply_poll(15000); }
     if (!streamed && ship_path == packed && FFat.exists(packed.c_str())) { FFat.remove(packed.c_str()); }
     // A note's listener already restarted with the mic; a Com command waits for
     // the Guide's answer unless the ship failed outright.
@@ -912,6 +916,17 @@ void micCaptureTask(void *pvParameters) {
     // From here until mic->close() the manual capture owns the microphone;
     // loop() must not restart the listener underneath it.
     manualCaptureActive = true;
+    // The ship should not wait for the radio to join after the person stops
+    // speaking: begin the association while the clip is being recorded. The
+    // join is asynchronous, so the capture is not held for it.
+    if (WiFi.status() != WL_CONNECTED) {
+      wifi_wake_from_nap();
+      if (WiFi.status() != WL_CONNECTED && wifi_enabled && ssid.length()) {
+        WiFi.mode(wifi_ap_enabled ? WIFI_AP_STA : WIFI_STA);
+        WiFi.begin(ssid.c_str(), password.c_str());
+        Serial.println("[voice] wifi joining for the ship");
+      }
+    }
     voiceListenStopAndWait();
 
     AudioInputIf *mic = watch.getAudioInput();
