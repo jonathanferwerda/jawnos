@@ -25,6 +25,7 @@ no warnings 'experimental::signatures';
 no warnings 'experimental::args_array_with_signatures';
 
 use Mojo::JSON qw(decode_json encode_json);
+use Time::Piece;
 
 our $CATALOG;
 our %STOP = map { $_ => 1 } qw(
@@ -365,12 +366,218 @@ sub voice_funnel_enabled {
 	return 1;
 }
 
-# ---- fast resolvers --------------------------------------------------------
+# ---- history / visit resolver ---------------------------------------------
+
+# The words that frame a question about the person's own records. They are
+# stripped before the rest of the sentence is looked up, so "when did I last
+# see Brian Coulbeck" names the person, not the tense.
+my %voice_funnel_history_strip = map { $_ => 1 } qw(
+	hey jawn please tell me when whens what whats which how long many
+	time times did was were is are am be been being do does done have has had
+	i we you me my our us your last first next previous latest
+	see saw seen visit visited visiting visits stay stayed staying
+	go went going at to with from the a an that this
+	it there about of in on for
+);
+
+# A question with no named thing ("when is the next appointment") is left to the
+# model: it is a real question, but it is not answerable from one app's rows.
+my %voice_funnel_history_generic = map { $_ => 1 } qw(
+	appointment appointments event events meeting meetings
+	record records entry entries thing things stuff something
+);
+
+# "When did I last message Brian" names a person, but it is a mail question, not
+# an appointment-history one. Leave it to the Guide rather than answer from the
+# wrong table.
+my %voice_funnel_history_not = map { $_ => 1 } qw(
+	message messaged messaging call called calling email emailed emailing
+	text texted texting mail mailed mailing send sent sending
+);
+
+sub _voice_funnel_when($ts) {
+	my $when = localtime($ts / 1000)->strftime('%A %B %d, %Y at %I:%M%p');
+	$when =~ s/\b0(\d:)/$1:/;
+	$when =~ s/(\d)([AP]M)\b/$1 $2/;
+	return $when;
+}
+
+sub _voice_funnel_duration($ms) {
+	my $seconds = int(abs($ms) / 1000);
+	my $minutes = int($seconds / 60);
+	my $rest = $seconds % 60;
+	my @part;
+	push @part, $minutes . ($minutes == 1 ? ' minute' : ' minutes') if $minutes;
+	push @part, $rest . ($rest == 1 ? ' second' : ' seconds') if $rest || !$minutes;
+	return join ' ', @part;
+}
+
+# Answer a "when did I last see <name>", "how long was my last visit to
+# <place>", "how many times have I been to <place>" question from the same
+# appointments the Guide's find reads - without a model. It is deliberately
+# conservative: an entity that does not resolve to one app returns undef, so an
+# unsure question still reaches the Guide.
+sub voice_funnel_history_answer($text, $meta = {}) {
+	$meta ||= {};
+	my $low = lc(defined $text ? $text : '');
+	# A history question carries a tense or a visit/see verb, and a question word.
+	# "how many times did I message Brian" is a mail question, not a history one.
+	return undef if grep { $voice_funnel_history_not{$_} } split /\s+/, $low;
+	my $has_tense = $low =~ /\b(?:last|first|next|previous|latest)\b/ ? 1 : 0;
+	my $has_verb = $low =~ /\b(?:see|saw|seen|visit(?:ed|ing|s)?|stay(?:ed|ing|s)?|been|go|went|going|at)\b/ ? 1 : 0;
+	return undef unless $has_tense || $has_verb;
+	return undef unless $low =~ /\bwhen(?:'s|s)?\b|\bwhat\s+time\b|how\s+(?:long|many)/;
+	# Weather has its own fast resolver; never steal its turn.
+	return undef if $low =~ /\bweather\b|\bforecast\b|\brain\b|\bsnow\b|\btemperature\b|\bwind\b/;
+	my $which = $low =~ /how\s+long|\blasted\b|\bstay(?:ed|ing|s)?\b/ ? 'duration'
+		: $low =~ /how\s+many/ ? 'count'
+		: $low =~ /\bfirst\b/ ? 'first'
+		: $low =~ /\bnext\b/ ? 'next'
+		: 'last';
+	# A visit asks where the person was; a person question asks when they were
+	# seen. The verbs decide which record type carries the moment.
+	my $is_visit = $low =~ /\bvisit(?:ed|ing|s)?\b|\bstay(?:ed|ing|s)?\b|\bbeen\s+to\b|\b(?:go|went|going)\b|\bat\b/ ? 1 : 0;
+	$is_visit = 1 if $which eq 'duration';
+	# The entity: drop the question frame and the verbs, then require something.
+	my $flat = $low;
+	$flat =~ s/['\x{2019}]//g;
+	$flat =~ s/[^\p{L}\p{N}]+/ /g;
+	my @token = grep {
+		length($_) > 1
+			&& !$voice_funnel_history_strip{$_}
+			&& !$voice_funnel_history_generic{$_}
+	} split /\s+/, $flat;
+	my $entity = join ' ', @token;
+	$entity =~ s/^\s+|\s+$//g;
+	return undef unless length $entity;
+	my $device = $meta->{'chip_id'};
+	my $found = eval { &Manager::help_search($entity, $device) };
+	return undef unless ref $found eq 'HASH' && ref $found->{'apps'} eq 'ARRAY' && @{ $found->{'apps'} };
+	my @apps = @{ $found->{'apps'} };
+	# Two apps with the same count is a question the resolver cannot answer
+	# without guessing; let the model ask.
+	return undef if @apps > 1 && ($apps[0]->{'count'} // 0) == ($apps[1]->{'count'} // 0);
+	my $app = $apps[0]->{'app'};
+	return undef unless defined $app && length $app;
+	my $visible = eval { &Manager::help_app_visible($app, $device) };
+	return undef unless $visible;
+	my $raw = eval { &subs::db_raw(
+		'select uuid, app, type, timestamp, duration, notes from appointments where app = ? order by cast(timestamp as integer) asc',
+		$app) };
+	return undef unless ref $raw eq 'ARRAY';
+	my $private_open = eval { (&subs::private_reachable_now() && &subs::private_revealed($device)) ? 1 : 0 } || 0;
+	my @rows = grep {
+		defined $_->{'timestamp'} && $_->{'timestamp'} =~ /^\d+$/
+			&& !( (eval { &subs::appointment_private_now($_) } || 0) && !$private_open )
+	} @{ $raw };
+	return undef unless @rows;
+	$_->{'ts'} = 0 + $_->{'timestamp'} for @rows;
+	@rows = sort { $a->{'ts'} <=> $b->{'ts'} } @rows;
+	my $now = &subs::rightNow();
+	my $label = eval { &subs::format_name($app) };
+	$label = $entity unless defined $label && length $label;
+	# A visit prefers the stop rows (the completed visits); a person question
+	# reads both moments. If the preferred kind never appears, all rows answer.
+	my %prefer = map { $_ => 1 } ($is_visit ? ('stop') : ('start', 'stop'));
+	my @set = grep { $prefer{ lc($_->{'type'} // '') } } @rows;
+	@set = @rows unless @set;
+	my $result = sub {
+		my ($speech) = @_;
+		return {
+			handled => 1, kind => 'history', speech => $speech,
+			app => $app, which => $which,
+		};
+	};
+	if ($which eq 'count') {
+		# A visit is counted by its stop rows; an app with only pictures or
+		# starts cannot say how many times the person was there.
+		my @counted = $is_visit
+			? grep { lc($_->{'type'} // '') eq 'stop' } @rows
+			: @set;
+		my $n = scalar @counted;
+		return undef unless $n;
+		return $result->('You have ' . ($is_visit ? 'been to ' . $label : 'seen ' . $label)
+			. ' ' . $n . ($n == 1 ? ' time.' : ' times.'));
+	}
+	if ($which eq 'next') {
+		# A future start at a place is a next visit just as a future stop is.
+		my @nextset = grep { lc($_->{'type'} // '') =~ /^(?:start|stop)$/ } @rows;
+		@nextset = @set unless @nextset;
+		my ($next) = grep { $_->{'ts'} > $now } @nextset;
+		return undef unless $next;
+		my $when = &_voice_funnel_when($next->{'ts'});
+		return $result->($is_visit
+			? 'Your next visit to ' . $label . ' is on ' . $when . '.'
+			: 'You next see ' . $label . ' on ' . $when . '.');
+	}
+	if ($which eq 'first') {
+		my $first = $set[0];
+		return undef unless $first;
+		my $when = &_voice_funnel_when($first->{'ts'});
+		return $result->($is_visit
+			? 'You first visited ' . $label . ' on ' . $when . '.'
+			: 'You first saw ' . $label . ' on ' . $when . '.');
+	}
+	# "duration" reads every row: an open start is the latest visit, and its
+	# length must not be invented.
+	if ($which eq 'duration') {
+		my @past = grep {
+			my $row = $_;
+			$row->{'ts'} <= $now
+				&& (($row->{'type'} // '') eq 'start' || ($row->{'type'} // '') eq 'stop')
+		} @rows;
+		my $last = $past[-1];
+		return undef unless $last;
+		my $type = lc($last->{'type'} // '');
+		my $when = &_voice_funnel_when($last->{'ts'});
+		if ($type eq 'start') {
+			return $result->('Your last visit to ' . $label . ' is still open, since ' . $when . '.');
+		}
+		my $duration = $last->{'duration'};
+		return undef unless defined $duration && $duration =~ /^-?\d+$/ && $duration != 0;
+		return $result->('Your last visit to ' . $label . ' lasted '
+			. &_voice_funnel_duration($duration) . ', on ' . $when . '.');
+	}
+	# An open start is where the person is now; an older stop is not their last
+	# visit. Check the presence rows before the preferred set reports a past stop.
+	my @presence = grep { $_->{'ts'} <= $now && lc($_->{'type'} // '') =~ /^(?:start|stop)$/ } @rows;
+	my $latest = $presence[-1];
+	# A start alone can be a meeting logged only at its start, or a forgotten
+	# session. Only a start from the last twelve hours is "now"; an older one is
+	# read as the last time, which is the safer answer.
+	if ($latest && lc($latest->{'type'} // '') eq 'start'
+		&& ($now - $latest->{'ts'}) <= 12 * 60 * 60 * 1000) {
+		my $since = &_voice_funnel_when($latest->{'ts'});
+		return $result->($is_visit
+			? 'You are at ' . $label . ' now, since ' . $since . '.'
+			: 'You are with ' . $label . ' now, since ' . $since . '.');
+	}
+	my @past = grep { $_->{'ts'} <= $now } @set;
+	my $last = $past[-1];
+	return undef unless $last;
+	my $when = &_voice_funnel_when($last->{'ts'});
+	if ($is_visit) {
+		my $duration = '';
+		if (lc($last->{'type'} // '') eq 'stop'
+			&& defined $last->{'duration'} && $last->{'duration'} =~ /^-?\d+$/
+			&& $last->{'duration'} != 0) {
+			$duration = &_voice_funnel_duration($last->{'duration'});
+		}
+		return $result->('You were last at ' . $label . ' on ' . $when
+			. ($duration ? ', for ' . $duration : '') . '.');
+	}
+	return $result->('You last saw ' . $label . ' on ' . $when . '.');
+}
 
 sub voice_funnel_fast($text, $meta = {}) {
 	my $low = lc(defined $text ? $text : '');
 	# "weather station" is an app, not the forecast; leave that to the app grammar.
 	return undef if $low =~ /\bstation\b/;
+	# History/visit questions read the person's own appointments. The resolver
+	# returns undef when the entity or the question does not resolve, so the
+	# weather path and the model keep their turns.
+	my $history = &voice_funnel_history_answer($text, $meta);
+	return $history if $history;
 	return undef unless $low =~ /\bweather\b|\bforecast\b|\brain\b|\bsnow\b/;
 	return undef unless $low =~ /what|how|will|is|forecast|tomorrow|today|rain|snow|temperature|outside|high|low|wind/;
 	my $when = $low =~ /tomorrow/ ? 'tomorrow' : 'now';

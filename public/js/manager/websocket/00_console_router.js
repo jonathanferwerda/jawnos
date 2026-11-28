@@ -188,6 +188,9 @@ var jawnosConsoleCommands = {
 	helpChatIngest: function (a) {
 		if (typeof helpChatIngest === 'function') { helpChatIngest(String(a[0] || '')); }
 	},
+	helpPendingReload: function () {
+		if (typeof helpPendingReload === 'function') { helpPendingReload(); }
+	},
 	jawnosClockAlarmRing: function (a) {
 		if (typeof jawnosClockAlarmRing === 'function') { jawnosClockAlarmRing(a[0] || {}); }
 	},

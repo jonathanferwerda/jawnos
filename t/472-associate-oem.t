@@ -197,7 +197,7 @@ ok(index($devices_help, "the phone\\'s own recogniser answers the microphone ins
 	'the Guide topic says the phone recogniser fills the box as you speak and keeps no recording');
 ok(index($devices_help, "Any other choice, or a machine without the phone\\'s recogniser, records the clip and sends it to the house as before") >= 0,
 	'and that every other choice still records and sends the clip');
-like($devices_help, qr/app => 'help',[\s\S]{0,600}?verified => '2026-11-27'/,
+like($devices_help, qr/app => 'help',[\s\S]{0,600}?verified => '2026-11-28'/,
 	'the Guide topic was re-vetted with the change');
 
 done_testing();

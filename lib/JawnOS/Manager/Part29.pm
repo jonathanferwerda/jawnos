@@ -534,6 +534,7 @@ sub app_action_pending_store($opts, $payload) {
 		app => '__president', context => 'app_action_pending',
 		subcontext => $key, warranty => '-2m',
 	}, \%row);
+	_app_action_pending_reload();
 	return $key;
 }
 
@@ -560,10 +561,123 @@ sub app_action_pending_take($opts) {
 	my $where = { app => '__president', context => 'app_action_pending', subcontext => $key };
 	my $row = eval { &subs::cache_get($where) };
 	&subs::cache_delete($where);
+	# A row was removed even if it was stale or for another speaker, so the
+	# Guide's strip must drop it either way.
+	_app_action_pending_reload() if ref $row eq 'HASH';
 	return undef unless ref $row eq 'HASH';
 	return undef unless ($row->{'speaker'} // '') eq $speaker;
 	return undef if &subs::rightNow() - ($row->{'at'} // 0) > $app_action_pending_ttl;
 	return $row;
+}
+
+# Tell any open Guide window that the held-write list changed. The command is
+# data the browser routes through its fixed table; nothing is sent when no
+# window is listening, and a failure here never breaks the write.
+sub _app_action_pending_reload {
+	eval { &Websocket::send('tab', { console => &Websocket::console_command('helpPendingReload') }); };
+	return;
+}
+
+# The held writes this machine is holding, one row each, for the Guide's card.
+# The cache is machine-local and never synced, so every row is for this machine;
+# the Guide may open under a different device type than the watch that spoke, so
+# the device column is deliberately not part of the filter. A row older than the
+# TTL, naming an app the Guide cannot see here, or naming an action the registry
+# no longer declares is not shown - matching what a spoken "yes" would accept.
+sub app_action_pending_list($c, $device) {
+	$device = '' unless defined $device;
+	my $q = &subs::db_query(
+		'select subcontext, data from cache where app = ? and context = ?',
+		'__president', 'app_action_pending'
+	);
+	my $now = &subs::rightNow();
+	my @out;
+	foreach my $row ( @{ ($q ? $q->hashes : []) || [] } ) {
+		next unless ref $row eq 'HASH';
+		my $id = $row->{'subcontext'} // '';
+		next unless $id =~ /^[a-f0-9]{24}$/;
+		my $payload = eval { decode_sereal($row->{'data'}) };
+		next unless ref $payload eq 'HASH';
+		my $at = defined $payload->{'at'} ? $payload->{'at'} : 0;
+		next if $now - $at > $app_action_pending_ttl;
+		my $entry = &help::app_action_find($payload->{'app'}, $payload->{'do'});
+		next unless $entry;
+		next unless &help_app_visible($entry->{'app'}, $device);
+		my @vals;
+		foreach my $k (sort keys %{ $payload->{'params'} || {} }) {
+			my $v = $payload->{'params'}->{$k};
+			next unless defined $v && !ref $v && length $v;
+			push @vals, $v;
+		}
+		my $label = ucfirst($entry->{'desc'} // $payload->{'do'} // 'a change');
+		$label .= ': ' . join(', ', @vals) if @vals;
+		push @out, {
+			id => $id,
+			app => $entry->{'app'},
+			do => $entry->{'do'},
+			params => { %{ $payload->{'params'} || {} } },
+			at => $at,
+			desc => $entry->{'desc'},
+			label => $label,
+		};
+	}
+	return [ sort { ($b->{'at'} // 0) <=> ($a->{'at'} // 0) } @out ];
+}
+
+# Confirm one held write. The row is deleted before the action runs, so a
+# double press cannot run it twice: the delete is the claim. A missing, expired
+# or now-hidden row is refused with the same "expired" answer the person sees.
+sub app_action_pending_confirm($c, $id) {
+	$id = '' unless defined $id;
+	return { ok => 0, error => 'That proposal has expired.' }
+		unless $id =~ /^[a-f0-9]{24}$/;
+	my $q = &subs::db_query(
+		'select data from cache where app = ? and context = ? and subcontext = ?',
+		'__president', 'app_action_pending', $id
+	);
+	my $raw = $q ? $q->hash : undef;
+	my $payload = $raw ? eval { decode_sereal($raw->{'data'}) } : undef;
+	# Delete before running, and let the delete be the claim: of two requests
+	# that both read the row, exactly one DELETE reports a changed row. The
+	# other runs nothing, so a double press cannot run the action twice.
+	my $del = &subs::db_query(
+		'delete from cache where app = ? and context = ? and subcontext = ?',
+		'__president', 'app_action_pending', $id
+	);
+	my $claimed = ($del && $del->rows) ? 1 : 0;
+	_app_action_pending_reload() if $claimed;
+	return { ok => 0, error => 'That proposal has expired.' }
+		unless $claimed && ref $payload eq 'HASH';
+	return { ok => 0, error => 'That proposal has expired.' }
+		if &subs::rightNow() - ($payload->{'at'} // 0) > $app_action_pending_ttl;
+	my $entry = &help::app_action_find($payload->{'app'}, $payload->{'do'});
+	return { ok => 0, error => 'That action is no longer available.' } unless $entry;
+	my $device = eval { &media_unlock_device($c) } || '';
+	return { ok => 0, error => 'That app is hidden here.' }
+		unless &help_app_visible($entry->{'app'}, $device);
+	# The screen's own confirmation is the browser path: not a voice turn, not a
+	# resume, and carrying the flag that says a person pressed the button.
+	my $r = app_action_execute($c, {
+		action => 'app', app => $payload->{'app'}, do => $payload->{'do'},
+		params => { %{ $payload->{'params'} || {} } }, confirmed => 1,
+	}, {});
+	unless (ref $r eq 'HASH' && $r->{'ok'}) {
+		return { ok => 0, error => ((ref $r eq 'HASH' && $r->{'error'}) || 'That did not work.') };
+	}
+	return { ok => 1, observation => ($r->{'speech'} || $r->{'error'}), result => $r };
+}
+
+# Drop one held write. Cancelling is idempotent: an id that is already gone is
+# still a success, because the person's intent - it must not run - is satisfied.
+sub app_action_pending_cancel($c, $id) {
+	$id = '' unless defined $id;
+	return { ok => 1 } unless $id =~ /^[a-f0-9]{24}$/;
+	my $q = &subs::db_query(
+		'delete from cache where app = ? and context = ? and subcontext = ?',
+		'__president', 'app_action_pending', $id
+	);
+	_app_action_pending_reload() if $q && $q->rows;
+	return { ok => 1 };
 }
 
 # ---- the app-action bridge -------------------------------------------------

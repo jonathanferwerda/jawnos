@@ -155,6 +155,7 @@
 		</div>
 		<div class="help_chat_log" style="display:none;flex:1;min-height:0;overflow-y:auto;padding:12px 14px 24px;box-sizing:border-box;"></div>
 	</div>
+	<div id="help_pending" class="help_pending" style="display:none;flex:0 0 auto;border-top:2px solid var(--line);padding:8px 12px;box-sizing:border-box;background:var(--panel);"></div>
 	<div class="help_agent" style="border-top:2px solid var(--line);padding:8px 12px 10px;box-sizing:border-box;flex:0 0 auto;background:var(--panel);">
 		<div class="help_agent_row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
 			<span style="font-weight:bold;font-size:13px;opacity:.8;">Guide</span>

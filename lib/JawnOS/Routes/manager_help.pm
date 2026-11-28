@@ -34,6 +34,9 @@ sub routes {
 	[36839, 'post', '/manager/help/verbs', 'action_36839'],
 	[36856, 'post', '/manager/help/verb', 'action_36856'],
 	[37610, 'post', '/manager/help/review', 'action_37610'],
+	[37700, 'get', '/manager/help/pending', 'action_37700'],
+	[37701, 'post', '/manager/help/pending/confirm', 'action_37701'],
+	[37702, 'post', '/manager/help/pending/cancel', 'action_37702'],
 	);
 }
 

@@ -39,6 +39,7 @@ The key point is that the Guide is not given a bigger catalogue as the house gro
 Some questions are better answered without a model:
 
 - **Weather** — `voice_funnel_weather_answer` reads the same forecast as the Weather app (`lib/JawnOS/Domain/Weather.pm:1139`), using the current GPS fix, the home plate, or a saved place. It answers “now”, “tomorrow”, rain chance, high/low and wind.
+- **History / visit** — `voice_funnel_history_answer` resolves the named person or place through `Manager::help_search`, reads only that app's appointments, and answers last (past only), first, next, a count, or a stop's duration. A start from the last twelve hours reads as “now”; an older lone start is the last time. A mail/chat verb ("message", "call", "email") is deliberately left to the model.
 - **Find / stop** — the spoken Guide now has a `find` branch (`Manager::help_search`) and a `stop` branch (`voice_command_apply`). These were already server-side; the funnel exposes them to the wrist.
 
 A fast resolver returns `{ handled => 1, speech => '...' }`; `voice_brain` speaks it and never calls the model. Add the next one when a question has a reliable, cheap answer.
@@ -165,29 +166,47 @@ The cache row is never synced between machines, and the executor re-validates
 the registry, visibility, parameters and scope when it resumes. With the
 Confirmation Requirement off a write still runs at once.
 
+### The Guide's held-write card
+
+The Guide window lists the held writes for this machine in a strip above the
+composer. `GET /manager/help/pending` returns the live rows (TTL, registry and
+`help_app_visible` filtered); `POST /manager/help/pending/confirm` deletes the
+row as its claim and runs the action through the browser path; `POST
+/manager/help/pending/cancel` drops it. There is no poller: the server sends the
+`helpPendingReload` console command when a row is stored, taken, confirmed or
+cancelled, and the strip also loads when the Guide window opens.
+
 Not done yet: the full Guide window is not offered `app` (it is `voice_only`);
-history/visit, camera and window control still need a route or a resolver that
-fits the same shape (camera has no server route today). To add an action, add
-one entry to `@gb::app_actions` and a test to `t/484-app-action-bridge.t`
-(read/execute) or `t/487-store-actions.t` (a read family's speech).
+camera and window control still need a route or a resolver that fits the same
+shape (camera has no server route today). To add an action, add one entry to
+`@gb::app_actions` and a test to `t/484-app-action-bridge.t` (read/execute),
+`t/487-store-actions.t` (a read family's speech) or `t/488-history-visit.t` (a
+fast resolver).
 
 ## Files
 
 - `lib/JawnOS/Domain/VoiceFunnel.pm` — catalogue, matcher, router, identity,
-  weather, app action lines.
+  weather, history/visit, app action lines.
 - `lib/JawnOS/Domain/Ai.pm` — fast path, scoped prompt, `find`/`stop`/`app`
   branches, and `voice_confirmation_kind` for the held write's yes/no.
 - `lib/JawnOS/Manager/Part29.pm` — `app_action_execute`: the registry gate,
   visibility, confirmation, route lookup and JSON dispatch; the held-write
-  `app_action_pending_store`/`take`.
+  `app_action_pending_store`/`take`/`peek` and the Guide's
+  `app_action_pending_list`/`confirm`/`cancel`.
 - `lib/JawnOS/Routes.pm` — `table`/`lookup`, the one route table the server and
   the bridge share.
+- `lib/JawnOS/Controller/manager_help.pm`, `lib/JawnOS/Routes/manager_help.pm` —
+  the held-write list, confirm and cancel routes.
+- `public/js/manager/help/03_pending.js`, `public/js/manager/help.js`,
+  `public/js/manager/websocket/00_console_router.js`,
+  `templates/apps/help.html.ep` — the card strip and its reload command.
 - `perl/gb/03_engines_and_tools.pl` — `@gb::app_actions` and the `app` tool.
 - `perl/help.pl` — `app_actions`, `app_action_find`, `app_action_lines`.
 - `lib/JawnOS/Manager/Part28.pm` — self-app fallback for `measure`.
-- `perl/help/topics_features.pl`, `perl/help/topics_business.pl` — the Voice
-  topic mentions the funnel, the bridge and the held write; the Store topic
-  names its voice lookups.
-- `t/483-voice-funnel.t`, `t/484-app-action-bridge.t`, `t/487-store-actions.t`
-  — matcher, scope, router contract, identity, weather, the action gates, the
-  held write and the Store family.
+- `perl/help/topics_features.pl`, `perl/help/topics_business.pl`,
+  `perl/help/topics_functions.pl`, `perl/help/topics_devices.pl` — the Voice,
+  Store, Appointments and Help topics name the new answers and the card.
+- `t/483-voice-funnel.t`, `t/484-app-action-bridge.t`, `t/487-store-actions.t`,
+  `t/488-history-visit.t`, `t/489-pending-card.t` — matcher, scope, router
+  contract, identity, weather, history/visit, the action gates, the held write,
+  the Store family and the card.

@@ -2,6 +2,7 @@
    help.js is part 1. The rest live in help/ in name order:
      01_music_speech.js - play music, chat ingest, ask and the speech recorder
      02_converse_coding_wiring.js - echo check, conversation mode, coding agent and wiring
+     03_pending.js - the held-write card: list, confirm and cancel
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 // The Help app. A window that explains JawnOS in plain language, and a Guide
@@ -36,6 +37,8 @@ function helpOpener(topic) {
 		success: function (response) {
 			windowMaker(response);
 			setTimeout(helpRefreshContext, 300);
+			// the held writes the Guide is offering, if the card part is loaded
+			if (typeof helpPendingLoad === 'function') { setTimeout(helpPendingLoad, 350); }
 		}
 	});
 }

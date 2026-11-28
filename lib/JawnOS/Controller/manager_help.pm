@@ -785,4 +785,30 @@ sub action_37610 {
 	$c->render(json => { app => $app, reviewed => 1, changed => $changed, pos => $action->{'pos'}, mab => $action->{'mab'} });
 }
 
+
+# The Guide's held writes: what this machine is holding for a change that has
+# not been confirmed yet, so the Guide window can offer the buttons a spoken
+# "yes" would otherwise be the only way to press.
+# GET /manager/help/pending
+sub action_37700 {
+	my $c = shift;
+	my $device = eval { &media_unlock_device($c) } || '';
+	$c->render(json => { ok => 1, actions => &app_action_pending_list($c, $device) });
+}
+
+# POST /manager/help/pending/confirm
+sub action_37701 {
+	my $c = shift;
+	my $r = &app_action_pending_confirm($c, $c->param('id'));
+	$c->render(json => $r);
+}
+
+# POST /manager/help/pending/cancel
+sub action_37702 {
+	my $c = shift;
+	my $r = &app_action_pending_cancel($c, $c->param('id'));
+	$c->render(json => $r);
+}
+
+
 1;
