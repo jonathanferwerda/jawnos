@@ -672,7 +672,10 @@ sub remote_input_apply($events) {
 			# stdin, where a newline would queue a second action.
 			my $spec = $e->{'k'} // '';
 			next unless $spec =~ /^[A-Za-z0-9_+]{1,40}$/;
-			$applied++ if &remote_input::inject('key', $spec);
+			# A held modifier (Shift across a click, Ctrl across a drag) arrives
+			# as keydown/keyup; a plain key is still one press and release.
+			my $action = exists $e->{'d'} ? ($e->{'d'} ? 'keydown' : 'keyup') : 'key';
+			$applied++ if &remote_input::inject($action, $spec);
 		}
 		elsif ($t eq 'type') {
 			my $text = $e->{'s'} // '';
@@ -701,8 +704,9 @@ sub remote_input_apply($events) {
 }
 
 # A peer that answered the handshake with a page or a refusal is not asked again
-# for a minute: the signed HTTP route still carries input, and an old peer must
-# not pay a dial on every batch.
+# for a short while: the signed HTTP route still carries input, and an old peer must
+# not pay a dial on every batch. Long enough to stop a storm, short enough that a
+# peer whose manager was restarting recovers without a minute of HTTP-only input.
 sub remote_input_socket_cooling($key) {
 	my $until = $remote_input_ws_failed{$key} || 0;
 	return $until > time ? 1 : 0;
@@ -817,7 +821,7 @@ sub remote_input_socket_for($rm, $browser_tab_id, $events) {
 		my $socket = ($tx && $tx->is_websocket) ? $tx->res->websocket : undef;
 		unless ($socket) {
 			delete $remote_input_ws{$key};
-			$remote_input_ws_failed{$key} = time + 60;
+			$remote_input_ws_failed{$key} = time + 15;
 			$log->info('remote input socket declined for ' . ($entry->{'uuid'} || '?') . ' code=' . ($tx && $tx->res->code ? $tx->res->code : 'none'));
 			return;
 		}
@@ -825,12 +829,16 @@ sub remote_input_socket_for($rm, $browser_tab_id, $events) {
 		$entry->{'tx'} = $tx;
 		$ua->inactivity_timeout(0);
 		my $hello = 0;
-		my $timer = Mojo::IOLoop->timer(2 => sub {
+		# The peer answers hello as soon as the upgrade is accepted, but a busy
+		# machine or a cold TLS handshake can take longer than two seconds. A
+		# timeout here used to leave a trusted peer on the signed HTTP path for a
+		# minute, which reads as "it worked, then stopped".
+		my $timer = Mojo::IOLoop->timer(6 => sub {
 			return if $hello;
 			my $sock = delete $entry->{'socket'};
 			eval { $sock->finish } if $sock;
 			delete $remote_input_ws{$key};
-			$remote_input_ws_failed{$key} = time + 60;
+			$remote_input_ws_failed{$key} = time + 15;
 			$log->info('remote input socket silent for ' . ($entry->{'uuid'} || '?'));
 		});
 		$socket->on(message => sub($socket, $msg) {
@@ -870,7 +878,7 @@ sub remote_input_socket_for($rm, $browser_tab_id, $events) {
 		$socket->on(finish => sub {
 			Mojo::IOLoop->remove($timer) if $timer && !$hello;
 			delete $remote_input_ws{$key};
-			$remote_input_ws_failed{$key} = time + 60 unless $hello;
+			$remote_input_ws_failed{$key} = time + 15 unless $hello;
 		});
 	});
 	return 0;

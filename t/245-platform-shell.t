@@ -221,6 +221,57 @@ like($remote, qr/JawnOS::Platform::Shell::clipboard_set/,
 	'remote_input writes through the seam');
 unlike($remote, qr/xclip/, 'and no longer spells xclip itself');
 
+# The held-modifier and wheel paths the remote control relies on. A backend
+# that cannot do an action answers empty rather than sending a malformed
+# command, so the panel can name what is missing.
+is_deeply(remote_input::command_for('xdotool', 'keydown', 'Shift_L')->{'argv'},
+	['xdotool', 'keydown', 'Shift_L'], 'X11 holds Shift down');
+is_deeply(remote_input::command_for('xdotool', 'keyup', 'Shift_L')->{'argv'},
+	['xdotool', 'keyup', 'Shift_L'], 'and lets it up');
+is(remote_input::command_for('dotool', 'keydown', 'Shift_L')->{'stdin'},
+	"keydown shift\n", 'dotool names the modifier it holds');
+is(remote_input::command_for('dotool', 'keyup', 'Shift_L')->{'stdin'},
+	"keyup shift\n", 'and releases it');
+is_deeply(remote_input::command_for('wtype', 'keydown', 'Shift_L')->{'argv'},
+	['wtype', '-M', 'shift'], 'wtype holds a modifier with -M');
+is_deeply(remote_input::command_for('wtype', 'keyup', 'Shift_L')->{'argv'},
+	['wtype', '-m', 'shift'], 'and releases it with -m');
+is_deeply(remote_input::command_for('wtype', 'keydown', 'a')->{'argv'},
+	['wtype', '-P', 'a'], 'a plain key is pressed with -P');
+is_deeply(remote_input::command_for('wtype', 'keyup', 'a')->{'argv'},
+	['wtype', '-p', 'a'], 'and released with -p');
+is(remote_input::command_for('ydotool', 'keydown', 'Shift_L')->{'argv'}, undef,
+	'ydotool has no key names to hold');
+is(remote_input::command_for('dotool', 'key', 'Return')->{'stdin'},
+	"key enter\n", 'dotool gets the Linux name for Return');
+is(remote_input::command_for('dotool', 'key', 'ctrl+v')->{'stdin'},
+	"key ctrl+v\n", 'and translates a combo part by part');
+is(remote_input::command_for('dotool', 'key', 'F5')->{'stdin'},
+	"key f5\n", 'an F-key is lower-case for dotool');
+is(remote_input::command_for('dotool', 'key', 'bracketleft')->{'stdin'},
+	"key leftbrace\n", 'and a punctuation keysym is its key name');
+is(remote_input::command_for('dotool', 'wheel', 1, 0)->{'stdin'},
+	"wheel down\n", 'dotool scrolls the wheel down');
+is(remote_input::command_for('dotool', 'wheel', -1, 0)->{'stdin'},
+	"wheel up\n", 'and up');
+is(remote_input::command_for('dotool', 'wheel', 0, -1)->{'stdin'},
+	"wheel left\n", 'and sideways');
+is(remote_input::command_for('ydotool', 'wheel', 1, 0)->{'argv'}, undef,
+	'ydotool cannot scroll');
+{
+	local $ENV{JAWNOS_INPUT_BACKEND} = 'wtype';
+	my $caps = remote_input::capabilities();
+	ok(!$caps->{'move'}, 'wtype does not advertise pointer movement');
+	ok($caps->{'key'}, 'but it can press a key');
+	ok($caps->{'type'}, 'and type text');
+}
+{
+	local $ENV{JAWNOS_INPUT_BACKEND} = 'x11';
+	my $caps = remote_input::capabilities();
+	ok($caps->{'move'} && $caps->{'button'} && $caps->{'wheel'} && $caps->{'keydown'},
+		'X11 advertises pointer, buttons, wheel and held keys');
+}
+
 my $misc8 = read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_misc8.pm");
 like($misc8, qr/Platform::Shell::clipboard_get\(\)/, 'the clipboard getter asks the seam');
 unlike($misc8, qr/xclip -o/, 'and no longer runs xclip on its own');

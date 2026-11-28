@@ -43,6 +43,19 @@ $row->{grant_expires} = 1;
 $row->{grant_scope} = 'trusted';
 ok(!subs::peer_allows($c, $row, 'visitor'), 'an expired grant is refused');
 
+# --- an action name is resolved through the policy table --------------------
+# remote_control is a peer action, not a rung. peer_allows used to read the
+# unknown word as member (the default), so the input socket admitted a member
+# grant while the HTTP route required Trusted.
+$row->{grant_scope} = 'member';
+$row->{grant_expires} = 0;
+ok(subs::peer_allows($c, $row, 'resident'), 'a member grant still reaches resident');
+ok(!subs::peer_allows($c, $row, 'remote_control'), 'but not remote_control, which is Trusted');
+ok(!subs::peer_allows($c, $row, 'command'), 'nor command, which is Trusted too');
+ok(!subs::peer_allows($c, $row, 'not_an_action'), 'and an unknown action opens nothing');
+$row->{grant_scope} = 'trusted';
+ok(subs::peer_allows($c, $row, 'remote_control'), 'a trusted grant reaches remote_control');
+
 # --- the proved key is either half of the row's identity -------------------
 # Which half the gate proved depends on how the caller was found: a direct
 # roster row is proved by its uuid, a machine the hub listed in another row's

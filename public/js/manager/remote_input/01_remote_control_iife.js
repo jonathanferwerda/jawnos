@@ -27,6 +27,10 @@
 		cooldownUntil: 0,
 		backend: '',
 		screen: null,
+		caps: null,
+		mods: {},
+		hasPointerEvents: false,
+		inFlightAt: 0,
 		lastError: '',
 		bound: false
 	};
@@ -86,6 +90,23 @@
 		$('#remote_input_return').toggle(R.controlling);
 		$('#remote_input_type_wrap').toggle(R.controlling);
 		$('#remote_input_edge_row').css('opacity', R.on ? 1 : 0.55);
+	}
+
+	// A backend that cannot move the pointer, scroll or name a key still answers
+	// ok, so the event quietly did nothing. Say which parts are absent instead of
+	// leaving the person to guess.
+	function capsWarning() {
+		if (!R.caps) { return; }
+		var missing = [];
+		if (!R.caps.move) { missing.push(jawnosT('pointer movement')); }
+		if (!R.caps.button) { missing.push(jawnosT('clicks')); }
+		if (!R.caps.wheel) { missing.push(jawnosT('the scroll wheel')); }
+		if (!R.caps.key) { missing.push(jawnosT('keys')); }
+		if (!missing.length) { return; }
+		var line = jawnosT('That machine cannot receive {0}.', missing.join(', '));
+		if (R.lastError === line) { return; }
+		R.lastError = line;
+		paints();
 	}
 
 	function clearQueue() {
@@ -152,6 +173,9 @@
 		R.flushTimer = null;
 		R.flushDelay = null;
 		if (!R.uuid) { return; }
+		// A request that never called complete (a dropped link, a paused tab)
+		// must not wedge every batch behind it for the rest of the hold.
+		if (R.inFlight && R.inFlightAt && Date.now() - R.inFlightAt > 15000) { R.inFlight = false; }
 		if (!R.on) {
 			// A release may still be waiting behind a batch that was in flight when
 			// the panel was switched off; it is the one event that must go through.
@@ -165,6 +189,7 @@
 		R.queue = [];
 		if (socketSend(batch)) { return; }
 		R.inFlight = true;
+		R.inFlightAt = Date.now();
 		$.ajax({
 			url: '/manager/remote_input/send',
 			type: 'POST',
@@ -184,6 +209,7 @@
 				}
 				R.backend = r.backend || R.backend;
 				R.screen = r.screen || R.screen;
+				R.caps = r.caps || R.caps;
 				if (R.lastError) { R.lastError = ''; paints(); }
 				if (R.backend === 'none') {
 					R.lastError = jawnosT('That machine has no input backend installed.');
@@ -193,6 +219,7 @@
 					R.lastError = jawnosT('That machine does not know its screen size.');
 					paints();
 				}
+				else { capsWarning(); }
 			},
 			error: function () {
 				R.lastError = jawnosT('That machine did not answer.');
@@ -200,6 +227,7 @@
 			},
 			complete: function () {
 				R.inFlight = false;
+				R.inFlightAt = 0;
 				if (R.queue.length) { scheduleFlush(); }
 			}
 		});
@@ -217,6 +245,7 @@
 		}
 		if (socketSend([ev])) { return; }
 		R.inFlight = true;
+		R.inFlightAt = Date.now();
 		$.ajax({
 			url: '/manager/remote_input/send',
 			type: 'POST',
@@ -225,6 +254,7 @@
 			data: { remote_uuid: R.uuid, events: JSON.stringify([ev]), browser_tab_id: sessionStorage.getItem('browser_tab_id') || '' },
 			complete: function () {
 				R.inFlight = false;
+				R.inFlightAt = 0;
 				if (R.queue.length) { scheduleFlush(); }
 			}
 		});
@@ -232,6 +262,15 @@
 
 	function isControlTarget(e) {
 		return !!(e.target && $(e.target).closest('#remote_input_controls').length);
+	}
+
+	// The switch is remembered across a reload, so being on is not enough: the
+	// panel must also be open for a machine. Otherwise a restored switch would
+	// arm an edge the person cannot see, aimed at the first machine in the list.
+	function armed() {
+		if (!R.on || !R.uuid) { return false; }
+		var box = $('#remote_control');
+		return !box.length || box.is(':visible');
 	}
 
 	function numberOr(value, fallback) {
@@ -248,7 +287,7 @@
 		var my = numberOr(e.movementY, numberOr(e.webkitMovementY, 0));
 		if (!R.controlling) {
 			var now = Date.now();
-			var at = !!(R.uuid && now > R.cooldownUntil && atEdge(e.clientX, e.clientY) && !isControlTarget(e));
+			var at = !!(armed() && now > R.cooldownUntil && atEdge(e.clientX, e.clientY) && !isControlTarget(e));
 			if (!at) {
 				R.edgeSince = 0;
 				if (R.edgeArmed) { R.edgeArmed = false; paints(); }
@@ -378,6 +417,7 @@
 		R.controlling = false;
 		R.returnArmed = false;
 		R.edgeArmed = false;
+		R.mods = {};
 		R.cooldownUntil = Date.now() + 400;
 		sendNow({ t: 'release' });
 		try {
@@ -393,12 +433,49 @@
 
 	function stop() {
 		clearQueue();
+		R.mods = {};
 		R.on = false;
 		if (R.controlling) { release('stopped'); }
 		R.uuid = '';
 		R.locked = false;
 		R.wantedLock = false;
 		paints();
+	}
+
+	// The hard way back. Escape already ends a hold the page can see, but a hold
+	// whose state has gone wrong (or a lock the shell kept) must be releasable
+	// even when the toggle says off. Ctrl+Super+F11 is checked before every other
+	// key guard, lets go of the peer, the pointer lock and the switch, and leaves
+	// the page with a normal cursor.
+	function forceReleaseKey(e) {
+		return !!(e && e.code === 'F11' && e.ctrlKey && e.metaKey);
+	}
+
+	function hardStop() {
+		R.mods = {};
+		if (R.uuid) { sendNow({ t: 'release' }); }
+		R.controlling = false;
+		R.returnArmed = false;
+		R.edgeArmed = false;
+		R.locked = false;
+		R.wantedLock = false;
+		R.lockRetry = false;
+		R.on = false;
+		try { if (document.pointerLockElement) { document.exitPointerLock(); } } catch (e) {}
+		document.documentElement.style.cursor = '';
+		$('#remote_input_enabled').prop('checked', false);
+		if (typeof settingSetter === 'function') {
+			settingSetter({ app: 'me', setting: 'remote_control_input', value: 'off' });
+		}
+		paints();
+	}
+
+	// Lost focus means lost keyups: let go of every held key and button on the
+	// peer so a modifier cannot stay stuck on the other screen.
+	function releaseHeld() {
+		if (!R.controlling) { return; }
+		R.mods = {};
+		sendNow({ t: 'release' });
 	}
 
 	// ------------------------------------------------------------------ keys
@@ -437,11 +514,37 @@
 		var name = keyName(e);
 		if (!name) { return ''; }
 		var mods = [];
-		if (e.ctrlKey) { mods.push('ctrl'); }
-		if (e.altKey) { mods.push('alt'); }
-		if (e.shiftKey) { mods.push('shift'); }
-		if (e.metaKey) { mods.push('super'); }
+		// A modifier already held on the peer must not be pressed and released
+		// again around this key: that would let go of it (and break a drag or a
+		// remote toggle that expects it to stay down).
+		if (e.ctrlKey && !modHeld('ctrl')) { mods.push('ctrl'); }
+		if (e.altKey && !modHeld('alt')) { mods.push('alt'); }
+		if (e.shiftKey && !modHeld('shift')) { mods.push('shift'); }
+		if (e.metaKey && !modHeld('meta')) { mods.push('super'); }
 		return mods.concat([name]).join('+');
+	}
+
+	// The physical modifier a key event names, as the keysym the peer's backend
+	// understands. The browser reports Shift/Control/Alt/Meta themselves with no
+	// printable character, so the old code dropped them and every Shift+click or
+	// Ctrl+click arrived as an unmodified click.
+	var MODIFIER_KEYS = {
+		ShiftLeft: 'Shift_L', ShiftRight: 'Shift_R',
+		ControlLeft: 'Control_L', ControlRight: 'Control_R',
+		AltLeft: 'Alt_L', AltRight: 'Alt_R',
+		MetaLeft: 'Super_L', MetaRight: 'Super_R'
+	};
+
+	function modifierKey(code) {
+		return MODIFIER_KEYS[code] || '';
+	}
+
+	function modHeld(kind) {
+		if (kind === 'shift') { return !!(R.mods.Shift_L || R.mods.Shift_R); }
+		if (kind === 'ctrl') { return !!(R.mods.Control_L || R.mods.Control_R); }
+		if (kind === 'alt') { return !!(R.mods.Alt_L || R.mods.Alt_R); }
+		if (kind === 'meta') { return !!(R.mods.Super_L || R.mods.Super_R); }
+		return false;
 	}
 
 	function typeFromKey(e) {
@@ -479,17 +582,21 @@
 
 	function clipboardPaste() {
 		if (!R.controlling || !R.uuid) { return; }
+		// With Ctrl already held on the peer, a bare v is the paste. A ctrl+v combo
+		// would press and release Ctrl again and let go of the held modifier.
+		var held = modHeld('ctrl');
+		function pastePress() { pushEvent({ t: 'key', k: held ? 'v' : 'ctrl+v' }); }
+		function deliver(text) {
+			if (!text) { pastePress(); return; }
+			if (!held) { pushEvent({ t: 'paste', s: text }); return; }
+			pushEvent({ t: 'clipboard_set', s: text });
+			pushEvent({ t: 'key', k: 'v' });
+		}
 		if (navigator.clipboard && navigator.clipboard.readText) {
-			navigator.clipboard.readText().then(function (text) {
-				if (text) { pushEvent({ t: 'paste', s: text }); }
-				else { pushEvent({ t: 'key', k: 'ctrl+v' }); }
-			}).catch(function () {
-				// no local clipboard permission: let the remote paste its own
-				pushEvent({ t: 'key', k: 'ctrl+v' });
-			});
+			navigator.clipboard.readText().then(deliver).catch(pastePress);
 			return;
 		}
-		pushEvent({ t: 'key', k: 'ctrl+v' });
+		pastePress();
 	}
 
 	// --------------------------------------------------------------- listeners
@@ -512,26 +619,43 @@
 			onMove(e);
 		}, true);
 
-		document.addEventListener('pointerdown', function (e) {
-			if (!R.on) { return; }
-			if (!R.controlling) { return; }
+		function pointerButton(e, down) {
+			if (!R.on || !R.controlling) { return; }
 			if (isControlTarget(e)) { return; }
 			// A click is a gesture, so it is the moment a free pointer can be
 			// captured and the other screen becomes the active one.
-			if (!R.locked) { tryLock(); }
+			if (down && !R.locked) { tryLock(); }
 			var b = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
 			e.preventDefault();
 			e.stopPropagation();
-			pushEvent({ t: 'button', b: b, d: 1 });
+			pushEvent({ t: 'button', b: b, d: down ? 1 : 0 });
+		}
+
+		document.addEventListener('pointerdown', function (e) {
+			R.hasPointerEvents = true;
+			pointerButton(e, true);
 		}, true);
 
 		document.addEventListener('pointerup', function (e) {
-			if (!R.on || !R.controlling) { return; }
-			if (isControlTarget(e)) { return; }
-			var b = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
-			e.preventDefault();
-			e.stopPropagation();
-			pushEvent({ t: 'button', b: b, d: 0 });
+			R.hasPointerEvents = true;
+			pointerButton(e, false);
+		}, true);
+
+		document.addEventListener('pointercancel', function (e) {
+			pointerButton(e, false);
+		}, true);
+
+		// A WebView without Pointer Events delivers only the mouse pair; when the
+		// pointer events arrived, those are the same click and must not be sent
+		// twice (a right-click became a double press and its menu never opened).
+		document.addEventListener('mousedown', function (e) {
+			if (R.hasPointerEvents) { return; }
+			pointerButton(e, true);
+		}, true);
+
+		document.addEventListener('mouseup', function (e) {
+			if (R.hasPointerEvents) { return; }
+			pointerButton(e, false);
 		}, true);
 
 		document.addEventListener('contextmenu', function (e) {
@@ -551,6 +675,14 @@
 		}, { capture: true, passive: false });
 
 		document.addEventListener('keydown', function (e) {
+			// The way back is checked before every other guard: a hold whose state
+			// has gone wrong must still let go.
+			if (forceReleaseKey(e)) {
+				e.preventDefault();
+				e.stopPropagation();
+				hardStop();
+				return;
+			}
 			if (!R.on || !R.controlling) { return; }
 			if (e.target && (e.target.id === 'remote_input_type' || e.target.id === 'remote_input_clipboard')) { return; }
 			if (!R.locked) { tryLock(); }
@@ -560,7 +692,16 @@
 				release('Escape');
 				return;
 			}
-			if (e.key === 'Control' || e.key === 'Shift' || e.key === 'Alt' || e.key === 'Meta') {
+			var modKey = modifierKey(e.code);
+			if (modKey) {
+				// Hold it on the peer for as long as it is held here, so Shift+click,
+				// Ctrl+click and a keyboard drag arrive modified.
+				e.preventDefault();
+				e.stopPropagation();
+				if (!R.mods[modKey] && !e.repeat) {
+					R.mods[modKey] = true;
+					pushEvent({ t: 'key', k: modKey, d: 1 });
+				}
 				return;
 			}
 			var clip = e.ctrlKey || e.metaKey;
@@ -585,19 +726,42 @@
 			}
 		}, true);
 
+		document.addEventListener('keyup', function (e) {
+			if (!R.on || !R.controlling) { return; }
+			if (e.target && (e.target.id === 'remote_input_type' || e.target.id === 'remote_input_clipboard')) { return; }
+			var modKey = modifierKey(e.code);
+			if (!modKey || !R.mods[modKey]) { return; }
+			e.preventDefault();
+			e.stopPropagation();
+			delete R.mods[modKey];
+			pushEvent({ t: 'key', k: modKey, d: 0 });
+		}, true);
+
+		// A lost keyup (focus went elsewhere) would leave a modifier down on the
+		// other machine; let go of everything held when this page loses focus.
+		window.addEventListener('blur', releaseHeld);
+		document.addEventListener('visibilitychange', function () {
+			if (document.hidden) { releaseHeld(); }
+		});
+
 		document.addEventListener('pointerlockchange', function () {
 			R.locked = !!document.pointerLockElement;
 			if (!R.locked && R.controlling && R.wantedLock) {
-				release('lock ended');
-			}
-			else {
-				if (R.locked) {
-					R.lockRetry = false;
-					R.wantedLock = true;
-					document.documentElement.style.cursor = 'none';
-				}
+				// A lock the browser drops (a tab switch, a shell window change)
+				// ends the lock, not the hold: the pointer is visible again and the
+				// next click or key captures it. Escape still ends the hold itself.
+				R.wantedLock = false;
+				R.lockRetry = true;
+				document.documentElement.style.cursor = R.cursorWas || '';
 				paints();
+				return;
 			}
+			if (R.locked) {
+				R.lockRetry = false;
+				R.wantedLock = true;
+				document.documentElement.style.cursor = 'none';
+			}
+			paints();
 		});
 
 		document.addEventListener('pointerlockerror', function () {
@@ -644,6 +808,8 @@
 			// the panel re-renders for the new peer; never leave the old peer held
 			if (R.controlling) { release('machine changed'); }
 			R.useSocket = false;
+			R.caps = null;
+			R.mods = {};
 			R.uuid = $(this).val() || '';
 			R.lastError = '';
 			paints();
@@ -698,6 +864,7 @@
 		}
 		R.backend = data.backend || R.backend;
 		R.screen = data.screen || R.screen;
+		R.caps = data.caps || R.caps;
 		R.lastError = '';
 		if (R.backend === 'none') {
 			R.lastError = jawnosT('That machine has no input backend installed.');
@@ -705,6 +872,7 @@
 		else if (!R.screen) {
 			R.lastError = jawnosT('That machine does not know its screen size.');
 		}
+		else { capsWarning(); }
 		paints();
 	};
 
@@ -726,6 +894,7 @@
 
 	window.jawnosRemoteInputStop = function () { stop(); };
 	window.jawnosRemoteInputRelease = function () { release('external'); };
+	window.jawnosRemoteInputForceRelease = function () { hardStop(); };
 
 	$(document).ready(function () {
 		bind();

@@ -107,6 +107,37 @@ sub wtype_key_args($spec) {
 
 my %x_button = ( left => 1, middle => 2, right => 3 );
 my %y_button = ( left => '40', middle => '42', right => '41' );
+# X keysyms (what the browser sends) to the Linux key names dotool expects.
+# dotool is the first Wayland backend, so a keysym left untranslated is a key
+# that does nothing there (Return, Prior, bracketleft were all silent).
+my %dotool_name = (
+	Shift_L => 'shift', Shift_R => 'shift',
+	Control_L => 'ctrl', Control_R => 'ctrl',
+	Alt_L => 'alt', Alt_R => 'alt',
+	Super_L => 'super', Super_R => 'super',
+	Escape => 'esc', Return => 'enter', KP_Enter => 'kpenter', Tab => 'tab',
+	BackSpace => 'backspace', Delete => 'delete', Insert => 'insert',
+	Home => 'home', End => 'end', Prior => 'pageup', Next => 'pagedown',
+	Up => 'up', Down => 'down', Left => 'left', Right => 'right', space => 'space',
+	Caps_Lock => 'capslock', Menu => 'menu', Print => 'sysrq',
+	Scroll_Lock => 'scrolllock', Pause => 'pause', Num_Lock => 'numlock',
+	minus => 'minus', equal => 'equal', bracketleft => 'leftbrace',
+	bracketright => 'rightbrace', backslash => 'backslash', semicolon => 'semicolon',
+	apostrophe => 'apostrophe', grave => 'grave', comma => 'comma', period => 'dot',
+	slash => 'slash', Romaji => 'romaji', yen => 'yen',
+	KP_Add => 'kpplus', KP_Subtract => 'kpminus', KP_Multiply => 'kpasterisk',
+	KP_Divide => 'kpslash', KP_Decimal => 'kpdot',
+);
+# wtype takes X modifiers by their short name, but calls Super "logo".
+my %wtype_mod = map { $_ => $dotool_name{$_} } grep { /^(?:Shift|Control|Alt|Super)_/ } keys %dotool_name;
+$wtype_mod{$_} = 'logo' for qw/Super_L Super_R/;
+
+sub dotool_spec($spec) {
+	return join '+', map {
+		my $part = $_;
+		$dotool_name{$part} // ($part =~ /^F(?:[1-9]|1[0-2])$/ ? lc $part : $part);
+	} split /\+/, $spec;
+}
 
 # The argv (plus any stdin) for one action on one backend, or {} when that
 # backend cannot do it. Kept separate from running it so the mapping is
@@ -119,6 +150,8 @@ sub command_for($b, $action, @args) {
 		return { argv => ['xdotool', 'mousedown', $n] } if $action eq 'mousedown';
 		return { argv => ['xdotool', 'mouseup',  $n] } if $action eq 'mouseup';
 		return { argv => ['xdotool', 'key',  $args[0]] } if $action eq 'key';
+		return { argv => ['xdotool', 'keydown', $args[0]] } if $action eq 'keydown';
+		return { argv => ['xdotool', 'keyup',   $args[0]] } if $action eq 'keyup';
 		return { argv => ['xdotool', 'type', '--', $args[0]] } if $action eq 'type';
 		return { argv => ['xdotool', 'mousemove', int($args[0]), int($args[1])] } if $action eq 'move';
 		return { argv => ['xdotool', 'mousemove_relative', '--', int($args[0]), int($args[1])] } if $action eq 'move_rel';
@@ -140,7 +173,18 @@ sub command_for($b, $action, @args) {
 		# an absolute jump; plain mousemove is relative.
 		return { argv => ['dotool'], stdin => "buttondown $button\n" } if $action eq 'mousedown';
 		return { argv => ['dotool'], stdin => "buttonup $button\n" } if $action eq 'mouseup';
-		return { argv => ['dotool'], stdin => "key $args[0]\n" } if $action eq 'key';
+		return { argv => ['dotool'], stdin => "key " . dotool_spec($args[0]) . "\n" } if $action eq 'key';
+		if ($action eq 'keydown' || $action eq 'keyup') {
+			return { argv => ['dotool'], stdin => "$action " . dotool_spec($args[0]) . "\n" };
+		}
+		if ($action eq 'wheel') {
+			# one wheel step per line; dotool names the direction, not a button
+			my ($dy, $dx) = map { int($_ || 0) } @args;
+			my @lines;
+			push @lines, 'wheel ' . ($dy > 0 ? 'down' : 'up') for 1 .. abs($dy);
+			push @lines, 'wheel ' . ($dx > 0 ? 'right' : 'left') for 1 .. abs($dx);
+			return @lines ? { argv => ['dotool'], stdin => join('', map { "$_\n" } @lines) } : {};
+		}
 		if ($action eq 'type') {
 			my $text = $args[0];
 			$text =~ s/[\r\n]+/ /g;   # one action per line on dotool's stdin
@@ -159,6 +203,12 @@ sub command_for($b, $action, @args) {
 		return {};
 	}
 	if ($b eq 'wtype') {
+		if ($action eq 'keydown' || $action eq 'keyup') {
+			my $name = $args[0];
+			my $mod = $wtype_mod{$name};
+			return { argv => [ 'wtype', ($action eq 'keydown' ? '-M' : '-m'), $mod ] } if $mod;
+			return { argv => [ 'wtype', ($action eq 'keydown' ? '-P' : '-p'), $name ] };
+		}
 		return { argv => ['wtype', '--', $args[0]] } if $action eq 'type';
 		return { argv => [ 'wtype', wtype_key_args($args[0]) ] } if $action eq 'key';
 		return {};              # wtype has no pointer control
@@ -187,6 +237,33 @@ sub command($action, @args) {
 		$log->warn('remote input: no backend (install dotool, wtype or ydotool, or set teletype: input_backend)') if $log;
 	}
 	return {};
+}
+
+# Which actions the installed backends can actually perform. A backend with no
+# pointer (wtype), no wheel (ydotool) or no key names (ydotool) must not read as
+# ready: the panel can say what is missing instead of accepting the event and
+# doing nothing on the other screen.
+my %probe = (
+	move     => [ move      => 100, 100, 1920, 1080 ],
+	move_rel => [ move_rel  => 10, 10 ],
+	button   => [ mousedown => 'left' ],
+	wheel    => [ wheel     => 1, 0 ],
+	key      => [ key       => 'a' ],
+	keydown  => [ keydown   => 'Shift_L' ],
+	type     => [ type      => 'a' ],
+);
+
+sub supports($action) {
+	my $spec = $probe{$action} or return 0;
+	for my $b (backends()) {
+		my $c = &command_for($b, @{$spec});
+		return 1 if $c->{'argv'} && @{$c->{'argv'}};
+	}
+	return 0;
+}
+
+sub capabilities() {
+	return { map { $_ => &supports($_) } sort keys %probe };
 }
 
 sub run_command($c) {

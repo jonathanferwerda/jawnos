@@ -129,7 +129,13 @@ sub peer_allows {
 	$grant = 'visitor' if $grant eq '';
 	$grant = 'none' unless exists $rank{$grant};
 	my $need = lc($required // 'member');
-	$need = 'member' unless exists $rank{$need};
+	# A caller may name a peer action (remote_control, command) rather than a
+	# rung. Resolve it through the one policy table first: reading an action name
+	# as a literal rung silently demoted remote_control to member, so the input
+	# socket admitted a grant the HTTP route had just refused. An unknown word is
+	# not a permission at all, matching peer_grant_normalize.
+	$need = lc(&peer_action_scope($need) // $need);
+	return 0 unless exists $rank{$need};
 	my $expires = $rm->{'grant_expires'};
 	if (defined $expires && $expires =~ /^\d+$/ && $expires > 0 && $expires < &rightNow()) {
 		return 0;

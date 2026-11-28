@@ -1,4 +1,4 @@
-# tests-for: scripts/jawnos_bluetooth.pl lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Routes/manager_misc2.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Manager/Declarations.pm templates/apps/network.html.ep templates/apps/network/controller.html.ep public/js/manager/network.js public/js/manager/network/02_tabs_bluetooth_remote.js public/js/manager/taskbar_network.js public/js/manager/taskbar_edit.js public/css/manager.css public/css/keyboard.css perl/help/topics_web.pl
+# tests-for: scripts/jawnos_bluetooth.pl lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Routes/manager_misc2.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Manager/Declarations.pm templates/apps/network.html.ep templates/apps/network/controller.html.ep public/js/manager/network.js public/js/manager/network/02_tabs_bluetooth_remote.js public/js/manager/remote_input/01_remote_control_iife.js public/js/manager/taskbar_network.js public/js/manager/taskbar_edit.js public/css/manager.css public/css/keyboard.css perl/help/topics_web.pl
 # covers:    The Network app's Bluetooth tab and Remote Machines tab, the
 #            Bluetooth helper's fixed command set and parsers behind a fake
 #            bluetoothctl, the scroll limits, and the taskbar's Bluetooth read.
@@ -273,6 +273,19 @@ like($template, qr/remote_manager_open/, 'a remote machine can open its Manager'
 like($template, qr/network_remote_toggle/, 'and its Remote control accordion toggle');
 like($template, qr/id="remote_control"/, 'the shared remote control panel is in the tab');
 like($template, qr/remote_control_machine_select/, 'a hidden machine list feeds it');
+like($template, qr/setting_grabber\(\{ app => 'me', setting => 'remote_control_input' \}\)/,
+	'the remote input switch is restored from its setting');
+like($template, qr/Ctrl\+Super\+F11/, 'the panel names the way back');
+my $remote_input_js = source('public/js/manager/remote_input/01_remote_control_iife.js');
+like($remote_input_js, qr/e\.code === 'F11' && e\.ctrlKey && e\.metaKey/,
+	'Ctrl+Super+F11 is read before every other key guard');
+like($remote_input_js, qr/function hardStop/, 'and clears the hold, the lock and the switch');
+like($remote_input_js, qr/function modifierKey/, 'a held modifier has a keysym');
+like($remote_input_js, qr/modifierKey\(e\.code\)/, 'and is sent on keydown and keyup');
+like($remote_input_js, qr/R\.hasPointerEvents/, 'a click is not sent twice when Pointer Events exist');
+like($remote_input_js, qr/function armed/, 'the edge is armed only while the accordion is open');
+like(source('public/js/manager/network/02_tabs_bluetooth_remote.js'), qr/jawnosRemoteInputRelease/,
+	'closing the accordion lets go of the hold');
 like(source('public/js/manager/network/02_tabs_bluetooth_remote.js'), qr/function networkRemoteControlOpen/, 'the accordion moves it under the row');
 like($template, qr/remote_machine_lister/, 'Remote Machines uses the same lister as the keyboard');
 

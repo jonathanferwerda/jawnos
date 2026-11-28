@@ -404,7 +404,8 @@
 						<div id="remote_command_reply" style="flex:1 1 100%;font-size:12px;opacity:.85;"></div>
 					</div>
 					<div id="remote_input_controls" class="network_remote_input" remote_uuid="" data-edge="right">
-						<label><input type="checkbox" id="remote_input_enabled"> <%= &subs::lang('remote_control.input') %></label>
+						<% my $remote_input_on = (&subs::setting_grabber({ app => 'me', setting => 'remote_control_input' }) || '') eq 'on'; %>
+						<label><input type="checkbox" id="remote_input_enabled"<%= $remote_input_on ? ' checked' : '' %>> <%= &subs::lang('remote_control.input') %></label>
 						<span id="remote_input_edge_row">
 							<%= &subs::lang('remote_control.that_screen') %>
 							<select id="remote_input_edge">
@@ -422,6 +423,7 @@
 						<div id="remote_input_type_wrap" style="display:none;">
 							<input type="text" id="remote_input_type" placeholder="<%= &subs::ui('Type to that machine...') %>" autocomplete="off" autocapitalize="off" spellcheck="false">
 						</div>
+						<div id="remote_input_shortcut" style="flex:1 1 100%;font-size:12px;opacity:.8;"><%= &subs::ui('Ctrl+Super+F11 releases the pointer and the keyboard here, even while the other screen holds them.') %></div>
 						<textarea id="remote_input_clipboard" style="display:none;" placeholder="<%= &subs::ui('Clipboard from that machine') %>" spellcheck="false"></textarea>
 					</div>
 				</div>

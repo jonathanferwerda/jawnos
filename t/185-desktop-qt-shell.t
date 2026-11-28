@@ -557,6 +557,11 @@ like($qt, qr/\("Control panel", show_panel\)/, 'the tray opens it');
 like($qt, qr/\("Reload view", reload_view\)/, 'the tray reloads the page in place');
 like($qt, qr/def reload_view\(\):/, 'and the shell has one way to do it');
 like($qt, qr/Key_F5[\s\S]{0,400}?self\.reload\(\)/, 'F5 reloads a view left wedged, without quitting');
+like($qt, qr/Key_F11[\s\S]{0,900}?jawnosRemoteInputForceRelease/,
+	'Ctrl+Super+F11 releases a remote hold from the shell');
+like($qt, qr/ControlModifier[\s\S]{0,200}?MetaModifier/,
+	'and only when both modifiers are held');
+like($qt, qr/self\._toggle_fullscreen\(\)/, 'an unmodified F11 still fills the screen');
 like($qt, qr/admin_opener\["open"\] = show_panel/, 'and the page admin icon does too');
 like($panel, qr/class ControlPanel/, 'the panel is a Qt dialog');
 like($panel, qr/theme\.PANEL_CSS/, 'it carries the desktop\'s shared look');

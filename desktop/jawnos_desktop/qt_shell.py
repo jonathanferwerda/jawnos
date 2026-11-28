@@ -1513,6 +1513,15 @@ def main(argv=None):
 
         def keyPressEvent(self, event):
             if event.key() == Qt.Key.Key_F11:
+                # The way out of a remote-control hold. The page handles the same
+                # combo when it can see it; this catches the case where the page
+                # is wedged (or the shell swallowed the key) and still gives the
+                # pointer and keyboard back. Only the unmodified F11 toggles
+                # fullscreen.
+                modifiers = event.modifiers()
+                if (modifiers & Qt.KeyboardModifier.ControlModifier) and (modifiers & Qt.KeyboardModifier.MetaModifier):
+                    self.page().runJavaScript("(window.jawnosRemoteInputForceRelease || function () {})();")
+                    return
                 self._toggle_fullscreen()
                 return
             if event.key() == Qt.Key.Key_F5:

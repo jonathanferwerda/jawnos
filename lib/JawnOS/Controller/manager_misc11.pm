@@ -67,9 +67,10 @@ sub action_35907 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	# Input is the most intimate thing a peer can ask for, so it sits on the
-	# Trusted rung rather than with the ordinary house actions.
+	# Trusted rung rather than with the ordinary house actions; peer_action_scope
+	# names that rung and peer_allows resolves the action through it.
 	unless (&subs::peer_allows($c, $rm, 'remote_control')) {
 		$c->render(json => { ok => 0, error => 'this machine needs Trusted access for remote input' });
 		return;
@@ -91,6 +92,7 @@ sub action_35907 {
 		applied => $applied,
 		backend => $backend,
 		screen => ($geometry ? [ $geometry->[0], $geometry->[1] ] : undef),
+		caps => &remote_input::capabilities(),
 		clipboard => $remote_input_clipboard
 	});
 }
@@ -104,13 +106,16 @@ sub action_35942 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
-	unless (&subs::peer_allows($c, $rm, 'remote_control')) { $c->rendered(403); return; }
+	# The socket asks for the same Trusted rung as the HTTP route. It used to
+	# check only the action name, which peer_allows read as member, so a member
+	# grant could inject input after the HTTP route had refused it.
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'remote_control')) { $c->rendered(403); return; }
 	my $geometry = &remote_input_geometry();
 	$c->send(&remote_input_frame({
 		t => 'hello',
 		backend => &remote_input::backend(),
 		screen => ($geometry ? [ $geometry->[0], $geometry->[1] ] : undef),
+		caps => &remote_input::capabilities(),
 	}));
 	$c->on(message => sub($ws, $msg) {
 		my $m = eval { decode_json $msg } || {};

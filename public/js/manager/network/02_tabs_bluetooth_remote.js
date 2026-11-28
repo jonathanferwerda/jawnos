@@ -226,6 +226,9 @@ $(document).on('click', '#network_refresh', function() {
 function networkRemoteControlClose() {
 	var panel = $('#remote_control');
 	if (!panel.length) { return; }
+	// Closing the accordion (or opening another machine's) must not leave the
+	// previous machine holding this machine's pointer and keys.
+	if (typeof jawnosRemoteInputRelease === 'function') { jawnosRemoteInputRelease(); }
 	panel.attr('hidden', true).appendTo('#network_remote_section .network_section_body');
 	$('.network_remote_panel_row').attr('hidden', true);
 	$('.network_remote_toggle').attr('aria-expanded', 'false');
