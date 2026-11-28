@@ -227,6 +227,20 @@ is($com_cmd->{'reply'}, 'Email Test on.', 'the Com reply names the app and its n
 is_deeply(\@replied, [ [ 'watch', 'Email Test on.' ] ], 'so the Com button is no longer silent');
 is(scalar(@guided), 0, 'a Com command does not go to the Guide');
 
+# A write that did not land is not reported as the asked-for state: the reply
+# reads the app's toggle back instead of trusting the command.
+{
+	local *subs::voice_command_apply = sub { push @applied, $_[0]; return { state => 'off' }; };
+	reset_observers();
+	$main::WHISPER = 'start email test';
+	$main::BRAIN   = undef;
+	my $not_there = &subs::voice_ingest('raw', { voice => 'command', chip_id => 'watch-chip', ts => 1_700_000_125_000 });
+	is($not_there->{'reply'}, 'I could not start Email Test.',
+		'a command whose write did not land says so instead of claiming it worked');
+	is_deeply(\@replied, [ [ 'watch', 'I could not start Email Test.' ] ],
+		'and the watch is told the truth');
+}
+
 reset_observers();
 $main::WHISPER = 'what is the weather';
 $main::BRAIN   = undef;

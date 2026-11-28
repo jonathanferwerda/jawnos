@@ -893,6 +893,10 @@ sub voice_command_apply {
 	};
 	&Manager::appointment_writer(&subs::controller_builder(), $db_data);
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $db_data->{'uuid'})});
+	# What the app now holds, read back rather than assumed: the reply must not
+	# say "off" when the write did not land (a cross-machine sync can lag).
+	my $state = &subs::setting_grabber({ app => $app, setting => 'toggle' });
+	$db_data->{'state'} = defined $state ? $state : '';
 	return $db_data;
 }
 
@@ -1545,17 +1549,21 @@ sub voice_ingest {
 			}
 		}
 		if ($row) {
-			my $did = eval { &subs::voice_command_apply($app, $cmd->{'want'}, $meta); 1 };
-			unless ($did) {
+			my $applied = eval { &subs::voice_command_apply($app, $cmd->{'want'}, $meta) };
+			unless (defined $applied) {
 				$log->error('voice: apply failed for ' . $app . ': ' . ($@ || 'unknown'));
 				return { status => 'apply_failed', app => $app, said => $text };
 			}
 			$log->info('voice: ' . $app . ' -> ' . $cmd->{'want'} . ' (' . $text . ')');
 			# A Com clip is a spoken command, so a recognised movement answers
-			# too: the watch shows the words and speaks them. Without this the
-			# only observable result of "start email test" was a toggle, and the
-			# wrist said nothing at all.
-			my $speech = &subs::format_name($app) . ($cmd->{'want'} eq 'on' ? ' on.' : ' off.');
+			# too: the watch shows the words and speaks them. The answer names
+			# what the app actually holds now; a write that did not land (or a
+			# stale peer) is reported instead of a claimed state.
+			my $state = (ref $applied eq 'HASH' && defined $applied->{'state'})
+				? $applied->{'state'} : $cmd->{'want'};
+			my $speech = ($state eq $cmd->{'want'})
+				? &subs::format_name($app) . ($state eq 'on' ? ' on.' : ' off.')
+				: 'I could not ' . ($cmd->{'want'} eq 'on' ? 'start ' : 'stop ') . &subs::format_name($app) . '.';
 			my $who = $meta->{'chip_id'} // '';
 			if (length $who) { &subs::watch_reply($meta, $speech); }
 			else { &subs::say_it($speech); }

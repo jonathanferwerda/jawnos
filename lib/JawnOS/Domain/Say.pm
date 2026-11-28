@@ -1086,8 +1086,8 @@ sub watch_reply_stream {
 		if (defined $pcm && length $pcm) {
 			my $est_total = length $pcm;
 			my $seq = 0;
-			for (my $off = 0; $off < length $pcm; $off += 4096) {
-				my $chunk = substr($pcm, $off, 4096);
+			for (my $off = 0; $off < length $pcm; $off += 512) {
+				my $chunk = substr($pcm, $off, 512);
 				$send->({ type => 'say_audio', data => { seq => $seq, last => 0, rate => 8000, total => $est_total, audio => MIME::Base64::encode_base64($chunk, '') } });
 				$seq++;
 			}
@@ -1128,10 +1128,12 @@ sub watch_reply_stream {
 		my ($seq, $sent) = (0, 0);
 		while (1) {
 			my $chunk = '';
-			# 4 KB of PCM per part: the base64 JSON is then ~5.5 KB, which the
-			# deck's ~15 KB internal heap can reassemble (16 KB raw parts made a
-			# ~22 KB line and were silently dropped by the BLE reassembler).
-			my $n = read($pout, $chunk, 4096);
+			# 512 bytes of PCM per part (~700 bytes base64, under 1 KB of JSON):
+			# the watch's BLE reassembler and JSON parser are smaller than the
+			# deck's, and a 4 KB part (a ~5.5 KB line) reached it as text only -
+			# the parts were dropped. More, smaller parts cost a little link time
+			# and cannot be silently lost.
+			my $n = read($pout, $chunk, 512);
 			last unless defined $n && $n > 0;
 			my $b64 = MIME::Base64::encode_base64($chunk, '');
 			$send->({ type => 'say_audio', data => { seq => $seq, last => 0, rate => $out_rate, total => $est_total, audio => $b64 } });
