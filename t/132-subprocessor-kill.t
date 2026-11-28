@@ -28,6 +28,7 @@ subs::preload('subprocessor_warranty_at');
 subs::preload('subprocessor_warranty_for');
 subs::preload('subprocessor_heartbeat_for');
 subs::preload('subprocessor_resident');
+subs::preload('subprocessor_lost_resident');
 subs::preload('subprocessor_reap');
 
 my $NOW = 1_700_000_000_000;
@@ -287,11 +288,27 @@ sub tracked_record {
 	like($master, qr/on_lost => sub \{ &resident_lost\(\$_\[0\]\) \}/,
 		'the reaper is given the lost-resident callback');
 	like($master, qr/&resident_lost\(\$process\);/, 'a resident that reports its own stop is recovered too');
-	like($master, qr/return unless &subs::subprocessor_resident\(\$name\);/,
-		'only a name the map pins to forever can recover the tree');
-	like($master, qr/\$parent == \$tree_pid/, "and only the tree's own children, not a worker's holder");
+	like($master, qr/return unless &subs::subprocessor_lost_resident\(\$record, \$tree_pid\);/,
+		'the decision is the tested domain sub, handed this tree\'s pid');
 	like($master, qr/a restart cannot cure a repeat within five minutes/,
 		'a resident that keeps dying cannot turn the house into a restart loop');
+}
+
+# ...and the decision itself: only the tree's own resident, not a one-shot, not
+# a worker's holder and not the optional model server.
+{
+	my $tree = 4000;
+	my $record = sub { my (%r) = @_; return { name => 'utility functions', parent => $tree, pid => 90020, %r } };
+	ok(&subs::subprocessor_lost_resident($record->(), $tree),
+		'a resident whose parent is this tree is recovered');
+	ok(!&subs::subprocessor_lost_resident($record->(parent => 1234), $tree),
+		'a resident whose parent is a worker is not (a holder ends when stopped)');
+	ok(!&subs::subprocessor_lost_resident($record->(name => 'task remote relay'), $tree),
+		'a one-shot is not a lost resident');
+	ok(!&subs::subprocessor_lost_resident($record->(name => 'ollama serve'), $tree),
+		'nor is the optional model server');
+	ok(!&subs::subprocessor_lost_resident(undef, $tree), 'and no record is no resident');
+	ok(!&subs::subprocessor_lost_resident($record->(), 0), 'with no tree pid nothing is recovered');
 }
 
 done_testing();

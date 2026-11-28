@@ -329,6 +329,22 @@ sub subprocessor_resident {
 	return (defined $spec && $spec eq 'forever') ? 1 : 0;
 }
 
+# The master's question about a record it has just forgotten: was this one of the
+# tree's OWN residents, so that the tree is now missing a permanent part of
+# itself? The name has to be a pinned resident (not a one-shot, not the optional
+# model server), and the record's parent has to be this tree's President: a
+# holder or a player a worker started is pinned 'forever' too, but it ends when
+# the person stops it.
+sub subprocessor_lost_resident {
+	my ($record, $tree_pid) = @_;
+	return 0 unless ref $record eq 'HASH';
+	return 0 unless &subprocessor_resident($record->{'name'});
+	return 0 unless defined $tree_pid && $tree_pid =~ /^\d+$/ && $tree_pid > 1;
+	my $parent = $record->{'parent'};
+	return 0 unless defined $parent && $parent =~ /^\d+$/ && $parent == $tree_pid;
+	return 1;
+}
+
 # Prove this subprocessor is still working. A resident loop calls this once per
 # turn; the master stamps heartbeat_at on the record and the reaper expires a
 # lease that has gone quiet. Throttled to once a second, so a tight loop does not

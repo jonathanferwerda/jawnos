@@ -1111,18 +1111,14 @@ my $resident_recovery_at = 0;
 my $resident_recovery_n = 0;
 sub resident_lost {
 	my ($record) = @_;
-	return unless ref $record eq 'HASH';
-	my $name = $record->{'name'} || '';
-	return unless length $name;
-	return unless &subs::subprocessor_resident($name);
-	# Only the tree's OWN residents: a holder or a player a worker started is
-	# pinned 'forever' too, but it ends when the person stops it.
+	# Was this one of the tree's own residents? The decision lives in the
+	# domain so it is tested there (subprocessor_lost_resident); this acts on it.
 	my $tree_pid = $fork ? $fork->pid : 0;
-	my $parent = $record->{'parent'};
-	return unless $tree_pid && defined $parent && $parent =~ /^\d+$/ && $parent == $tree_pid;
+	return unless &subs::subprocessor_lost_resident($record, $tree_pid);
 	# Only a tree that believes it is serving has something to recover, and a
 	# paused ticker means a teardown is already under way.
 	return unless $status eq 'started' && !$master_timer_paused;
+	my $name = $record->{'name'};
 	my $pid = $record->{'pid'} || '?';
 	my $now = time;
 	if ($resident_recovery_at && $now - $resident_recovery_at < 300) {
