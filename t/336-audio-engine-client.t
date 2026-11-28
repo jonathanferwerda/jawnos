@@ -148,15 +148,20 @@ my %reply = (
 	my $stop = JawnOS::Audio::Engine::audio_engine_stop();
 	is($stop->{'state'}, 'done', 'stop returns the final status');
 
+	my $listen_stop = JawnOS::Audio::Engine::audio_engine_listen_stop();
+	ok($listen_stop->{'ok'}, 'listen stop is acknowledged');
+
 	my $quit = JawnOS::Audio::Engine::audio_engine_quit();
 	ok($quit->{'ok'}, 'quit is acknowledged');
 
 	my @seen = logged_requests($log);
-	is_deeply([ map { $_->{'cmd'} } @seen ], [qw(record status stop quit)],
+	is_deeply([ map { $_->{'cmd'} } @seen ], [qw(record status stop listen quit)],
 		'each wrapper sends its own cmd, in order');
 	is($seen[0]{'out'}, $out, 'record sends the output path');
 	is($seen[0]{'seconds'}, 10, 'and the length');
 	is($seen[0]{'start_at'}, 96000, 'and the start sample');
+	is($seen[3]{'cmd'}, 'listen', 'listen stop sends the listen command');
+	is($seen[3]{'action'}, 'stop', 'with the scoped stop action');
 
 	waitpid($pid, 0);
 	$server_pids[-1] = undef;

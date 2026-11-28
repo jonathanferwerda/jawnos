@@ -449,9 +449,17 @@ sub audio_engine_stop {
 # take that records beside the engine transport borrowed the transport's one
 # output, so the engine detaches its live input and leaves the transport
 # playing. The global `stop` above also joins the transport, so it is the wrong
-# line for Studio's Stop take; Listen stop still uses it.
+# line for Studio's Stop take.
 sub audio_engine_record_stop {
 	return audio_engine_command({ cmd => 'record', action => 'stop' });
+}
+
+# Stop the live Listen and nothing else: `{"cmd":"listen","action":"stop"}`.
+# A listen beside the engine transport rides the transport's output, so this
+# detaches only the listen; the transport (and any recording take) keeps
+# running. The global `stop` above is the wrong line for Studio's Listen stop.
+sub audio_engine_listen_stop {
+	return audio_engine_command({ cmd => 'listen', action => 'stop' });
 }
 
 sub audio_engine_quit {

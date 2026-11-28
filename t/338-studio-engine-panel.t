@@ -360,7 +360,9 @@ my @names = qw(
 
 	my $stop = run_take(action => 'listen_stop');
 	is($stop->{'status'}, 200, 'listen_stop is 200');
-	is((logged_requests($log))[-1]{'cmd'}, 'stop', 'and sends stop');
+	my $stop_request = (logged_requests($log))[-1];
+	is($stop_request->{'cmd'}, 'listen', 'and sends a listen command');
+	is($stop_request->{'action'}, 'stop', 'with the scoped stop action');
 
 	my $knob = run_take(action => 'param', target => 'listen', name => 'gain', value => '0.25');
 	is($knob->{'status'}, 200, 'a listen knob is 200');

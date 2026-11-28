@@ -2427,3 +2427,54 @@ fn a_live_take_monitors_beside_the_playing_transport() {
     );
     assert!(!socket_left, "a clean quit must unlink the socket");
 }
+
+#[test]
+fn a_listen_rides_a_playing_transport_and_stops_alone() {
+    // A listen beside the transport opens no second output: its worker builds
+    // the capture and the strip, and the finished stereo joins the transport's
+    // live ring. A scoped stop detaches only the listen; the transport keeps
+    // playing its clips and click.
+    let clip = TempFile::new("transport-listen-clip");
+    write_silent_wav(&clip.path, 4_800);
+
+    let server = Server::start("transport-listen");
+    let mut client = server.connect();
+
+    let start = client.ask(&format!(
+        "{{\"cmd\":\"transport\",\"action\":\"start\",\"position\":0,\"bpm\":120,\"beats_per_bar\":4,\"gain\":0,\"clips\":[{{\"file\":\"{}\",\"start\":0}}]}}",
+        clip.text()
+    ));
+    assert!(start.contains("\"state\":\"playing\""), "start: {start}");
+
+    let listen = client.ask("{\"cmd\":\"listen\",\"channel\":0,\"system\":false}");
+    assert!(listen.contains("\"ok\":true"), "listen: {listen}");
+    assert!(listen.contains("\"state\":\"listening\""), "listen: {listen}");
+    let status = client.wait_for_listen_frames();
+    assert!(status.contains("\"state\":\"listening\""), "status: {status}");
+
+    let transport = client.ask("{\"cmd\":\"transport\",\"action\":\"status\"}");
+    assert!(transport.contains("\"state\":\"playing\""), "transport: {transport}");
+
+    // The scoped stop ends the listen and leaves the transport playing.
+    let stopped = client.ask("{\"cmd\":\"listen\",\"action\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    let transport = client.ask("{\"cmd\":\"transport\",\"action\":\"status\"}");
+    assert!(transport.contains("\"state\":\"playing\""), "transport: {transport}");
+
+    // A second scoped stop is an answer, not a second stop.
+    let again = client.ask("{\"cmd\":\"listen\",\"action\":\"stop\"}");
+    assert!(again.contains("\"ok\":false"), "again: {again}");
+    assert!(again.contains("no listen is running"), "again: {again}");
+    let transport = client.ask("{\"cmd\":\"transport\",\"action\":\"status\"}");
+    assert!(transport.contains("\"state\":\"playing\""), "transport: {transport}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}

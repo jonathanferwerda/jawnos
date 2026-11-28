@@ -483,8 +483,18 @@ like(
 );
 like(
 	$controller,
+	qr/\$action eq 'listen_stop'[\s\S]{0,220}audio_engine_listen_stop/,
+	'Listen stop uses the listen-specific stop'
+);
+unlike(
+	$controller,
 	qr/\$action eq 'listen_stop'[\s\S]{0,220}audio_engine_stop/,
-	'Listen stop keeps the global stop'
+	'so it never calls the global stop'
+);
+like(
+	$engine_pm,
+	qr/sub audio_engine_listen_stop[\s\S]{0,220}cmd => 'listen', action => 'stop'/,
+	'the client sends the listen-specific stop'
 );
 
 # --- the browser follows the engine clock and never doubles the click --------

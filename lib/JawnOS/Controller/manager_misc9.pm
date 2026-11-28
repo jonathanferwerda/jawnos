@@ -1564,7 +1564,7 @@ sub action_44023 {
 		return;
 	}
 	if ($action eq 'listen_stop') {
-		$c->render(json => &JawnOS::Audio::Engine::audio_engine_stop());
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_listen_stop());
 		return;
 	}
 	unless ($action eq 'start') {
