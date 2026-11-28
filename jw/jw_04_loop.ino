@@ -379,7 +379,7 @@ void jawn_loop() {
   // steps aside (and is not restarted) while a manual record or playback holds
   // the microphone, and only listens while the screen is on (dozing = off).
   if (voiceCaptureEnabled && !voiceListening && !isRecording && !isPlaying && !dozing
-      && !voiceAwaitingReply) {
+      && !voiceAwaitingReply && !manualCaptureActive) {
     // start the listener the moment the screen is up: a command spoken in the
     // first seconds of a wake must be heard, so this no longer waits for the
     // radio (a wrist glance skipped the bring-up entirely and voice detection
@@ -389,7 +389,10 @@ void jawn_loop() {
   }
   // a clip being heard or waiting to go needs the bridge: bring the radio up on
   // demand (a glance did not), so the payload has somewhere to go
-  if ((voiceRecording || voiceShipping || comRecording) && bt_enabled && !ble_radio_up && ble_restore_at == 0) {
+  // The answer to a spoken request comes back over the bridge, so a reply wait
+  // needs the radio too - a Com clip uploaded over WiFi has no other reply path.
+  if ((voiceRecording || voiceShipping || comRecording || voiceAwaitingReply)
+      && bt_enabled && !ble_radio_up && ble_restore_at == 0) {
     ble_restore_at = millis();
   }
   // the server said the clip was transcribed and filed: drop the watch's local

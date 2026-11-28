@@ -293,4 +293,23 @@ like($audio, qr/#define REC_SHIP_WINDOW_MS 15000UL/, 'a note gets a bounded retr
 like($audio, qr/while \(!ok && millis\(\) - ship_started < REC_SHIP_WINDOW_MS\)/,
 	'and is retried until a send succeeds or the window ends');
 
+# --- the manual recorder owns the microphone --------------------------------
+# The always-on listener held the I2S device when Rec/Com opened it, and every
+# read came back zero (the house decoded silence). The manual capture now stops
+# the listener, waits for its close, discards the same warm-up, and hands the
+# microphone back afterwards.
+like($audio, qr/voiceListenStopAndWait\(\);/, 'a manual capture stops the listener first');
+like($audio, qr/mic open mode=%s path=%s/, 'and logs the mic open by mode');
+like($audio, qr/#define REC_WARMUP_MS 400/, 'the recorder discards the same 400 ms warm-up');
+like($audio, qr/voiceListenStart\(false\);\s*\n\s*Serial\.printf\("\[voice\] listener restart/, 'and hands the mic back after the capture');
+like($ship, qr/static void voiceListenStopAndWait\(\)/, 'the stop waits for the listener to release the mic');
+like($ship, qr/while \(voiceTaskAlive && millis\(\) - t < 2500\)/, 'with a bounded wait');
+
+# --- a silent capture is never shipped --------------------------------------
+like($audio, qr/#define REC_SILENCE_PEAK 32/, 'a tiny digital-silence floor');
+like($audio, qr/capture silent, not shipped/, 'a silent capture is never shipped');
+like($audio, qr/if \(bytes_written_total <= 1600 \|\| peak < REC_SILENCE_PEAK\)/,
+	'silence and a too-short tap share the drop');
+like($voice, qr/ok = \(code >= 200 && code < 300\);/, 'only a 2xx POST counts as shipped');
+
 done_testing();

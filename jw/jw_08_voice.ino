@@ -126,7 +126,10 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
     https.addHeader("Content-Type", "application/octet-stream");
     int code = https.sendRequest("POST", &f, (size_t)f.size());
     Serial.printf("[voice] post mode=%s -> %d\n", mode, code);
-    ok = (code > 0 && code < 400);
+    // Only 2xx means the house took the body. A 403 (auth) or 400 (unusable
+    // body) is a failure like any other: keep the clip for the bounded retry
+    // and let the caller fall back to the other transport.
+    ok = (code >= 200 && code < 300);
     https.end();
   }
   else {
@@ -343,15 +346,12 @@ static void voice_stream_push(const uint8_t *p, unsigned len) {
   }
 }
 
-// Encode the samples held for one block and hand the block over. Each block
-// carries its own predictor and step index (the IMA layout ffmpeg reads), so a
-// block boundary is a safe place to split for the wire.
-static void voice_stream_encode_block() {
-  int count = voice_sblk_have;
-  voice_sblk_have = 0;
-  if (count < 2) { return; }
-  uint8_t blk[VOICE_ADPCM_BLOCK];
-  int32_t pred = voice_sblk[0];
+// Encode `count` samples into one 1024-byte IMA ADPCM block and return the bytes
+// written (padded). Each block carries its own predictor and step index (the
+// layout ffmpeg reads), so a block boundary is a safe place to split for the
+// wire - the BLE stream and the Com WiFi upload both rely on that.
+static int voice_adpcm_block(const int16_t *samples, int count, uint8_t *blk) {
+  int32_t pred = samples[0];
   int index = 0;
   int at = 0;
   blk[at++] = (uint8_t)(pred & 0xff);
@@ -362,7 +362,7 @@ static void voice_stream_encode_block() {
   uint8_t pending = 0;
   for (int i = 1; i < count; i++) {
     int32_t step = voice_adpcm_step[index];
-    int32_t diff = (int32_t)voice_sblk[i] - pred;
+    int32_t diff = (int32_t)samples[i] - pred;
     uint8_t nib = 0;
     if (diff < 0) { nib = 8; diff = -diff; }
     if (diff >= step) { nib |= 4; diff -= step; }
@@ -381,6 +381,16 @@ static void voice_stream_encode_block() {
   }
   if (nib_have) { blk[at++] = pending; }
   while (at < VOICE_ADPCM_BLOCK) { blk[at++] = 0; }   // pad, as the file path does
+  return at;
+}
+
+// Encode the samples held for one block and hand it to the BLE sender.
+static void voice_stream_encode_block() {
+  int count = voice_sblk_have;
+  voice_sblk_have = 0;
+  if (count < 2) { return; }
+  uint8_t blk[VOICE_ADPCM_BLOCK];
+  int at = voice_adpcm_block(voice_sblk, count, blk);
   voice_stream_push(blk, at);
 }
 
@@ -441,6 +451,218 @@ static void voice_stream_end() {
   if (!voice_stream_run) { return; }
   voice_stream_encode_block();   // the partial final block
   voice_stream_stop = true;
+}
+
+// ---- Com: upload the push-to-talk clip while it is being spoken -----------
+// A Com command is uploaded over WiFi in 1024-byte IMA ADPCM blocks as the mic
+// fills them, so the house has the audio the moment the button is released.
+// Each block is one POST; the block that turns out to be last carries last=1
+// (an empty final chunk when the last data block was already full), and the
+// house assembles the session and runs the same voice_ingest. The whole-file
+// POST over /watch/voice (then BLE) remains the fallback when WiFi is down or
+// any chunk fails. Rec memos stay whole-file: they are not spoken live.
+//
+// The stream is folded to 8 kHz, the rate the BLE path already uses and the one
+// the house reads. Every block has its own predictor and step index, so block
+// boundaries are safe split points.
+#define COM_STREAM_QUEUE 6
+#define COM_STREAM_TIMEOUT_MS 4000
+#define COM_STREAM_DRAIN_MS 10000
+static QueueHandle_t com_stream_q = nullptr;
+static String com_stream_base;                       // URL without seq/last
+static String com_stream_session;
+static volatile bool com_stream_active = false;      // the capture is feeding it
+static volatile bool com_stream_done = false;        // capture ended: flush, close
+static volatile bool com_stream_abort_requested = false;  // never send a last chunk
+static volatile bool com_stream_failed = false;      // a chunk failed: fall back
+static volatile bool com_stream_ok = false;          // every chunk landed
+static volatile bool com_stream_sender_alive = false;
+static volatile unsigned com_stream_seq = 0;
+static volatile unsigned com_stream_chunks = 0;
+static volatile unsigned com_stream_queued = 0;   // blocks handed to the upload task
+static int16_t com_sblk[VOICE_ADPCM_SPB];
+static int com_sblk_have = 0;
+
+static bool com_stream_post(WiFiClientSecure &client, const uint8_t *data, unsigned len, bool last) {
+  String url = com_stream_base + "&seq=" + String(com_stream_seq)
+    + "&last=" + (last ? "1" : "0");
+  HTTPClient https;
+  https.setTimeout(COM_STREAM_TIMEOUT_MS);
+  bool ok = false;
+  if (https.begin(client, url)) {
+    https.addHeader("Content-Type", "application/octet-stream");
+    int code = (data && len) ? https.POST((uint8_t *)data, len) : https.POST((uint8_t *)"", 0);
+    ok = (code >= 200 && code < 300);
+    Serial.printf("[voice] com stream chunk seq=%u bytes=%u last=%d -> %d\n",
+                  (unsigned)com_stream_seq, len, last ? 1 : 0, code);
+    https.end();
+  }
+  else {
+    Serial.printf("[voice] com stream chunk seq=%u begin failed\n", (unsigned)com_stream_seq);
+  }
+  if (ok) { com_stream_seq++; }
+  return ok;
+}
+
+static void com_stream_task(void *pv) {
+  uint8_t pend[VOICE_ADPCM_BLOCK];
+  bool have_pend = false;
+  WiFiClientSecure client;
+  client.setCACert(HOUSE_CA_PEM);
+  while (true) {
+    uint8_t blk[VOICE_ADPCM_BLOCK];
+    if (xQueueReceive(com_stream_q, blk, pdMS_TO_TICKS(100)) == pdTRUE) {
+      // Hold one block back: only the next block (or the end) tells us this one
+      // was not the last, and the last one must carry last=1.
+      if (have_pend) {
+        if (!com_stream_post(client, pend, sizeof(pend), false)) { com_stream_failed = true; break; }
+        com_stream_chunks++;
+      }
+      memcpy(pend, blk, sizeof(pend));
+      have_pend = true;
+      if (com_stream_abort_requested) { break; }
+      continue;
+    }
+    if (com_stream_abort_requested) { break; }
+    if (com_stream_done) {
+      if (have_pend) {
+        if (!com_stream_post(client, pend, sizeof(pend), true)) { com_stream_failed = true; break; }
+      }
+      else {
+        // safety net: no data block was held back, so an empty final chunk is
+        // the only way to close the session
+        if (!com_stream_post(client, nullptr, 0, true)) { com_stream_failed = true; break; }
+      }
+      com_stream_chunks++;
+      break;
+    }
+  }
+  if (com_stream_q) { xQueueReset(com_stream_q); }
+  com_stream_ok = !com_stream_failed && !com_stream_abort_requested;
+  com_stream_sender_alive = false;
+  vTaskDelete(NULL);
+}
+
+// Start the WiFi upload for a Com capture. Best effort: with no WiFi, no
+// homebase or no room for the queue the whole-file path covers the clip.
+static void com_stream_begin(long ts) {
+  if (com_stream_active || com_stream_sender_alive) { return; }
+  if (WiFi.status() != WL_CONNECTED || homebaseIP.length() == 0 || authorization.length() == 0) {
+    Serial.printf("[voice] com stream not started (wifi=%d homebase=%u auth=%u)\n",
+                  (int)(WiFi.status() == WL_CONNECTED),
+                  (unsigned)homebaseIP.length(), (unsigned)authorization.length());
+    return;
+  }
+  if (!com_stream_q) {
+    com_stream_q = xQueueCreate(COM_STREAM_QUEUE, VOICE_ADPCM_BLOCK);
+    if (!com_stream_q) { Serial.println("[voice] com stream not started (no queue)"); return; }
+  }
+  xQueueReset(com_stream_q);
+  // The session id must match [A-Za-z0-9_.-]{1,64}: the clip's epoch, a dash,
+  // and the boot millis in hex.
+  com_stream_session = String(ts) + "-" + String((unsigned long)millis(), HEX);
+  com_stream_base = "https://" + homebaseIP + "/watch/voice/stream?edt=watch"
+    + "&chip_id=" + chip_id_maker()
+    + "&authorization=" + urlEncode(authorization)
+    + "&voice=" + COMMAND_MODE
+    + "&timestamp=" + String(ts)
+    + "&session=" + com_stream_session;
+  com_stream_active = true;
+  com_stream_done = false;
+  com_stream_abort_requested = false;
+  com_stream_failed = false;
+  com_stream_ok = false;
+  com_stream_seq = 0;
+  com_stream_chunks = 0;
+  com_stream_queued = 0;
+  com_sblk_have = 0;
+  com_stream_sender_alive = true;
+  Serial.printf("[voice] com stream begin session=%s ts=%ld\n", com_stream_session.c_str(), ts);
+  if (xTaskCreatePinnedToCore(com_stream_task, "ComStream", 12288, NULL, 1, NULL, 0) != pdPASS) {
+    Serial.println("[voice] com stream not started (no task)");
+    com_stream_active = false;
+    com_stream_sender_alive = false;
+  }
+}
+
+// 8 kHz samples in, complete 1024-byte blocks on their way to the upload task.
+// Never blocks the microphone for long; a full queue means the link is behind
+// the speech, so the clip falls back to the whole-file path.
+static void com_stream_feed(const int16_t *samples, int n) {
+  if (!com_stream_active || com_stream_failed) { return; }
+  for (int i = 0; i < n; i++) {
+    com_sblk[com_sblk_have++] = samples[i];
+    if (com_sblk_have >= VOICE_ADPCM_SPB) {
+      uint8_t blk[VOICE_ADPCM_BLOCK];
+      voice_adpcm_block(com_sblk, com_sblk_have, blk);
+      com_sblk_have = 0;
+      if (xQueueSend(com_stream_q, blk, pdMS_TO_TICKS(20)) != pdTRUE) {
+        Serial.println("[voice] com stream fell behind the speech; whole file will be sent");
+        com_stream_failed = true;
+        com_stream_active = false;
+        return;
+      }
+      com_stream_queued++;
+    }
+  }
+}
+
+// Capture over: flush the partial final block, close the session with last=1,
+// and wait (bounded) for the uploads to finish. True means the house has the
+// whole clip and the ship task can skip the whole-file POST.
+static bool com_stream_end() {
+  if (!com_stream_active && !com_stream_sender_alive) { return false; }
+  if (!com_stream_failed && !com_stream_abort_requested) {
+    if (com_sblk_have >= 2) {
+      uint8_t blk[VOICE_ADPCM_BLOCK];
+      voice_adpcm_block(com_sblk, com_sblk_have, blk);
+      if (xQueueSend(com_stream_q, blk, pdMS_TO_TICKS(200)) != pdTRUE) {
+        com_stream_failed = true;
+      }
+      else {
+        com_stream_queued++;
+      }
+    }
+  }
+  if (!com_stream_failed && !com_stream_abort_requested && com_stream_queued == 0) {
+    // A tap too short for one 1024-byte block: close nothing. A session with no
+    // audio would only make the house ingest silence.
+    Serial.println("[voice] com stream aborted (no blocks)");
+    com_stream_abort_requested = true;
+    if (com_stream_q) { xQueueReset(com_stream_q); }
+  }
+  com_sblk_have = 0;
+  com_stream_active = false;
+  com_stream_done = true;
+  uint32_t t = millis();
+  while (com_stream_sender_alive && millis() - t < COM_STREAM_DRAIN_MS) {
+    vTaskDelay(20 / portTICK_PERIOD_MS);
+  }
+  if (com_stream_sender_alive) {
+    Serial.println("[voice] com stream did not finish; whole file will be sent");
+    com_stream_failed = true;
+    com_stream_abort_requested = true;
+  }
+  bool ok = com_stream_ok && !com_stream_failed && !com_stream_abort_requested;
+  Serial.printf("[voice] com stream %s chunks=%u session=%s\n",
+                ok ? "ok" : "failed", (unsigned)com_stream_chunks, com_stream_session.c_str());
+  return ok;
+}
+
+// A silent or too-short capture: drop the session without its last chunk, so
+// the house never assembles or ingests it.
+static void com_stream_abort() {
+  if (!com_stream_active && !com_stream_sender_alive) { return; }
+  com_stream_abort_requested = true;
+  com_stream_active = false;
+  if (com_stream_q) { xQueueReset(com_stream_q); }
+  uint32_t t = millis();
+  while (com_stream_sender_alive && millis() - t < 2000) {
+    vTaskDelay(20 / portTICK_PERIOD_MS);
+  }
+  com_stream_ok = false;
+  com_stream_failed = true;
+  Serial.printf("[voice] com stream aborted (chunks=%u)\n", (unsigned)com_stream_chunks);
 }
 
 // Capture over with nothing in it: abandon the stream rather than finish it. The

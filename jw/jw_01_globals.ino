@@ -24,6 +24,13 @@ static void clock_apply_to_face();
 // jw_07, so name them here for PlatformIO's .ino preprocessor.
 static bool voice_compress_clip(const String &in_path, const String &out_path, bool fold_half, uint32_t rate);
 static bool voice_ship_clip(const String &path, long ts, const char *mode);
+// The manual recorder takes the microphone from the listener (jw_09) and, for a
+// Com push-to-talk, streams its blocks to the house over WiFi (jw_08).
+static void voiceListenStopAndWait();
+static void com_stream_begin(long ts);
+static void com_stream_feed(const int16_t *s, int n);
+static bool com_stream_end();
+static void com_stream_abort();
 
 // lv_label_set_text() frees and reallocates the label's text and invalidates the
 // area even when the text is identical, and the loop calls the face writers on
@@ -132,6 +139,18 @@ static String voice_floor = "auto";
 static uint32_t voice_ambient_rms = 0;
 static volatile bool voiceListening = false;
 static volatile bool voiceOneShot = false;   // a serial "voice" capture, not the setting
+// Microphone ownership. The always-on listener opens the I2S device and keeps it
+// across utterances; a manual Rec/Com capture opens the same device. Opening it
+// while the listener still held it made the recorder read all zeros (the server
+// decoded a memo and a command as silence), so a manual capture now stops the
+// listener and waits for its close first. These flags are how that hand-off is
+// known across the two cores.
+static volatile bool voiceTaskAlive = false;      // the listener task is running
+static volatile bool voiceStopRequested = false;  // a manual capture asked it to end
+static volatile bool voiceMicOpen = false;        // the listener holds the mic
+// A manual capture owns the mic from before the stop until after mic->close();
+// loop() must not restart the listener inside that window.
+static volatile bool manualCaptureActive = false;
 // True while a command is being recorded: loop() holds the screen timeout off
 // then, so a spoken command is not cut short by the watch dozing (the tilt-wake
 // delay the user asked for).
@@ -200,6 +219,9 @@ static volatile bool rec_is_note = true;
 static volatile bool rec_ship_is_note = true;
 static volatile long rec_ship_ts = 0;
 static String rec_ship_path;
+// True when a Com capture already reached the house chunk by chunk over WiFi, so
+// the ship task must not POST the whole file again.
+static volatile bool rec_ship_streamed = false;
 // Set when the saved config says BLE should be on. Starting the BLE stack from
 // setup() crashes the watch, so the start is deferred to loop() once the rest of
 // the boot (display, LVGL, WiFi) has settled.

@@ -172,16 +172,30 @@ static void voice_ack(bool wake) {
 }
 
 static void voiceListenTask(void *pv) {
+  voiceTaskAlive = true;
+  voiceMicOpen = false;
+  // A manual capture may have asked us to stop before this task got to run:
+  // never open the microphone in that case.
+  if (voiceStopRequested || !voiceListening) {
+    voiceTaskAlive = false;
+    voiceListening = false;
+    vTaskDelete(NULL);
+  }
   if (voiceDbg) { Serial.printf("[voice] task int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
   AudioInputIf *mic = watch.getAudioInput();
+  voiceMicOpen = true;   // from here the listener owns the device
   if (!mic || !mic->open(MIC_I2S_BITS_PER_SAMPLE, 1, MIC_I2S_SAMPLE_RATE)) {
     Serial.println("[voice] microphone open failed");
+    voiceMicOpen = false;
+    voiceTaskAlive = false;
     voiceListening = false;
     vTaskDelete(NULL);
   }
   uint8_t *buf = (uint8_t *)malloc(VOICE_FRAME_SAMPLES * 2);
   if (!buf) {
     mic->close();
+    voiceMicOpen = false;
+    voiceTaskAlive = false;
     voiceListening = false;
     vTaskDelete(NULL);
   }
@@ -457,24 +471,61 @@ static void voiceListenTask(void *pv) {
       f.close();   // a capture cut short by a manual record is discarded
       voiceRecording = false;
       voiceWakeHoldUntil = 0;
+      voice_stream_abort();
     }
     if (voiceOneShot) { break; }             // a serial "voice" capture is one utterance
     if (!voiceCaptureEnabled) { break; }     // the setting was turned off
     vTaskDelay(1);
   }
   mic->close();
+  voiceMicOpen = false;
   free(buf);
   voiceRecording = false;
   voiceWakeHoldUntil = 0;
   voiceListening = false;
+  voiceTaskAlive = false;
   if (voiceDbg) { Serial.printf("[voice] task end int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
   vTaskDelete(NULL);
 }
 
+// Stop the always-on listener and wait for it to release the microphone, so a
+// manual Rec/Com capture can open the same I2S device. Opening it under a live
+// listener is what made the recorder's samples all zero - the house decoded a
+// memo and a command as silence. The wait is bounded: a stuck listener must not
+// hang a button.
+static void voiceListenStopAndWait() {
+  if (!voiceListening && !voiceTaskAlive && !voiceMicOpen) { return; }
+  bool was_recording = voiceRecording;
+  Serial.printf("[voice] listener stop (listen=%d alive=%d mic=%d)\n",
+                (int)voiceListening, (int)voiceTaskAlive, (int)voiceMicOpen);
+  voiceStopRequested = true;
+  voiceListening = false;
+  uint32_t t = millis();
+  while (voiceTaskAlive && millis() - t < 2500) {
+    vTaskDelay(20 / portTICK_PERIOD_MS);
+  }
+  if (voiceTaskAlive) {
+    Serial.println("[voice] listener stop timed out; opening the mic anyway");
+  }
+  else {
+    Serial.printf("[voice] listener stopped in %u ms (mic=%d)\n",
+                  (unsigned)(millis() - t), (int)voiceMicOpen);
+  }
+  if (was_recording) {
+    // A hands-free capture was in flight: its live stream must not linger and
+    // block the next one.
+    voice_stream_abort();
+    Serial.println("[voice] listener capture aborted for the manual one");
+  }
+}
+
 // Arm the listener. one_shot is the serial trigger (a single utterance); the
 // setting keeps it running until it is turned off. A capture already in flight
-// is left alone.
+// is left alone, and a manual capture owns the microphone outright.
 static void voiceListenStart(bool one_shot) {
+  if (manualCaptureActive) {
+    return;
+  }
   if (voiceListening) {
     return;
   }
@@ -487,6 +538,7 @@ static void voiceListenStart(bool one_shot) {
     return;
   }
   if (voiceDbg) { Serial.printf("[voice] start int=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
+  voiceStopRequested = false;
   voiceOneShot = one_shot;
   voiceListening = true;
   xTaskCreatePinnedToCore(voiceListenTask, "VoiceTask", 8192, NULL, 2, NULL, 1);

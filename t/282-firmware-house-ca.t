@@ -130,7 +130,9 @@ my $anchors = () = $pico =~ /setTrustAnchors\s*\(\s*&house_ca_list\s*\)/g;
 is($anchors, 3, 'and applies it to all three Pico house clients');
 unlike($pico, qr/setCACert/, 'the Pico uses BearSSL anchors, not the ESP32 API');
 
-for my $pair (['jt', 6], ['jw', 4]) {
+# jw: the room fetches, the voice POST, the reply fetch and the setup probes, plus
+# the Com WiFi upload client.
+for my $pair (['jt', 6], ['jw', 5]) {
 	my ($name, $want) = @$pair;
 	my $src = join '', map { scalar read_file($_) } glob("$root/$name/*.ino");
 	my $calls = () = $src =~ /setCACert\s*\(\s*HOUSE_CA_PEM\s*\)/g;

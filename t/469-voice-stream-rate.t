@@ -129,4 +129,23 @@ my $house = read_file('jw/jw_07_house_audio.ino');
 like($house, qr/voice_compress_clip\(src, packed, true, MIC_I2S_SAMPLE_RATE \/ 2\)/,
 	'the Rec memo folds to half the mic rate and names it');
 
+# --------------------------------------------------- the Com WiFi upload
+# While Com is held, its 8 kHz IMA ADPCM goes up block by block over WiFi; the
+# whole-file POST stays the fallback, and a note is never streamed.
+like($voice, qr{/watch/voice/stream}, 'a Com capture streams to the stream route');
+like($voice, qr{authorization=" \+ urlEncode\(authorization\)}, 'the upload carries the authorization');
+like($voice, qr{voice=" \+ COMMAND_MODE}, 'and is tagged as a command');
+like($voice, qr{session=" \+ com_stream_session}, 'with a per-capture session id');
+like($voice, qr{seq=" \+ String\(com_stream_seq\)}, 'a per-chunk sequence number');
+like($voice, qr{last=" \+ \(last \? "1" : "0"\)}, 'and a last flag');
+like($voice, qr{https\.addHeader\("Content-Type", "application/octet-stream"\)}, 'raw block bodies');
+like($voice, qr{com_stream_post\(client, nullptr, 0, true\)}, 'an empty final chunk closes a full last block');
+like($voice, qr{#define COM_STREAM_QUEUE 6}, 'blocks wait in a small queue for the upload task');
+like($voice, qr{Hold one block back}, 'the last block is held back so it can carry last=1');
+like($voice, qr{voice_adpcm_block\(com_sblk, com_sblk_have, blk\)}, 'the upload reuses the IMA block encoder');
+like($voice, qr{com_sblk\[com_sblk_have\+\+\] = samples\[i\]}, 'and encodes 8 kHz blocks as they fill');
+like($house, qr/com_stream_begin\(clip_ts\)/, 'the Com capture starts the upload');
+like($house, qr/rec_ship_streamed = com_stream_end\(\)/, 'and records whether the house has the whole clip');
+like($house, qr/via=wifi-stream/, 'a streamed command skips the whole-file POST');
+
 done_testing();
