@@ -14,7 +14,7 @@
 //! count so the person learns the take has a gap, rather than the engine
 //! pretending a late block arrived on time.
 //!
-//! The writer thread rewrites the header sizes on a cadence (~0.5 s of audio,
+//! The writer thread rewrites the header sizes on a cadence (~2 s of audio,
 //! not per block) and again in [`DiskWriter::finish`]. Between syncs the header
 //! describes an older, shorter prefix of the file: never more samples than are
 //! actually on disk, so a killed take is still a valid WAV. The tail since the
@@ -29,9 +29,10 @@ use std::thread::{self, JoinHandle};
 
 use crate::wav::{WavError, WavWriter};
 
-/// Frames per header sync: half a second of audio, so the seek cost is paid
-/// a couple of times a second instead of once per block (~750/s at 64 frames).
-const SYNC_HALF_SECONDS: u64 = 2;
+/// Frames per header sync: two seconds of audio, so the seek cost is paid
+/// once every couple of seconds instead of every beat. A killed take loses
+/// at most the last sync interval from its header, not its samples.
+const SYNC_SECONDS: u64 = 2;
 
 /// A block as it crosses the queue: interleaved i16 samples, already the
 /// on-disk format, so the writer thread does no conversion.
@@ -65,7 +66,7 @@ impl DiskWriter {
             ));
         }
         let writer = WavWriter::create(path, rate, channels, period)?;
-        let sync_frames = (u64::from(rate) / SYNC_HALF_SECONDS).max(1);
+        let sync_frames = (u64::from(rate) * SYNC_SECONDS).max(1);
 
         // A bounded mpsc channel is the queue: `try_send` is the non-blocking
         // hand-off and `recv` is the writer's pull.
@@ -255,5 +256,13 @@ mod tests {
         assert_eq!(disk.push(&[1, 2, 3]), 1, "one whole frame exists");
         assert_eq!(disk.dropped_frames(), 1);
         assert_eq!(disk.finish().expect("finish"), 0);
+    }
+
+    #[test]
+    fn the_header_sync_is_two_seconds_not_a_beat() {
+        // The 120 bpm click is one beat per 0.5 s; syncing on every beat
+        // stalled the writers and underran the playback in the P2 gate.
+        assert_eq!(SYNC_SECONDS, 2);
+        assert_eq!(48_000 * SYNC_SECONDS, 96_000);
     }
 }
