@@ -330,13 +330,12 @@ sub action_37270 {
 	}
 	my $spoken = substr($text, 0, 800);
 	&subs::say_it($spoken);
-	# the voice runs in a fork of its own, so the caller cannot hear it finish:
-	# hand an estimate along (Piper paces about 2.7 words a second) so a spoken
-	# conversation can open its mic just before the voice has had its say. The
-	# old 0.8 s base was padding, and the mic stayed shut while the person was
-	# already talking.
+	# The voice runs in a fork of its own, so the caller cannot hear it finish.
+	# This estimate is a ceiling, not a target: opening the mic before the voice
+	# ends cut the answer off, so keep the padding and let the client subtract
+	# only its recogniser's measured warm-up.
 	my $words = scalar( split /\s+/, $spoken );
-	my $seconds = $words ? (0.2 + $words / 2.7) : 0;
+	my $seconds = $words ? (0.8 + $words / 2.5) : 0;
 	$c->render(json => { ok => 1, seconds => sprintf('%.2f', $seconds), ms => int($seconds * 1000) });
 }
 
