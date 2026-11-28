@@ -673,6 +673,15 @@ sub authentication_passer($c) {
 			. ' answer=' . $answer);
 	}
 	unless ($authentication eq 'approved') {
+		# A linked machine that proved its pinned key is the house calling, not a
+		# person whose cookie lapsed. The app gate and the resident scope already
+		# admit that proof; the login gate did not, so a relay from a peer whose
+		# stored session had expired was answered with the Gate page - a 200, which
+		# the status-blind relay counted as delivered, and the row waited for the
+		# next sync. Let the proved machine through for this request without
+		# rewriting its cookie; the tier and scope checks above still decide which
+		# surfaces it reaches, and an explicit denial below still refuses.
+		return 'approved' if $peer_call;
 		$c->session('authentication' => 'revoked');
 		$c->session('bti', $c->stash('browser_tab_id'));
 		my $restore_list = [];
