@@ -676,6 +676,73 @@ sub live_verb_names {
 	return \%names;
 }
 
+# The person's own behavioural rules live in one synced setting (see
+# Guide.pm: guide_rule_remember). The prompt carries only the rules whose match
+# words are in this turn's question or the window the person has open, newest
+# and most-specific first, capped in both count and size. A rule list that grows
+# therefore costs nothing on a question that touches none of it.
+our $GUIDE_RULES_CAP_COUNT = 6;
+our $GUIDE_RULES_CAP_CHARS = 800;
+
+# A match word counts when it stands on its own: "app" does not fire inside
+# "happy", and a quoted phrase matches as one run.
+sub rule_matches_text {
+	my ($rule, $text) = @_;
+	return 0 unless defined $text && length $text;
+	my $hay = lc $text;
+	foreach my $w ( @{ $rule->{'match'} || [] } ) {
+		my $q = lc $w;
+		next unless length $q;
+		my $re = quotemeta($q);
+		return 1 if $hay =~ /(?<![\p{L}\p{N}])$re(?![\p{L}\p{N}])/;
+	}
+	return 0;
+}
+
+# A rule may name the window it belongs to; it is offered only while that name
+# is in front of the person (the question, the topic, or the attached window).
+sub rule_app_matches {
+	my ($rule, $text) = @_;
+	my $app = $rule->{'app'} // '';
+	return 1 unless length $app;
+	return 0 unless defined $text && length $text;
+	return index(lc $text, lc $app) >= 0 ? 1 : 0;
+}
+
+sub prompt_rules {
+	my ($text) = @_;
+	my @hit;
+	my $pos = 0;
+	foreach my $r ( @{ &subs::guide_rules_read() } ) {
+		my $at = $pos++;
+		next unless &rule_matches_text($r, $text);
+		next unless &rule_app_matches($r, $text);
+		my $specific = 0;
+		foreach my $w ( @{ $r->{'match'} } ) {
+			$specific++ if index(lc($text // ''), lc $w) >= 0;
+		}
+		push @hit, { rule => $r, specific => $specific, pos => $at };
+	}
+	return '' unless @hit;
+	# most-specific first (more of its words are present), newest first on a tie
+	@hit = sort { $b->{'specific'} <=> $a->{'specific'} || $b->{'pos'} <=> $a->{'pos'} } @hit;
+	my $block = "\nRules the person asked you to follow on this turn (follow each one):\n";
+	my (@lines, $chars);
+	$chars = 0;
+	foreach my $h ( @hit ) {
+		last if scalar(@lines) >= $GUIDE_RULES_CAP_COUNT;
+		my $r = $h->{'rule'};
+		my $line = '- ' . $r->{'rule'};
+		$line .= ' (when: ' . $r->{'when'} . ')' if length($r->{'when'} // '');
+		$line .= "\n";
+		last if $chars + length($line) > $GUIDE_RULES_CAP_CHARS;
+		push @lines, $line;
+		$chars += length $line;
+	}
+	return '' unless @lines;
+	return $block . join('', @lines);
+}
+
 sub actions_prompt {
 	# The action lines are generated from @gb::guide_tools (see gb.pl), so a tool is
 	# declared once and offered here automatically once it is live (not `planned`).
@@ -684,7 +751,7 @@ sub actions_prompt {
 	# rest - a model told it could "find" when nothing can run a find simply did
 	# nothing at all. $with_page offers the page verb; it is given only on a turn
 	# that carries the attached window's form, so no other associate sees it.
-	my ($only, $with_page) = @_;
+	my ($only, $with_page, $match_text) = @_;
 	# The Confirmation Requirement (the Confirm tick in the Guide's associate
 	# panel, stored as a setting so it is the same on every machine): off means
 	# a proposed appointment is saved as it is made, so promote and discard are
@@ -723,7 +790,8 @@ sub actions_prompt {
 Rules:
 - Navigate, search, make media and change appointments (update). Never delete, send or
   pay, and never change anything else.
-- Choose only from the actions listed above; there is no other verb here.
+- Choose only from the actions listed above, plus remember_rule and forget_rule
+  (described below); there is no other verb here.
 - When the person names a photo, a record or an app to show them, use find first,
   then open what the result points at. If find returns an app, pass that exact app
   name to open_gallery - do not hand open_gallery a free-text name instead.
@@ -788,8 +856,13 @@ $update_rule
   with no "app" the media waits in the Camera pool to be filed. It is slow, so
   say what you are making rather than making several at once.
 - Keep every text field short and in plain, everyday words.
+- To follow a presentation or behaviour rule the person states ("present
+  coordinates with three decimal places", "always answer in metric"), use
+  remember_rule with "match" (the words that should call it up) and "rule"
+  (one short sentence). To stop following one, use forget_rule with its words
+  or its position. You see only the rules whose words match this turn.
 TXT
-	return $header . $lines . "\n" . $rules;
+	return $header . $lines . "\n" . $rules . &prompt_rules($match_text);
 }
 
 # The Coding agent's prompt: the JawnOS Guide's self-healing half. It reads and

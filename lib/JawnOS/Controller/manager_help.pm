@@ -247,7 +247,19 @@ sub action_34818 {
 	utf8::encode($page_json) if utf8::is_utf8($page_json);
 	my $page = eval { decode_json $page_json } || {};
 	my $page_on = (ref $page eq 'HASH' && length($page->{'title'} // $page->{'app'} // '')) ? 1 : 0;
-	my $system = &help::actions_prompt(undef, $page_on) . "\n\n";
+	# The words this turn is about: the newest USER line plus the window and help
+	# topic in front of the person. help::actions_prompt uses them to pick out only
+	# the person's own rules that match, so the prompt never carries the whole list.
+	my $rule_text = '';
+	foreach my $m ( reverse @{ $transcript } ) {
+		next unless ref $m eq 'HASH';
+		next unless (($m->{'role'} // '') eq 'user');
+		$rule_text = defined $m->{'content'} ? "$m->{'content'}" : '';
+		last;
+	}
+	$rule_text .= ' ' . join(' ', grep { defined && length } map { $context->{$_} } qw/title view appointment/);
+	$rule_text .= ' ' . ($t->{'title'} // '') if $t;
+	my $system = &help::actions_prompt(undef, $page_on, $rule_text) . "\n\n";
 	# the guide is given the wall clock so it can turn "last year", "yesterday" and
 	# "next Friday" into the absolute dates where_when and create need
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
@@ -359,6 +371,19 @@ sub action_34818 {
 			}
 			elsif (($action->{'action'} || '') eq 'unalias') {
 				my $r = &guide_alias_remove($action->{'alias'});
+				$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
+			}
+			# A behavioural rule is a write to the shared setting, not a client
+			# action: store or remove it and answer in words. Only the rules whose
+			# words match a turn are ever shown to the model (help::actions_prompt).
+			elsif (($action->{'action'} || '') eq 'remember_rule') {
+				my $r = &guide_rule_remember($action->{'match'}, $action->{'rule'}, $action->{'app'}, $action->{'when'});
+				$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
+			}
+			elsif (($action->{'action'} || '') eq 'forget_rule') {
+				my $which = $action->{'match'};
+				$which = $action->{'index'} unless defined $which && (ref $which eq 'ARRAY' ? @{ $which } : length "$which");
+				my $r = &guide_rule_forget($which);
 				$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
 			}
 			else {

@@ -303,6 +303,22 @@ $(document).on('click', '#guide_verbs_save', function () {
 	});
 });
 
+// The Guide's behavioural rules are one JSON list in a textarea, saved whole so
+// a half-typed entry never reaches the store. It is a house setting (device
+// 'all'), so every machine follows the same rules; only the entries whose match
+// words occur in a turn are ever given to the model.
+$(document).on('click', '#guide_rules_save', function () {
+	var status = $('#guide_rules_status');
+	var rows;
+	try { rows = JSON.parse($('#guide_rules_json').val() || '[]'); }
+	catch (e) { status.text('that is not a JSON list'); return; }
+	if (!$.isArray(rows)) { status.text('that is not a JSON list'); return; }
+	status.text('saving\u2026');
+	settingSetter({ app: '__president', setting: 'guide_rules', device: 'all', value: JSON.stringify(rows, null, 2) }).then(function () {
+		status.text('saved \u2014 ' + rows.length + ' rule(s)');
+	}, function () { status.text('could not save'); });
+});
+
 // Budgets and goals are edited as a list: each row is an amount, a measure (the
 // app's own, money, or a plain count), a scope count + unit (none makes it a
 // fixed level), and which way it runs. The rows are composed back into the one

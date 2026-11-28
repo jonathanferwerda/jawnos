@@ -658,6 +658,132 @@ sub guide_aliases_read {
 	return ref $map eq 'HASH' ? $map : {};
 }
 
+# The person's behavioural rules for the Guide: a short "follow this" sentence
+# with the words that should call it up. Stored as one synced list under
+# __president/guide_rules, the same way the runtime verbs are, so every machine
+# follows the same rules. The prompt (help.pl) only ever carries the rules whose
+# words occur in the current turn, so the list can grow without costing tokens on
+# an unrelated question.
+#
+# An entry is {"match":["coordinates","latitude"],"rule":"...", "app":"", "when":""}.
+# `app` names a window the rule belongs to; `when` is a note the person said.
+sub guide_rules_read {
+	my $raw = eval { &subs::setting_grabber({ app => '__president', setting => 'guide_rules', device => 'all' }) } || '';
+	my $rows = eval { decode_json($raw) } || [];
+	$rows = [] unless ref $rows eq 'ARRAY';
+	my @out;
+	foreach my $r ( @{$rows} ) {
+		next unless ref $r eq 'HASH';
+		next unless ref $r->{'match'} eq 'ARRAY';
+		my @match;
+		foreach my $w ( @{ $r->{'match'} } ) {
+			next unless defined $w;
+			$w = "$w";
+			$w =~ s/^\s+|\s+$//g;
+			push @match, substr($w, 0, 60) if length $w;
+		}
+		next unless @match;
+		my $rule = defined $r->{'rule'} ? "$r->{'rule'}" : '';
+		$rule =~ s/\s+/ /g;
+		$rule =~ s/^\s+|\s+$//g;
+		next unless length $rule;
+		my $when = defined $r->{'when'} ? "$r->{'when'}" : '';
+		$when =~ s/\s+/ /g;
+		$when =~ s/^\s+|\s+$//g;
+		push @out, {
+			match => \@match,
+			rule => substr($rule, 0, 300),
+			app => (defined $r->{'app'} ? "$r->{'app'}" : ''),
+			when => substr($when, 0, 120),
+		};
+	}
+	return \@out;
+}
+
+sub guide_rules_write {
+	my ($rows) = @_;
+	return 0 unless ref $rows eq 'ARRAY';
+	&subs::setting_setter({ app => '__president', setting => 'guide_rules', device => 'all', value => encode_json($rows) });
+	return 1;
+}
+
+# Remember one rule. `match` is the words that call it up (an array or a
+# comma-separated string); `rule` is one short sentence. A rule with the same
+# set of trigger words replaces the old one, so saying it twice does not stack.
+sub guide_rule_remember {
+	my ($match, $rule, $app, $when) = @_;
+	my @match;
+	if (ref $match eq 'ARRAY') {
+		@match = @{$match};
+	}
+	elsif (defined $match && length "$match") {
+		@match = split /\s*,\s*/, "$match";
+	}
+	foreach my $w ( @match ) {
+		$w = defined $w ? "$w" : '';
+		$w =~ s/^\s+|\s+$//g;
+	}
+	@match = grep { length } map { substr($_, 0, 60) } @match;
+	@match = @match[0 .. 7] if scalar @match > 8;
+	my $r = defined $rule ? "$rule" : '';
+	$r =~ s/\s+/ /g;
+	$r =~ s/^\s+|\s+$//g;
+	return { ok => 0, text => 'Tell me the words that should call up the rule.' } unless @match;
+	return { ok => 0, text => 'Tell me the rule in one short sentence.' } unless length $r;
+	$r = substr($r, 0, 300);
+	my $scope_app = defined $app ? "$app" : '';
+	$scope_app =~ s/^\s+|\s+$//g;
+	my $note = defined $when ? "$when" : '';
+	$note =~ s/\s+/ /g;
+	$note =~ s/^\s+|\s+$//g;
+	my $rows = &guide_rules_read();
+	my $sig = join('|', map { lc } sort @match);
+	my @keep = grep { join('|', map { lc } sort @{ $_->{'match'} }) ne $sig } @{ $rows };
+	my $entry = { match => \@match, rule => $r };
+	$entry->{'app'} = substr($scope_app, 0, 120) if length $scope_app;
+	$entry->{'when'} = substr($note, 0, 120) if length $note;
+	push @keep, $entry;
+	&guide_rules_write(\@keep);
+	return { ok => 1, text => 'Remembered: ' . $r };
+}
+
+# Forget one rule, by a trigger word or by its position (1 is the first).
+sub guide_rule_forget {
+	my ($which) = @_;
+	$which = $which->[0] if ref $which eq 'ARRAY' && @{ $which };
+	my $rows = &guide_rules_read();
+	return { ok => 0, text => 'There are no rules to forget.' } unless @{ $rows };
+	my $removed;
+	if (defined $which && "$which" =~ /^\s*\d+\s*$/) {
+		my $i = "$which" + 0;
+		$i = 0 if $i < 1;
+		$i -= 1 if $i >= 1;
+		if ($i >= 0 && $i < scalar @{ $rows }) {
+			$removed = splice(@{ $rows }, $i, 1);
+		}
+	}
+	else {
+		my $want = defined $which ? lc "$which" : '';
+		$want =~ s/^\s+|\s+$//g;
+		if (length $want) {
+			my @keep;
+			foreach my $r ( @{ $rows } ) {
+				my $hit = 0;
+				foreach my $w ( @{ $r->{'match'} } ) {
+					my $lw = lc $w;
+					$hit = 1 if $lw eq $want || index($lw, $want) >= 0 || index($want, $lw) >= 0;
+				}
+				if ($hit && !$removed) { $removed = $r; next; }
+				push @keep, $r;
+			}
+			@{ $rows } = @keep;
+		}
+	}
+	return { ok => 0, text => 'I could not find that rule.' } unless $removed;
+	&guide_rules_write($rows);
+	return { ok => 1, text => 'Forgot the rule: ' . $removed->{'rule'} };
+}
+
 sub guide_resolve_when($when) {
 	my $now = &subs::rightNow();
 	return $now unless defined $when && length $when;

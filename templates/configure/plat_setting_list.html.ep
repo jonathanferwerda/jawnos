@@ -473,6 +473,13 @@
 		<button id="guide_verbs_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;">Save commands</button>
 		<span id="guide_verbs_status" class="cfg-note" style="margin:0;"></span>
 	</div>
+	<h4 style="margin-top:18px;"><%= &subs::ui('Guide rules') %></h4>
+	<p class="cfg-note"><%= &subs::ui('Behaviour the Guide follows: each entry is a JSON object with "match" (the words that call it up) and "rule" (one short sentence); add "app" or "when" to scope it. Only the rules whose words match the question are given to the model, so a long list costs nothing when nothing matches. The list is a setting, so it syncs to every machine.') %></p>
+	<textarea id="guide_rules_json" spellcheck="false" style="width:100%;box-sizing:border-box;min-height:110px;font-family:monospace;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px;"><%= &subs::setting_grabber({ app => '__president', setting => 'guide_rules', device => 'all' }) || '[]' %></textarea>
+	<div class="cfg-row">
+		<button id="guide_rules_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;"><%= &subs::ui('Save rules') %></button>
+		<span id="guide_rules_status" class="cfg-note" style="margin:0;"></span>
+	</div>
 	</details>
 	</div>
 	<div id="plat_oauth" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_oauth' ? '' : 'display:none;' %>">
