@@ -147,8 +147,16 @@ sub remote_relay_request($c, $extra_params = {}) {
 							$failure = 'HTTP ' . ($response->code || '?');
 						}
 						else {
-							$answered = $route;
-							last;
+							# A gate or login page is a success status: the route never ran.
+							# Treat it as a failed route and try the next address.
+							my $refused = &relay_refused($response);
+							if (length $refused) {
+								$failure = $refused;
+							}
+							else {
+								$answered = $route;
+								last;
+							}
 						}
 					}
 					eval { $rm->{'ua'}->connect_timeout($connect) } if defined $connect;
@@ -217,10 +225,18 @@ sub remote_relay_request($c, $extra_params = {}) {
 #					$rm->{'ua'}->inactivity_timeout(3);
 					my $url = $rm->{'manager'} . $path;
 					my $body;
-					eval {
-						my $res = $rm->{'ua'}->post($url => form => $extra_params)->result;
-						$body = $res->body;
-					};
+					my $res = eval { $rm->{'ua'}->post($url => form => $extra_params)->result };
+					$body = $res->body if $res;
+					# A refusal page answers 200 and the route never runs: without this
+					# a peer that refused the change looked like one that took it, and
+					# the row waited for the next sync with nothing said.
+					my $refused = &relay_refused($res);
+					if (length $refused) {
+						my $peer = $rm->{'hostname'} || '';
+						$peer = substr($rm->{'signatorial'} || '', 0, 8) unless length $peer;
+						$peer = 'unknown peer' unless length $peer;
+						eval { &subs::log_writer('relay: ' . $peer . ' ' . $path . ' refused the request (' . $refused . ')') };
+					}
 
 
 
@@ -298,6 +314,14 @@ sub remote_relay_request($c, $extra_params = {}) {
 					}
 					else {
 						my $body = eval { $res->result->body };
+						my $response = eval { $res->result };
+						my $refused = &relay_refused($response);
+						if (length $refused) {
+							my $peer = $rm->{'hostname'} || '';
+							$peer = substr($rm->{'signatorial'} || '', 0, 8) unless length $peer;
+							$peer = 'unknown peer' unless length $peer;
+							eval { &subs::log_writer('relay: ' . $peer . ' ' . $path . ' refused the request (' . $refused . ')') };
+						}
 						return $body if $remote_uuid && defined $body;
 					}
 				}
@@ -313,6 +337,25 @@ sub remote_relay_request($c, $extra_params = {}) {
 		}
 
 	}
+}
+
+# Did the peer answer with a refusal page instead of running the route?
+# The app gate, the login gate and a resident's scope denial all render a page
+# with a 200 status, so a relay that only checked is_success counted the refusal
+# as delivery: the row stayed on this machine until the next sync, with nothing
+# in any log to say why. A relayed route answers JSON (or nothing); a full
+# document, or one of the house's own refusal pages, is the gate. Returns what
+# the page is (the failure reason) or '' for a real answer.
+sub relay_refused {
+	my ($response) = @_;
+	return '' unless $response;
+	return 'HTTP ' . ($response->code || '?') unless eval { $response->is_success };
+	my $body = eval { $response->body };
+	return '' unless defined $body && length $body;
+	return 'the app-required page' if $body =~ /id="app_required"/;
+	return 'the denial page' if $body =~ /class="denial_image"/;
+	return 'the login gate' if $body =~ /<!DOCTYPE\s+html/i;
+	return '';
 }
 
 # The agent the ticket retry uses. It carries the caller's transport policy:
