@@ -1,7 +1,8 @@
-# tests-for: perl/help.pl lib/JawnOS/Domain/Guide.pm lib/JawnOS/Controller/manager_help.pm templates/configure/plat_setting_list.html.ep public/js/manager/configure/01_update_controls.js
+# tests-for: perl/help.pl lib/JawnOS/Domain/Guide.pm lib/JawnOS/Controller/manager_help.pm lib/JawnOS/Controller/manager_intelligence.pm templates/apps/intelligence.html.ep public/js/manager/intelligence.js templates/configure/plat_setting_list.html.ep public/js/manager/configure/01_update_controls.js
 # covers:    the Guide's own behavioural rules: a keyword-scoped, capped prompt
 #           block, remember_rule/forget_rule against the shared setting, and the
-#           Configure editor's textarea + Save wiring.
+#           Intelligence -> Rules editor that renders, adds, edits and deletes
+#           both lists through the shared setting writer (Plat keeps no editor).
 
 use strict;
 use warnings;
@@ -11,6 +12,7 @@ use utf8;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use Mojo::Template;
 use JawnOSTest;
 
 binmode Test::More->builder->output,         ':encoding(UTF-8)';
@@ -130,19 +132,77 @@ my $stored;
 	ok(scalar(() = $bl =~ /^- /mg) >= 1, 'at least one rule still makes it in');
 }
 
-# --- the editor wiring ------------------------------------------------------
+# --- the Rules editor, in Intelligence --------------------------------------
 {
-	my $template = do { local (@ARGV, $/) = ("$root/templates/configure/plat_setting_list.html.ep"); <> };
-	like($template, qr/id="guide_rules_json"/, 'the rules textarea exists');
-	like($template, qr/id="guide_rules_save"/, 'the rules Save button exists');
-	like($template, qr/setting\s*=>\s*'guide_rules'/, 'the textarea shows the shared setting');
-	like($template, qr/subs::ui\('Guide rules'\)/, 'the section is labelled in the on-screen words');
+	my $plat = do { local (@ARGV, $/) = ("$root/templates/configure/plat_setting_list.html.ep"); <> };
+	unlike($plat, qr/id="guide_rules_json"/, 'the raw rules textarea is gone from Plat');
+	unlike($plat, qr/id="guide_verbs_json"/, 'the raw commands textarea is gone from Plat');
+	like($plat, qr/Intelligence, on the Rules pill/, 'Plat points at Intelligence on the Rules pill');
 
-	my $js = do { local (@ARGV, $/) = ("$root/public/js/manager/configure/01_update_controls.js"); <> };
-	like($js, qr/#guide_rules_save/, 'the Save button is wired');
-	like($js, qr/setting:\s*'guide_rules'/, 'it writes the guide_rules setting');
-	like($js, qr/settingSetter\(/, 'through the shared setting writer');
-	like($js, qr/device:\s*'all'/, 'as a house setting every machine reads');
+	my $cjs = do { local (@ARGV, $/) = ("$root/public/js/manager/configure/01_update_controls.js"); <> };
+	unlike($cjs, qr/guide_rules_save|guide_verbs_save/, 'no dead Plat save wiring is left');
+
+	my $tpl = do { local (@ARGV, $/) = ("$root/templates/apps/intelligence.html.ep"); <> };
+	like($tpl, qr/data-section="rules"/, 'the Rules pill exists');
+	like($tpl, qr/id="intelligence_section_rules"/, 'the Rules panel exists');
+	like($tpl, qr/class="intelligence_rule_list"/, 'the rules render as a list, not JSON');
+	like($tpl, qr/class="intelligence_command_list"/, 'the commands render as a list, not JSON');
+	like($tpl, qr/id="intelligence_rule_form"/, 'the add-rule form exists');
+	like($tpl, qr/id="intelligence_command_form"/, 'the add-command form exists');
+	like($tpl, qr/data-entry="<%=\s*encode_json/, 'each entry keeps its raw fields for a faithful save');
+	like($tpl, qr/class="intelligence_edit"/, 'each entry can be edited');
+	like($tpl, qr/class="intelligence_delete"/, 'each entry can be deleted');
+	like($tpl, qr/subs::ui\('Guide rules'\)/, 'the rules section is labelled in the on-screen words');
+	like($tpl, qr/subs::ui\('Guide commands'\)/, 'the commands section is labelled in the on-screen words');
+
+	my $ctl = do { local (@ARGV, $/) = ("$root/lib/JawnOS/Controller/manager_intelligence.pm"); <> };
+	like($ctl, qr/setting\s*=>\s*'guide_rules'/, 'the controller reads the guide_rules setting');
+	like($ctl, qr/setting\s*=>\s*'guide_verbs'/, 'the controller reads the guide_verbs setting');
+
+	my $ijs = do { local (@ARGV, $/) = ("$root/public/js/manager/intelligence.js"); <> };
+	like($ijs, qr/settingSetter\(\{ app: '__president', setting: 'guide_rules', device: 'all'/, 'a rule save writes the shared setting');
+	like($ijs, qr/settingSetter\(\{ app: '__president', setting: 'guide_verbs', device: 'all'/, 'a command save writes the shared setting');
+	like($ijs, qr/jawnosConfirm\(/, 'deleting asks first');
+	like($ijs, qr/intelligenceListEntries/, 'the whole list is read back before a write');
+	like($ijs, qr/delete entry\.(?:app|when)/, 'unknown fields stay on an entry it does not own');
+}
+
+
+# --- the Rules panel renders as HTML ----------------------------------------
+{
+	my $mt = Mojo::Template->new(vars => 1, auto_escape => 1);
+	my $ns = $mt->namespace;
+	no warnings 'redefine';
+	local *subs::ui = sub { my ($t) = @_; return defined $t ? $t : ''; };
+	local *subs::format_name = sub { my ($n) = @_; return defined $n ? $n : ''; };
+	{
+		no strict 'refs';
+		*{"${ns}::include"} = sub { return ''; };
+	}
+	my $src = do { local (@ARGV, $/) = ("$root/templates/apps/intelligence.html.ep"); <> };
+	my $html = eval {
+		$mt->render($src, {
+			intel => {
+				summary => {}, agents => [], evaluations => [], recent => [],
+				providers => {}, history => {},
+				rules => [
+					{ match => [ 'coordinates', 'latitude' ], rule => 'ROUNDED-COORDS rule', app => 'travel', when => 'always' },
+				],
+				verbs => [
+					{ name => 'weather_say', desc => 'Say the weather', primitive => 'say', params => { text => 'hello' }, args => { text => 'the words' } },
+				],
+			},
+		});
+	};
+	is($@, '', 'the Intelligence template renders with the Rules lists');
+	like($html, qr/intelligence_section_rules/, 'the Rules panel renders');
+	like($html, qr/intelligence_rule_entry/, 'a rule renders as its own row');
+	like($html, qr/intelligence_chip[^>]*>coordinates/, 'the trigger words render as chips');
+	like($html, qr/ROUNDED-COORDS rule/, 'the rule sentence is readable');
+	like($html, qr/intelligence_command_entry/, 'a command renders as its own row');
+	like($html, qr/weather_say/, 'the command name is readable');
+	like($html, qr/text=hello/, 'the command parameters are summarised');
+	unlike($html, qr/id="guide_rules_json"/, 'the Rules panel is not a raw JSON textarea');
 }
 
 done_testing();

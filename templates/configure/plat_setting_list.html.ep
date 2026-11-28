@@ -465,22 +465,7 @@
 	<p class="cfg-note">Ollama and Cloudflare model lists are read from each service when this panel opens; the other providers' lists are built in. Models are addressed as <code>provider:model</code> — a bare name goes to Ollama, and <code>@cf/…</code> to Cloudflare. The lists only offer providers that can answer: a key entered (and an account not out of credit), or a local Ollama that is running.</p>
 	</details>
 
-	<details class="cfg-acc" data-acc="plat-guide-commands">
-		<summary><%= &subs::lang('configure.guide_commands') %></summary>
-	<p class="cfg-note">Extra verbs the Guide can run, added without a code change. Each entry is JSON: a <code>name</code>, a <code>desc</code>, an optional <code>args</code> map, and a <code>primitive</code> with its <code>params</code>. The primitives are <code>say</code>, <code>open_app</code>, <code>set_setting</code>, <code>run_command</code>, <code>toggle</code>, <code>stage</code>, <code>find</code> and <code>play_music</code>; a param value may contain <code>{name}</code> to take one of the model's arguments. The list is a setting, so it syncs to every machine and they all learn the verb.</p>
-	<textarea id="guide_verbs_json" spellcheck="false" style="width:100%;box-sizing:border-box;min-height:140px;font-family:monospace;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px;"><%= &subs::setting_grabber({ app => '__president', setting => 'guide_verbs', device => 'all' }) || '[]' %></textarea>
-	<div class="cfg-row">
-		<button id="guide_verbs_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;">Save commands</button>
-		<span id="guide_verbs_status" class="cfg-note" style="margin:0;"></span>
-	</div>
-	<h4 style="margin-top:18px;"><%= &subs::ui('Guide rules') %></h4>
-	<p class="cfg-note"><%= &subs::ui('Behaviour the Guide follows: each entry is a JSON object with "match" (the words that call it up) and "rule" (one short sentence); add "app" or "when" to scope it. Only the rules whose words match the question are given to the model, so a long list costs nothing when nothing matches. The list is a setting, so it syncs to every machine.') %></p>
-	<textarea id="guide_rules_json" spellcheck="false" style="width:100%;box-sizing:border-box;min-height:110px;font-family:monospace;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px;"><%= &subs::setting_grabber({ app => '__president', setting => 'guide_rules', device => 'all' }) || '[]' %></textarea>
-	<div class="cfg-row">
-		<button id="guide_rules_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;"><%= &subs::ui('Save rules') %></button>
-		<span id="guide_rules_status" class="cfg-note" style="margin:0;"></span>
-	</div>
-	</details>
+	<p class="cfg-note"><%= &subs::ui('Guide rules and runtime commands are managed in Intelligence, on the Rules pill.') %></p>
 	</div>
 	<div id="plat_oauth" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_oauth' ? '' : 'display:none;' %>">
 		<%= include 'configure/oauth_clients' %>

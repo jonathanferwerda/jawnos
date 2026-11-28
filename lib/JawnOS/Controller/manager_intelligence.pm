@@ -3,16 +3,19 @@ package Manager;
 # GET /manager/intelligence
 #
 # The Intelligence app: the AI token ledger, the daily rollup, the house's daily
-# purse, the cached provider balances and the evaluation schedule. It reads the
-# panels and writes only the evaluation cadence a person changes here; the
-# cadence route is the only POST and it calls the same schedule arranger the
-# app's own controls use, so the setting and the queue cannot drift. The
-# window draws all five pills at once - the browser swaps panels - so one
-# request answers the whole window, and the History ranges are each drawn
-# server-side rather than asked for again per pill.
+# purse, the cached provider balances, the evaluation schedule, and the Guide's
+# rules and runtime commands. It reads the panels and writes only the evaluation
+# cadence a person changes here; the cadence route is the only POST and it calls
+# the same schedule arranger the app's own controls use, so the setting and the
+# queue cannot drift. The window draws all six pills at once - the browser swaps
+# panels - so one request answers the whole window, and the History ranges are
+# each drawn server-side rather than asked for again per pill. The Rules pill's
+# lists are read here as-is; the browser writes them back through the shared
+# setting setter, so an entry the panel does not understand rides along.
 use strict;
 use warnings;
 use utf8;
+use Mojo::JSON qw(decode_json);
 
 sub action_92001 {
 	my $c = shift;
@@ -37,6 +40,19 @@ sub action_92001 {
 		history     => \%history,
 		recent      => $recent,
 	};
+
+	# The Guide's two editable lists are house settings. They are read raw so
+	# the Rules pill can draw every entry as a readable row; the array is passed
+	# through as-is, because an entry the panel does not understand must survive
+	# an edit or a delete somewhere else.
+	my $rules_raw = eval { &subs::setting_grabber({ app => '__president', setting => 'guide_rules', device => 'all' }) } || '';
+	my $rules = eval { decode_json($rules_raw) } || [];
+	$rules = [] unless ref $rules eq 'ARRAY';
+	my $verbs_raw = eval { &subs::setting_grabber({ app => '__president', setting => 'guide_verbs', device => 'all' }) } || '';
+	my $verbs = eval { decode_json($verbs_raw) } || [];
+	$verbs = [] unless ref $verbs eq 'ARRAY';
+	$data->{'rules'} = $rules;
+	$data->{'verbs'} = $verbs;
 
 	my $content = $c->render_to_string(template => 'apps/intelligence', intel => $data);
 	my $contents = &window_maker({

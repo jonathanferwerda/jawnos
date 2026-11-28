@@ -390,6 +390,239 @@ $(document).on('click', '#intelligence .intelligence_spread_button', function() 
 	});
 });
 
+// --- the Rules pill ---------------------------------------------------------
+// The Guide's behavioural rules and runtime commands are one house setting each
+// (guide_rules, guide_verbs), and the server draws them as readable rows. This
+// script adds, edits and deletes one entry at a time, then writes the whole list
+// back through the shared setting writer. It starts from the rendered entry, so
+// a field the panel does not understand rides along untouched.
+var intelligenceRulesNotePending = '';
+
+function intelligenceRulesReload() {
+	var wind = $('#intelligence').closest('.wind');
+	var stamp = wind.length ? parseInt(wind.attr('timestamp'), 10) : NaN;
+	intelligenceOpener(isFinite(stamp) ? stamp : Date.now());
+}
+
+function intelligenceRulesNote(text) {
+	var note = $('#intelligence_rules_note');
+	if (note.length && text) { note.text(text); }
+}
+
+function intelligenceRulesNoteShow() {
+	if (!intelligenceRulesNotePending) { return; }
+	intelligenceRulesNote(intelligenceRulesNotePending);
+	intelligenceRulesNotePending = '';
+}
+
+function intelligenceListEntries(listSelector) {
+	var rows = [];
+	$(listSelector).find('[data-entry]').each(function() {
+		var raw = $(this).attr('data-entry');
+		try { rows.push(JSON.parse(raw)); }
+		catch (e) { rows.push(raw); }
+	});
+	return rows;
+}
+
+function intelligenceRulesEntries() {
+	return intelligenceListEntries('#intelligence .intelligence_rule_list');
+}
+
+function intelligenceCommandsEntries() {
+	return intelligenceListEntries('#intelligence .intelligence_command_list');
+}
+
+function intelligenceRulesWrite(rows) {
+	return settingSetter({ app: '__president', setting: 'guide_rules', device: 'all', value: JSON.stringify(rows, null, 2) });
+}
+
+function intelligenceCommandsWrite(rows) {
+	return settingSetter({ app: '__president', setting: 'guide_verbs', device: 'all', value: JSON.stringify(rows, null, 2) });
+}
+
+function intelligenceRuleTriggers(value) {
+	return String(value || '').split(',').map(function(w) { return $.trim(w); }).filter(function(w) { return w.length; });
+}
+
+function intelligenceRuleFormReset() {
+	$('#intelligence_rule_match, #intelligence_rule_text, #intelligence_rule_app, #intelligence_rule_when').val('');
+	$('#intelligence_rule_index').val('');
+	$('#intelligence_rule_save').text($('#intelligence_rule_save').attr('data-add-label') || jawnosT('Add rule'));
+	$('#intelligence_rule_cancel').prop('hidden', true);
+}
+
+function intelligenceCommandFormReset() {
+	$('#intelligence_command_name, #intelligence_command_desc, #intelligence_command_params').val('');
+	$('#intelligence_command_primitive').val('say');
+	$('#intelligence_command_index').val('');
+	$('#intelligence_command_save').text($('#intelligence_command_save').attr('data-add-label') || jawnosT('Add command'));
+	$('#intelligence_command_cancel').prop('hidden', true);
+}
+
+function intelligenceCommandPrimitive(entry) {
+	if (!entry || typeof entry !== 'object') { return ''; }
+	var p = entry.primitive;
+	if (p && typeof p === 'object') { return String(p.name || ''); }
+	return (typeof p === 'string') ? p : '';
+}
+
+function intelligenceCommandParams(entry) {
+	if (!entry || typeof entry !== 'object') { return {}; }
+	var p = entry.primitive;
+	if (p && typeof p === 'object' && p.params && typeof p.params === 'object') { return p.params; }
+	if (entry.params && typeof entry.params === 'object') { return entry.params; }
+	return {};
+}
+
+// --- editing a rule ---------------------------------------------------------
+$(document).on('click', '#intelligence .intelligence_edit[data-kind="rule"]', function() {
+	var index = parseInt($(this).attr('data-index'), 10);
+	var entries = intelligenceRulesEntries();
+	var entry = entries[index];
+	if (!entry || typeof entry !== 'object') { return; }
+	$('#intelligence_rule_match').val($.isArray(entry.match) ? entry.match.join(', ') : (typeof entry.match === 'string' ? entry.match : ''));
+	$('#intelligence_rule_text').val(typeof entry.rule === 'string' ? entry.rule : '');
+	$('#intelligence_rule_app').val(typeof entry.app === 'string' ? entry.app : '');
+	$('#intelligence_rule_when').val(typeof entry.when === 'string' ? entry.when : '');
+	$('#intelligence_rule_index').val(String(index));
+	$('#intelligence_rule_save').text(jawnosT('Save changes'));
+	$('#intelligence_rule_cancel').prop('hidden', false);
+	$('#intelligence_rule_match').trigger('focus');
+});
+
+$(document).on('click', '#intelligence_rule_cancel', function() {
+	intelligenceRuleFormReset();
+});
+
+$(document).on('submit', '#intelligence_rule_form', function(event) {
+	event.preventDefault();
+	var triggers = intelligenceRuleTriggers($('#intelligence_rule_match').val());
+	var rule = $.trim($('#intelligence_rule_text').val() || '');
+	if (!triggers.length) { intelligenceRulesNote(jawnosT('Give the rule the words that call it up.')); return; }
+	if (!rule.length) { intelligenceRulesNote(jawnosT('Give the rule a short sentence.')); return; }
+	var app = $.trim($('#intelligence_rule_app').val() || '');
+	var when = $.trim($('#intelligence_rule_when').val() || '');
+	var entries = intelligenceRulesEntries();
+	var index = $('#intelligence_rule_index').val();
+	var entry;
+	if (index !== '') {
+		entry = entries[parseInt(index, 10)];
+		if (!entry || typeof entry !== 'object') { entry = {}; entries[parseInt(index, 10)] = entry; }
+	}
+	else {
+		entry = {};
+		entries.push(entry);
+	}
+	entry.match = triggers;
+	entry.rule = rule;
+	if (app.length) { entry.app = app; } else { delete entry.app; }
+	if (when.length) { entry.when = when; } else { delete entry.when; }
+	intelligenceRulesNote(jawnosT('Saving...'));
+	intelligenceRulesWrite(entries).then(function() {
+		intelligenceRulesNotePending = jawnosT('Rule saved.');
+		intelligenceRuleFormReset();
+		intelligenceRulesReload();
+	}, function() {
+		intelligenceRulesNote(jawnosT('Could not save the rules.'));
+	});
+});
+
+$(document).on('click', '#intelligence .intelligence_delete[data-kind="rule"]', function() {
+	var index = parseInt($(this).attr('data-index'), 10);
+	jawnosConfirm(jawnosT('Delete this rule?'), function() {
+		var entries = intelligenceRulesEntries();
+		if (!(index >= 0 && index < entries.length)) { return; }
+		entries.splice(index, 1);
+		intelligenceRulesWrite(entries).then(function() {
+			intelligenceRulesNotePending = jawnosT('Rule deleted.');
+			intelligenceRulesReload();
+		}, function() {
+			intelligenceRulesNote(jawnosT('Could not save the rules.'));
+		});
+	});
+});
+
+// --- editing a command ------------------------------------------------------
+$(document).on('click', '#intelligence .intelligence_edit[data-kind="command"]', function() {
+	var index = parseInt($(this).attr('data-index'), 10);
+	var entries = intelligenceCommandsEntries();
+	var entry = entries[index];
+	if (!entry || typeof entry !== 'object') { return; }
+	var params = intelligenceCommandParams(entry);
+	$('#intelligence_command_name').val(typeof entry.name === 'string' ? entry.name : '');
+	$('#intelligence_command_desc').val(typeof entry.desc === 'string' ? entry.desc : '');
+	$('#intelligence_command_primitive').val(intelligenceCommandPrimitive(entry) || 'say');
+	$('#intelligence_command_params').val(Object.keys(params).length ? JSON.stringify(params, null, 2) : '');
+	$('#intelligence_command_index').val(String(index));
+	$('#intelligence_command_save').text(jawnosT('Save changes'));
+	$('#intelligence_command_cancel').prop('hidden', false);
+	$('#intelligence_command_name').trigger('focus');
+});
+
+$(document).on('click', '#intelligence_command_cancel', function() {
+	intelligenceCommandFormReset();
+});
+
+$(document).on('submit', '#intelligence_command_form', function(event) {
+	event.preventDefault();
+	var name = $.trim($('#intelligence_command_name').val() || '');
+	if (!/^[a-z][a-z0-9_]{1,40}$/.test(name)) { intelligenceRulesNote(jawnosT('A command name is lowercase letters, digits and underscores.')); return; }
+	var desc = $.trim($('#intelligence_command_desc').val() || '');
+	var primitive = $('#intelligence_command_primitive').val() || 'say';
+	var paramsText = $.trim($('#intelligence_command_params').val() || '');
+	var params = {};
+	if (paramsText.length) {
+		try { params = JSON.parse(paramsText); }
+		catch (e) { intelligenceRulesNote(jawnosT('The parameters are not valid JSON.')); return; }
+		if (!params || typeof params !== 'object' || $.isArray(params)) { intelligenceRulesNote(jawnosT('The parameters must be a JSON object.')); return; }
+	}
+	var entries = intelligenceCommandsEntries();
+	var index = $('#intelligence_command_index').val();
+	var entry;
+	if (index !== '') {
+		entry = entries[parseInt(index, 10)];
+		if (!entry || typeof entry !== 'object') { entry = {}; entries[parseInt(index, 10)] = entry; }
+	}
+	else {
+		entry = {};
+		entries.push(entry);
+	}
+	entry.name = name;
+	entry.desc = desc;
+	if (entry.primitive && typeof entry.primitive === 'object') {
+		entry.primitive.name = primitive;
+		entry.primitive.params = params;
+	}
+	else {
+		entry.primitive = primitive;
+		entry.params = params;
+	}
+	intelligenceRulesNote(jawnosT('Saving...'));
+	intelligenceCommandsWrite(entries).then(function() {
+		intelligenceRulesNotePending = jawnosT('Command saved.');
+		intelligenceCommandFormReset();
+		intelligenceRulesReload();
+	}, function() {
+		intelligenceRulesNote(jawnosT('Could not save the commands.'));
+	});
+});
+
+$(document).on('click', '#intelligence .intelligence_delete[data-kind="command"]', function() {
+	var index = parseInt($(this).attr('data-index'), 10);
+	jawnosConfirm(jawnosT('Delete this command?'), function() {
+		var entries = intelligenceCommandsEntries();
+		if (!(index >= 0 && index < entries.length)) { return; }
+		entries.splice(index, 1);
+		intelligenceCommandsWrite(entries).then(function() {
+			intelligenceRulesNotePending = jawnosT('Command deleted.');
+			intelligenceRulesReload();
+		}, function() {
+			intelligenceRulesNote(jawnosT('Could not save the commands.'));
+		});
+	});
+});
+
 function intelligenceRestore() {
 	intelligenceSectionRestore();
 	intelligenceHistoryRestore();
@@ -398,6 +631,7 @@ function intelligenceRestore() {
 	intelligenceDaysClose();
 	intelligenceSortRestore();
 	intelligenceSpreadNoteShow();
+	intelligenceRulesNoteShow();
 }
 
 // --- provider balances in the chosen currency --------------------------------

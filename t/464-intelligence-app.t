@@ -304,7 +304,7 @@ subs::preload($_) for qw(
 		'the pill row scrolls sideways and never wraps');
 	like($tpl, qr/border-radius:999px/, 'the pills are rounded');
 	like($tpl, qr/flex:1 1 auto; min-height:0; overflow-y:auto/, 'a panel fills the window and scrolls');
-	for my $section (qw(overview agents evaluations providers history)) {
+	for my $section (qw(overview agents evaluations providers rules history)) {
 		like($tpl, qr/data-section="$section"/, "the $section panel is present");
 	}
 	like($tpl, qr/data-eval-filter="active"/, 'the evaluation filter pills are present');
@@ -334,7 +334,7 @@ subs::preload($_) for qw(
 	like($js, qr/function intelligenceSpreadNoteShow/, 'the spread answer is shown after the refresh');
 	like($js, qr/intelligenceEveryDayLabel/, 'the weekday trigger says Every day');
 	like($js, qr/currency_picker/, 'the Intelligence window converts a picked currency');
-	unlike($js, qr/settingSetter/, 'the weekdays are not a second request');
+	like($js, qr/settingSetter\(\{ app: '__president', setting: 'guide_rules'/, 'the Rules lists save through the shared setting writer');
 
 	my $menu = read_file("$FindBin::Bin/../templates/start_menu/start_menu.html.ep");
 	like($menu, qr/id="intelligence_toggle"/, 'the start menu carries the intelligence icon');

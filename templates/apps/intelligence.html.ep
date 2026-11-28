@@ -1,9 +1,11 @@
+<% use Mojo::JSON qw(encode_json); %>
 <% my $d = (ref $intel eq 'HASH') ? $intel : {}; %>
 <% my $num = sub { my ($n) = @_; $n = 0 unless defined $n && $n =~ /^-?\d+(?:\.\d+)?$/; my $s = sprintf('%.0f', $n); $s =~ s/(\d)(?=(\d{3})+(?!\d))/$1,/g; return $s; }; %>
 <% my $pct = sub { my ($n) = @_; $n = 0 unless defined $n && $n =~ /^-?\d+(?:\.\d+)?$/; return sprintf('%.1f', $n); }; %>
 <% my $money = sub { my ($v, $currency) = @_; return '' unless defined $v && $v =~ /^-?\d+(?:\.\d+)?$/; return sprintf('%.2f %s', $v, defined $currency ? $currency : ''); }; %>
 <% my @day_names = qw(Sunday Monday Tuesday Wednesday Thursday Friday Saturday); %>
 <% my $days_text = sub { my ($days) = @_; return '' unless ref $days eq 'ARRAY' && @{$days}; return join(', ', map { &subs::ui($day_names[$_]) } grep { defined $day_names[$_] } @{$days}); }; %>
+<% my $params_summary = sub { my ($h) = @_; return '' unless ref $h eq 'HASH'; my @p; foreach my $k (sort keys %{$h}) { my $v = $h->{$k}; my $shown = ref $v ? encode_json($v) : (defined $v ? "$v" : ''); push @p, $k . '=' . $shown; } return join(', ', @p); }; %>
 <% my $scope_label = sub { my ($scope) = @_; return ($scope eq '__president') ? &subs::ui('Whole house') : &subs::format_name($scope); }; %>
 <% my %cadence_label = ( off => &subs::ui('Off'), hourly => &subs::ui('Hourly'), daily => &subs::ui('Daily'), weekly => &subs::ui('Weekly'), monthly => &subs::ui('Monthly'), yearly => &subs::ui('Yearly'), each_run => &subs::ui('Each run') ); %>
 <% my %state_label = ( active => &subs::ui('Active'), scheduled => &subs::ui('Scheduled'), on_demand => &subs::ui('On demand'), idle => &subs::ui('Idle') ); %>
@@ -66,6 +68,25 @@
 #intelligence .intelligence_history_panel { display: none; }
 #intelligence .intelligence_history_panel.is-active { display: block; }
 #intelligence .intelligence_scroll { min-width: 0; overflow-x: auto; flex: 0 0 auto; }
+#intelligence .intelligence_rule_list, #intelligence .intelligence_command_list { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+#intelligence .intelligence_rule_entry, #intelligence .intelligence_command_entry { border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .5); padding: 8px 10px; background: var(--panel); }
+#intelligence .intelligence_entry_head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+#intelligence .intelligence_entry_actions { display: flex; gap: 6px; flex: 0 0 auto; }
+#intelligence .intelligence_entry_actions button, #intelligence .intelligence_form_actions button { font: inherit; font-size: 13px; color: inherit; background: var(--panel-2, var(--panel)); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; cursor: var(--jawnos-cursor-pointer, pointer); }
+#intelligence .intelligence_chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+#intelligence .intelligence_chip { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2, var(--panel)); font-size: 12px; overflow-wrap: anywhere; }
+#intelligence .intelligence_chip_raw { opacity: .7; font-style: italic; }
+#intelligence .intelligence_rule_text { margin-top: 6px; }
+#intelligence .intelligence_entry_raw { font-family: monospace; font-size: 12px; overflow-wrap: anywhere; opacity: .75; }
+#intelligence .intelligence_command_title { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+#intelligence .intelligence_rule_form, #intelligence .intelligence_command_form { margin: 6px 0 4px; display: flex; flex-direction: column; gap: 8px; }
+#intelligence .intelligence_form_row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+#intelligence .intelligence_field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; flex: 1 1 150px; min-width: 0; }
+#intelligence .intelligence_field_wide { flex: 2 1 240px; }
+#intelligence .intelligence_field input[type=text], #intelligence .intelligence_field select, #intelligence .intelligence_field textarea { font: inherit; font-size: 13px; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .4); padding: 4px 6px; width: 100%; box-sizing: border-box; }
+#intelligence .intelligence_field textarea { font-family: monospace; resize: vertical; }
+#intelligence .intelligence_form_actions { display: flex; gap: 6px; flex: 0 0 auto; }
+#intelligence .intelligence_form_actions button[type=submit] { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; }
 </style>
 <div id="intelligence" app="intelligence">
 	<div class="intelligence_tabs" role="tablist" aria-label="<%= &subs::ui('Intelligence sections') %>">
@@ -73,6 +94,7 @@
 		<button type="button" class="intelligence_section_pill" role="tab" data-section="agents" aria-selected="false" aria-controls="intelligence_section_agents" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Agents') %></button>
 		<button type="button" class="intelligence_section_pill" role="tab" data-section="evaluations" aria-selected="false" aria-controls="intelligence_section_evaluations" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Evaluations') %></button>
 		<button type="button" class="intelligence_section_pill" role="tab" data-section="providers" aria-selected="false" aria-controls="intelligence_section_providers" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Providers') %></button>
+		<button type="button" class="intelligence_section_pill" role="tab" data-section="rules" aria-selected="false" aria-controls="intelligence_section_rules" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Rules') %></button>
 		<button type="button" class="intelligence_section_pill" role="tab" data-section="history" aria-selected="false" aria-controls="intelligence_section_history" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('History') %></button>
 	</div>
 
@@ -318,6 +340,118 @@
 		<% } else { %>
 			<p class="intelligence_empty"><%= &subs::ui('No inferred outside spend is on the balance chart.') %></p>
 		<% } %>
+	</section>
+
+	<section id="intelligence_section_rules" class="intelligence_section" data-section="rules" role="tabpanel" hidden>
+		<div class="intelligence_note" id="intelligence_rules_note" aria-live="polite"></div>
+		<div class="intelligence_card">
+			<h4><%= &subs::ui('Guide rules') %></h4>
+			<p class="intelligence_sub"><%= &subs::ui('Behaviour the Guide follows. Each rule names the words that call it up; only the rules whose words match the question are given to the model, so a long list costs nothing when nothing matches. The list is a house setting, so every machine follows it.') %></p>
+			<form id="intelligence_rule_form" class="intelligence_rule_form" autocomplete="off">
+				<div class="intelligence_form_row">
+					<label class="intelligence_field intelligence_field_wide"><span><%= &subs::ui('Trigger words') %></span>
+						<input type="text" id="intelligence_rule_match" placeholder="<%= &subs::ui('coordinates, latitude') %>"></label>
+					<label class="intelligence_field intelligence_field_wide"><span><%= &subs::ui('Rule') %></span>
+						<input type="text" id="intelligence_rule_text" placeholder="<%= &subs::ui('Present coordinates with three decimal places.') %>"></label>
+				</div>
+				<div class="intelligence_form_row">
+					<label class="intelligence_field"><span><%= &subs::ui('App (optional)') %></span>
+						<input type="text" id="intelligence_rule_app"></label>
+					<label class="intelligence_field"><span><%= &subs::ui('When (optional)') %></span>
+						<input type="text" id="intelligence_rule_when"></label>
+					<div class="intelligence_form_actions">
+						<button type="submit" id="intelligence_rule_save" data-add-label="<%= &subs::ui('Add rule') %>"><%= &subs::ui('Add rule') %></button>
+						<button type="button" id="intelligence_rule_cancel" hidden><%= &subs::ui('Cancel') %></button>
+					</div>
+				</div>
+				<input type="hidden" id="intelligence_rule_index" value="">
+			</form>
+			<% my $rules = (ref $d->{'rules'} eq 'ARRAY') ? $d->{'rules'} : []; %>
+			<ul class="intelligence_rule_list">
+			<% if (!@{$rules}) { %>
+				<li class="intelligence_empty"><%= &subs::ui('No rules yet. Add one above.') %></li>
+			<% } %>
+			<% foreach my $i ( 0 .. $#{$rules} ) { my $r = $rules->[$i]; my $is_hash = (ref $r eq 'HASH') ? 1 : 0; my @match = ($is_hash && ref $r->{'match'} eq 'ARRAY') ? @{ $r->{'match'} } : (($is_hash && defined $r->{'match'} && !ref $r->{'match'}) ? ($r->{'match'}) : ()); my $rule_text = ($is_hash && defined $r->{'rule'} && !ref $r->{'rule'}) ? "$r->{'rule'}" : ''; my $app = ($is_hash && defined $r->{'app'} && !ref $r->{'app'}) ? "$r->{'app'}" : ''; my $when = ($is_hash && defined $r->{'when'} && !ref $r->{'when'}) ? "$r->{'when'}" : ''; %>
+				<li class="intelligence_rule_entry" data-kind="rule" data-index="<%= $i %>" data-entry="<%= encode_json($r) %>">
+					<div class="intelligence_entry_head">
+						<div class="intelligence_chips">
+						<% if (@match) { %>
+							<% foreach my $w ( @match ) { %><span class="intelligence_chip"><%= $w %></span><% } %>
+						<% } else { %>
+							<span class="intelligence_chip intelligence_chip_raw"><%= &subs::ui('unrecognised') %></span>
+						<% } %>
+						</div>
+						<div class="intelligence_entry_actions">
+							<% if ($is_hash) { %><button type="button" class="intelligence_edit" data-kind="rule" data-index="<%= $i %>"><%= &subs::ui('Edit') %></button><% } %>
+							<button type="button" class="intelligence_delete" data-kind="rule" data-index="<%= $i %>"><%= &subs::ui('Delete') %></button>
+						</div>
+					</div>
+					<% if (length $rule_text) { %>
+						<div class="intelligence_rule_text"><%= $rule_text %></div>
+					<% } else { %>
+						<div class="intelligence_rule_text intelligence_entry_raw"><%= ref $r ? encode_json($r) : (defined $r ? $r : '') %></div>
+					<% } %>
+					<% if (length $app || length $when) { %>
+						<div class="intelligence_sub">
+						<% if (length $app) { %><%= &subs::ui('App') %>: <%= $app %><% } %>
+						<% if (length $app && length $when) { %> · <% } %>
+						<% if (length $when) { %><%= &subs::ui('When') %>: <%= $when %><% } %>
+						</div>
+					<% } %>
+				</li>
+			<% } %>
+			</ul>
+		</div>
+
+		<div class="intelligence_card">
+			<h4><%= &subs::ui('Guide commands') %></h4>
+			<p class="intelligence_sub"><%= &subs::ui('Runtime verbs the Guide can run. Each names a primitive and the parameters to run it with; the primitives are say, open_app, set_setting, run_command, toggle, stage, find and play_music, and a parameter may contain {name} to take one of the model\'s arguments. The list is a house setting, so every machine learns the verb.') %></p>
+			<form id="intelligence_command_form" class="intelligence_command_form" autocomplete="off">
+				<div class="intelligence_form_row">
+					<label class="intelligence_field"><span><%= &subs::ui('Name') %></span>
+						<input type="text" id="intelligence_command_name" placeholder="weather_say"></label>
+					<label class="intelligence_field intelligence_field_wide"><span><%= &subs::ui('Description') %></span>
+						<input type="text" id="intelligence_command_desc"></label>
+				</div>
+				<div class="intelligence_form_row">
+					<label class="intelligence_field"><span><%= &subs::ui('Primitive') %></span>
+						<select id="intelligence_command_primitive">
+							<% foreach my $p (qw(say open_app set_setting run_command toggle stage find play_music)) { %><option value="<%= $p %>"><%= $p %></option><% } %>
+						</select></label>
+					<label class="intelligence_field intelligence_field_wide"><span><%= &subs::ui('Parameters (JSON)') %></span>
+						<textarea id="intelligence_command_params" rows="2" spellcheck="false" placeholder='{"text":"{name} says hello"}'></textarea></label>
+					<div class="intelligence_form_actions">
+						<button type="submit" id="intelligence_command_save" data-add-label="<%= &subs::ui('Add command') %>"><%= &subs::ui('Add command') %></button>
+						<button type="button" id="intelligence_command_cancel" hidden><%= &subs::ui('Cancel') %></button>
+					</div>
+				</div>
+				<input type="hidden" id="intelligence_command_index" value="">
+			</form>
+			<% my $verbs = (ref $d->{'verbs'} eq 'ARRAY') ? $d->{'verbs'} : []; %>
+			<ul class="intelligence_command_list">
+			<% if (!@{$verbs}) { %>
+				<li class="intelligence_empty"><%= &subs::ui('No commands yet. Add one above.') %></li>
+			<% } %>
+			<% foreach my $i ( 0 .. $#{$verbs} ) { my $v = $verbs->[$i]; my $is_hash = (ref $v eq 'HASH') ? 1 : 0; my $prim = $is_hash ? $v->{'primitive'} : undef; my $prim_name = ''; my $params = {}; if (ref $prim eq 'HASH') { $prim_name = (defined $prim->{'name'} && !ref $prim->{'name'}) ? "$prim->{'name'}" : ''; $params = (ref $prim->{'params'} eq 'HASH') ? $prim->{'params'} : {}; } elsif ($is_hash && defined $prim && !ref $prim) { $prim_name = "$prim"; $params = (ref $v->{'params'} eq 'HASH') ? $v->{'params'} : {}; } my $args = ($is_hash && ref $v->{'args'} eq 'HASH') ? $v->{'args'} : {}; my $name = ($is_hash && defined $v->{'name'} && !ref $v->{'name'}) ? "$v->{'name'}" : ''; my $desc = ($is_hash && defined $v->{'desc'} && !ref $v->{'desc'}) ? "$v->{'desc'}" : ''; my $ps = $params_summary->($params); my $as = $params_summary->($args); %>
+				<li class="intelligence_command_entry" data-kind="command" data-index="<%= $i %>" data-entry="<%= encode_json($v) %>">
+					<div class="intelligence_entry_head">
+						<div class="intelligence_command_title">
+							<b class="intelligence_command_name"><%= length $name ? $name : &subs::ui('unrecognised') %></b>
+							<% if (length $prim_name) { %><span class="intelligence_chip"><%= $prim_name %></span><% } %>
+						</div>
+						<div class="intelligence_entry_actions">
+							<% if ($is_hash) { %><button type="button" class="intelligence_edit" data-kind="command" data-index="<%= $i %>"><%= &subs::ui('Edit') %></button><% } %>
+							<button type="button" class="intelligence_delete" data-kind="command" data-index="<%= $i %>"><%= &subs::ui('Delete') %></button>
+						</div>
+					</div>
+					<% if (length $desc) { %><div class="intelligence_sub"><%= $desc %></div><% } %>
+					<% if (length $ps) { %><div class="intelligence_sub"><%= &subs::ui('Parameters') %>: <code><%= $ps %></code></div><% } %>
+					<% if (length $as) { %><div class="intelligence_sub"><%= &subs::ui('Arguments') %>: <code><%= $as %></code></div><% } %>
+					<% if (!$is_hash) { %><div class="intelligence_entry_raw"><%= ref $v ? encode_json($v) : (defined $v ? $v : '') %></div><% } %>
+				</li>
+			<% } %>
+			</ul>
+		</div>
 	</section>
 
 	<section id="intelligence_section_history" class="intelligence_section" data-section="history" role="tabpanel" hidden>
