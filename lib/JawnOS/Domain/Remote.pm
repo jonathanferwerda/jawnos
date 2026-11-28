@@ -1100,7 +1100,7 @@ sub qa_ux_model_choices {
 			id     => $provider->{'id'},
 			label  => ($provider->{'label'} || $provider->{'id'}),
 			models => [ map {
-				{ value => $_->{'value'}, name => ($_->{'name'} || $_->{'value'}), paid => ($_->{'paid'} ? 1 : 0) }
+				{ value => $_->{'value'}, name => ($_->{'name'} || $_->{'value'}), paid => ($_->{'paid'} ? 1 : 0), trial => ($_->{'trial'} ? 1 : 0) }
 			} @models ],
 		};
 	}

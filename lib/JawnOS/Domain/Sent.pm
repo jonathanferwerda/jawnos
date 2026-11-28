@@ -685,7 +685,7 @@ sub cloudflare_model_list {
 # reported), grouped by provider. The probe is cached, keyed by the provider
 # set, so adding a provider shows at once and an unchanged list opens instantly.
 sub help_model_list {
-	my $sig = join '_', map { $_->{'id'} || '' } @{ &subs::ai_providers() };
+	my $sig = &subs::ai_catalogue_signature();
 	my $context = 'help_models_' . $sig;
 	my $cached = &subs::cache_get({ app => 'mail', context => $context });
 	return $cached if ref $cached eq 'ARRAY';

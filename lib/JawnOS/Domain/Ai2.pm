@@ -130,6 +130,21 @@ sub ai_free_model {
 	return '';
 }
 
+# A short signature of the providers and the fixed lists they offer. A picker's
+# cached model list is keyed by it, so adding a provider or changing one
+# provider's models (Alibaba's trial list, say) invalidates the cache at once
+# instead of leaving the old names up for the cache's ten minutes.
+sub ai_catalogue_signature {
+	my $text = join '|', map {
+		my $p = $_;
+		join(':', ($p->{'id'} || ''), ($p->{'label'} || ''),
+			join(',', @{ $p->{'models'} || [] }),
+			join(',', @{ $p->{'trial_models'} || [] }),
+			join(',', @{ $p->{'free_models'} || [] }));
+	} @{ &subs::ai_providers() };
+	return md5_sum($text);
+}
+
 # Pass a capability (chat, vision, image, audio) to keep only models that serve it.
 sub ai_model_catalogue {
 	my ($cap) = @_;

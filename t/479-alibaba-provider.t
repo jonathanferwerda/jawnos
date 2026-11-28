@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Ai2.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Controller/manager_misc7.pm perl/crew.pl templates/apps/help.html.ep templates/mail/pen_sections.html.ep templates/configure/plat_setting_list.html.ep perl/help/topics_functions.pl
+# tests-for: lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Ai2.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Controller/manager_misc7.pm perl/crew.pl templates/apps/help.html.ep templates/mail/pen_sections.html.ep templates/configure/plat_setting_list.html.ep perl/help/topics_functions.pl
 # covers: the Alibaba (Qwen) provider — its key setting, its model prefix, the
 #         DashScope wire, its new-user free-trial models — and the
 #         provider-grouped model pickers it joins.
@@ -72,6 +72,11 @@ my ($openai) = grep { ($_->{'id'} || '') eq 'openai' } @{ $catalogue };
 ok(!grep({ $_->{'trial'} } @{ $openai->{'models'} || [] }),
 	'another provider has no trial rows');
 
+# The picker caches are keyed by the provider lists, not just the provider ids,
+# so a changed list is seen at once rather than after the ten-minute cache.
+like(subs::ai_catalogue_signature(), qr/^[0-9a-f]{32}$/,
+	'the catalogue signature is a short digest');
+
 # A used-up trial reads as one model's quota, not the account's credit: tell
 # the person to pick another trial model instead of standing the provider down.
 ok(subs::ai_trial_exhausted('{"code":"AllocationQuota.FreeTierOnly","message":"..."}'),
@@ -104,12 +109,16 @@ like($sent, qr/short => \$name, group => \$label, trial =>/,
 	'each picker row carries its provider group and trial flag');
 like($sent, qr/ai_model_catalogue\('chat'\)/,
 	'the Guide list is built from the chat catalogue');
+like($sent, qr/ai_catalogue_signature/,
+	'and its cache is keyed by the provider model lists');
 like($sent, qr/ai_provider_ready/,
 	'and only providers that can answer are offered');
 
 my $search = read_file("$root/lib/JawnOS/Controller/manager_misc7.pm");
+like($search, qr/ai_catalogue_signature/,
+	'the Search cache is keyed by the provider model lists');
 like($search, qr/ai_models_/,
-	'the Search catalogue cache is keyed by the provider set');
+	'the Search catalogue cache is still keyed by the provider set');
 
 my $help_tpl = read_file("$root/templates/apps/help.html.ep");
 like($help_tpl, qr/<optgroup label=/, 'the Guide picker groups models by provider');
@@ -123,5 +132,7 @@ like($plat_tpl, qr/ai_role_fallback.*<optgroup label=/s,
 like($plat_tpl, qr/free trial/, 'and names a free-trial row');
 my $search_tpl = read_file("$root/templates/apps/search.html.ep");
 like($search_tpl, qr/\$m->\{'trial'\}/, 'the Search picker marks a free-trial row');
+my $remote = read_file("$root/lib/JawnOS/Domain/Remote.pm");
+like($remote, qr/trial => \(\$_->\{'trial'\}/, 'the QA picker carries the trial flag');
 
 done_testing();

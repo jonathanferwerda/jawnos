@@ -656,7 +656,7 @@ sub action_26178 {
 	# set: opening Search must not sit on an Ollama probe or a Cloudflare request,
 	# and a provider added to the registry shows up without waiting out the cache.
 	&subs::preload('pen_model_list');
-	my $sig = join '_', map { $_->{'id'} || '' } @{ &subs::ai_providers() };
+	my $sig = &subs::ai_catalogue_signature();
 	my $context = 'ai_models_' . $sig;
 	my $models = &subs::cache_get({ app => 'search', context => $context });
 	unless (ref $models eq 'ARRAY') {
