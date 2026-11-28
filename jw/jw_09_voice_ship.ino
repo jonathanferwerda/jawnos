@@ -5,38 +5,44 @@ static bool voice_ship_clip(const String &path, long ts, const char *mode) {
   // word. WiFi POSTs the whole file in one request. The BLE bridge is the
   // fallback for when there is no WiFi (or the homebase is unreachable); taps and
   // steps, which are tiny, still ride BLE as before.
+  // Each line names the mode and the path taken: a Rec memo that never reached
+  // Notes and a Com command that got no reply are told apart here, before the
+  // server is involved.
   if (WiFi.status() == WL_CONNECTED) {
     if (homebaseIP.length() == 0) {
-      Serial.println("[voice] no homebase; BLE now");
+      Serial.printf("[voice] ship mode=%s via=ble (no homebase)\n", mode);
     }
     else if ((int32_t)(millis() - homebase_down_until) < 0) {
-      Serial.println("[voice] homebase marked down; BLE now");
+      Serial.printf("[voice] ship mode=%s via=ble (homebase marked down)\n", mode);
     }
     else if (voice_post_clip(path, ts, mode)) {
-      Serial.println("[voice] clip shipped over WiFi");
+      Serial.printf("[voice] ship mode=%s via=wifi ts=%ld\n", mode, ts);
       return true;
     }
     else {
-      Serial.println("[voice] WiFi POST failed; BLE now");
+      Serial.printf("[voice] ship mode=%s wifi failed; trying ble\n", mode);
     }
   }
   else {
-    Serial.println("[voice] WiFi not connected; BLE now");
+    Serial.printf("[voice] ship mode=%s via=ble (wifi off)\n", mode);
   }
   if (deviceConnected && voice_ble_send(path, ts, mode)) {
-    Serial.println("[voice] clip shipped over BLE");
+    Serial.printf("[voice] ship mode=%s via=ble ts=%ld\n", mode, ts);
     return true;
   }
-  Serial.println("[voice] no radio to ship the clip on");
+  Serial.printf("[voice] ship mode=%s FAILED: no radio\n", mode);
   return false;
 }
 
-// The orange ring: a border around the whole panel while a spoken command is
-// being heard. It lives on the top layer so the per-room rebuilds - which
-// lv_obj_clean the screen - never sweep it away, and it is not clickable, so a
-// touch still lands on the buttons beneath it. loop() drives it from
-// `voiceRecording`, the same flag that keeps the screen awake mid-sentence, so
-// the ring means the one thing: the watch is listening right now.
+// The capture ring: a border around the whole panel while a capture is in
+// flight. Orange for a spoken command (the wake phrase or a Com push-to-talk);
+// teal while the Rec button's memo is the capture, so the person can tell at a
+// glance whether the words are going to the Guide or into Notes. It lives on
+// the top layer so the per-room rebuilds - which lv_obj_clean the screen - never
+// sweep it away, and it is not clickable, so a touch still lands on the buttons
+// beneath it. loop() drives it from the capture flags.
+#define VOICE_BORDER_CAPTURE 0xff8000   // hey jawn or Com: a command
+#define VOICE_BORDER_NOTE    0x00b3b3   // Rec: a memo for Notes
 static lv_obj_t *voice_border = nullptr;
 
 static void voice_border_maker() {
@@ -48,14 +54,19 @@ static void voice_border_maker() {
   lv_obj_set_pos(voice_border, 0, 0);
   lv_obj_set_style_bg_opa(voice_border, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_radius(voice_border, 0, LV_PART_MAIN);
-  lv_obj_set_style_border_color(voice_border, lv_color_hex(0xff8000), LV_PART_MAIN);
+  lv_obj_set_style_border_color(voice_border, lv_color_hex(VOICE_BORDER_CAPTURE), LV_PART_MAIN);
   lv_obj_set_style_border_width(voice_border, 6, LV_PART_MAIN);
   lv_obj_add_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void voice_border_show(bool on) {
+// `note` recolors the ring teal for a Rec memo; the color is set on every call,
+// not only when the ring appears, so a Rec -> Com hand-off recolors a ring that
+// never went out between the two captures.
+static void voice_border_show(bool on, bool note) {
   voice_border_maker();
   if (!voice_border) { return; }
+  lv_obj_set_style_border_color(voice_border,
+      lv_color_hex(note ? VOICE_BORDER_NOTE : VOICE_BORDER_CAPTURE), LV_PART_MAIN);
   if (on) {
     lv_obj_remove_flag(voice_border, LV_OBJ_FLAG_HIDDEN);
   }

@@ -421,17 +421,35 @@ void jawn_loop() {
   if (voiceAwaitingReply) {
     buttonMillis = millis();
     if (!isPlaying && millis() - voiceAwaitingSince > 30000) {
+      Serial.println("[voice] reply wait timed out (30s); no say/audio arrived");
       voiceAwaitingReply = false;
       buttonMillis = millis();
     }
   }
-  // the orange ring: shown for exactly as long as a command is being heard
+  // the capture ring: shown for exactly as long as a capture is in flight.
+  // Orange for the hands-free listener and Com; teal for the Rec button's memo,
+  // which is a capture too (isRecording with rec_is_note) even though it never
+  // sets voiceRecording. The note flag is tracked on its own so a Rec -> Com
+  // hand-off recolors a ring that stays on across both.
   {
     static bool voice_border_on = false;
-    bool want_border = voiceRecording || comRecording;
-    if (want_border != voice_border_on) {
+    static bool voice_border_note = false;
+    bool note_capture = isRecording && rec_is_note;
+    bool want_border = voiceRecording || comRecording || note_capture;
+    bool want_note = note_capture;
+    if (want_border != voice_border_on
+        || (want_border && want_note != voice_border_note)) {
       voice_border_on = want_border;
-      voice_border_show(want_border);
+      voice_border_note = want_note;
+      voice_border_show(want_border, want_note);
+      if (want_border) {
+        Serial.printf("[voice] border color=%s mode=%s\n",
+                      want_note ? "teal" : "orange",
+                      want_note ? "note" : (comRecording ? "command" : "voice"));
+      }
+      else {
+        Serial.println("[voice] border off");
+      }
     }
   }
   // a guide associate reply: draw the words, then hear them - the parts arrive

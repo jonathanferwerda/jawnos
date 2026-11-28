@@ -288,12 +288,23 @@ static void wrist_look_monitor() {
   // the glance back to the normal timeout, whose deadline loop() keeps rebasing
   // while voiceRecording/voiceAwaitingReply are set; after the answer the full
   // configured timeout starts again.
-  if (voiceRecording || voiceShipping || voiceAwaitingReply
-      || (voiceWakeHoldUntil && (int32_t)(millis() - voiceWakeHoldUntil) < 0)) {
+  // isRecording covers the Rec and Com buttons: a held button is a capture too,
+  // and without it the glance's arm-drop could darken the screen (and light
+  // sleep the radio) part-way through a memo.
+  static bool capture_hold_logged = false;
+  bool capture_holds = isRecording || voiceRecording || voiceShipping || voiceAwaitingReply
+      || (voiceWakeHoldUntil && (int32_t)(millis() - voiceWakeHoldUntil) < 0);
+  if (capture_holds) {
+    if (!capture_hold_logged) {
+      capture_hold_logged = true;
+      Serial.printf("[voice] wrist hold: capture owns the screen (rec=%d voice=%d ship=%d reply=%d)\n",
+                    (int)isRecording, (int)voiceRecording, (int)voiceShipping, (int)voiceAwaitingReply);
+    }
     wrist_look_watch = false;
     buttonMillis = millis();
     return;
   }
+  capture_hold_logged = false;
   if (millis() - wrist_look_since > WRIST_LOOK_EXTEND_MS) {
     // the glance is spent: a tilt wake keeps the screen for five seconds at
     // most without a button press, even if the arm is still held up

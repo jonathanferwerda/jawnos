@@ -1,4 +1,4 @@
-# tests-for: jw/jw_01_globals.ino jw/jw_03_setup.ino jw/jw_04_loop.ino jw/jw_05_loop2.ino jw/jw_06_net_face.ino jw/jw_11_configure.ino jw/jw_13_serial_lowpower.ino jw/jw_14_settings.ino jw/jw_15_config_files.ino jw/jw_02_ble.ino jw/jw_07_house_audio.ino
+# tests-for: jw/jw_01_globals.ino jw/jw_03_setup.ino jw/jw_04_loop.ino jw/jw_05_loop2.ino jw/jw_06_net_face.ino jw/jw_11_configure.ino jw/jw_13_serial_lowpower.ino jw/jw_14_settings.ino jw/jw_15_config_files.ino jw/jw_02_ble.ino jw/jw_07_house_audio.ino jw/jw_12_wrist.ino
 # covers:    The watch actually sleeps when Sleep is on, and the awake screen
 #            stops polling what does not change. A connected BLE bridge used to
 #            keep the watch out of the real light sleep for as long as the bridge
@@ -35,6 +35,7 @@ my $jw_save    = read_file("$root/jw/jw_14_settings.ino");
 my $jw_config  = read_file("$root/jw/jw_15_config_files.ino");
 my $jw_ble     = read_file("$root/jw/jw_02_ble.ino");
 my $jw_house   = read_file("$root/jw/jw_07_house_audio.ino");
+my $jw_wrist   = read_file("$root/jw/jw_12_wrist.ino");
 
 # --- a live bridge delays the sleep, it does not cancel it -------------------
 like( $jw_sleep, qr/const bool want_sleep = lightSleep && !watch\.isUsbIn\(\);/,
@@ -228,5 +229,13 @@ like( $jw_net, qr/WiFi\.mode\(WIFI_OFF\);/, 'WiFi is switched off, not just disc
 like( $jw_net, qr/MDNS\.end\(\);/, 'and mDNS is ended' );
 like( $jw_net, qr/wifi_restore_pending && WiFi\.status\(\) == WL_CONNECTED/, 'the restore finishes non-blocking' );
 like( $jw_loop, qr/wifi_restore_tick\(\);/, 'the awake loop finishes the restore' );
+
+# --- a capture owns the screen against the wrist glance -----------------------
+# The glance's arm-drop sleeps the watch, which would cut a held Rec/Com memo
+# short; isRecording joins the voice flags so the capture keeps the screen.
+like( $jw_wrist, qr/bool capture_holds = isRecording \|\| voiceRecording \|\| voiceShipping \|\| voiceAwaitingReply/,
+	'a held manual capture owns the screen against the wrist glance' );
+like( $jw_wrist, qr/\[voice\] wrist hold: capture owns the screen/,
+	'and the hold is named on the console for a capture that went wrong' );
 
 done_testing();

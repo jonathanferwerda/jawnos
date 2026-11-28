@@ -375,7 +375,7 @@ static void screen_gesture(lv_event_t *e);
 static void ble_push_steps(bool force);
 static void voiceListenStart(bool one_shot);
 static void voice_control(lv_event_t *e);
-static void voice_border_show(bool on);
+static void voice_border_show(bool on, bool note);
 static void voice_trigger_apply();
 void setting_room();
 String chat_room;

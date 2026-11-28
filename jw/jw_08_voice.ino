@@ -91,22 +91,25 @@ static void voice_dc_block(int16_t *s, int n) {
 // of KB, well past what the TLS stack wants held in RAM.
 static bool voice_post_clip(const String &path, long ts, const char *mode) {
   if (homebaseIP.length() == 0 || authorization.length() == 0) {
-    Serial.printf("[voice] no homebase (%u) or authorization (%u)\n",
-                  (unsigned)homebaseIP.length(), (unsigned)authorization.length());
+    Serial.printf("[voice] post mode=%s skipped: no homebase (%u) or authorization (%u)\n",
+                  mode, (unsigned)homebaseIP.length(), (unsigned)authorization.length());
     return false;
   }
   // the same backoff the room fetch keeps: with the homebase away a TLS connect
   // only times out, and a run of those is what asserts in the TLS/lwip stack and
   // reboots the watch (see the notes). While it is marked down, do not POST.
   if ((int32_t)(millis() - homebase_down_until) < 0) {
-    Serial.println("[voice] homebase marked down; not POSTing");
+    Serial.printf("[voice] post mode=%s skipped: homebase marked down\n", mode);
     return false;
   }
   File f = FFat.open(path.c_str(), FILE_READ);
   if (!f) {
-    Serial.println("[voice] clip open failed");
+    Serial.printf("[voice] post mode=%s skipped: clip open failed (%s)\n", mode, path.c_str());
     return false;
   }
+  // The body's size and the mode are the whole request; the URL carries the
+  // authorization token, so it is never printed.
+  Serial.printf("[voice] post mode=%s ts=%ld bytes=%u\n", mode, ts, (unsigned)f.size());
   WiFiClientSecure client;
   client.setCACert(HOUSE_CA_PEM);
   HTTPClient https;
@@ -122,12 +125,12 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
   if (https.begin(client, url)) {
     https.addHeader("Content-Type", "application/octet-stream");
     int code = https.sendRequest("POST", &f, (size_t)f.size());
-    Serial.printf("[voice] POST -> %d\n", code);
+    Serial.printf("[voice] post mode=%s -> %d\n", mode, code);
     ok = (code > 0 && code < 400);
     https.end();
   }
   else {
-    Serial.println("[voice] https.begin failed");
+    Serial.printf("[voice] post mode=%s begin failed\n", mode);
   }
   homebase_down_until = ok ? 0 : millis() + 20000;
   f.close();
@@ -177,6 +180,8 @@ static bool voice_ble_send(const String &path, long ts, const char *mode) {
   size_t b64_len = ((size + 2) / 3) * 4;
   int total = (int)((b64_len + VOICE_BLE_CHUNK - 1) / VOICE_BLE_CHUNK);
   if (total < 1) { total = 1; }
+  Serial.printf("[voice] ble send mode=%s ts=%ld bytes=%u parts=%d\n",
+                mode, ts, (unsigned)size, total);
   static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   String head = "{\"type\":\"voice\",\"chip_id\":\"" + chip_id_maker() + "\",\"edt\":\"watch\",\"ts\":" + String(ts) + ",\"voice\":\"" + String(mode) + "\",\"data\":\"";
   String out = String(0) + "/" + String(total) + ":" + head;
@@ -225,6 +230,7 @@ static bool voice_ble_send(const String &path, long ts, const char *mode) {
     ok = voice_ble_notify(out);
   }
   f.close();
+  Serial.printf("[voice] ble send mode=%s done %s\n", mode, ok ? "ok" : "short");
   return ok;
 }
 

@@ -390,7 +390,7 @@ void loop2(void * pvParameters) {
                 say_text_pending = true;
                 xSemaphoreGive(taskMutex);
               }
-              Serial.printf("[say] %s\n", t.c_str());
+              Serial.printf("[voice] reply %u chars: %s\n", (unsigned)t.length(), t.c_str());
             }
           }
           else if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "say_audio_ready") {

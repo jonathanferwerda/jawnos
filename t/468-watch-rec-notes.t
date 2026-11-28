@@ -276,4 +276,21 @@ like($ship, qr/voice_compress_clip\(VOICE_WAV_PATH, VOICE_ADPCM_PATH, false, cap
 like($ship, qr/voice_ship_clip\(ship_path, ts, voice_mode_name\)/,
 	'and ships with the model that heard it');
 
+# The capture ring: orange for a spoken command, teal while the Rec button's
+# memo is the capture. The note flag is tracked separately, so a Rec -> Com
+# hand-off recolors a ring that never went out between them.
+like($loop, qr/bool note_capture = isRecording && rec_is_note/,
+	'the Rec hold counts as a capture for the ring');
+like($loop, qr/voice_border_show\(want_border, want_note\)/,
+	'the ring is told a memo from a command on every color change');
+like($ship, qr/#define VOICE_BORDER_NOTE\s+0x00b3b3/, 'a Rec memo wears a teal ring');
+like($ship, qr/static void voice_border_show\(bool on, bool note\)/,
+	'the ring takes the note flag');
+
+# A note that could not be sent is retried inside a bounded window instead of
+# being left on flash after one attempt (the Rec test that never reached Notes).
+like($audio, qr/#define REC_SHIP_WINDOW_MS 15000UL/, 'a note gets a bounded retry window');
+like($audio, qr/while \(!ok && millis\(\) - ship_started < REC_SHIP_WINDOW_MS\)/,
+	'and is retried until a send succeeds or the window ends');
+
 done_testing();

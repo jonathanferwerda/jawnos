@@ -653,6 +653,7 @@ static void audio_button(lv_event_t * e) {
             rec_is_note = true;
             rec_clip_ts = timestamp_maker();
             isRecording = true;
+            Serial.printf("[voice] rec start mode=note ts=%ld\n", (long)rec_clip_ts);
             lv_label_set_text(btn_label, "Recording...");
             String filename = String((long)rec_clip_ts) + ".wav";
             saveFileToFolder("/recordings", filename.c_str());
@@ -664,6 +665,7 @@ static void audio_button(lv_event_t * e) {
         } else if (code == LV_EVENT_RELEASED) {
             if (isRecording && rec_is_note) {
                 isRecording = false; 
+                Serial.println("[voice] rec stop mode=note");
                 lv_label_set_text(btn_label, "Rec");
             }
         }
@@ -680,6 +682,7 @@ static void audio_button(lv_event_t * e) {
             isRecording = true;
             comRecording = true;                 // orange ring + keep the screen awake
             voiceWakeHoldUntil = millis() + 15000;
+            Serial.printf("[voice] rec start mode=command ts=%ld\n", (long)rec_clip_ts);
             lv_label_set_text(btn_label, "Listening...");
             rec_clip_wav = "/com.wav";           // not a memo: Play still plays Rec
             xTaskCreatePinnedToCore(micCaptureTask, "MicTask", 4096, NULL, 2, NULL, 1);
@@ -687,6 +690,7 @@ static void audio_button(lv_event_t * e) {
         } else if (code == LV_EVENT_RELEASED) {
             if (isRecording && !rec_is_note) {
                 isRecording = false;
+                Serial.println("[voice] rec stop mode=command");
                 lv_label_set_text(btn_label, "Com");
             }
         }
@@ -815,6 +819,14 @@ static void rec_note_prune(const String &keep) {
 // "note" and filed in Notes; a Com clip is tagged "command", so the server
 // reads it as a wake-word capture (command first, then the Guide). It runs off
 // the microphone task so the TLS/BLE send never sits on the mic's small stack.
+//
+// A failed send used to end here after one attempt: if the bridge was still
+// coming up (or the POST timed out) the memo sat on flash forever - the Rec test
+// that never reached Notes. Hold the radio's bring-up and try again, but only
+// after a send that returned false: the server does not dedupe memos, so a
+// retry after the bytes landed would file the note twice.
+#define REC_SHIP_WINDOW_MS 15000UL
+
 static void rec_voice_ship_task(void *pv) {
     (void)pv;
     bool note = rec_ship_is_note;
@@ -822,18 +834,31 @@ static void rec_voice_ship_task(void *pv) {
     String src = rec_ship_path;
     String packed = note ? "/rec.adpcm" : "/com.adpcm";
     const char *mode = note ? REC_NOTE_MODE : COMMAND_MODE;
-    // the Com clip holds the screen on while it is sent and waits for the Guide
-    if (!note) { voiceShipping = true; }
+    // A note needs the BLE bring-up just as much as a Com clip; it used to ask
+    // for neither the radio nor the screen hold.
+    voiceShipping = true;
     String ship_path = src;
     // fold_half takes the memo to half the mic's rate, and that is the rate the
     // compressed header must name (8 kHz for the 16 kHz microphone).
     if (voice_compress_clip(src, packed, true, MIC_I2S_SAMPLE_RATE / 2)) { ship_path = packed; }
-    bool ok = voice_ship_clip(ship_path, ts, mode);
-    Serial.printf("[%s] clip ts=%ld %s\n", note ? "rec" : "com", ts, ok ? "shipped" : "NOT shipped");
-    if (!note) {
-        voiceShipping = false;
-        if (ok) { voiceAwaitingSince = millis(); voiceAwaitingReply = true; }
+    Serial.printf("[voice] ship start mode=%s ts=%ld path=%s%s\n",
+                  mode, ts, ship_path.c_str(), ship_path == packed ? " (adpcm)" : " (wav)");
+    uint32_t ship_started = millis();
+    uint32_t attempts = 0;
+    bool ok = false;
+    while (!ok && millis() - ship_started < REC_SHIP_WINDOW_MS) {
+        attempts++;
+        ok = voice_ship_clip(ship_path, ts, mode);
+        if (!ok) {
+            Serial.printf("[voice] ship mode=%s attempt %u failed; retrying\n",
+                          mode, (unsigned)attempts);
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+        }
     }
+    voiceShipping = false;
+    Serial.printf("[voice] ship mode=%s ts=%ld %s after %u attempt(s)\n",
+                  mode, ts, ok ? "shipped" : "NOT shipped", (unsigned)attempts);
+    if (!note && ok) { voiceAwaitingSince = millis(); voiceAwaitingReply = true; }
     if (ship_path == packed && FFat.exists(packed.c_str())) { FFat.remove(packed.c_str()); }
     vTaskDelete(NULL);
 }
@@ -848,7 +873,7 @@ void micCaptureTask(void *pvParameters) {
 
     AudioInputIf *mic = watch.getAudioInput();
     if (!mic || !mic->open(MIC_I2S_BITS_PER_SAMPLE, 1, MIC_I2S_SAMPLE_RATE)) {
-        Serial.println("[Recorder] microphone open failed");
+        Serial.printf("[voice] rec capture mode=%s FAILED: microphone open\n", note ? "note" : "command");
         isRecording = false;
         if (!note) { comRecording = false; voiceWakeHoldUntil = 0; }
         vTaskDelete(NULL);
@@ -870,7 +895,8 @@ void micCaptureTask(void *pvParameters) {
     uint8_t *tempBuf = (uint8_t *)malloc(AUDIO_BUFFER_CHUNK_SIZE);
     uint32_t bytes_written_total = 0;
 
-    Serial.println("[Recorder] Flash append loop initialized.");
+    Serial.printf("[voice] rec capture mode=%s path=%s open\n",
+                  note ? "note" : "command", clip_path.c_str());
     uint32_t started_ms = millis();
 
     while (isRecording) {
@@ -892,8 +918,8 @@ void micCaptureTask(void *pvParameters) {
     uint32_t spent = millis() - started_ms;
     // the bytes-per-second figure says whether the microphone really produced the
     // 16 kHz the WAV header claims (16 kHz mono 16-bit is ~32000 B/s)
-    Serial.printf("[Recorder] captured %u bytes in %u ms (%u B/s, expect ~32000)\n",
-                  bytes_written_total, spent,
+    Serial.printf("[voice] rec capture mode=%s path=%s bytes=%u in %u ms (%u B/s, expect ~32000)\n",
+                  note ? "note" : "command", clip_path.c_str(), bytes_written_total, spent,
                   spent ? (unsigned)((uint64_t)bytes_written_total * 1000 / spent) : 0);
 
     // Patch structural sizing tags so whisper.cpp can process it cleanly
@@ -915,8 +941,13 @@ void micCaptureTask(void *pvParameters) {
     if (bytes_written_total > 1600) {
         if (note) { rec_note_prune(clip_path); }
         if (xTaskCreatePinnedToCore(rec_voice_ship_task, "RecShip", 12288, NULL, 1, NULL, 0) != pdPASS) {
-            Serial.println("[rec] could not start the ship task");
+            Serial.printf("[voice] ship mode=%s could not start the ship task\n",
+                          note ? REC_NOTE_MODE : COMMAND_MODE);
         }
+    }
+    else {
+        Serial.printf("[voice] rec capture mode=%s too short (%u bytes); not shipped\n",
+                      note ? "note" : "command", bytes_written_total);
     }
     vTaskDelete(NULL);
 }
