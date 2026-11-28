@@ -1071,8 +1071,15 @@ void micCaptureTask(void *pvParameters) {
 
     // A Rec clip is a voice memo for the Notes app: keep the folder to its limit.
     if (note) { rec_note_prune(clip_path); }
-    if (xTaskCreatePinnedToCore(rec_voice_ship_task, "RecShip", 12288, NULL, 1, NULL, 0) != pdPASS) {
-        Serial.printf("[voice] ship mode=%s could not start the ship task\n", mode);
+    BaseType_t made = xTaskCreatePinnedToCore(rec_voice_ship_task, "RecShip", 12288, NULL, 1, NULL, 0);
+    if (made != pdPASS) {
+        Serial.printf("[voice] ship mode=%s 12k task refused (free %u); retrying 8k\n",
+                      mode, (unsigned)ESP.getFreeHeap());
+        made = xTaskCreatePinnedToCore(rec_voice_ship_task, "RecShip", 8192, NULL, 1, NULL, 0);
+    }
+    if (made != pdPASS) {
+        Serial.printf("[voice] ship mode=%s could not start the ship task (free %u)\n",
+                      mode, (unsigned)ESP.getFreeHeap());
     }
 
     // The listener can have the microphone back now that the capture is done.

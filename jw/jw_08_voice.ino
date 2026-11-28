@@ -122,7 +122,7 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
   if (https.begin(client, url)) {
     https.addHeader("Content-Type", "application/octet-stream");
     int code = https.sendRequest("POST", &f, (size_t)f.size());
-    Serial.printf("[voice] post mode=%s -> %d\n", mode, code);
+    Serial.printf("[voice] post mode=%s -> %d (wifi=%d)\n", mode, code, (int)WiFi.status());
     // Only 2xx means the house took the body. A 403 (auth) or 400 (unusable
     // body) is a failure like any other: keep the clip for the bounded retry
     // and let the caller fall back to the other transport. A 4xx still proves
@@ -497,7 +497,8 @@ static bool com_stream_post(WiFiClientSecure &client, const uint8_t *data, unsig
     https.end();
   }
   else {
-    Serial.printf("[voice] com stream chunk seq=%u begin failed\n", (unsigned)com_stream_seq);
+    Serial.printf("[voice] com stream chunk seq=%u begin failed (wifi=%d)\n",
+                  (unsigned)com_stream_seq, (int)WiFi.status());
   }
   if (ok) { com_stream_seq++; }
   return ok;
@@ -610,7 +611,10 @@ static void com_stream_feed(const int16_t *samples, int n) {
 // and wait (bounded) for the uploads to finish. True means the house has the
 // whole clip and the ship task can skip the whole-file POST.
 static bool com_stream_end() {
-  if (!com_stream_active && !com_stream_sender_alive) { return false; }
+  if (!com_stream_active && !com_stream_sender_alive) {
+    if (com_stream_q) { vQueueDelete(com_stream_q); com_stream_q = nullptr; }
+    return false;
+  }
   if (!com_stream_failed && !com_stream_abort_requested) {
     if (com_sblk_have >= 2) {
       uint8_t blk[VOICE_ADPCM_BLOCK];
@@ -645,6 +649,13 @@ static bool com_stream_end() {
   bool ok = com_stream_ok && !com_stream_failed && !com_stream_abort_requested;
   Serial.printf("[voice] com stream %s chunks=%u session=%s\n",
                 ok ? "ok" : "failed", (unsigned)com_stream_chunks, com_stream_session.c_str());
+  // The upload task is gone and its queue is dead weight: a failed Com used to
+  // leave it behind, and the 12 KB ship task the recorder starts next could not
+  // be created, so the clip never fell back to BLE. Free it with the task.
+  if (!com_stream_sender_alive && com_stream_q) {
+    vQueueDelete(com_stream_q);
+    com_stream_q = nullptr;
+  }
   return ok;
 }
 
@@ -662,6 +673,10 @@ static void com_stream_abort() {
   com_stream_ok = false;
   com_stream_failed = true;
   Serial.printf("[voice] com stream aborted (chunks=%u)\n", (unsigned)com_stream_chunks);
+  if (!com_stream_sender_alive && com_stream_q) {
+    vQueueDelete(com_stream_q);
+    com_stream_q = nullptr;
+  }
 }
 
 // Capture over with nothing in it: abandon the stream rather than finish it. The
