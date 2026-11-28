@@ -4645,6 +4645,20 @@ impl Server {
     /// render thread. The session stays, so a following `status` still reports
     /// where it stopped and a `start` can resume from there.
     fn transport_stop(&mut self) -> String {
+        // A listen riding this transport has no output of its own, so ending
+        // the transport would leave its capture loop pushing into a ring nobody
+        // reads. Signal it first (while the transport still exists to report
+        // the owner) and join it after the transport closes.
+        let listen_riding = self
+            .transport
+            .as_ref()
+            .map(|session| session.live_owner == Some(LiveInputOwner::Listen))
+            .unwrap_or(false);
+        if listen_riding {
+            if let Some(session) = &self.listen {
+                session.stop.store(true, Ordering::SeqCst);
+            }
+        }
         if let Some(mut session) = self.transport.take() {
             // The output is about to close, so the take's live ring has no
             // reader left. Clear the attachment before the render thread leaves,
@@ -4652,6 +4666,12 @@ impl Server {
             session.detach_live();
             session.finish();
             self.transport = Some(session);
+        }
+        if listen_riding {
+            if let Some(mut session) = self.listen.take() {
+                session.finish();
+                self.listen = Some(session);
+            }
         }
         self.transport_status()
     }
@@ -7050,9 +7070,6 @@ impl PlaySession {
 }
 
 
-/// The server's handle to one transport's render thread. The control block is
-/// the same one the socket writes: seek, tempo and loop changes are atomic and
-/// take effect at the next block.
 /// Which role's live input a transport is carrying. The render thread has one
 /// live slot; a take and a listen never share it, because a listen refuses while
 /// a take records and a take with `monitor_input` refuses while a listen runs.
@@ -7062,6 +7079,9 @@ enum LiveInputOwner {
     Listen,
 }
 
+/// The server's handle to one transport's render thread. The control block is
+/// the same one the socket writes: seek, tempo and loop changes are atomic and
+/// take effect at the next block.
 struct TransportSession {
     control: Arc<TransportControl>,
     handle: Option<JoinHandle<()>>,
@@ -7275,10 +7295,11 @@ fn default_transport_line() -> String {
 }
 
 /// The transport's worker. It owns the output for as long as it runs; the
-/// socket never opens a second output for a playback, listen or patch while it
-/// does. A take may still capture beside it, because a take's capture stream
-/// and its monitor are separate. A take's live input may also join this
-/// output through `live`, while its own monitor files and click still refuse.
+/// socket never opens a second output for a playback or patch while it does.
+/// A take may still capture beside it, because a take's capture stream and its
+/// monitor are separate. A take's live input and a listen may also join this
+/// output through `live`, while a take's own monitor files and click still
+/// refuse.
 /// The device loop never returns on its own: `stop` makes the source's next
 /// block fail, which is the same clean path a stopped playback takes.
 fn run_transport(
@@ -12407,6 +12428,49 @@ break"}"#).is_err());
             Some(LiveInputOwner::Take),
             "the take kept its live slot"
         );
+    }
+
+    #[test]
+    fn stopping_the_transport_ends_a_listen_riding_it() {
+        // A listen riding the transport has no output of its own. Stopping the
+        // transport must end that listen too, rather than leave its capture
+        // pushing into a ring whose reader has gone.
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        let listening = reply(server.handle(r#"{"cmd":"listen","channel":0}"#));
+        assert!(listening.contains("\"ok\":true"), "{listening}");
+        assert_eq!(
+            server
+                .transport
+                .as_ref()
+                .expect("the transport session")
+                .live_owner,
+            Some(LiveInputOwner::Listen)
+        );
+
+        let stopped = reply(server.handle(r#"{"cmd":"transport","action":"stop"}"#));
+        assert!(stopped.contains("\"state\":\"stopped\""), "{stopped}");
+        assert_eq!(
+            server
+                .transport
+                .as_ref()
+                .expect("the transport session")
+                .live_owner,
+            None,
+            "the stopped transport carries no live owner"
+        );
+        assert!(
+            !server
+                .listen
+                .as_ref()
+                .expect("the listen session")
+                .is_listening(),
+            "the listen ended with the transport it rode"
+        );
+        let status = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(!status.contains("\"state\":\"listening\""), "{status}");
     }
 
     #[test]
