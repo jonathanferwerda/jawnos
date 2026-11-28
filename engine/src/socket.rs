@@ -1182,8 +1182,9 @@ struct Server {
     /// loop, so it runs beside a patch and says `off` until the first bind.
     gateway: Gateway,
     next_take: u64,
-    /// What the boot restore did with the saved plan, reported on every status
-    /// line as `plan` or `plan_error` beside `machine`.
+    /// The plan the engine is running (the boot restore's, or a live `patch`'s)
+    /// or the reason there is none, reported on every status line as `plan` or
+    /// `plan_error` beside `machine`.
     boot: BootPlan,
     /// The live monitor tap. It exists for the process's lifetime; `start` and
     /// `stop` only change what its writer thread serves, so the transport and
@@ -1196,7 +1197,8 @@ struct Server {
     uplink: Arc<Mutex<UplinkStatus>>,
 }
 
-/// The boot-restore outcome, in the shape `status` reports it.
+/// The plan the engine is running (boot-restored or live), in the shape
+/// `status` reports it, or the reason it is not running.
 enum BootPlan {
     Armed(PatchSummary),
     Error(String),
@@ -1461,9 +1463,9 @@ impl Server {
         }
     }
 
-    /// Append `machine`, the boot-restore outcome (`plan` or `plan_error`) and
-    /// the uplink's state to a status object, without changing any key already
-    /// present.
+    /// Append `machine`, the running plan's shape (or the reason there is
+    /// none) and the uplink's state to a status object, without changing any
+    /// key already present.
     fn add_boot(&self, line: String) -> String {
         let head = match line.strip_suffix('}') {
             Some(head) => head,
@@ -2767,55 +2769,80 @@ impl Server {
     /// take records, a playback plays or a listen monitors. A second `patch`
     /// replaces the first: the old graph is joined before the new one opens the
     /// device, so the reply describes a graph that is actually running.
+    ///
+    /// The outcome is also what `status` reports as `plan`/`plan_error`: a live
+    /// patch becomes the plan the engine is running, and a refusal records why.
+    /// Without that, a saved plan whose `manage` was off at boot would keep
+    /// answering `plan_error: ... manage is off` while a patch was running.
     fn patch(&mut self, object: &Object) -> String {
+        match self.apply_patch(object) {
+            Ok(summary) => {
+                let reply = format!(
+                    "{{\"ok\":true,\"state\":\"patching\",{},{}}}",
+                    summary.json(),
+                    self.gateway.fragment()
+                );
+                self.boot = BootPlan::Armed(summary);
+                reply
+            }
+            Err(error) => {
+                // Record this refusal rather than reviving the boot restore's
+                // reason: `status` must describe the last attempt.
+                self.boot = BootPlan::Error(error.clone());
+                error_line(&error)
+            }
+        }
+    }
+
+    /// The body of `patch`, so its one caller can record the outcome — the
+    /// armed plan or the refusal — on the status line in one place.
+    fn apply_patch(&mut self, object: &Object) -> Result<PatchSummary, String> {
         if let Some(session) = &self.transport {
             if session.is_playing() {
-                return error_line(
-                    "the transport is playing; stop it before patching. Sharing the transport's output with the patchbay is the next stage",
+                return Err(
+                    "the transport is playing; stop it before patching. Sharing the transport's output with the patchbay is the next stage".to_string(),
                 );
             }
         }
         if let Some(running) = &self.current {
             if running.is_recording() {
-                return error_line(
-                    "a take is recording; the patchbay needs the capture and the outputs. Stop the take before patching",
+                return Err(
+                    "a take is recording; the patchbay needs the capture and the outputs. Stop the take before patching".to_string(),
                 );
             }
         }
         if let Some(session) = &self.bus_take {
             if session.is_recording() {
-                return error_line(
-                    "a bus take is recording the running patch; stop the take before replacing the patch",
+                return Err(
+                    "a bus take is recording the running patch; stop the take before replacing the patch".to_string(),
                 );
             }
         }
         if let Some(session) = &self.listen {
             if session.is_listening() {
-                return error_line(
-                    "listen is monitoring the inputs; the patchbay needs the capture and the outputs. Stop the listen before patching",
+                return Err(
+                    "listen is monitoring the inputs; the patchbay needs the capture and the outputs. Stop the listen before patching".to_string(),
                 );
             }
         }
         if let Some(session) = &self.playback {
             if session.is_playing() {
-                return error_line(
-                    "a playback is using the outputs; the patchbay needs them. Stop the playback before patching",
+                return Err(
+                    "a playback is using the outputs; the patchbay needs them. Stop the playback before patching".to_string(),
                 );
             }
         }
 
         let plan = match get(object, "plan") {
             Some(Value::Obj(plan)) => plan,
-            _ => return error_line("patch needs \"plan\": the saved sources, buses, sinks and routes"),
+            _ => {
+                return Err(
+                    "patch needs \"plan\": the saved sources, buses, sinks and routes".to_string(),
+                )
+            }
         };
-        let patchbay = match Patchbay::from_object(plan, self.config.channels, &self.config.machine)
-        {
-            Ok(patchbay) => patchbay,
-            Err(error) => return error_line(&error),
-        };
-        if let Err(error) = crate::listen_support(self.config.backend) {
-            return error_line(&error);
-        }
+        let patchbay = Patchbay::from_object(plan, self.config.channels, &self.config.machine)?;
+        crate::listen_support(self.config.backend)?;
 
         // The manager creates the virtual sink and names its monitor here. An
         // older caller sends no field and keeps the engine's startup choice; an
@@ -2824,9 +2851,7 @@ impl Server {
             None | Some(Value::Null) => self.config.system_device.clone(),
             Some(Value::Str(name)) if name.is_empty() => None,
             Some(Value::Str(name)) => Some(name.clone()),
-            Some(_) => {
-                return error_line("\"system_device\" must be one source name")
-            }
+            Some(_) => return Err("\"system_device\" must be one source name".to_string()),
         };
 
         // Join a finished patch before replacing it, so a sequence of plans
@@ -2835,20 +2860,13 @@ impl Server {
             previous.finish();
         }
 
-        let summary = match self.start_patch_worker(patchbay, system_device) {
-            Ok(summary) => summary,
-            Err(error) => return error_line(&error),
-        };
+        let summary = self.start_patch_worker(patchbay, system_device)?;
         // A finished bus take belonged to the patch that just ended; a running
         // one was refused above.
         if let Some(mut previous) = self.bus_take.take() {
             previous.finish();
         }
-        format!(
-            "{{\"ok\":true,\"state\":\"patching\",{},{}}}",
-            summary.json(),
-            self.gateway.fragment()
-        )
+        Ok(summary)
     }
 
     /// `{"cmd":"record","out":...,"bus":"<bus-id>","seconds":N}`: record
@@ -4771,7 +4789,7 @@ impl Server {
         // The configuration describes the process, not the take, so every
         // state carries it: a supervisor compares these with its own flags to
         // tell whether the engine it adopted is the one it asked for. The
-        // boot restore adds `machine` and `plan`/`plan_error` on top, and the
+        // plan state adds `machine` and `plan`/`plan_error` on top, and the
         // monitor adds its `stream` object and `streaming` flag.
         let control = self.monitor.control();
         self.add_boot(add_monitor(add_config(line, &self.config), &control))
@@ -4804,6 +4822,10 @@ impl Server {
             session.finish();
         }
         if was_patching {
+            // The plan this server was reporting ended with the patch. Say so
+            // rather than let it (or the boot restore's reason) stand while the
+            // patchbay is off; a later `patch` records its own outcome.
+            self.boot = BootPlan::Error("the patch is off".to_string());
             if let Some(session) = &self.patch {
                 return session.line();
             }

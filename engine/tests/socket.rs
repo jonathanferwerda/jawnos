@@ -1709,6 +1709,70 @@ fn serve_with_manage_off_does_not_patch() {
 }
 
 #[test]
+fn a_live_patch_clears_the_boot_plan_error() {
+    let plan = serve_plan_path("boot-error-cleared");
+    fs::write(
+        &plan,
+        r#"{"manage":false,"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]}}"#,
+    )
+    .expect("write the plan");
+    let server = Server::start_with(
+        "serve-plan-live-patch",
+        &["--plan", plan.to_str().expect("path"), "--machine", "table"],
+    );
+    let mut client = server.connect();
+
+    // The saved plan was not managed at boot, so status carries the reason.
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"plan_error\":"), "boot: {status}");
+    assert!(status.contains("manage is off"), "boot: {status}");
+    assert!(!status.contains("\"state\":\"patching\""), "boot: {status}");
+
+    // A live patch becomes the running plan; the boot reason must not linger.
+    let live = "{\"sources\":[{\"id\":\"in0\",\"kind\":\"input\",\"channel\":0}],\"buses\":[{\"id\":\"house\"}],\"sinks\":[{\"id\":\"out\",\"kind\":\"interface\"}],\"routes\":[{\"from\":\"in0\",\"to\":\"house\"},{\"from\":\"house\",\"to\":\"out\"}]}";
+    let reply = client.ask(&format!("{{\"cmd\":\"patch\",\"plan\":{live}}}"));
+    assert!(reply.contains("\"ok\":true"), "patch: {reply}");
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"state\":\"patching\""), "status: {status}");
+    assert!(status.contains("\"plan\":"), "status: {status}");
+    assert!(!status.contains("\"plan_error\":"), "status: {status}");
+    assert!(!status.contains("manage is off"), "status: {status}");
+
+    // A refused patch records its own reason instead of reviving the boot one.
+    let reply = client.ask(
+        "{\"cmd\":\"patch\",\"plan\":{\"sources\":[],\"buses\":[],\"sinks\":[],\"routes\":[{\"from\":\"a\",\"to\":\"b\"}]}}",
+    );
+    assert!(reply.contains("\"ok\":false"), "bad plan: {reply}");
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"plan_error\":"), "status: {status}");
+    assert!(status.contains("does not declare"), "status: {status}");
+    assert!(!status.contains("manage is off"), "status: {status}");
+
+    // Unpatch ends the plan, so status no longer claims a managed plan is
+    // running (and still does not blame the boot-time switch).
+    let unpatched = client.ask("{\"cmd\":\"unpatch\"}");
+    assert!(
+        unpatched.contains("\"state\":\"done\""),
+        "unpatch: {unpatched}"
+    );
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"plan_error\":"), "status: {status}");
+    assert!(status.contains("the patch is off"), "status: {status}");
+    assert!(!status.contains("manage is off"), "status: {status}");
+
+    let _ = fs::remove_file(&plan);
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
 fn serve_with_a_malformed_plan_still_serves() {
     let plan = serve_plan_path("malformed");
     fs::write(&plan, "not json at all").expect("write the plan");
