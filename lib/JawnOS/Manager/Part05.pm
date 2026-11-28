@@ -477,39 +477,13 @@ sub appointment_writer($c,$app) {
 			&subs::db_insert('appointments', $app);
 		}
 	}
-	# An invoice gets its own receive address as soon as it is written, so a
-	# print or a public page already names it. Idempotent: a re-save keeps the
-	# address the invoice already owns.
-	if (!$mirror && ($app->{'type'} || '') eq 'invoice' && ($app->{'uuid'} || '') ne '') {
-		my $wallet = &subs::crypto_invoice_wallet('BTC');
-		&subs::crypto_invoice_address({ app => $wallet->{'app'}, invoice => $app->{'uuid'} }) if $wallet;
-	}
-	# a transaction with an account is a money move, so it is written to the
-	# warehouse ledger too; the budget and the warehouse then read one store
-	&warehouse_money_mirror($app) unless $mirror;
-	# The row, the hardware toggle and the theme push are the child's; the window
-	# render is the press's to do once. The three tab pushes below are socket
-	# writes, not renders, and they are what makes the new child appear on the
-	# screen at once - they stay for a quiet child too. A press then forks the
-	# window once, not once per child, and still shows every child immediately.
-	&Websocket::send('tab', { console => &Websocket::console_command('calculator')});
-	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app->{'app'}, $app->{'uuid'})});
-	&Websocket::send('tab', { console => &Websocket::console_command('continentRecord', { uuid => $app->{'uuid'}, app => $app->{'app'}, purpose => 'app', timestamp => $app->{'timestamp'}, navigation => 'once' })});
-	# The header went out as soon as the row was written. The window render is the
-	# slow half; fork it so the writer - and the default model and option sessions
-	# it starts - does not wait for a full redraw.
-	my $centre_app = &subs::unformat_name($app->{'app'});
-	&subs::subprocessor(sub {
-		Mojo::IOLoop->reset;
-		&centre_view_grabber({ c => $c, app => $centre_app, timestamp => &subs::rightNow(), cached => 'no' });
-	}, { name => 'centre view' }) unless $quiet_child;
-	&budget_runner($app->{'app'}) unless $quiet_child;
-	# every run: a scope on the each_run cadence queues an evaluation as soon as it
-	# has run, throttled by a Minion lock so a burst is one run, not many
-	&subs::evaluation_run_trigger($app->{'app'}, $app) unless $quiet_child;
-
-	# Tell the other machines about the row now, not only at the next sync. A
-	# request-based writer (manager_reset, the NFC tag, the decoder's command)
+	# Tell the other machines about the row now, not only at the next sync. This
+	# runs before the invoice, ledger, tab and render work below on purpose: that
+	# work is best-effort (a missing Minion queue or wallet must not lose a press),
+	# and a throw in it used to skip the send, leaving the row on this machine only.
+	# The row is already complete here - every branch above has written its type,
+	# final data, model and options - so nothing below changes what travels.
+	# A request-based writer (manager_reset, the NFC tag, the decoder's command)
 	# already put its action on the wire and says so; a row that arrived on the
 	# relay is already there. Everything else goes out from a controller that may
 	# have no browser behind it, so give it a request shape the relay can read.
@@ -551,6 +525,36 @@ sub appointment_writer($c,$app) {
 			}, { name => 'appointment relay' });
 		}
 	}
+	# An invoice gets its own receive address as soon as it is written, so a
+	# print or a public page already names it. Idempotent: a re-save keeps the
+	# address the invoice already owns.
+	if (!$mirror && ($app->{'type'} || '') eq 'invoice' && ($app->{'uuid'} || '') ne '') {
+		my $wallet = &subs::crypto_invoice_wallet('BTC');
+		&subs::crypto_invoice_address({ app => $wallet->{'app'}, invoice => $app->{'uuid'} }) if $wallet;
+	}
+	# a transaction with an account is a money move, so it is written to the
+	# warehouse ledger too; the budget and the warehouse then read one store
+	&warehouse_money_mirror($app) unless $mirror;
+	# The row, the hardware toggle and the theme push are the child's; the window
+	# render is the press's to do once. The three tab pushes below are socket
+	# writes, not renders, and they are what makes the new child appear on the
+	# screen at once - they stay for a quiet child too. A press then forks the
+	# window once, not once per child, and still shows every child immediately.
+	&Websocket::send('tab', { console => &Websocket::console_command('calculator')});
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app->{'app'}, $app->{'uuid'})});
+	&Websocket::send('tab', { console => &Websocket::console_command('continentRecord', { uuid => $app->{'uuid'}, app => $app->{'app'}, purpose => 'app', timestamp => $app->{'timestamp'}, navigation => 'once' })});
+	# The header went out as soon as the row was written. The window render is the
+	# slow half; fork it so the writer - and the default model and option sessions
+	# it starts - does not wait for a full redraw.
+	my $centre_app = &subs::unformat_name($app->{'app'});
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&centre_view_grabber({ c => $c, app => $centre_app, timestamp => &subs::rightNow(), cached => 'no' });
+	}, { name => 'centre view' }) unless $quiet_child;
+	&budget_runner($app->{'app'}) unless $quiet_child;
+	# every run: a scope on the each_run cadence queues an evaluation as soon as it
+	# has run, throttled by a Minion lock so a burst is one run, not many
+	&subs::evaluation_run_trigger($app->{'app'}, $app) unless $quiet_child;
 
 	&subs::appointment_theme_push() if (($theme_movement // '') =~ /^(?:start|stop|record)$/);
 
