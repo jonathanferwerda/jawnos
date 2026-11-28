@@ -144,10 +144,16 @@ function jawnSpeechOemInstall() {
 	};
 	window.jawnSpeechResult = function (text, isFinal) {
 		var o = jawnSpeechOem.owner;
-		if (!o || !isFinal) { return; }
-		// only the final phrase is written into the field; an interim one is
-		// not text the person has finished saying
-		if (o.onFinal) { o.onFinal(String(text == null ? '' : text)); }
+		if (!o) { return; }
+		var words = String(text == null ? '' : text);
+		// An interim guess fills the surface while the person is still talking;
+		// the final one replaces it and is the only text that is committed.
+		if (isFinal) {
+			if (o.onFinal) { o.onFinal(words); }
+		}
+		else if (o.onPartial) {
+			o.onPartial(words);
+		}
 	};
 }
 
@@ -481,6 +487,44 @@ function softKbDictationAppend(target, text) {
 	softKbInsert(sep + text, target, true);
 }
 
+// Interim words from the phone's recogniser, shown while the person is still
+// talking. A field is restored to the text it had before the phrase, then the
+// current guess is appended, so each partial replaces the last instead of
+// piling up; the final resets that base and goes through the ordinary append.
+// The input method has no page field, so its interim words ride the hint line
+// and the final still commits to the editor.
+function softKbDictationPartial(target, text) {
+	text = String(text || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+	if (!text) { return; }
+	if (jawnSoftIme || !target || !document.contains(target) || !softKbEditable(target)
+		|| target.isContentEditable || typeof target.selectionStart != 'number') {
+		softKbDictateHint(text);
+		return;
+	}
+	if (!jawnDictate.partial_base) {
+		jawnDictate.partial_base = {
+			value: target.value || '',
+			start: target.selectionStart,
+			end: target.selectionEnd == null ? target.selectionStart : target.selectionEnd
+		};
+	}
+	target.value = jawnDictate.partial_base.value;
+	target.selectionStart = jawnDictate.partial_base.start;
+	target.selectionEnd = jawnDictate.partial_base.end;
+	softKbDictationAppend(target, text);
+}
+
+function softKbDictationPartialReset(target) {
+	var base = jawnDictate.partial_base;
+	jawnDictate.partial_base = null;
+	if (!base || !target || !document.contains(target) || target.isContentEditable) { return; }
+	target.value = base.value;
+	try {
+		target.selectionStart = base.start;
+		target.selectionEnd = base.end;
+	} catch (err) {}
+}
+
 // The ordinary recorder: a short clip per phrase, posted to /manager/dictate
 // and transcribed by the house's role. It is unchanged, and it is the answer
 // whenever the phone's recogniser is absent or cannot start.
@@ -490,6 +534,7 @@ function softKbDictateBrowserStart() {
 		return;
 	}
 	softKbLayoutsToggle(false);
+	jawnDictate.partial_base = null;
 	jawnSoftListening = true;
 	var session = ++jawnDictate.session;
 	jawnDictate.target = jawnSoftIme ? null : jawnSoftField;
@@ -542,6 +587,7 @@ function softKbDictateBrowserStart() {
 // microphone open until the person presses Stop.
 function softKbDictateOemStart() {
 	softKbLayoutsToggle(false);
+	jawnDictate.partial_base = null;
 	jawnSoftListening = true;
 	var session = ++jawnDictate.session;
 	var target = jawnSoftIme ? null : jawnSoftField;
@@ -556,13 +602,19 @@ function softKbDictateOemStart() {
 			if (session != jawnDictate.session || !jawnSoftListening) { return; }
 			softKbDictateHint(softKbLabel('Listening…'));
 		},
+		onPartial: function (text) {
+			if (session != jawnDictate.session) { return; }
+			softKbDictationPartial(target, text);
+		},
 		onFinal: function (text) {
 			if (session != jawnDictate.session) { return; }
+			softKbDictationPartialReset(target);
 			softKbDictationAppend(target, text);
 			if (jawnSoftListening) { softKbDictateHint(softKbLabel('Listening…')); }
 		},
 		onStopped: function () {
 			if (session != jawnDictate.session) { return; }
+			softKbDictationPartialReset(target);
 			if (jawnSoftListening) { softKbDictateHint(softKbLabel('Listening…')); }
 			else { softKbMicState(); softKbTitleUpdate(); }
 		},
@@ -570,6 +622,7 @@ function softKbDictateOemStart() {
 			if (session != jawnDictate.session) { return; }
 			// the phone declined the microphone or could not hear: the same
 			// press continues through the recorder, never doing nothing
+			softKbDictationPartialReset(target);
 			jawnSoftListening = false;
 			softKbMicState();
 			softKbDictateBrowserStart();

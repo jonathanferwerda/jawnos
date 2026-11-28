@@ -72,12 +72,18 @@ function assistantConversationListen(panel, spoken) {
 			};
 			var service = assistantTranscriptionService(panel);
 			if (typeof jawnSpeechOemReady === 'function' && jawnSpeechOemReady(service)) {
-				// The phone's recogniser returns text only: no audio clip for Plat,
+				// The phone's recogniser returns text, not audio: no audio clip for Plat,
 				// no punctuation pass and no clip kept. The final phrase reaches the
 				// same callback the recorder's transcript uses.
 				var owner = {
 					lang: String(window.jawnos_lang_code || 'en-US'),
 					restart: false,
+					onPartial: function (text) {
+						if (!text) { return; }
+						if (typeof assistantLastWords === 'function' && assistantLastWords(panel)) { return; }
+						var box = panel.find('.assistant_question');
+						if (box && box.length) { box.val(text); }
+					},
 					onFinal: function (text) {
 						jawnSpeechOemStop(owner);
 						panel.removeData('oem_owner');

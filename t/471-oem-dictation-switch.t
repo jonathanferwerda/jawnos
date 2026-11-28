@@ -1,7 +1,8 @@
 # tests-for: lib/JawnOS/Domain/Ai.pm templates/soft_keyboard.html.ep templates/apps/help.html.ep public/js/manager/soft_keyboard/01_scroll_dictate.js public/js/manager/help/02_converse_coding_wiring.js
 # covers:    When a microphone's transcription role names android:oem, the page
-#           uses the app's own recogniser (window.JawnSpeech) and inserts only
-#           the final text through the surface's ordinary path; every other
+#           uses the app's own recogniser (window.JawnSpeech), fills the field
+#           with each interim guess and settles the final text through the
+#           surface's ordinary path; every other
 #           value - and every WebView without the bridge - keeps the
 #           record-and-POST recorder. The concrete service is resolved from the
 #           role (transcription_keyboard / transcription_guide, or the shared
@@ -125,6 +126,10 @@ like($kb_js, qr/onError: function \(\) \{[\s\S]*?softKbDictateBrowserStart\(\);/
 	'a bridge error hands the press to the recorder');
 like($kb_js, qr/onFinal: function \(text\) \{[\s\S]*?softKbDictationAppend\(target, text\);/,
 	'the final phrase joins the field through the recorder\'s append path');
+like($kb_js, qr/window\.jawnSpeechResult = function \(text, isFinal\) \{[\s\S]*?o\.onPartial\(words\)/,
+	'the dispatcher hands an interim phrase to onPartial');
+like($kb_js, qr/onPartial: function \(text\) \{[\s\S]*?softKbDictationPartial\(target, text\);/,
+	'the keyboard shows interim words while the person speaks');
 like($kb_js, qr/audio clip for Plat, no punctuation pass and no clip kept/,
 	'the OEM path records that it returns text only');
 
@@ -136,6 +141,8 @@ like($help_js, qr/onError: function \(\) \{[\s\S]*?listen_browser\(\);/,
 	'a bridge error finishes the press with the recorder');
 like($help_js, qr/onFinal: function \(text\) \{[\s\S]*?jawnEchoCheck\(text, self_words\)[\s\S]*?fill\(verdict\.text\);/,
 	'the final phrase reaches the callback the recorder would fill');
+like($help_js, qr/onPartial: function \(text\) \{[\s\S]*?\$\('#help_question'\)\.val\(text\)/,
+	'the Guide fills the box as the words arrive');
 like($help_js, qr/jawnClipListen\(\{/, 'the record-and-POST listener is still there');
 
 # (c) The decision itself, run in node: a non-OEM service and an unavailable

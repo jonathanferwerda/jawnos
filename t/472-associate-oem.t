@@ -2,8 +2,9 @@
 # covers:    The Guide's floating associate makes the same microphone choice as
 #           the Guide's main composer: when the Guide's transcription role
 #           resolves to android:oem and the WebView carries the app bridge, the
-#           phone's own recogniser answers (text only, no recording kept), and
-#           the final phrase reaches assistantConversationHeard exactly as the
+#           phone's own recogniser answers: its interim words fill the question
+#           box while the person speaks (no recording is kept), and the final
+#           phrase reaches assistantConversationHeard exactly as the
 #           recorder's transcript does. Every other service, an absent bridge,
 #           and a bridge error all keep the record-and-POST recorder. The
 #           keyboard's and the Guide's help topics say the same in words.
@@ -101,7 +102,11 @@ vm.runInContext(fs.readFileSync(path, 'utf8'), ctx);
 ctx.assistantConversationHeard = function (panel, text) { ctx.__heard = text; };
 
 var store = {};
-var box = { attr: function (n) { return n === 'data-transcribe-service' ? ctx.__service : undefined; } };
+var box = {
+	length: 1,
+	attr: function (n) { return n === 'data-transcribe-service' ? ctx.__service : undefined; },
+	val: function (v) { if (arguments.length) { ctx.__partial = v; return this; } return ctx.__partial; }
+};
 var empty = { length: 0, attr: function () { return undefined; } };
 var panel = {
 	0: {},
@@ -118,6 +123,9 @@ ctx.assistantConversationListen(panel);
 ok(ctx.__startedWith && ctx.__recorder === 0, 'android:oem with a bridge starts the phone recogniser');
 
 // 2. its final phrase goes through the recorder's own insertion callback.
+ctx.__partial = null;
+ctx.__startedWith.onPartial('hello');
+ok(ctx.__partial === 'hello', 'interim words fill the composer as they arrive');
 ctx.__startedWith.onFinal('hello there');
 ok(ctx.__heard === 'hello there', 'the final phrase reaches the recorder\'s insertion path');
 ok(ctx.__stopped === ctx.__startedWith, 'the OEM turn is stopped before the phrase is handled');
@@ -159,22 +167,22 @@ JS
 
 # ------------------------------------------------------------ the help topics
 # The rule: a microphone change updates its topic in the same change. Both
-# surfaces say the phone's recogniser may answer, that it is text only, and
-# that every other choice records and sends the clip as before.
+# surfaces say the phone's recogniser may answer, that its words fill the field
+# as the person speaks, and that every other choice records and sends the clip.
 my $mail_help    = read_file("$root/perl/help/topics_mail.pl");
 my $devices_help = read_file("$root/perl/help/topics_devices.pl");
 
 ok(index($mail_help, "When the keyboard\\'s transcription role is set to Android on-device") >= 0,
 	'the keyboard topic names the Android on-device choice');
-ok(index($mail_help, 'it returns text only, so no recording is kept') >= 0,
-	'and says the phone recogniser keeps no recording');
+ok(index($mail_help, 'the words appear in the field as you speak and settle on the final phrase, so no recording is kept') >= 0,
+	'and says the phone recogniser fills the field as you speak and keeps no recording');
 ok(index($mail_help, "any other choice, or a machine without the phone\\'s recogniser, records the phrase and sends the clip to the house as above") >= 0,
 	'and that every other choice still records and sends the clip');
-ok(index($mail_help, "When the keyboard\\'s role is set to Android on-device under Configure -> Plat, the phone\\'s own recogniser answers instead - text only, with no recording kept") >= 0,
+ok(index($mail_help, "When the keyboard\\'s role is set to Android on-device under Configure -> Plat, the phone\\'s own recogniser answers instead - the words fill the field as you speak and settle on the final phrase, with no recording kept") >= 0,
 	'the keyboard step says the same in the on-screen words');
 
-ok(index($devices_help, "the phone\\'s own recogniser answers the microphone instead: it returns text only, with no recording kept") >= 0,
-	'the Guide topic says the phone recogniser answers and keeps no recording');
+ok(index($devices_help, "the phone\\'s own recogniser answers the microphone instead: the words appear in the box as you speak and settle on the final transcript, and no recording is kept") >= 0,
+	'the Guide topic says the phone recogniser fills the box as you speak and keeps no recording');
 ok(index($devices_help, "Any other choice, or a machine without the phone\\'s recogniser, records the clip and sends it to the house as before") >= 0,
 	'and that every other choice still records and sends the clip');
 like($devices_help, qr/app => 'help',[\s\S]{0,600}?verified => '2026-11-27'/,

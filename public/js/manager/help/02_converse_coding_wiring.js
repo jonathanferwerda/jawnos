@@ -74,7 +74,7 @@ function helpListenToggle(onText) {
 	};
 	var service = $('#help_question').attr('data-transcribe-service') || '';
 	if (typeof jawnSpeechOemReady === 'function' && jawnSpeechOemReady(service)) {
-		// The phone's recogniser returns text only: no audio clip for Plat, no
+		// The phone's recogniser returns text, not audio: no audio clip for Plat, no
 		// punctuation pass and no clip kept. The final phrase reaches the same
 		// callback the recorder's transcript uses.
 		var owner = {
@@ -82,6 +82,12 @@ function helpListenToggle(onText) {
 			restart: false,
 			onListening: function () { $('#help_ask').text('Stop'); },
 			onStopped: function () { $('#help_ask').text('Send'); },
+			onPartial: function (text) {
+				// while the Guide is answering, the mic would only show its own
+				// voice; the final has the echo check, the interim words do not
+				if (self_words || !text) { return; }
+				$('#help_question').val(text);
+			},
 			onFinal: function (text) {
 				jawnSpeechOemStop(owner);
 				var verdict = self_words ? jawnEchoCheck(text, self_words) : { echo: false, text: text };
