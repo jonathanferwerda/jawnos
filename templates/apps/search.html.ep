@@ -1,5 +1,7 @@
 <%
 	my $q = $c->param('q') || '';
+	my $model_groups = ref $models eq 'ARRAY' ? $models : [];
+	my $chosen_model = defined $selected_model ? $selected_model : '';
 %>
 <style>
 #search_app { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; background:var(--panel); position:relative; }
@@ -40,6 +42,19 @@
 #search_app .search_app_engine_group { font-size:10px; letter-spacing:0.04em; text-transform:uppercase; color:var(--ink-muted, #888); }
 #search_app .search_app_engine_remove { flex:0 0 auto; padding:2px 6px; cursor:var(--jawnos-cursor-pointer, pointer); opacity:.7; }
 #search_app .search_app_engine_remove:hover { opacity:1; }
+/* The AI tab's own row: the model (grouped by provider) and a fresh thread. */
+#search_app_ai_bar { display:none; gap:8px; align-items:center; padding:0 10px 10px; flex:0 0 auto; }
+#search_app.ai_mode #search_app_ai_bar { display:flex; }
+#search_app_ai_bar label { font-size:12px; color:var(--ink-muted, #888); }
+#search_app_ai_model { flex:1 1 auto; min-width:0; padding:7px 9px; font-size:13px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2); color:inherit; }
+#search_app_ai_new { flex:0 0 auto; padding:7px 12px; font-size:13px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); }
+/* A conversation, not one answer: the person's turns right, the model's left. */
+#search_app .search_app_thread { display:flex; flex-direction:column; gap:10px; padding:6px 2px 12px; }
+#search_app .search_app_msg { max-width:86%; padding:9px 12px; border-radius:12px; line-height:1.5; }
+#search_app .search_app_msg_text { white-space:pre-wrap; overflow-wrap:anywhere; }
+#search_app .search_app_msg_user { align-self:flex-end; background:var(--ink, #333); color:var(--panel); border-bottom-right-radius:4px; }
+#search_app .search_app_msg_ai { align-self:flex-start; background:var(--panel-2); border:1px solid var(--line); border-bottom-left-radius:4px; }
+#search_app .search_app_msg.search_app_thinking { color:var(--ink-muted, #888); font-style:italic; }
 </style>
 <div id="search_app">
 	<div id="search_app_tabs">
@@ -51,6 +66,25 @@
 	<div id="search_app_bar">
 		<input id="search_app_input" type="search" autocomplete="off" spellcheck="false"
 			placeholder="<%= &subs::lang('common.search') %>" value="<%= &subs::html_text($q) %>">
+	</div>
+	<div id="search_app_ai_bar">
+		<label for="search_app_ai_model"><%= &subs::ui('Model') %></label>
+		<select id="search_app_ai_model" hint="<%= &subs::ui('The model this tab talks to') %>">
+			<option value=""><%= &subs::ui('Default model') %></option>
+			<% foreach my $group ( @{$model_groups} ) {
+				my $glabel = $group->{'label'} || $group->{'id'} || '';
+				$glabel =~ s/\\x\{00b7\}/\x{00b7}/g;
+				my $list = ref $group->{'models'} eq 'ARRAY' ? $group->{'models'} : [];
+				next unless @{$list};
+			%>
+			<optgroup label="<%= $glabel %>">
+				<% foreach my $m ( @{$list} ) { my $value = $m->{'value'} // ''; next unless length $value; %>
+				<option value="<%= $value %>" <% if ($chosen_model eq $value) { %>selected<% } %>><%= $m->{'name'} || $value %></option>
+				<% } %>
+			</optgroup>
+			<% } %>
+		</select>
+		<button type="button" id="search_app_ai_new" hint="<%= &subs::ui('Start a new conversation') %>"><%= &subs::ui('New chat') %></button>
 	</div>
 	<div id="search_app_body">
 		<div id="search_app_results"></div>

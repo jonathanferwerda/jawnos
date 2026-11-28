@@ -1,16 +1,18 @@
 // Search is one window with three contexts: Apps (the house's appointments and
-// apps), Web (the engines that are switched on), and AI (the Guide's model).
-// Only the active tab is asked, and the tab is remembered, so a search never
-// mixes the three. A web result opens the JawnOS Browser - the Search window
-// itself stays where it is. The gear on the tabs row opens the engine settings
-// (searchable, enabled engines first) and a Browser button can add a site.
+// apps), Web (the engines that are switched on), and AI (a conversation with the
+// model chosen in its own row). Only the active tab is asked, and the tab is
+// remembered, so a search never mixes the three. A web result opens the JawnOS
+// Browser - the Search window itself stays where it is. The gear on the tabs row
+// opens the engine settings (searchable, enabled engines first) and a Browser
+// button can add a site.
 ( function () {
 	if (window.jawnosSearchAppOpen) { return; }
 
 	function T(text) { return (typeof jawnosT === 'function') ? jawnosT(text) : text; }
 
 	var TAB_KEY = 'jawnos_search_tab';
-	var state = { tab: 'apps', seq: 0, timer: null, lastAI: '', engines: null, enginesFilter: '' };
+	var AI_MODEL_KEY = 'jawnos_search_ai_model';
+	var state = { tab: 'apps', seq: 0, timer: null, engines: null, enginesFilter: '', messages: [] };
 
 	function storedTab() {
 		var tab = '';
@@ -36,10 +38,45 @@
 	function markTabs() {
 		$('#search_app .search_app_tab').removeClass('selected')
 			.filter('[data-tab="' + state.tab + '"]').addClass('selected');
+		$('#search_app').toggleClass('ai_mode', state.tab === 'ai');
 	}
 
 	function query() {
 		return $.trim($('#search_app_input').val() || '');
+	}
+
+	// The model the AI tab talks to is remembered in this browser. A stored value
+	// the catalogue no longer offers is ignored, so a removed provider falls back
+	// to the server's default rather than sending a dead id.
+	function aiModelRestore() {
+		var sel = $('#search_app_ai_model');
+		if (!sel.length) { return; }
+		var stored = null;
+		try { stored = localStorage.getItem(AI_MODEL_KEY); } catch (e) { stored = null; }
+		if (stored === null) { return; }
+		var exists = sel.find('option').filter(function () { return this.value === stored; });
+		if (exists.length) { sel.val(stored); }
+	}
+
+	// The AI tab is a conversation: the whole thread is redrawn from state after
+	// every turn, so a re-render cannot lose it.
+	function renderThread() {
+		var box = results().empty();
+		if (!state.messages.length) { note(T('Ask a question and press Enter.')); return; }
+		var thread = $('<div class="search_app_thread"></div>');
+		$.each(state.messages, function (i, m) {
+			thread.append($('<div class="search_app_msg"></div>')
+				.addClass(m.role === 'user' ? 'search_app_msg_user' : 'search_app_msg_ai')
+				.append($('<div class="search_app_msg_text"></div>').text(m.content)));
+		});
+		box.append(thread);
+	}
+
+	function aiSay(role, text) {
+		state.messages.push({ role: role, content: text });
+		renderThread();
+		var box = results();
+		if (box.length) { box.scrollTop(box[0].scrollHeight); }
 	}
 
 	function renderApps(list) {
@@ -150,7 +187,7 @@
 		if (!q.length) {
 			if (tab === 'apps') { note(T('Type a name to find an app.')); }
 			else if (tab === 'web') { note(T('Type a search and press Enter.')); }
-			else { note(T('Ask a question and press Enter.')); }
+			else { renderThread(); }
 			return;
 		}
 
@@ -178,19 +215,26 @@
 			return;
 		}
 
-		// AI: one question per Enter/open, never once per keystroke.
-		if (state.lastAI === q && results().find('.search_app_answer').length) { return; }
-		state.lastAI = q;
-		busy(T('Thinking...'));
-		$.post('/manager/search/ai', { q: q }, function (data) {
+		// AI: one question per Enter, with the earlier turns as context. The
+		// chosen model rides with the call; the window keeps the thread.
+		var model = $('#search_app_ai_model').val() || '';
+		var prior = state.messages.slice(-20);
+		aiSay('user', q);
+		$('#search_app_input').val('');
+		var pending = $('<div class="search_app_msg search_app_msg_ai search_app_thinking"></div>').text(T('Thinking...'));
+		results().find('.search_app_thread').append(pending);
+		var box = results();
+		if (box.length) { box.scrollTop(box[0].scrollHeight); }
+		$.post('/manager/search/ai', { q: q, model: model, messages: JSON.stringify(prior) }, function (data) {
 			if (seq !== state.seq) { return; }
+			pending.remove();
 			if (!data || !data.ok || !data.answer) {
-				note((data && data.error) || T('The AI did not answer.'));
+				aiSay('assistant', (data && data.error) || T('The AI did not answer.'));
 				return;
 			}
-			results().empty().append($('<div class="search_app_answer"></div>').text(data.answer));
+			aiSay('assistant', data.answer);
 		}).fail(function () {
-			if (seq === state.seq) { note(T('The AI did not answer.')); }
+			if (seq === state.seq) { pending.remove(); aiSay('assistant', T('The AI did not answer.')); }
 		});
 	}
 
@@ -206,6 +250,7 @@
 		// An empty query draws the tab's own hint; a query handed over by the
 		// dock's magnifier is searched at once. The magnifier also sets the Apps
 		// tab, so the query lands on the house's own records.
+		aiModelRestore();
 		loadEngines(false);
 		run();
 	}
@@ -233,7 +278,6 @@
 	$(document).on('click', '#search_app_tabs .search_app_tab', function () {
 		var tab = $(this).attr('data-tab') || 'apps';
 		saveTab(tab);
-		state.lastAI = '';
 		run();
 	});
 
@@ -279,8 +323,8 @@
 	$(document).on('input', '#search_app_input', function () {
 		clearTimeout(state.timer);
 		if (state.tab === 'ai') {
-			// the AI is asked on Enter, not on every letter
-			note(T('Press Enter to ask.'));
+			// the AI is asked on Enter, not on every letter, and typing must not
+			// wipe the conversation under it
 			return;
 		}
 		state.timer = setTimeout(run, 350);
@@ -305,6 +349,17 @@
 		if (!url) { return; }
 		if (typeof internetLaunch === 'function') { internetLaunch(url, 'browse', '', ''); }
 		else { window.open(url, '_blank'); }
+	});
+
+	$(document).on('change', '#search_app_ai_model', function () {
+		try { localStorage.setItem(AI_MODEL_KEY, $(this).val() || ''); } catch (e) {}
+	});
+
+	$(document).on('click', '#search_app_ai_new', function (e) {
+		e.preventDefault();
+		state.messages = [];
+		renderThread();
+		$('#search_app_input').val('').focus();
 	});
 
 	$(document).on('click', '#search_app_toggle', function (e) {

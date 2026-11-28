@@ -156,8 +156,11 @@ sub action_26590 {
 	$c->render(json => { engines => &search_web_matches($q) });
 }
 
-# The AI tab: the Guide's own model answers in plain text. It is asked on Enter,
-# not on every letter, so a search does not spend a call per keystroke.
+# The AI tab: a conversation with the model chosen in the tab's picker, or the
+# Guide's model when none is chosen. It is asked on Enter, not on every letter,
+# so a search does not spend a call per keystroke. The earlier turns ride along
+# so a follow-up keeps its context; the system prompt is ours and never comes
+# from the caller.
 # POST /manager/search/ai
 sub action_26602 {
 	my $c = shift;
@@ -167,15 +170,58 @@ sub action_26602 {
 		$c->render(json => { ok => 0, error => &subs::ui('Ask something first.') });
 		return;
 	}
+	# Keep the newest turns within a bound, so a long conversation cannot grow a
+	# call without limit. Only user/assistant text is accepted.
+	my @history;
+	my $raw = $c->param('messages') // '';
+	if (length $raw) {
+		my $list = eval { decode_json($raw) };
+		if (ref $list eq 'ARRAY') {
+			my @cand;
+			foreach my $m ( @{$list} ) {
+				next unless ref $m eq 'HASH';
+				my $role = lc($m->{'role'} // '');
+				next unless $role eq 'user' || $role eq 'assistant';
+				my $text = $m->{'content'} // '';
+				next unless defined $text && length $text;
+				push @cand, { role => $role, content => substr($text, 0, 8000) };
+			}
+			my $total = 0;
+			foreach my $m ( reverse @cand ) {
+				last if @history >= 20;
+				my $room = 32000 - $total;
+				last if $room <= 0;
+				$m->{'content'} = substr($m->{'content'}, 0, $room) if length($m->{'content'}) > $room;
+				$total += length $m->{'content'};
+				unshift @history, $m;
+			}
+		}
+	}
 	my $system = 'You are the Search app\'s AI inside JawnOS, a personal, self-hosted operating environment. '
-		. 'Answer the question directly in a few short paragraphs of plain text. '
+		. 'This is a conversation: answer the latest question in a few short paragraphs of plain text, '
+		. 'using the earlier turns as context. '
 		. 'No headings, no bullet lists, no markdown and no preamble. If you are unsure, say so plainly.';
-	my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $q, &subs::ai_role_thinking_effective('help_assistant'));
+	my @messages = ( { role => 'system', content => $system }, @history, { role => 'user', content => $q } );
+	my $thinking = &subs::ai_role_thinking_effective('help_assistant');
+	my $model = $c->param('model') // '';
+	$model =~ s/[^\x20-\x7e]//g;
+	$model =~ s/^\s+|\s+$//g;
+	$model = substr($model, 0, 200);
+	my ($text, $err);
+	my ($primary, $fallback) = &subs::ai_role_models('help_assistant');
+	if (!length $model || $model eq $primary) {
+		# the default keeps the Crew's placement and the role's fallback
+		($text, $err) = &subs::ai_chat_role('help_assistant', \@messages, $thinking);
+	}
+	else {
+		# an explicit pick is called as chosen; only its role fallback may answer
+		($text, $err) = &subs::ai_chat_with_fallback($model, $fallback, \@messages, $thinking, 'help_assistant');
+	}
 	unless (defined $text && length $text) {
 		$c->render(json => { ok => 0, error => ($err || &subs::ui('The AI did not answer.')) });
 		return;
 	}
-	$c->render(json => { ok => 1, answer => $text });
+	$c->render(json => { ok => 1, answer => $text, model => $model });
 }
 
 # POST /manager/clipboard_setter

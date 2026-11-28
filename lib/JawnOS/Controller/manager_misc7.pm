@@ -643,18 +643,29 @@ sub action_26142 {
 }
 
 # The Search app: one window with three contexts. Apps reads the house's own
-# records, Web reads the engines that are switched on, and AI asks the
-# Guide's model. The window is the same for all three; the client remembers the
-# tab and asks only that one.
+# records, Web reads the engines that are switched on, and AI talks to the model
+# the person chooses there. The window is the same for all three; the client
+# remembers the tab and asks only that one.
 # GET /manager/search
 sub action_26178 {
 	my $c = shift;
 	my $q = $c->param('q') || $c->param('search') || '';
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
+	# Every chat model from every configured provider, grouped by provider, for
+	# the AI tab's picker. Cached like the Help window's list: opening Search must
+	# not sit on an Ollama probe or a Cloudflare request.
+	&subs::preload('pen_model_list');
+	my $models = &subs::cache_get({ app => 'search', context => 'ai_models' });
+	unless (ref $models eq 'ARRAY') {
+		$models = &subs::ai_model_catalogue('chat');
+		&subs::cache_set({ app => 'search', context => 'ai_models', warranty => '-10m' }, $models);
+	}
 	my $contents = $c->render_to_string(
 		template => 'apps/search',
 		app => 'search',
-		q => $q
+		q => $q,
+		models => $models,
+		selected_model => (&subs::setting_grabber({ app => 'mail', setting => 'help_assistant' }) || '')
 	);
 	my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'search', contents => $contents }, $timestamp);
 	$c->render(text => $window);

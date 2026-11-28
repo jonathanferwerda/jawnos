@@ -214,21 +214,21 @@ $topic{'clothesline'} = {
 $topic{'search'} = {
 		title => 'Search', category => 'apps', app => 'search',
 		templates => [ 'templates/apps/search.html.ep', 'public/js/manager/search.js' ],
-		controls => [ 'Search engines' ],
-		verified => '2026-11-18',
-		summary => 'One window for the house, the web and the Guide, with a tab for each.',
+		controls => [ 'Search engines', 'The model this tab talks to', 'Start a new conversation' ],
+		verified => '2026-11-27',
+		summary => 'One window for the house, the web and an AI conversation, with a tab for each.',
 		body => [
-			'The search box in the start menu, the taskbar or the dock still filters apps as you type, and it also answers the akas you have taught an app: a word that is only another name for it still brings the app up, with that word in brackets after its name. The magnifier beside it opens Search, the app: it keeps your words and lets you choose what to search.',
+			'The search box in the start menu, the taskbar or the dock still filters apps as you type, and it also answers the akas you have taught an app: a word that is only another name for it still brings the app up, with that word in brackets after its name. The magnifier beside it opens Search on the Apps tab with those words, so the matches are there at once.',
 			'Apps finds the house\'s own apps and the appointments you have made, by their names or by any aka you have taught them (a word like "zzz" for sleep), showing each app\'s own icon beside its name; press a result to open it. A private app is never offered, by its name or by an aka.',
 			'Web asks the search engines that are switched on and shows the links each one finds under its name. Bing, Brave, DuckDuckGo and Wikipedia are on to begin with; the settings panel lists dozens more under General, Reference, Media, Shopping and News. A link opens in the JawnOS Browser; the Search window stays where it is.',
 			'The gear on the tab row opens the engine settings. Type in Find an engine to narrow the list, tick an engine to switch it on or off, and press the × on a custom engine to remove it. The choice is kept for the whole house, so every machine searches with the same engines; with none ticked the Web tab says so and offers the panel.',
 			'In the browser on a phone, + Search adds the site you are reading: the server reads the page\'s OpenSearch description, then a search parameter already in the address, and offers a plain /search?q= guess if neither is there. An engine that answers a server with a JavaScript shell still appears in the list, and its row opens that engine in the browser.',
-			'AI asks the model chosen for the Guide under Configure → Plat. It answers in plain text in the same window; press Enter to ask, so typing a question does not spend a call on every letter.',
-			'Only the tab you are on is searched, and the app remembers that tab the next time it opens. Type to search Apps and Web; Enter asks the AI.'
+			'AI talks to the model you pick in its Model menu: every chat model from every provider the house has set up, grouped by provider, with the Guide\'s own model as the default. It is a conversation - each answer uses the earlier turns, and New chat clears the thread. It answers in plain text, and Enter sends, so typing a question does not spend a call on every letter.',
+			'Only the tab you are on is searched. The magnifier always lands on Apps; opening Search from the start menu reopens the tab you last used. Type to search Apps and Web; in AI, press Enter to send.'
 		],
 		steps => [
 			'Type in the dock\'s search box and press the magnifier, or open Search from the start menu.',
-			'Choose Apps, Web or AI across the top and type your words.',
+			'Choose Apps, Web or AI across the top and type your words. In AI, pick a model and press Enter; New chat starts over.',
 			'Press a result to open the app, or a web link to read it in the JawnOS Browser.',
 			'Use the gear to choose which engines Web asks; in the phone\'s browser, + Search adds the site you are reading.'
 		],
