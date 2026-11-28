@@ -276,7 +276,19 @@ void loop2(void * pvParameters) {
               authorization = (const char *)params["authorization"];
               DEFAULT_SCREEN_TIMEOUT = params["screen_timeout"];
               long timestamp = params["timestamp"];
-              rtc.setTime(timestamp);
+              // Time only moves forward, exactly as a room payload does: a now_me
+              // that was queued (a retried relay, a late bridge push) used to walk
+              // the clock back by minutes, and every clip then carried a stamp the
+              // house refused as older than its toggle. The other params still
+              // land; only a backward time is ignored.
+              long clock_now = timestamp_maker();
+              if (clock_now < 1700000000L || timestamp + 60 >= clock_now) {
+                rtc.setTime(timestamp);
+              }
+              else {
+                Serial.printf("[rtc] stale now_me time ignored (%ld s behind)\n",
+                              (long)(clock_now - timestamp));
+              }
               offset = params["offset"];
               rtc.offset = offset;
               room_count = json_int(params["room_count"]);

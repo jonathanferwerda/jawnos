@@ -438,7 +438,17 @@ void jawn_setup() {
     authorization = server.arg("authorization");
     DEFAULT_SCREEN_TIMEOUT = server.arg("screen_timeout").toInt();
     long timestamp = server.arg("timestamp").toInt();
-    rtc.setTime(timestamp);
+    // Time only moves forward: a replayed now_me (a retried relay, a stale queue)
+    // must not walk the clock back. The room payload already applies this rule;
+    // this path did not, and a late push moved the watch minutes into the past.
+    long clock_now = timestamp_maker();
+    if (clock_now < 1700000000L || timestamp + 60 >= clock_now) {
+      rtc.setTime(timestamp);
+    }
+    else {
+      Serial.printf("[rtc] stale now_me time ignored (%ld s behind)\n",
+                    (long)(clock_now - timestamp));
+    }
     offset = server.arg("offset").toInt();
     rtc.offset = offset;
     // correct the face's hardware RTC now, not only when a room payload comes

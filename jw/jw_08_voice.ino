@@ -108,11 +108,8 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
   Serial.printf("[voice] post mode=%s ts=%ld bytes=%u\n", mode, ts, (unsigned)f.size());
   WiFiClientSecure client;
   client.setCACert(HOUSE_CA_PEM);
-  HTTPClient https;
-  // The house's watch listener can answer a room fetch in five seconds when it
-  // is busy; a four-second POST timed out every clip (-1) while the same port
-  // served GETs. Long enough for a busy listener, still bounded.
-  https.setTimeout(12000);
+  Serial.printf("[voice] post mode=%s heap free=%u max=%u\n", mode,
+                (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   String url = "https://" + homebaseIP + "/watch/voice?edt=watch"
     + "&chip_id=" + chip_id_maker()
     + "&authorization=" + urlEncode(authorization)
@@ -120,20 +117,38 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
     + "&timestamp=" + String(ts);
   bool ok = false;
   bool reached = false;
-  if (https.begin(client, url)) {
-    https.addHeader("Content-Type", "application/octet-stream");
-    int code = https.sendRequest("POST", &f, (size_t)f.size());
-    Serial.printf("[voice] post mode=%s -> %d (wifi=%d)\n", mode, code, (int)WiFi.status());
-    // Only 2xx means the house took the body. A 403 (auth) or 400 (unusable
-    // body) is a failure like any other: keep the clip for the bounded retry
-    // and let the caller fall back to the other transport. A 4xx still proves
-    // the homebase is reachable, so it must not mark it down.
-    reached = code > 0;
-    ok = (code >= 200 && code < 300);
-    https.end();
-  }
-  else {
-    Serial.printf("[voice] post mode=%s begin failed\n", mode);
+  // A connect can be refused while the radio is still settling after the
+  // capture's join: the same POST succeeds minutes later at sleep. One short
+  // retry (rewinding the file) turns that into WiFi instead of a whole clip
+  // over the slower BLE link.
+  for (int attempt = 1; attempt <= 2 && !ok && !reached; attempt++) {
+    if (attempt > 1) { vTaskDelay(pdMS_TO_TICKS(300)); }
+    HTTPClient https;
+    // The house's watch listener can answer a room fetch in five seconds when it
+    // is busy; a four-second POST timed out every clip (-1) while the same port
+    // served GETs. Long enough for a busy listener, still bounded.
+    https.setTimeout(12000);
+    if (https.begin(client, url)) {
+      https.addHeader("Content-Type", "application/octet-stream");
+      int code = https.sendRequest("POST", &f, (size_t)f.size());
+      Serial.printf("[voice] post mode=%s -> %d (wifi=%d, attempt %d)\n",
+                    mode, code, (int)WiFi.status(), attempt);
+      // Only 2xx means the house took the body. A 403 (auth) or 400 (unusable
+      // body) is a failure like any other: keep the clip for the bounded retry
+      // and let the caller fall back to the other transport. A 4xx still proves
+      // the homebase is reachable, so it must not mark it down.
+      reached = code > 0;
+      ok = (code >= 200 && code < 300);
+      https.end();
+    }
+    else {
+      char err[96] = {0};
+      client.lastError(err, sizeof(err));
+      Serial.printf("[voice] post mode=%s begin failed (tls=%s heap free=%u max=%u, attempt %d)\n",
+                    mode, err, (unsigned)ESP.getFreeHeap(),
+                    (unsigned)ESP.getMaxAllocHeap(), attempt);
+    }
+    if (!reached && !ok && f) { f.seek(0, SeekSet); }
   }
   homebase_down_until = (ok || reached) ? 0 : millis() + 20000;
   f.close();
@@ -510,8 +525,14 @@ static void com_stream_task(void *pv) {
   bool have_pend = false;
   WiFiClientSecure client;
   client.setCACert(HOUSE_CA_PEM);
+  bool logged_heap = false;
   while (true) {
     uint8_t blk[VOICE_ADPCM_BLOCK];
+    if (!logged_heap && com_stream_seq == 0) {
+      logged_heap = true;
+      Serial.printf("[voice] com stream heap free=%u max=%u\n",
+                    (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    }
     if (xQueueReceive(com_stream_q, blk, pdMS_TO_TICKS(100)) == pdTRUE) {
       // Hold one block back: only the next block (or the end) tells us this one
       // was not the last, and the last one must carry last=1.
