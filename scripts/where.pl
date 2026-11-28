@@ -155,9 +155,11 @@ my @route_files      = grep { -f $_ } glob "$root/lib/JawnOS/Routes/*.pm";
 
 # A service registers its own routes: the watch server owns /watch/* in
 # perl/watch.pl, the teletype socket in perl/teletype.pl, the alarm's catch-all
-# in perl/Alarm.pl. They are searched only when the route table has no exact
-# match, so the common lookup still reads one table.
-my @service_files = grep { -f $_ } glob "$root/perl/*.pl";
+# in perl/Alarm.pl. A large service may split into a subdirectory - the music
+# routes are in perl/Music/, not perl/Music.pl - so this walks perl/ instead of
+# listing its top level. They are searched only when the route table has no
+# exact match, so the common lookup still reads one table.
+my @service_files = source_files(dirs => ['perl'], ext => [qw(pl)]);
 
 # --- the shareable tool shelf ------------------------------------------------
 #
@@ -981,8 +983,13 @@ sub route_path {
 			my $n    = 0;
 			for my $line (split /\n/, $text, -1) {
 				$n++;
+				# A service registers either bare (`get '/watch/volume'`) or on
+				# the app's router (`Manager::app->routes->get('/manager/music'`),
+				# which the music split uses. Both name the path the caller typed;
+				# only a router method counts, so a client's `->get('http...')`
+				# is not mistaken for a route.
 				my ($method, $p) = $line
-					=~ /^\s*(get|post|put|patch|del|delete|any|websocket)\s+'([^']+)'/
+					=~ /(?:^|\->routes->)\s*(get|post|put|patch|del|delete|any|websocket)\s*\(?\s*'([^']+)'/
 					or next;
 				next unless $p eq $path;
 				print "route\t", rel($file), ":$n\t$method $p\n";

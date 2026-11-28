@@ -103,6 +103,60 @@ for my $name (qw(subs::path_name path_name)) {
 	is($unregistered, 1, 'a path no service registers is still a miss');
 }
 
+# --- a route a split service registers, and the router form ----------------
+{
+	# The music service is a directory of parts, not one perl/Music.pl: these
+	# routes are registered in perl/Music/ and were invisible while the service
+	# scan listed only perl/*.pl. The parts also use the router form
+	# (`->routes->post(...)`), which a bare `post '...'` scan misses.
+	my (undef, $out) = where('/music/search');
+	like($out, qr{^route\tperl/Music/08_music_routes\.pl:(\d+)\tpost /music/search$}m,
+		'a route in a split service directory resolves');
+	my ($line) = $out =~ /^route\tperl\/Music\/08_music_routes\.pl:(\d+)\t/m;
+	my @src = split /\n/, read_file("$root/perl/Music/08_music_routes.pl");
+	like($src[$line - 1], qr{^\s*Manager::app->routes->post\('/music/search'},
+		'and the line is the registration, not a call site');
+
+	(undef, $out) = where('/music/window');
+	like($out, qr{^route\tperl/Music/08_music_routes\.pl:\d+\tpost /music/window$}m,
+		'a second route in the same part resolves');
+
+	(undef, $out) = where('/music/audio');
+	like($out, qr{^route\tperl/Music/08_music_routes\.pl:\d+\tget /music/audio$}m,
+		'a GET route in the split part resolves');
+
+	# The same router form in a top-level service.
+	(undef, $out) = where('/manager/music');
+	like($out, qr{^route\tperl/Music\.pl:(\d+)\tget /manager/music$}m,
+		'the router form in perl/Music.pl resolves');
+
+	(undef, $out) = where('/play');
+	like($out, qr{^route\tperl/Music\.pl:\d+\tget /play$}m,
+		'and so does /play');
+
+	my ($miss) = where('/music/nothing_here');
+	is($miss, 1, 'a path no part registers is still a miss');
+}
+
+# --- a router registration is not a client call ----------------------------
+{
+	my $tmp = tempdir(CLEANUP => 1);
+	make_path("$tmp/perl/Music");
+	write_file("$tmp/perl/Music/routes.pl", <<'PL');
+package probe;
+Manager::app->routes->get('/probe/route' => sub { });
+my $res = $ua->get('/probe/client');
+PL
+
+	my ($code, $out) = where('--root', $tmp, '/probe/route');
+	is($code, 0, 'a router registration in a nested service resolves');
+	like($out, qr{^route\tperl/Music/routes\.pl:2\tget /probe/route$}m,
+		'to the part and line');
+
+	my ($client) = where('--root', $tmp, '/probe/client');
+	is($client, 1, "a client's ->get is not a route registration");
+}
+
 # --- a help topic, by name --------------------------------------------------
 {
 	my ($code, $out) = where('gallery');

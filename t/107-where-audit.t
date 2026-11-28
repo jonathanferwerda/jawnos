@@ -106,7 +106,9 @@ like($brief, qr/run_tests\.pl/, 'and the check to run');
 like($brief, qr/ranking: the right answer/, 'and says what a ranking report means');
 like($brief, qr/coverage: the locator did not return it/, 'and what a coverage report means');
 like($brief, qr/miss \/ coverage/, 'the brief names the reported miss');
-like($brief, qr/cwd \/tmp\/probe/, 'and shows the context it was made in');
+unlike($brief, qr/cwd \/tmp\/probe/, 'while the per-call context stays in the report and --json');
+like($brief, qr/^Ledger, last 14 days: calls 2, hits 1, misses 1, confirmed 1, wrong 3\.$/m,
+	'and opens with one counts line');
 
 my ($strict_code) = run_audit('--db', $db, '--root', $tree, '--days', 14, '--strict');
 is($strict_code, 1, '--strict fails when there is anything to fix');
@@ -150,9 +152,8 @@ ok((grep { $_->{'name'} eq 'drifted_name' } @{ $bounded->{'drift'} }),
 	is_deeply($follower->{'followed'}, ['good_sub'], 'with the name that was used');
 
 	my (undef, $lbrief) = run_audit('--db', $ldb, '--root', $tree, '--days', 14, '--prompt');
-	like($lbrief, qr/NEAR LEADS nobody followed/, 'the brief raises the lead nobody used');
-	like($lbrief, qr/cold_missed offered ghost_sub/, 'with the names it offered');
-	unlike($lbrief, qr/lead_missed offered/, 'and leaves out the one that was followed');
+	like($lbrief, qr/near leads 2 offered \/ 1 followed/, 'the brief counts the leads');
+	unlike($lbrief, qr/NEAR LEADS|cold_missed offered/, 'and leaves the lead rows to the report and --json');
 }
 
 # --- a flag lookup is not a name to cover ----------------------------------

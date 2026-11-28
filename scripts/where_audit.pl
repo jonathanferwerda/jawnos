@@ -216,7 +216,7 @@ if ($json) {
 }
 
 if ($prompt) {
-	print audit_prompt(\@misses, \@wrong, \@drift, \@lead_names, $days, $limit);
+	print audit_prompt(\@misses, \@wrong, \@drift, \%summary, $days);
 	exit(($strict && $findings) ? 1 : 0);
 }
 
@@ -263,14 +263,21 @@ exit(($strict && $findings) ? 1 : 0);
 
 # --- the brief ---------------------------------------------------------------
 
+# The brief is deliberately compact: the per-call context (cwd, parent shell, ssh
+# command line) and the near-lead rows repeat for every miss and are not what an
+# agent edits, so they stay in the report and --json. The counts carry the one
+# signal those rows held: a high offered / low followed ratio means the ranking.
 sub audit_prompt {
-	my ($misses, $wrong, $drift, $leads, $days, $limit) = @_;
+	my ($misses, $wrong, $drift, $summary, $days) = @_;
 	my @lines = ('Maintain the locator (scripts/where.pl, lib/JawnOS/Manager/Index.pm, lib/JawnOS/Domain/Loader.pm).');
-	push @lines, "Its ledger for the last $days days shows:";
+	my $ledger = sprintf('Ledger, last %d days: calls %d, hits %d, misses %d, confirmed %d, wrong %d',
+		$days, @{$summary}{qw(calls hits misses right wrong)});
+	$ledger .= sprintf(', near leads %d offered / %d followed', @{$summary}{qw(leads followed)})
+		if $summary->{'leads'};
+	push @lines, "$ledger.";
 	if (@{$misses}) {
 		push @lines, '', 'MISSES (find each with `perl scripts/where.pl <name>` and add the missing coverage, map or pattern, with a t/96-where.t case):';
-		push @lines, sprintf('  %s (%d, last %s)%s', $_->{'name'}, $_->{'n'}, $_->{'last'},
-			($_->{'context_text'} ? ' - ' . $_->{'context_text'} : '')) for @{$misses};
+		push @lines, sprintf('  %s (%d, last %s)', $_->{'name'}, $_->{'n'}, $_->{'last'}) for @{$misses};
 	}
 	if (@{$wrong}) {
 		push @lines, '', 'WRONG OR MISSED (open the reported location, confirm it, then correct the locator):';
@@ -283,15 +290,6 @@ sub audit_prompt {
 	if (@{$drift}) {
 		push @lines, '', 'MAP DRIFT (the map names a file that no longer defines the name):';
 		push @lines, sprintf('  %s: %s says %s', $_->{'name'}, $_->{'kind'}, $_->{'map'}) for @{$drift};
-	}
-	my @cold = grep { !@{ $_->{'followed'} } } @{$leads};
-	if (@cold) {
-		push @lines, '', 'NEAR LEADS nobody followed (the miss printed these names; open one and check whether it was the answer - if it was, the ranking is wrong, if another name was, the coverage is missing):';
-		my $shown = 0;
-		for my $r (@cold) {
-			last if $shown++ >= $limit;
-			push @lines, sprintf('  %s offered %s', $r->{'name'}, join(', ', @{ $r->{'offered'} }));
-		}
 	}
 	push @lines, '', 'Confirm every case in the source before editing; add a test for each new shape; run `perl scripts/tests_for.pl --staged --run`, then `perl scripts/run_tests.pl`; finish with bump, commit, push, restart.';
 	return join("\n", @lines) . "\n";
