@@ -261,10 +261,10 @@ static void tilt_serial_command(String line) {
     // the watch face reads the hardware clock; this says what both of them hold
     struct tm pcf_tm = {};
     watch.rtc.getDateTime(&pcf_tm);
-    Serial.printf("[rtc] pcf %04d-%02d-%02d %02d:%02d:%02d | esp %s | offset %ld\n",
+    Serial.printf("[rtc] pcf %04d-%02d-%02d %02d:%02d:%02d | esp %s | offset %ld | sys=%ld\n",
                   pcf_tm.tm_year + 1900, pcf_tm.tm_mon + 1, pcf_tm.tm_mday,
                   pcf_tm.tm_hour, pcf_tm.tm_min, pcf_tm.tm_sec,
-                  rtc.getTime("%Y-%m-%d %H:%M:%S").c_str(), offset);
+                  rtc.getTime("%Y-%m-%d %H:%M:%S").c_str(), offset, (long)time(NULL));
   }
   else if (line == "blestop on") {
     ble_state_off = true;   // the watch stops asking, the phone stops pushing

@@ -1,9 +1,11 @@
-# tests-for: jw/jw_05_loop2.ino jw/jw_03_setup.ino jw/jw_08_voice.ino
+# tests-for: jw/jw_05_loop2.ino jw/jw_03_setup.ino jw/jw_06_net_face.ino jw/jw_07_house_audio.ino jw/jw_08_voice.ino jw/jw_13_serial_lowpower.ino
 # covers:    A now_me that arrives late must not walk the watch's clock back, on
 #            either the BLE or the HTTP path: a queued push moved it minutes into
 #            the past, and every clip's stamp was then refused as older than its
-#            toggle. The WiFi clip POST records its heap and TLS error and retries
-#            a refused connect once before the clip falls back to BLE.
+#            toggle. The system clock (what TLS validates the house leaf against)
+#            is copied from the RTC chip before any house connection, so a clock
+#            still in 1970 cannot refuse the 2026 certificate. The WiFi clip POST
+#            records its heap and TLS error and retries a refused connect once.
 
 use strict;
 use warnings;
@@ -18,7 +20,10 @@ use JawnOSTest;
 
 my $ble   = read_file(root() . '/jw/jw_05_loop2.ino');
 my $http  = read_file(root() . '/jw/jw_03_setup.ino');
+my $net   = read_file(root() . '/jw/jw_06_net_face.ino');
+my $house = read_file(root() . '/jw/jw_07_house_audio.ino');
 my $voice = read_file(root() . '/jw/jw_08_voice.ino');
+my $serial = read_file(root() . '/jw/jw_13_serial_lowpower.ino');
 
 # --- the forward-only clock guard, on both now_me paths --------------------
 for my $case ([ 'BLE', $ble ], [ 'HTTP', $http ]) {
@@ -34,6 +39,22 @@ for my $case ([ 'BLE', $ble ], [ 'HTTP', $http ]) {
 	ok($guard > 0 && $set > 0 && $guard < $set,
 		"$name: the guard is tested before the clock is written");
 }
+
+# --- the C library's clock is set before TLS -------------------------------
+like($house, qr/static void clock_sync_system\(\)/,
+	'a helper copies the chip time into the C library’s clock');
+like($house, qr/settimeofday\(&tv, NULL\)/,
+	'which is what mbedTLS reads when it validates the leaf');
+like($house, qr/clock_sync_system\(\);\s*\n\s*struct tm local_tm/, 
+	'and it runs before clock_apply_to_face can rewrite the chip');
+for my $case ([ 'the GET path', $net ], [ 'the POST path', $voice ]) {
+	my ($name, $src) = @{$case};
+	like($src, qr/clock_sync_system\(\);/, "$name syncs the system clock before TLS");
+}
+like($voice, qr/\[voice\] post mode=%s tls=%s sys=%ld/,
+	'a failed POST names the TLS error and the clock it used');
+like($serial, qr/offset %ld \| sys=%ld/,
+	'and the console time probe shows the C library clock too');
 
 # --- the WiFi POST: a diagnosable, retried connect -------------------------
 like($voice, qr/client\.lastError\(err, sizeof\(err\)\)/,

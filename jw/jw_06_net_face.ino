@@ -733,6 +733,8 @@ void https_download(fs::FS &fs, String url, String filename) {
   // written with their exact length, but appending a new reply onto an old one
   // would leave the WAV's data chunk pointing at the previous clip.
   fs.remove(filename.c_str());
+  // TLS checks the leaf against time(); the C library starts at 1970.
+  clock_sync_system();
   connexion -> setCACert(HOUSE_CA_PEM);
   if (connexion) {
     {
@@ -828,6 +830,8 @@ String https_request_raw(String url, String method, String payloadData) {
   }
   url = url_maker(url);
   Serial.println(url);
+  // TLS checks the leaf against time(); the C library starts at 1970.
+  clock_sync_system();
   // A stack client, not "new": one leaked WiFiClientSecure per request is what
   // ground the heap down until the panel's SPI DMA buffers stopped allocating.
   WiFiClientSecure connexion;

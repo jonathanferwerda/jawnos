@@ -19,6 +19,7 @@ String getContentType(String filename);
 String https_request_raw(String url, String method, String payloadData);
 void apply_president_payload();
 static void clock_apply_to_face();
+static void clock_sync_system();
 
 // The Rec button's memo ships with the voice helpers in jw_08/jw_09 but stops in
 // jw_07, so name them here for PlatformIO's .ino preprocessor.

@@ -106,6 +106,8 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
   // The body's size and the mode are the whole request; the URL carries the
   // authorization token, so it is never printed.
   Serial.printf("[voice] post mode=%s ts=%ld bytes=%u\n", mode, ts, (unsigned)f.size());
+  // TLS checks the leaf against time(); the C library starts at 1970.
+  clock_sync_system();
   WiFiClientSecure client;
   client.setCACert(HOUSE_CA_PEM);
   Serial.printf("[voice] post mode=%s heap free=%u max=%u\n", mode,
@@ -136,6 +138,12 @@ static bool voice_post_clip(const String &path, long ts, const char *mode) {
       int code = https.sendRequest("POST", &f, (size_t)f.size());
       Serial.printf("[voice] post mode=%s -> %d (wifi=%d, attempt %d)\n",
                     mode, code, (int)WiFi.status(), attempt);
+      if (code < 0) {
+        char err[96] = {0};
+        client.lastError(err, sizeof(err));
+        Serial.printf("[voice] post mode=%s tls=%s sys=%ld\n",
+                      mode, err, (long)time(NULL));
+      }
       // Only 2xx means the house took the body. A 403 (auth) or 400 (unusable
       // body) is a failure like any other: keep the clip for the bounded retry
       // and let the caller fall back to the other transport. A 4xx still proves
@@ -502,6 +510,7 @@ static int16_t com_sblk[VOICE_ADPCM_SPB];
 static int com_sblk_have = 0;
 
 static bool com_stream_post(WiFiClientSecure &client, const uint8_t *data, unsigned len, bool last) {
+  clock_sync_system();   // TLS checks the leaf against the C library's clock
   String url = com_stream_base + "&seq=" + String(com_stream_seq)
     + "&last=" + (last ? "1" : "0");
   HTTPClient https;
