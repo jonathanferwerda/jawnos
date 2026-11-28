@@ -80,7 +80,9 @@ function assistantConversationListen(panel, spoken) {
 					restart: false,
 					onPartial: function (text) {
 						if (!text) { return; }
-						if (typeof assistantLastWords === 'function' && assistantLastWords(panel)) { return; }
+						// The mic opens only after the reply's estimated speech has
+						// run out, so interim words here are the person's, not the
+						// associate's own voice; the final still echo-checks.
 						var box = panel.find('.assistant_question');
 						if (box && box.length) { box.val(text); }
 					},

@@ -67,7 +67,7 @@ unlike($assoc, qr/function jawnSpeechOemInstall/, 'the associate does not re-ins
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
 SKIP: {
-	skip 'node is not installed; the associate OEM harness is skipped', 9
+	skip 'node is not installed; the associate OEM harness is skipped', 11
 		unless $node && -x $node;
 
 	my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
@@ -126,6 +126,13 @@ ok(ctx.__startedWith && ctx.__recorder === 0, 'android:oem with a bridge starts 
 ctx.__partial = null;
 ctx.__startedWith.onPartial('hello');
 ok(ctx.__partial === 'hello', 'interim words fill the composer as they arrive');
+// the associate holds its mic until the previous reply's estimated speech has
+// run out, so a reply already in the thread must not suppress the person's
+// interim words (the final still runs the echo check)
+ctx.assistantThread = function () { return [{ role: 'assistant', content: 'the previous answer' }]; };
+ctx.__partial = null;
+ctx.__startedWith.onPartial('still talking');
+ok(ctx.__partial === 'still talking', 'a previous reply does not suppress interim words');
 ctx.__startedWith.onFinal('hello there');
 ok(ctx.__heard === 'hello there', 'the final phrase reaches the recorder\'s insertion path');
 ok(ctx.__stopped === ctx.__startedWith, 'the OEM turn is stopped before the phrase is handled');
@@ -157,7 +164,7 @@ JS
 	my $out = `$node "$harness" "$root/public/js/manager/manager/01_assistant_conversation.js" 2>&1`;
 	my $status = $? >> 8;
 	my @lines = grep { /^(?:ok|FAIL)\s/ } split /\n/, $out;
-	ok(scalar @lines >= 7, 'the associate OEM harness ran') or diag($out);
+	ok(scalar @lines >= 9, 'the associate OEM harness ran') or diag($out);
 	for my $line (@lines) {
 		my ($verdict, $name) = $line =~ /^(ok|FAIL)\s+(.*)$/;
 		ok($verdict eq 'ok', $name);
