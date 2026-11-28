@@ -175,7 +175,7 @@
 				<% foreach my $g ( @horder ) { %>
 					<optgroup label="<%= length($g) ? $g : 'Models' %>">
 						<% foreach my $cm ( @{$hgroups{$g}} ) { my $mid = $cm->{'model'} || $cm->{'name'}; next unless $mid; %>
-							<option value="<%= $mid %>" <% if ($sel eq $mid) { %>selected<% $hshown = 1; } %>><%= $cm->{'short'} || $cm->{'name'} || $mid %></option>
+							<option value="<%= $mid %>" <% if ($sel eq $mid) { %>selected<% $hshown = 1; } %>><%= $cm->{'short'} || $cm->{'name'} || $mid %><% if ($cm->{'trial'}) { %> · <%= &subs::ui('free trial') %><% } %></option>
 						<% } %>
 					</optgroup>
 				<% } %>

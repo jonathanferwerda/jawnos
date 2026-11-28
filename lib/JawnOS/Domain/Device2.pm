@@ -787,8 +787,17 @@ sub ai_providers {
 		{ id => 'alibaba',    label => 'Alibaba (Qwen)',        keys => [ [ 'alibaba_key', 'API key' ] ],
 			# DashScope's OpenAI-compatible mode (the international site this house
 			# reaches). The ids are Model Studio's own; a chat model is reached as
-			# alibaba:<id>.
-			models => [ qw/qwen3-max qwen3-coder-plus qwen-max qwen-plus qwen-turbo qwen-long qwen3-vl-plus qwen-vl-max/ ] },
+			# alibaba:<id>. Only ids that still carry the Singapore-region new-user
+			# free trial are listed: Alibaba removed the free quota from the older
+			# ones on 2026-10-29 (qwen-max, qwen-plus, qwen-turbo, qwen-long,
+			# qwen3-max, qwen3-coder-plus, qwen-vl-plus, qwen-vl-max, qwen-flash)
+			# and 2026-11-19 (qwen3.7-flash, qwen3.7-max), so a new account gets no
+			# free tokens for them. trial_models names the ids that still do;
+			# ai_model_trial reads it and the pickers say "free trial", so a
+			# model's price is never a guess. Each model has its own ~1M-token,
+			# 90-day quota, so an exhausted one is swapped for another, not topped up.
+			models => [ qw/qwen4-max qwen3.7-plus qwen3.8-flash qwen3.8-omni-flash/ ],
+			trial_models => [ qw/qwen4-max qwen3.7-plus qwen3.8-flash qwen3.8-omni-flash/ ] },
 		{ id => 'mistral',    label => 'Mistral',               keys => [ [ 'mistral_key', 'API key' ] ],
 			models => [ qw/mistral-large-latest mistral-small-latest codestral-latest/ ] },
 		{ id => 'cohere',     label => 'Cohere',                keys => [ [ 'cohere_key', 'API key' ] ],
@@ -867,7 +876,7 @@ sub ai_model_caps_by_name {
 	return ('audio') if $n =~ /(whisper|asr|transcri|speech-to-text|\bstt\b|deepgram|nova-?2|parakeet)/;
 	return ('other') if $n =~ /(embed|rerank|\bbge\b|resnet|distilbert|sst-2|translat|m2m100|indictrans|guard|smart-turn|moderation)/;
 	return ('vision') if $n =~ /(llava|bakllava|moondream|minicpm-?v|cogvlm|pixtral|qwen2-?vl|qwen2\.5-?vl|qwen2\.5vl|internvl|llama-?3\.2-vision|vision|(?:^|[-_.])vl\d*(?:$|[-_.]))/;
-	return ('chat', 'vision') if $n =~ /(gpt-4o|gpt-4\.1|claude|gemini|gemma3|gemma4|grok-2-vision|grok-vision|llama-?4|mistral-small-?3(?:\.\d+)?|phi-?4-multimodal|deepseek-(?:v[0-9.]+-)?flash)/;
+	return ('chat', 'vision') if $n =~ /(gpt-4o|gpt-4\.1|claude|gemini|gemma3|gemma4|grok-2-vision|grok-vision|llama-?4|mistral-small-?3(?:\.\d+)?|phi-?4-multimodal|deepseek-(?:v[0-9.]+-)?flash|qwen4|qwen3\.7-plus|qwen3\.8-omni)/;
 	return ('chat');
 }
 
@@ -953,6 +962,22 @@ sub ai_model_paid {
 		return 0 if grep { $_ eq $name } @{ $p->{'free_models'} };
 	}
 	return 1;
+}
+
+# Whether a model is served on a provider's new-user free trial: a finite,
+# expiring quota (Alibaba's is about one million tokens per model for 90 days),
+# not one of the free-forever ids in free_models. Only the provider knows how
+# much quota is left, so the app names the trial models and reads a
+# quota-exhausted error; a person is never left guessing whether a listed model
+# is free.
+sub ai_model_trial {
+	my ($model) = @_;
+	my $provider = &ai_model_provider($model);
+	my ($p) = grep { ($_->{'id'} || '') eq $provider } @{ &ai_providers() };
+	return 0 unless $p && ref $p->{'trial_models'} eq 'ARRAY';
+	my ($name) = $model =~ /^[a-z]+:(.+)$/;
+	$name = $model unless defined $name;
+	return (grep { $_ eq $name } @{ $p->{'trial_models'} }) ? 1 : 0;
 }
 
 sub ai_bucket_available {

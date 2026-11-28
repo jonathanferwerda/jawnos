@@ -34,7 +34,7 @@
 	      <% foreach my $g ( @porder ) { %>
 	        <optgroup label="<%= length($g) ? $g : 'Models' %>">
 	          <% foreach my $cm ( @{$pgroups{$g}} ) { my $mid = $cm->{'model'} // ''; next unless length $mid; %>
-	            <option value="<%= $mid %>" <% if (($con->{'chatbot_model'} // '') eq $mid) { %>selected<% } %>><%= $cm->{'short'} || $cm->{'name'} || $mid %></option>
+	            <option value="<%= $mid %>" <% if (($con->{'chatbot_model'} // '') eq $mid) { %>selected<% } %>><%= $cm->{'short'} || $cm->{'name'} || $mid %><% if ($cm->{'trial'}) { %> · <%= &subs::ui('free trial') %><% } %></option>
 	          <% } %>
 	        </optgroup>
 	      <% } %>

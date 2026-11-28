@@ -583,7 +583,7 @@ sub pen_model_choices {
 			my $name = $m->{'name'};
 			$name = $value unless defined $name && length $name;
 			my $full = ($label && $label ne $name) ? $label . " \x{00b7} " . $name : $name;
-			push @choices, { model => $value, name => $full, short => $name, group => $label };
+			push @choices, { model => $value, name => $full, short => $name, group => $label, trial => ($m->{'trial'} ? 1 : 0) };
 		}
 	}
 	return \@choices;

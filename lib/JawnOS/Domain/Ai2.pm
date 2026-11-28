@@ -139,19 +139,19 @@ sub ai_model_catalogue {
 		if ($p->{'id'} eq 'ollama') {
 			foreach my $mi ( @{ &subs::pen_model_list() } ) {
 				my $name = $mi->{'model'} || $mi->{'name'};
-				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('ollama', $name, $mi) ], paid => &ai_model_paid($name), bucket => &ai_model_bucket($name) };
+				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('ollama', $name, $mi) ], paid => &ai_model_paid($name), trial => 0, bucket => &ai_model_bucket($name) };
 			}
 		}
 		elsif ($p->{'id'} eq 'cloudflare') {
 			foreach my $mi ( @{ &subs::cloudflare_model_list() } ) {
 				my $name = $mi->{'model'} || $mi->{'name'};
-				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('cloudflare', $name, $mi) ], paid => &ai_model_paid($name), bucket => &ai_model_bucket($name) };
+				push @models, { value => $name, name => ($mi->{'name'} || $name), caps => [ &ai_model_caps('cloudflare', $name, $mi) ], paid => &ai_model_paid($name), trial => 0, bucket => &ai_model_bucket($name) };
 			}
 		}
 		else {
 			foreach my $m ( @{ $p->{'models'} || [] } ) {
 				my $value = $p->{'id'} . ':' . $m;
-				push @models, { value => $value, name => $m, caps => [ &ai_model_caps($p->{'id'}, $m, undef) ], paid => &ai_model_paid($value), bucket => &ai_model_bucket($value) };
+				push @models, { value => $value, name => $m, caps => [ &ai_model_caps($p->{'id'}, $m, undef) ], paid => &ai_model_paid($value), trial => &subs::ai_model_trial($value), bucket => &ai_model_bucket($value) };
 			}
 		}
 		@models = grep { my $m = $_; scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) } @models if $cap;
@@ -169,7 +169,7 @@ sub ai_model_catalogue {
 			my $name = $mi->{'model'} || $mi->{'name'};
 			next unless defined $name && length $name;
 			my $value = '@' . $device . '/' . $name;
-			push @rm_models, { value => $value, name => $name, caps => [ &ai_model_caps('ollama', $name, $mi) ], paid => &ai_model_paid($value), bucket => &ai_model_bucket($value) };
+			push @rm_models, { value => $value, name => $name, caps => [ &ai_model_caps('ollama', $name, $mi) ], paid => &ai_model_paid($value), trial => 0, bucket => &ai_model_bucket($value) };
 		}
 		@rm_models = grep { my $m = $_; scalar( grep { $_ eq $cap } @{ $m->{'caps'} } ) } @rm_models if $cap;
 		push @out, { id => 'ollama:' . $device, label => 'Ollama \x{00b7} ' . $device, models => \@rm_models } if @rm_models;
@@ -607,6 +607,16 @@ sub ai_stream_feed {
 	return @out;
 }
 
+# Whether a provider's error says a model's new-user trial is exhausted rather
+# than the whole account having no credit. Alibaba answers "Free Quota Only"
+# with HTTP 403 and code AllocationQuota.FreeTierOnly; each model keeps its own
+# quota, so that answer must not stand the provider down.
+sub ai_trial_exhausted {
+	my ($body) = @_;
+	return 0 unless defined $body && length $body;
+	return $body =~ /AllocationQuota\.FreeTierOnly/i ? 1 : 0;
+}
+
 sub ai_chat_raw {
 	my ($model, $messages, $thinking, $role, $opt) = @_;
 	my @key_settings = &subs::ai_key_settings();
@@ -847,9 +857,16 @@ sub ai_chat_raw {
 	}
 	unless ($res->is_success) {
 		my $body = substr($res->body || $stream_raw, 0, 500);
+		# A new-user free trial that is used up (or Free Quota Only being on) is one
+		# model's quota, not the account's credit: every other model keeps its own
+		# trial, so do not stand the whole provider down. Say what happened so the
+		# person can pick another trial model instead of guessing.
+		if (&ai_trial_exhausted($body)) {
+			return (undef, 'this model\'s free trial is used up (or Free Quota Only is on); pick another free-trial model');
+		}
 		# out of credit reads the same at every provider: stand the bucket down, so
 		# the panel hides its paid models and chat steps down to a free one
-		if ($res->code == 402 || $body =~ /(insufficient|credit|billing|payment|out of funds|no funds|balance|exceeded your current quota|exceeded your quota)/i) {
+		if ($res->code == 402 || $body =~ /(insufficient|credit|billing|payment|out of funds|no funds|balance|arrear|exceeded your current quota|exceeded your quota)/i) {
 			&ai_bucket_mark_unavailable(&ai_model_bucket($model), $res->code . ' ' . $body);
 		}
 		else {

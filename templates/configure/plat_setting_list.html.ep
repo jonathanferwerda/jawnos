@@ -23,6 +23,14 @@
 	);
 	my $role_settings = &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @roles ] });
 	my $catalogue = &subs::ai_model_catalogue();
+	# A model's price, in the words that matter here: a new-user free trial is
+	# neither the free-forever ids nor an ordinary paid model, and a person
+	# choosing one needs to know its ~1M tokens can run out.
+	my $price_label = sub {
+		my ($m) = @_;
+		return 'free trial' if $m->{'trial'};
+		return $m->{'paid'} ? 'paid' : 'free';
+	};
 	# the scheduled evaluation's preferred worker: the server dispatches the run,
 	# and this names the machine it should ask first when that machine is ready
 	my $machines = &subs::remote_machine_lister({ self => 'yes', mirrors => 'none' });
@@ -193,7 +201,7 @@
 								<% foreach my $m ( @models ) {
 									my @mcaps = grep { $_ ne 'other' } @{ $m->{'caps'} };
 								%>
-									<option value="<%= $m->{'value'} %>" data-thinks="<%= ($thinking_cap && $thinks_of->($m->{'value'})) ? 1 : 0 %>" <% if ($current eq $m->{'value'}) { %>selected="selected"<% $shown = 1; } %>><%= $m->{'name'} %> · <%= join('+', @mcaps) %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
+									<option value="<%= $m->{'value'} %>" data-thinks="<%= ($thinking_cap && $thinks_of->($m->{'value'})) ? 1 : 0 %>" <% if ($current eq $m->{'value'}) { %>selected="selected"<% $shown = 1; } %>><%= $m->{'name'} %> · <%= join('+', @mcaps) %> · <%= $price_label->($m) %></option>
 								<% } %>
 							</optgroup>
 						<% } %>
@@ -231,7 +239,7 @@
 						<% foreach my $g ( @forder ) { %>
 							<optgroup label="<%= length($g) ? $g : 'Models' %>">
 								<% foreach my $m ( @{$fgroups{$g}} ) { %>
-									<option value="<%= $m->{'value'} %>" <% if ($current && $m->{'value'} eq $current) { %>disabled="disabled"<% } %> <% if ($fallback eq $m->{'value'}) { %>selected="selected"<% } %>><%= $m->{'name'} %> · <%= $m->{'paid'} ? 'paid' : 'free' %></option>
+									<option value="<%= $m->{'value'} %>" <% if ($current && $m->{'value'} eq $current) { %>disabled="disabled"<% } %> <% if ($fallback eq $m->{'value'}) { %>selected="selected"<% } %>><%= $m->{'name'} %> · <%= $price_label->($m) %></option>
 								<% } %>
 							</optgroup>
 						<% } %>
@@ -297,7 +305,7 @@
 										my $qa_selected = ($qa_ux_current eq $qa_m->{'value'}) ? 1 : 0;
 										$qa_ux_shown = 1 if $qa_selected;
 									%>
-										<option value="<%= $qa_m->{'value'} %>" <% if ($qa_selected) { %>selected<% } %>><%= $qa_m->{'name'} %> · <%= $qa_m->{'paid'} ? 'paid' : 'free' %></option>
+										<option value="<%= $qa_m->{'value'} %>" <% if ($qa_selected) { %>selected<% } %>><%= $qa_m->{'name'} %> · <%= $price_label->($qa_m) %></option>
 									<% } %>
 								</optgroup>
 							<% } %>

@@ -79,7 +79,7 @@
 			%>
 			<optgroup label="<%= $glabel %>">
 				<% foreach my $m ( @{$list} ) { my $value = $m->{'value'} // ''; next unless length $value; %>
-				<option value="<%= $value %>" <% if ($chosen_model eq $value) { %>selected<% } %>><%= $m->{'name'} || $value %></option>
+				<option value="<%= $value %>" <% if ($chosen_model eq $value) { %>selected<% } %>><%= $m->{'name'} || $value %><% if ($m->{'trial'}) { %> · <%= &subs::ui('free trial') %><% } %></option>
 				<% } %>
 			</optgroup>
 			<% } %>
