@@ -926,6 +926,127 @@ sub run_sound_param {
 	is_deeply($calls[-1], [2, 'gain', 0.5], 'and still addresses a route');
 }
 
+# --- a take borrows the house patch and gives it back -----------------------
+# The engine gives its capture and outputs to one owner, so a normal take
+# refuses while the house patch runs. The route suspends the managed patch
+# before recording, restores it on Stop, on a refused start and when a take
+# ends on its own; with the switch off it never touches the patch.
+{
+	my $rec_dir = tempdir(CLEANUP => 1);
+	local $ENV{JAWNOS_AUDIO_PLAN} = "$rec_dir/audio-plan.json";
+	require JawnOS::Audio::SystemMix;
+
+	my $plan = {
+		sources => [ { id => 'gtr', kind => 'input', channel => 1 } ],
+		buses   => [],
+		sinks   => [ { id => 'out', kind => 'interface', channel => 0 } ],
+		routes  => [ { from => 'gtr', to => 'out' } ],
+	};
+	&subs::setting_setter({
+		app => 'misc', setting => 'rec_location', value => $rec_dir,
+		device => &subs::device_setter(),
+	});
+	&subs::setting_setter({
+		app => 'sound', setting => 'audio_plan', device => 'all',
+		value => encode_json($plan),
+	});
+	&subs::setting_setter({
+		app => 'sound', setting => 'audio_manage', device => 'all', value => '1',
+	});
+	my $marker = &subs::device_setter();
+	&subs::setting_setter({
+		app => 'sound', setting => 'audio_take_patch', device => $marker, value => '',
+	});
+
+	my (@recorded, @unpatched, @patched);
+	my $state = 'patching';
+	my $record_answer = { ok => 1, take => 9, state => 'recording' };
+	no warnings 'redefine';
+	local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
+	local *JawnOS::Audio::Engine::audio_engine_status = sub {
+		return { ok => 1, state => $state };
+	};
+	local *JawnOS::Audio::Engine::audio_engine_unpatch = sub {
+		push @unpatched, 1;
+		return { ok => 1, state => 'done' };
+	};
+	local *JawnOS::Audio::Engine::audio_engine_patch = sub {
+		push @patched, $_[0];
+		return { ok => 1, state => 'patching' };
+	};
+	local *JawnOS::Audio::Engine::audio_engine_record = sub {
+		push @recorded, [@_];
+		return $record_answer;
+	};
+	local *JawnOS::Audio::Engine::audio_engine_record_stop = sub {
+		return { ok => 1, state => 'done' };
+	};
+	local *JawnOS::Audio::SystemMix::ensure = sub { return { ok => 0, skipped => 1 } };
+
+	# Start: the patch goes down before the take asks for the capture.
+	my $started = run_take(seconds => '5', tracks => '1', inputs => '0');
+	is($started->{'status'}, 200, 'a take over the house patch starts');
+	is(scalar @unpatched, 1, 'the running patch is suspended first');
+	is(scalar @recorded, 1, 'and the take is then asked to record');
+	is(&subs::setting_grabber({
+		app => 'sound', setting => 'audio_take_patch', device => $marker,
+	}), 'suspended', 'the restore is owed while the take runs');
+
+	# A poll during the take reports the take and leaves the patch down.
+	$state = 'recording';
+	run_take(action => 'status');
+	is(scalar @patched, 0, 'a status poll during the take does not re-arm the patch');
+
+	# A take that ends on its own reports done; that poll restores the patch.
+	$state = 'done';
+	run_take(action => 'status');
+	is(scalar @patched, 1, 'a take that ended on its own re-arms the patch');
+	is(scalar @{ $patched[0]{routes} }, 1, 'with the saved plan');
+	is($patched[0]{routes}[0]{from}, 'gtr', 'and its saved route');
+	is(&subs::setting_grabber({
+		app => 'sound', setting => 'audio_take_patch', device => $marker,
+	}), '', 'and the debt is cleared');
+
+	# Stop restores even when the page asks after the take already ended.
+	$state = 'patching';
+	$record_answer = { ok => 1, take => 10, state => 'recording' };
+	@patched = ();
+	run_take(seconds => '5', tracks => '1', inputs => '0');
+	is(scalar @unpatched, 2, 'a second take suspends the patch again');
+	run_take(action => 'stop');
+	is(scalar @patched, 1, 'Stop re-arms the patch');
+	is(&subs::setting_grabber({
+		app => 'sound', setting => 'audio_take_patch', device => $marker,
+	}), '', 'and clears the debt');
+
+	# A refused take never got the capture, so it restores before answering.
+	$state = 'patching';
+	$record_answer = { ok => 0, error => 'the engine refused this take' };
+	@patched = ();
+	my $refused = run_take(seconds => '5', tracks => '1', inputs => '0');
+	is($refused->{'status'}, 200, 'a refused take keeps its relayed answer');
+	ok(!$refused->{'json'}{'ok'}, 'with ok false');
+	is(scalar @patched, 1, 'the refused take restores the patch before answering');
+	is(&subs::setting_grabber({
+		app => 'sound', setting => 'audio_take_patch', device => $marker,
+	}), '', 'and clears the debt');
+
+	# With the switch off the patch is not ours: nothing is suspended.
+	&subs::setting_setter({
+		app => 'sound', setting => 'audio_manage', device => 'all', value => '0',
+	});
+	$state = 'patching';
+	$record_answer = { ok => 1, take => 11, state => 'recording' };
+	@unpatched = ();
+	@patched = ();
+	run_take(seconds => '5', tracks => '1', inputs => '0');
+	is(scalar @unpatched, 0, 'manage off leaves the patch running');
+	is(scalar @patched, 0, 'and no restore is attempted');
+	is(&subs::setting_grabber({
+		app => 'sound', setting => 'audio_take_patch', device => $marker,
+	}), '', 'and no debt is written');
+}
+
 # --- one busy refusal is retried -------------------------------------------
 {
 	my ($path, $log) = start_mock(busy_once => 1, replies => \%reply);

@@ -877,4 +877,116 @@ CARDS
 	}
 }
 
+# --- a Studio take suspends the house patch and restores it ------------------
+# The engine gives its capture and outputs to one owner, so a normal take
+# cannot record while the patch runs. The take route suspends the managed patch
+# and re-arms the saved plan afterwards; the debt is a setting, not a process
+# flag, so a request that dies leaves the restore owed.
+{
+	%STORE = ();
+	require JawnOS::Audio::SystemMix;
+	my $plan = {
+		sources => [ { id => 'gtr', kind => 'input', channel => 1 } ],
+		buses   => [],
+		sinks   => [ { id => 'out', kind => 'interface', channel => 0 } ],
+		routes  => [ { from => 'gtr', to => 'out' } ],
+	};
+	subs::audio_plan_write($plan);
+	my $marker = "sound/$subs::audio_take_patch_setting/" . &subs::device_setter();
+	is($STORE{$marker}, undef, 'no take has suspended the patch yet');
+
+	my @patched;
+	my $unpatched = 0;
+	my $state = 'patching';
+	no warnings 'redefine';
+	local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
+	local *JawnOS::Audio::Engine::audio_engine_status = sub {
+		return { ok => 1, state => $state };
+	};
+	local *JawnOS::Audio::Engine::audio_engine_unpatch = sub {
+		$unpatched++;
+		return { ok => 1, state => 'done' };
+	};
+	local *JawnOS::Audio::Engine::audio_engine_patch = sub {
+		push @patched, $_[0];
+		return { ok => 1, state => 'patching' };
+	};
+	local *JawnOS::Audio::SystemMix::ensure = sub { return { ok => 0, skipped => 1 } };
+
+	&subs::setting_setter({
+		app => 'sound', setting => $subs::audio_manage_setting,
+		device => 'all', value => '1',
+	});
+
+	my $suspended = subs::audio_take_patch_suspend();
+	is($suspended->{suspended}, 1, 'a running patch is suspended for a take');
+	is($unpatched, 1, 'and the engine is asked to unpatch');
+	is($STORE{$marker}, 'suspended',
+		'the restore is owed in a durable setting');
+	is(scalar @{ subs::audio_plan_read()->{routes} }, 1,
+		'and the saved plan is left untouched by the suspend');
+
+	# A status poll while the take records must not cut it short.
+	$state = 'recording';
+	my $busy = subs::audio_take_patch_restore({
+		only_if_idle => 1, status => { ok => 1, state => 'recording' },
+	});
+	is($busy->{pending}, 1, 'a take still recording keeps the restore owed');
+	is(scalar @patched, 0, 'and the patch is not re-armed under it');
+	is($STORE{$marker}, 'suspended',
+		'the marker stays for the end of the take');
+
+	# A take that ends on its own answers `done`, and the next poll restores.
+	$state = 'done';
+	my $ended = subs::audio_take_patch_restore({
+		only_if_idle => 1, status => { ok => 1, state => 'done' },
+	});
+	is($ended->{restored}, 1, 'a take that ended on its own restores the patch');
+	is(scalar @patched, 1, 'the saved plan is applied once');
+	is($STORE{$marker}, '', 'and the durable debt is cleared');
+	is_deeply($patched[0]->{routes}, subs::audio_plan_read()->{routes},
+		'the saved plan is what is re-armed');
+
+	# Stop restores unconditionally, whether the take was still recording or
+	# had already ended.
+	$state = 'patching';
+	is(subs::audio_take_patch_suspend()->{suspended}, 1, 'a second take suspends again');
+	my $stopped = subs::audio_take_patch_restore();
+	is($stopped->{restored}, 1, 'Stop re-arms the patch');
+	is(scalar @patched, 2, 'and applies the saved plan');
+	is($STORE{$marker}, '', 'Stop clears the debt');
+}
+
+# --- the switch off leaves the patch alone ----------------------------------
+{
+	my $marker = "sound/$subs::audio_take_patch_setting/" . &subs::device_setter();
+	%STORE = (
+		"sound/$subs::audio_manage_setting/all" => '0',
+		$marker => 'suspended',
+	);
+	my (@patched, @unpatched);
+	no warnings 'redefine';
+	local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
+	local *JawnOS::Audio::Engine::audio_engine_status = sub {
+		return { ok => 1, state => 'patching' };
+	};
+	local *JawnOS::Audio::Engine::audio_engine_unpatch = sub {
+		push @unpatched, 1;
+		return { ok => 1, state => 'done' };
+	};
+	local *JawnOS::Audio::Engine::audio_engine_patch = sub {
+		push @patched, 1;
+		return { ok => 1, state => 'patching' };
+	};
+
+	my $suspended = subs::audio_take_patch_suspend();
+	is($suspended->{suspended}, 0, 'manage off never suspends the patch');
+	is(scalar @unpatched, 0, 'and the engine is not asked to unpatch');
+
+	my $restored = subs::audio_take_patch_restore();
+	is($restored->{restored}, 0, 'and a stale debt is not re-armed');
+	is(scalar @patched, 0, 'the patch is left alone while the switch is off');
+	is($STORE{$marker}, '', 'but the stale marker is cleared');
+}
+
 done_testing();

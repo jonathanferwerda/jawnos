@@ -34,6 +34,12 @@ use Mojo::JSON qw(decode_json encode_json);
 # mixer. The Sound page's per-device volume rows stay per-device.
 our $audio_plan_setting = 'audio_plan';
 our $audio_manage_setting = 'audio_manage';
+# A normal Studio take needs the capture and the outputs, which the running
+# house patch owns. The take suspends that patch and re-arms the saved plan
+# afterwards; this setting, not a process global, is how it remembers the debt.
+# A worker that dies after the unpatch has still left the next request a marker
+# to pay, and the plan itself stays on disk the whole time.
+our $audio_take_patch_setting = 'audio_take_patch';
 
 sub audio_plan_read {
 	require JawnOS::Audio::Plan;
@@ -538,6 +544,103 @@ sub audio_plan_status {
 			JawnOS::Audio::Engine::audio_engine_state_dir()
 		),
 		machine          => (eval { Sys::Hostname::hostname() } || ''),
+	};
+}
+
+# ---- a Studio take borrowing the capture from the house patch --------------
+
+# The saved plan is a normal take's to borrow, not to lose. The engine gives its
+# capture and outputs to one owner, so a take refuses while the patch runs
+# (engine/src/socket.rs record()). The take route asks these two helpers to put
+# the patch down and to pick it up again; the marker in `$audio_take_patch_setting`
+# makes that a durable promise rather than a process-local flag.
+
+sub _audio_take_patch_marker {
+	# This machine's take owed this machine's engine a restore; another
+	# machine's running patch must not clear it.
+	my $raw = &subs::setting_grabber({
+		app     => 'sound',
+		setting => $audio_take_patch_setting,
+		device  => &subs::device_setter(),
+	});
+	return (defined $raw && !ref $raw && $raw eq 'suspended') ? 1 : 0;
+}
+
+sub _audio_take_patch_marker_write {
+	my ($suspended) = @_;
+	&subs::setting_setter({
+		app     => 'sound',
+		setting => $audio_take_patch_setting,
+		device  => &subs::device_setter(),
+		value   => $suspended ? 'suspended' : '',
+	});
+	return;
+}
+
+# Called just before a normal take asks the engine to record. Only the managed
+# house patch is suspended: with the switch off the patch is not ours to stop.
+# The marker is written before the command, so a request that dies in between
+# still leaves the house knowing a restore is owed.
+sub audio_take_patch_suspend {
+	return { ok => 1, suspended => 0 } unless &audio_manage_read();
+
+	require JawnOS::Audio::Engine;
+	my $status = eval { JawnOS::Audio::Engine::audio_engine_status() };
+	return { ok => 1, suspended => 0 }
+		unless ref $status eq 'HASH' && ($status->{'state'} // '') eq 'patching';
+
+	_audio_take_patch_marker_write(1);
+	my $answer = eval { JawnOS::Audio::Engine::audio_engine_unpatch() };
+	return { ok => 1, suspended => 1, engine => $answer };
+}
+
+# Re-arm the saved plan after the take. Stop and a refused start restore
+# unconditionally; the status poll passes `only_if_idle` so a take that ends on
+# its own is restored without touching one that is still recording. The marker
+# is cleared only once the plan is applied (or the switch is off, or a patch is
+# already running): a failed re-arm stays owed for the next call.
+sub audio_take_patch_restore {
+	my ($opts) = @_;
+	$opts = {} unless ref $opts eq 'HASH';
+	return { ok => 1, restored => 0 } unless _audio_take_patch_marker();
+
+	unless (&audio_manage_read()) {
+		_audio_take_patch_marker_write(0);
+		return {
+			ok => 1, restored => 0, skipped => 1,
+			error => 'the house mixer is not managed on this machine',
+		};
+	}
+
+	if ($opts->{'only_if_idle'}) {
+		require JawnOS::Audio::Engine;
+		my $status = exists $opts->{'status'}
+			? $opts->{'status'}
+			: eval { JawnOS::Audio::Engine::audio_engine_status() };
+		my $state = ref $status eq 'HASH' ? ($status->{'state'} // '') : '';
+		# The take still owns the capture: leave the plan owed.
+		return { ok => 1, restored => 0, pending => 1 }
+			if $state eq 'recording';
+		# The house patch is already running, so nothing is owed.
+		if ($state eq 'patching') {
+			_audio_take_patch_marker_write(0);
+			return { ok => 1, restored => 0, already => 1 };
+		}
+		# No live engine answer: the boot file arms the saved plan when the
+		# engine returns, so the marker waits for that engine and the next poll.
+		return { ok => 1, restored => 0, pending => 1 }
+			unless ref $status eq 'HASH' && $status->{'ok'};
+	}
+
+	my $applied = eval { &audio_plan_apply() };
+	$applied = { ok => 0, error => "$@" } unless ref $applied eq 'HASH';
+	if ($applied->{'ok'}) {
+		_audio_take_patch_marker_write(0);
+		return { ok => 1, restored => 1, applied => $applied };
+	}
+	return {
+		ok => 0, restored => 0, applied => $applied,
+		error => ($applied->{'error'} // 'the house patch could not be restored'),
 	};
 }
 

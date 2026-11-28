@@ -1475,6 +1475,9 @@ sub action_44023 {
 	if ($action eq 'status') {
 		my $status = &JawnOS::Audio::Engine::audio_engine_status();
 		$status = {} unless ref $status eq 'HASH';
+		# A take that ends on its own reports `done` here. Re-arm the house
+		# patch the take suspended, but never while a take still records.
+		eval { &subs::audio_take_patch_restore({ only_if_idle => 1, status => $status }) };
 		# `installed` is the machine's engine, not this take: a staged binary
 		# that is not running is still the capture path the page must use
 		# instead of the browser microphone. `available` is the live socket.
@@ -1485,7 +1488,11 @@ sub action_44023 {
 		return;
 	}
 	if ($action eq 'stop') {
-		$c->render(json => &JawnOS::Audio::Engine::audio_engine_record_stop());
+		my $answer = &JawnOS::Audio::Engine::audio_engine_record_stop();
+		# Stop is the take's end whether it was asked for or had already
+		# happened, so the patch this take suspended is re-armed here.
+		eval { &subs::audio_take_patch_restore() };
+		$c->render(json => $answer);
 		return;
 	}
 	if ($action eq 'param') {
@@ -3080,6 +3087,16 @@ sub studio_take_start {
 	my $track_count = $plan ? scalar(@$plan) : 1;
 	my ($path_error, $path, $reserved) = &studio_take_path($folder, undef, $track_count);
 	return (503, { ok => 0, error => $path_error }) if defined $path_error;
+	# A normal take needs the capture and the outputs, which the running house
+	# patch owns. A bus take is the exception: it records that patch's own bus,
+	# so it needs the patch left running. The marker this writes is durable, so
+	# a refusal below (or a worker that dies) still leaves a restore owed.
+	my $suspended = 0;
+	if (!defined $bus_name) {
+		my $suspend = eval { &subs::audio_take_patch_suspend() };
+		$suspended = (ref $suspend eq 'HASH' && $suspend->{'suspended'}) ? 1 : 0;
+	}
+
 	my $extra;
 	$extra->{'tracks'} = $plan if $plan;
 	$extra->{'master'} = $master if @$master;
@@ -3107,6 +3124,10 @@ sub studio_take_start {
 	} elsif ($track_count > 1) {
 		unlink $path;
 	}
+	# A refused take never got the capture, so hand the house patch back before
+	# the refusal reaches the page. A successful take keeps the marker until
+	# Stop, or until the status poll sees that it ended on its own.
+	eval { &subs::audio_take_patch_restore() } if $suspended && !$answer->{'ok'};
 
 	# The probe above can race an engine that exits between the two connections.
 	# The client says the same sentence when a connect fails, so the route still
