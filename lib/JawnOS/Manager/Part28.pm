@@ -331,7 +331,7 @@ sub remote_command_run($c, $data) {
 		return { ok => 0, error => 'no agent on this machine to read that' } unless $model;
 		# Only the verbs this executor actually runs are offered, so the peer's guide
 		# cannot pick an action whose effect has nowhere to go.
-		my %remote_verbs = map { $_ => 1 } qw/open_app play_music measure where_when say ask done/;
+		my %remote_verbs = map { $_ => 1 } qw/open_app close_app play_music measure where_when say ask done/;
 		my $system = &help::actions_prompt(\%remote_verbs) . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
 		my ($out) = &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking_effective('help_assistant'));
 		$action = $out ? &subs::json_from_model($out) : undef;
@@ -398,6 +398,14 @@ sub remote_command_execute($c, $action) {
 		my $js = &Websocket::console_command('appWindowOpener', $action->{'app'});
 		&Websocket::send('server', { console => $js });
 		return 'opened the ' . $action->{'app'} . ' window';
+	}
+	if ($a eq 'close_app' && $action->{'app'}) {
+		# The same press as the window's X, so its save, relock and encryption
+		# still run; one window per tab is closed (the topmost of that app).
+		my $app = &subs::unformat_name($action->{'app'});
+		my $js = &Websocket::console_command('appWindowCloser', $app);
+		&Websocket::send('server', { console => $js });
+		return 'closed the ' . $app . ' window';
 	}
 	if ($a eq 'play_music' && $action->{'query'}) {
 		my $r = help_music_file($c, $action->{'query'}, $action->{'shuffle'});

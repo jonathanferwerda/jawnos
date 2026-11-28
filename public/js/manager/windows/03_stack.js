@@ -271,6 +271,21 @@ function windowCloseTearDown(timestamp, win, done) {
 	if (windowPhoneChecker()) { windowStacker(); }
 }
 
+// Close the window an app has open in this tab: the same press the person makes
+// with the X, so the window's own close path (socket stop, save, the
+// window_closer POST) runs and private relock and encryption still happen. One
+// window per call - the last in the DOM, which is the one on top - so a
+// many-window app (Terminal, Folders) loses one at a time.
+function jawnAppWindowCloser(app) {
+	if (!app) { return 0; }
+	var button = $('.close_button').filter(function () {
+		return $(this).attr('app') === app;
+	}).last();
+	if (!button.length) { return 0; }
+	button.trigger('click');
+	return 1;
+}
+
 // A close is a farewell and then the teardown. The motion belongs to the
 // effects level; with it off (or reduced motion) nothing is delayed and the
 // window goes at once, exactly as before.

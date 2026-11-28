@@ -419,6 +419,12 @@ sub guide_verb_execute($c, $action) {
 	# closed registry and its own gate (see app_action_execute below).
 	return (app_action_execute($c, $action, {})->{'speech'} || 'That action did not run.')
 		if $name eq 'app';
+	# Closing a window is the twin of open_app: the browser's own close press,
+	# sent the same way, so the window's save, relock and encryption still run.
+	if ($name eq 'close_app') {
+		return 'no app named' unless ($action->{'app'} // '') ne '';
+		return &remote_command_execute($c, $action);
+	}
 	my ($verb) = grep { $_->{'name'} eq $name } @{ &help::learned_verbs() };
 	return 'no such command: ' . $name unless $verb;
 	my $prim = $verb->{'primitive'};

@@ -1420,7 +1420,7 @@ sub voice_brain {
 	}
 	my $verbs = ($scope && $scope->{'ok'} && ref $scope->{'verbs'} eq 'HASH')
 		? $scope->{'verbs'}
-		: { map { $_ => 1 } qw/say ask done measure where_when create play_music open_app alias unalias/ };
+		: { map { $_ => 1 } qw/say ask done measure where_when create play_music open_app close_app alias unalias/ };
 	my $system = &help::actions_prompt($verbs, 0, $text) . "\n\n";
 	$system .= "Only the actions listed above exist on this turn; ignore any rule that names an action not listed.\n";
 	$system .= "This came in as a spoken command to the person's watch, transcribed on-device: "
@@ -1555,8 +1555,8 @@ sub voice_brain {
 		return { handled => 1, action => 'stop', app => $app, said => $speech };
 	}
 	# the acting verbs the server can run itself: measure/where read our own
-	# records, play_music/open_app reach the open JawnOS tabs over the socket
-	if ($a eq 'measure' || $a eq 'where_when' || $a eq 'play_music' || $a eq 'open_app') {
+	# records, play_music/open_app/close_app reach the open JawnOS tabs over the socket
+	if ($a eq 'measure' || $a eq 'where_when' || $a eq 'play_music' || $a eq 'open_app' || $a eq 'close_app') {
 		my $obs = eval { &Manager::remote_command_execute(&subs::controller_builder(), $action) };
 		return undef unless defined $obs && length $obs;
 		$reply->($obs);

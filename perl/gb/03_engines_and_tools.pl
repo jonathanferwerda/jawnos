@@ -92,6 +92,8 @@ our @guide_tools = (
 	  desc => 'open the photo browser to one or more named things, each resolved to the app that holds it ("app":"x" scopes to one; "search":"x" filters by text)' },
 	{ name => 'open_app', args => { app => 'gallery' }, example => '{"action":"open_app","app":"gallery"}',
 	  desc => "open one app's window" },
+	{ name => 'close_app', args => { app => 'camera' }, example => '{"action":"close_app","app":"camera"}',
+	  desc => "close one app's window" },
 	{ name => 'say', args => { text => '...' }, example => '{"action":"say","text":"..."}',
 	  desc => 'answer in words, then stop' },
 	{ name => 'ask', args => { text => '...' }, example => '{"action":"ask","text":"..."}',
@@ -260,6 +262,26 @@ our @app_actions = (
 			my $say = $n . ' order' . ($n == 1 ? ' is' : 's are') . ' open';
 			$say .= ' and ' . ($n == 1 ? 'its total is ' : 'they total ') . sprintf('%.2f', $total) if $priced;
 			return ucfirst($say) . '.';
+		},
+	},
+	{
+		app => 'camera', do => 'photo', kind => 'write',
+		method => 'post', route => '/manager/camera/photo',
+		params => {},
+		confirm => 'I can ask the Camera to take a photo. Confirm it and I will.',
+		desc => 'take a photo with the open Camera window',
+		speech => sub {
+			return 'I asked the Camera to take a photo.';
+		},
+	},
+	{
+		app => 'camera', do => 'video', kind => 'write',
+		method => 'post', route => '/manager/camera/video',
+		params => {},
+		confirm => 'I can ask the Camera to record a video. Confirm it and I will.',
+		desc => 'record a video with the open Camera window',
+		speech => sub {
+			return 'I asked the Camera to record a video.';
 		},
 	},
 );

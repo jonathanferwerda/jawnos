@@ -51,7 +51,9 @@ The fast lane (`start`/`stop <app>`) never reaches here.
   `evaluation_model_call_role`). Without a guide model it returns `undef` and the
   transcript stays a note.
 - **A closed action vocabulary** — `help::actions_prompt(\%voice_verbs)` over
-  `say ask done measure where_when create play_music open_app alias unalias`.
+  the funnel's scoped set (the common core is
+  `say ask done find open_app close_app alias unalias`, with the app family's
+  verbs added).
   The verbs are deliberately narrower than the Guide's full set: there is no
   screen and no follow-up turn.
 - **Name resolution** — `subs::guide_resolve_action` rewrites a clear app name to

@@ -290,6 +290,28 @@ function jawnCameraAppUpload(blob, name, kind) {
 	});
 }
 
+// A camera action asked for over the socket (the Guide's screen or voice path):
+// press the same button the person would. The window may still be opening when
+// the ask arrives, so wait a few seconds for it instead of dropping the press.
+function jawnCameraCommand(what) {
+	what = String(what || '');
+	if (what !== 'photo' && what !== 'video') { return 0; }
+	if (document.hidden) { return 0; }
+	var sel = (what === 'photo') ? '#camera_app .camera_app_photo' : '#camera_app .camera_app_video';
+	var fire = function () {
+		var el = $(sel);
+		if (!el.length) { return 0; }
+		el.trigger('click');
+		return 1;
+	};
+	if (fire()) { return 1; }
+	var tries = 0;
+	var timer = setInterval(function () {
+		if (fire() || ++tries > 20) { clearInterval(timer); }
+	}, 150);
+	return -1;
+}
+
 // Take a photo: the OS camera in the app, a webcam frame on the desktop.
 $(document).on('click', '.camera_app_photo', function () {
 	if (jawnCameraAppNative()) {

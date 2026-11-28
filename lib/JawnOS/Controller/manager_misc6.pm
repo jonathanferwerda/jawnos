@@ -160,6 +160,34 @@ sub action_23193 {
 	$c->render(text => $contents);
 }
 
+# POST /manager/camera/photo
+sub action_92011 {
+	my $c = shift;
+	&_camera_command($c, 'photo');
+}
+
+# POST /manager/camera/video
+sub action_92012 {
+	my $c = shift;
+	&_camera_command($c, 'video');
+}
+
+# Ask the open Camera window to press one of its own two buttons. It is the
+# same press the person makes, so the app's source, orientation and Unclaimed
+# media rules all still run. Only a tab showing the Camera window acts; the
+# channel is the app's own, and the handler ignores a hidden tab.
+sub _camera_command {
+	my ($c, $what) = @_;
+	$what = '' unless defined $what;
+	unless ($what eq 'photo' || $what eq 'video') {
+		$c->render(json => { ok => 0, error => 'no such camera action' });
+		return;
+	}
+	my $js = &Websocket::console_command('cameraAction', $what);
+	&Websocket::send('camera', { console => $js });
+	$c->render(json => { ok => 1, action => $what });
+}
+
 # A member machine hands the crest holder its cosignature. The request carries
 # the peer's signature and the statement carries it again, so the roster row
 # keeps a signature that still verifies after the request is gone. Only a

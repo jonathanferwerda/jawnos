@@ -8,7 +8,7 @@ $topic{'internet'} = {
 		title => 'Internet', category => 'apps', app => 'internet',
 		templates => [ 'templates/internet/internet.html.ep', 'templates/web/web.html.ep', 'public/js/manager/internet.js', 'public/js/manager/page_agent.js' ],
 		controls => [ 'Pages the house fetched, ready to open or measure', 'A real browser that counts site time', 'Type an address and press Enter', 'Open the address in the JawnOS browser' ],
-		verified => '2026-11-15',
+		verified => '2026-11-28',
 		summary => 'Web and Browse: saved pages with measures, and a real browser that counts site time.',
 		body => [
 			'Internet has two components. Web holds the pages the house fetched; each can be opened, or measured with the Measures tool. Browse opens a real browser in its own window on a computer (or its own screen on a phone), because a live page cannot run inside the manager window. The tab you used last is the tab Internet opens, so Web and Browse do not keep switching places.',
@@ -117,7 +117,8 @@ $topic{'camera'} = {
 			'A capture is filed under the Camera app. In the app an appointment\'s own camera buttons open the same OS camera: the rear/front pair in its Details view and Camera (native) / Video (native) in its Media group. Details files the capture onto that row. The Media group names only the app, so it files onto the app\'s open session, or its newest row when nothing is running - never into Unclaimed media.',
 			'A capture taken in the Camera app itself - and media an agent generated without an appointment - waits in Unclaimed media with a one-week warranty. Tick the items you want (or Select all), then search for an appointment name and press Approved, or drop them onto the drop zone.',
 			'On the desktop and in a browser, Source chooses which camera the next capture uses: Auto, Front or Back, and then every video input the machine reports by name. The choice is remembered on that machine, so the same lens is used next time. On a phone the OS camera chooses its own lens.',
-			'An appointment\'s Media group carries the same idea across the House: each row of buttons has a machine picker under it, so a photo can be taken on a chosen phone and a scan on a chosen computer while the appointment stays where you are. The pick is remembered for that person at that screen, and the picture or scan lands on the appointment as usual. Only a machine that can do the job is offered - phones for a camera, computers for a flatbed or feeder scan.'
+			'An appointment\'s Media group carries the same idea across the House: each row of buttons has a machine picker under it, so a photo can be taken on a chosen phone and a scan on a chosen computer while the appointment stays where you are. The pick is remembered for that person at that screen, and the picture or scan lands on the appointment as usual. Only a machine that can do the job is offered - phones for a camera, computers for a flatbed or feeder scan.',
+			'With the Camera window open, a spoken request can drive it: "take a photo" and "record a video" press the same two buttons, and "close Camera" closes it. A spoken capture is a write, so it is proposed first under the Confirmation Requirement and runs when you confirm; it then follows the same source, orientation and Unclaimed media rules as a press.'
 		],
 		steps => [
 			'Open Camera from the start menu, or pin it to the taskbar.',
@@ -126,7 +127,7 @@ $topic{'camera'} = {
 			'The capture is saved when you accept it in the camera.',
 			'To file unclaimed media onto an appointment, tick items, search for the appointment name, and press Approved.'
 		],
-		related => [ 'gallery' ]
+		related => [ 'gallery', 'voice' ]
 	};
 $topic{'scan'} = {
 		title => 'Scan', category => 'apps', app => 'scan',

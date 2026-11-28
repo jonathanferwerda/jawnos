@@ -129,6 +129,10 @@ summary. The registry is `@gb::app_actions` in
   prices by `search`.
 - `store` / `orders` (read) — `GET /manager/store/register/state`: the open
   register orders and their total.
+- `camera` / `photo` (write) — `POST /manager/camera/photo`: press the open
+  Camera window's Take a photo button.
+- `camera` / `video` (write) — `POST /manager/camera/video`: press its Record a
+  video button.
 
 The gates are in code, not only in the prompt:
 
@@ -182,19 +186,37 @@ cancelled, and the strip also loads when the Guide window opens.
 
 The full Guide window and its associate now get the same `app`, `weather` and
 `history` tools; the voice turn's scoped list is still smaller, but nothing the
-watch can do is missing from the screen. Not done yet: camera and window
-control still need a route or a resolver that fits the same shape (camera has
-no server route today). To add an action, add one entry to `@gb::app_actions`
-and a test to `t/484-app-action-bridge.t` (read/execute),
-`t/487-store-actions.t` (a read family's speech) or `t/488-history-visit.t` (a
-fast resolver).
+watch can do is missing from the screen.
+
+### Camera and window control
+
+A spoken capture is an app action for `camera`: `photo` and `video` press the
+same two buttons the app shows, through the camera app's own socket channel, so
+the source choice, the orientation reading and the Unclaimed media pool all
+still run. It is a write, so it is proposed and confirmed like any other. Only a
+tab showing the Camera window acts, and a hidden tab ignores the press; keep the
+window open, or say "open Camera" first.
+
+Window control is the `close_app` tool, the twin of `open_app`: the server sends
+the browser's own close press (`appWindowCloser`), so the window's close path
+runs - the websocket stop, the save, and the `window_closer` POST that relocks a
+private app and encrypts or decrypts its files. It closes one window per tab
+(the topmost of that app), so a many-window app loses one at a time. It is
+offered to both the screen and the voice turn and needs no confirmation,
+matching `open_app`.
+
+To add another action, add one entry to `@gb::app_actions` and a test to
+`t/484-app-action-bridge.t` (read/execute), `t/487-store-actions.t` (a read
+family's speech), `t/488-history-visit.t` (a fast resolver) or
+`t/491-camera-window-voice.t` (the camera press and the window close).
 
 ## Files
 
 - `lib/JawnOS/Domain/VoiceFunnel.pm` — catalogue, matcher, router, identity,
   weather, history/visit, app action lines.
-- `lib/JawnOS/Domain/Ai.pm` — fast path, scoped prompt, `find`/`stop`/`app`
-  branches, and `voice_confirmation_kind` for the held write's yes/no.
+- `lib/JawnOS/Domain/Ai.pm` — fast path, scoped prompt, `find`/`stop`/`app`/
+  `open_app`/`close_app` branches, and `voice_confirmation_kind` for the held
+  write's yes/no.
 - `lib/JawnOS/Manager/Part29.pm` — `app_action_execute`: the registry gate,
   visibility, confirmation, route lookup and JSON dispatch; the held-write
   `app_action_pending_store`/`take`/`peek` and the Guide's
@@ -204,6 +226,11 @@ fast resolver).
 - `lib/JawnOS/Controller/manager_help.pm`, `lib/JawnOS/Routes/manager_help.pm` —
   the held-write list, confirm and cancel routes, and the weather/history
   routes the Guide uses.
+- `lib/JawnOS/Controller/manager_misc6.pm`, `lib/JawnOS/Routes/manager_misc6.pm` —
+  the camera photo/video routes.
+- `public/js/manager/camera.js`, `public/js/manager/windows/03_stack.js`,
+  `public/js/manager/websocket/00_console_router.js` — the camera press and the
+  window close press.
 - `public/js/manager/help/03_pending.js`, `public/js/manager/help.js`,
   `public/js/manager/websocket/00_console_router.js`,
   `templates/apps/help.html.ep` — the card strip and its reload command.
@@ -215,6 +242,7 @@ fast resolver).
   `perl/help/topics_functions.pl`, `perl/help/topics_devices.pl` — the Voice,
   Store, Appointments and Help topics name the new answers and the card.
 - `t/483-voice-funnel.t`, `t/484-app-action-bridge.t`, `t/487-store-actions.t`,
-  `t/488-history-visit.t`, `t/489-pending-card.t`, `t/490-guide-parity.t` —
-  matcher, scope, router contract, identity, weather, history/visit, the action
-  gates, the held write, the Store family, the card and the Guide parity.
+  `t/488-history-visit.t`, `t/489-pending-card.t`, `t/490-guide-parity.t`,
+  `t/491-camera-window-voice.t` — matcher, scope, router contract, identity,
+  weather, history/visit, the action gates, the held write, the Store family,
+  the card, the Guide parity, the camera press and the window close.

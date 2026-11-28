@@ -10,6 +10,8 @@ sub routes {
 	[22699, 'get', '/manager/notifications', 'action_22699'],
 	[22702, 'get', '/manager/notes', 'action_22702'],
 	[23193, 'get', '/manager/camera', 'action_23193'],
+	[92011, 'post', '/manager/camera/photo', 'action_92011'],
+	[92012, 'post', '/manager/camera/video', 'action_92012'],
 	[24039, 'post', '/manager/crest/cosign', 'action_24039'],
 	[24861, 'get', '/manager/app_draft', 'action_24861'],
 	[24875, 'post', '/manager/app_draft', 'action_24875'],

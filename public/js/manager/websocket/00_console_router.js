@@ -272,6 +272,26 @@ var jawnosConsoleCommands = {
 		var c = String(a[0] || '');
 		if (/^[A-Za-z0-9_-]+$/.test(c)) { $('.' + c + '_close_button').trigger('click'); }
 	},
+	appWindowCloser: function (a) {
+		var app = String(a[0] || '');
+		if (!app || typeof jawnAppWindowCloser !== 'function') { return; }
+		jawnAppWindowCloser(app);
+	},
+	cameraAction: function (a) {
+		var what = String(a[0] || '');
+		if (what !== 'photo' && what !== 'video') { return; }
+		if (typeof jawnCameraCommand === 'function') { jawnCameraCommand(what); return; }
+		// The Camera app's script loads with its window; wait for it rather
+		// than dropping a press that arrived while the window was opening.
+		var tries = 0;
+		var timer = setInterval(function () {
+			if (typeof jawnCameraCommand === 'function') {
+				clearInterval(timer);
+				jawnCameraCommand(what);
+			}
+			else if (++tries > 20) { clearInterval(timer); }
+		}, 150);
+	},
 	show: function (a) {
 		var id = String(a[0] || '');
 		if (/^[A-Za-z0-9_-]+$/.test(id)) { $('#' + id).show(); }
