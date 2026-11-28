@@ -156,7 +156,15 @@ my $stored;
 	like($tpl, qr/subs::ui\('Guide commands'\)/, 'the commands section is labelled in the on-screen words');
 
 	my $ctl = do { local (@ARGV, $/) = ("$root/lib/JawnOS/Controller/manager_intelligence.pm"); <> };
-	like($ctl, qr/setting\s*=>\s*'guide_rules'/, 'the controller reads the guide_rules setting');
+	# The controller is package Manager and calls the guide verbs unqualified, so
+# each domain sub needs a Manager wrapper; a missing one is a runtime
+# "Undefined subroutine &Manager::..." the direct domain tests cannot see.
+my $mgr = do { local (@ARGV, $/) = ("$root/lib/JawnOS/Manager.pm"); <> };
+like($mgr, qr/\*Manager::guide_rule_remember = sub \{ &subs::guide_rule_remember/,
+	'the Manager wrapper for remember_rule exists');
+like($mgr, qr/\*Manager::guide_rule_forget = sub \{ &subs::guide_rule_forget/,
+	'the Manager wrapper for forget_rule exists');
+like($ctl, qr/setting\s*=>\s*'guide_rules'/, 'the controller reads the guide_rules setting');
 	like($ctl, qr/setting\s*=>\s*'guide_verbs'/, 'the controller reads the guide_verbs setting');
 
 	my $ijs = do { local (@ARGV, $/) = ("$root/public/js/manager/intelligence.js"); <> };
