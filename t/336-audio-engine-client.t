@@ -1031,6 +1031,19 @@ sub run_sound_param {
 		app => 'sound', setting => 'audio_take_patch', device => $marker,
 	}), '', 'and clears the debt');
 
+	# A bus take records the patch's own bus, so it must keep the patch running.
+	$state = 'patching';
+	$record_answer = { ok => 1, take => 12, state => 'recording' };
+	@unpatched = ();
+	@patched = ();
+	my $bus_take = run_take(seconds => '5', bus => 'house');
+	is($bus_take->{'status'}, 200, 'a bus take starts while the house patch runs');
+	is($bus_take->{'json'}{'ok'}, 1, 'and the engine accepts it');
+	is(scalar @unpatched, 0, 'a bus take does not suspend the patch');
+	is(&subs::setting_grabber({
+		app => 'sound', setting => 'audio_take_patch', device => $marker,
+	}), '', 'and writes no restore debt');
+
 	# With the switch off the patch is not ours: nothing is suspended.
 	&subs::setting_setter({
 		app => 'sound', setting => 'audio_manage', device => 'all', value => '0',
